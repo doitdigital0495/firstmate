@@ -300,6 +300,7 @@ Multiple positional args become separate queued messages; `fm-spawn`'s template 
 Project trust dialog can appear on the first pi run in any not-yet-trusted directory, observed even on clean worktrees.
 Accept with Enter.
 The decision persists per path in `~/.pi/agent/trust.json`, so later spawns in the same worktree slot skip it.
+That same trust gate also decides whether the tracked project-local `.pi/settings.json` applies; its auto-compaction reserve is tuned for the `openai-codex/gpt-5.6-sol` context window, so a Pi crewmate dispatched on another model needs the reserve reconsidered ([`docs/configuration.md`](../../../docs/configuration.md) "Pi auto-compaction").
 
 `fm-spawn` keeps the turn-end extension in `state/`, outside the worktree, because project-local extension files make the trust gate strictly worse and pollute the project.
 The extension must listen for pi's `turn_end` event, not `agent_end`, so the watcher wakes after each completed turn instead of only when the whole agent run exits.
