@@ -25,6 +25,10 @@ test_compaction_threshold() {
   [ "$enabled" = "true" ] || fail "compaction.enabled is '$enabled', expected true"
   [ "$keep" = "20000" ] || fail "compaction.keepRecentTokens is '$keep', expected Pi's default 20000"
 
+  case "$reserve" in
+    '' | *[!0-9]*) fail "compaction.reserveTokens is '$reserve', expected a whole number of tokens" ;;
+  esac
+
   threshold=$((MODEL_CONTEXT_WINDOW - reserve))
   [ "$threshold" -eq "$EXPECTED_THRESHOLD" ] \
     || fail "effective trigger is $MODEL_CONTEXT_WINDOW - $reserve = $threshold, expected $EXPECTED_THRESHOLD"
@@ -35,11 +39,11 @@ test_compaction_threshold() {
 test_no_extension_configuration() {
   local keys
 
-  keys=$(jq -r 'keys[]' "$SETTINGS")
-  [ "$keys" = "compaction" ] \
-    || fail "$SETTINGS must carry only the compaction key, found: $(printf '%s' "$keys" | tr '\n' ' ')"
+  keys=$(jq -r 'keys[] | select(test("extension"; "i"))' "$SETTINGS")
+  [ -z "$keys" ] \
+    || fail "$SETTINGS must carry no extension configuration, found: $(printf '%s' "$keys" | tr '\n' ' ')"
 
-  pass "settings file carries compaction only; extensions stay directory-loaded"
+  pass "settings file carries no extension configuration; extensions come from .pi/extensions/ and the -e wiring"
 }
 
 test_compaction_threshold

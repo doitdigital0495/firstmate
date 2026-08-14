@@ -39,9 +39,11 @@ The tracked project-local `.pi/settings.json` is the single owner of Firstmate's
 Pi has no direct threshold setting: it compacts when `contextTokens > contextWindow - reserveTokens`, so the threshold is expressed as the reserve left standing.
 Firstmate sets `enabled: true`, `reserveTokens: 97000`, and `keepRecentTokens: 20000`, which on the active Firstmate Pi model `openai-codex/gpt-5.6-sol` and its `272000` context window gives an effective trigger of `272000 - 97000 = 175000` tokens.
 `keepRecentTokens: 20000` is Pi's own default recent-history window, restated so the whole compaction block reads as one deliberate choice rather than a partial override.
-That 175,000 trigger is model-dependent rather than absolute: a model with a different context window keeps the same 97,000-token reserve and therefore compacts somewhere else, so retune the reserve whenever the primary Pi model's context window changes.
+That 175,000 trigger is model-dependent rather than absolute, and `reserveTokens: 97000` assumes the Firstmate primary Pi model `openai-codex/gpt-5.6-sol` with its 272,000-token context window.
+Any different Pi model launched from this repository, including a crewmate dispatched on another Pi model, requires the reserve to be adjusted before use: a smaller window keeps the same 97,000-token reserve and therefore moves the trigger, and a window at or below 97,000 leaves no usable headroom at all.
+The reserve stays a static value here; there is no dynamic model detection or runtime floor, so retuning it is a deliberate edit whenever the Pi model's context window changes.
 Pi loads settings when a session starts, so a changed value reaches new or restarted Pi sessions and never the process already running.
-The Firstmate Pi extensions in `.pi/extensions/` load by directory convention and are deliberately absent from this file, so nothing here duplicates extension configuration.
+The Firstmate Pi extensions in `.pi/extensions/` are not configured through this file: a trusted primary session auto-loads them from that directory, and `bin/fm-spawn.sh`, `bin/fm-session-start.sh`, and `bin/fm-supervision-instructions.sh` otherwise supply their paths explicitly through the existing `-e` wiring.
 [`tests/fm-pi-compaction-settings.test.sh`](../tests/fm-pi-compaction-settings.test.sh) is the regression that parses this file and proves the equation.
 
 ## Backlog backend (.tasks.toml / config/backlog-backend)
