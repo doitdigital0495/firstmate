@@ -39,7 +39,8 @@ test_compaction_threshold() {
 test_no_extension_configuration() {
   local keys
 
-  keys=$(jq -r 'keys[] | select(test("extension"; "i"))' "$SETTINGS")
+  keys=$(jq -r 'keys[] | select(test("extension"; "i"))' "$SETTINGS") \
+    || fail "$SETTINGS must be a readable JSON object"
   [ -z "$keys" ] \
     || fail "$SETTINGS must carry no extension configuration, found: $(printf '%s' "$keys" | tr '\n' ' ')"
 
