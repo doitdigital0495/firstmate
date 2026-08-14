@@ -33,6 +33,17 @@ The `/calm` command replaces the file atomically before changing live presentati
 The extension reloads this preference on every Pi `session_start`, including startup, new, resume, fork, and reload reasons.
 This preference is local to each Firstmate home and is not part of secondmate inherited configuration.
 
+## Pi auto-compaction (.pi/settings.json)
+
+The tracked project-local `.pi/settings.json` is the single owner of Firstmate's Pi auto-compaction threshold, and it changes nothing outside this repository because Pi deep-merges a project settings file over the operator's global `~/.pi/agent/settings.json` instead of replacing it.
+Pi has no direct threshold setting: it compacts when `contextTokens > contextWindow - reserveTokens`, so the threshold is expressed as the reserve left standing.
+Firstmate sets `enabled: true`, `reserveTokens: 97000`, and `keepRecentTokens: 20000`, which on the active Firstmate Pi model `openai-codex/gpt-5.6-sol` and its `272000` context window gives an effective trigger of `272000 - 97000 = 175000` tokens.
+`keepRecentTokens: 20000` is Pi's own default recent-history window, restated so the whole compaction block reads as one deliberate choice rather than a partial override.
+That 175,000 trigger is model-dependent rather than absolute: a model with a different context window keeps the same 97,000-token reserve and therefore compacts somewhere else, so retune the reserve whenever the primary Pi model's context window changes.
+Pi loads settings when a session starts, so a changed value reaches new or restarted Pi sessions and never the process already running.
+The Firstmate Pi extensions in `.pi/extensions/` load by directory convention and are deliberately absent from this file, so nothing here duplicates extension configuration.
+[`tests/fm-pi-compaction-settings.test.sh`](../tests/fm-pi-compaction-settings.test.sh) is the regression that parses this file and proves the equation.
+
 ## Backlog backend (.tasks.toml / config/backlog-backend)
 
 The tracked `.tasks.toml` pins the default `tasks-axi` markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
