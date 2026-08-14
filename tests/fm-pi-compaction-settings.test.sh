@@ -6,6 +6,8 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (required to parse the settings file)"; exit 0; }
+
 SETTINGS="$ROOT/.pi/settings.json"
 
 # Context window of the active Firstmate Pi model (openai-codex/gpt-5.6-sol).
