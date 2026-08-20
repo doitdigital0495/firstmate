@@ -1,0 +1,14 @@
+=== EVIDENCE: real fm-spawn.sh run, claude crewmate, project tracks .claude/settings.local.json ===
+
+--- project's committed .claude/settings.local.json (before spawn) ---
+{"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"1"},"permissions":{"allow":["Bash(npm test)"]},"enabledPlugins":{"context7":true}}
+--- worktree .claude/settings.local.json (AFTER spawn) ---
+{"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"1"},"permissions":{"allow":["Bash(npm test)"]},"enabledPlugins":{"context7":true}}
+--- git -C <worktree> status --porcelain (AFTER spawn) ---
+(empty above = worktree clean)
+--- ls -A <worktree>/.claude ---
+settings.local.json
+--- firstmate hook settings written OUTSIDE the worktree ---
+path: /tmp/fm-busy-adapter-wiring.YUpjFY/claude-project-settings/home/state/busy-cl-3.claude-settings.json
+--- claude launch command captured from the tmux spawn ---
+--settings '/tmp/fm-busy-adapter-wiring.YUpjFY/claude-project-settings/home/state/busy-cl-3.claude-settings.json' 

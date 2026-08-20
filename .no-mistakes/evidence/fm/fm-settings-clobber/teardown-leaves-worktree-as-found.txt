@@ -1,0 +1,22 @@
+=== EVIDENCE 1: teardown of a worktree whose project TRACKS .claude/settings.local.json ===
+teardown exit code: 0  (0 = allowed)
+--- file content before teardown ---
+{"permissions":{"allow":["Bash(npm test)"]}}
+--- file content after teardown ---
+{"permissions":{"allow":["Bash(npm test)"]}}
+
+=== EVIDENCE 2: a worker-written untracked file under .claude/ now refuses teardown ===
+file: .claude/agents/reviewer.md
+teardown exit code: 1  (1 = refused)
+--- teardown stderr ---
+REFUSED: worktree /tmp/fm-teardown-tests.dEsHDm/claude-untracked-dirty/wt has uncommitted changes.
+uncommitted changes present
+Commit them (or get the captain's explicit OK to discard, then --force).
+--- file still present after refusal ---
+reviewer.md
+
+=== EVIDENCE 3: one-time migration of a pre-fix firstmate leftover ===
+teardown exit code: 0  (0 = allowed)
+--- .claude/ contents after teardown (firstmate hook file gone, project file kept) ---
+project-note.md
+

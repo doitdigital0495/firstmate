@@ -1,0 +1,15 @@
+=== EVIDENCE: real fm-spawn.sh run, claude crewmate, project tracks .claude/settings.local.json ===
+
+--- project's committed .claude/settings.local.json (before spawn) ---
+{"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"1"},"permissions":{"allow":["Bash(npm test)"]},"enabledPlugins":{"context7":true}}
+--- worktree .claude/settings.local.json (AFTER spawn) ---
+{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"'/tmp/fm-base-check/bin/fm-busy-event.sh' apply '/tmp/fm-busy-adapter-wiring.71wBSB/claude-project-settings/home/state' 'busy-cl-3' busy --gen 'g1787234554.549370.13731' --source claude-hook --event user-prompt-submit 2>/dev/null || true"}]}],"Stop":[{"hooks":[{"type":"command","command":"touch '/tmp/fm-busy-adapter-wiring.71wBSB/claude-project-settings/home/state/busy-cl-3.turn-ended'; '/tmp/fm-base-check/bin/fm-busy-event.sh' apply '/tmp/fm-busy-adapter-wiring.71wBSB/claude-project-settings/home/state' 'busy-cl-3' idle --gen 'g1787234554.549370.13731' --source claude-hook --event stop 2>/dev/null || true"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"'/tmp/fm-base-check/bin/fm-busy-event.sh' apply '/tmp/fm-busy-adapter-wiring.71wBSB/claude-project-settings/home/state' 'busy-cl-3' idle --gen 'g1787234554.549370.13731' --source claude-hook --event stop-failure 2>/dev/null || true"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"'/tmp/fm-base-check/bin/fm-busy-event.sh' apply '/tmp/fm-busy-adapter-wiring.71wBSB/claude-project-settings/home/state' 'busy-cl-3' idle --gen 'g1787234554.549370.13731' --source claude-hook --event session-end 2>/dev/null || true"}]}]}}
+--- git -C <worktree> status --porcelain (AFTER spawn) ---
+ M .claude/settings.local.json
+(empty above = worktree clean)
+--- ls -A <worktree>/.claude ---
+settings.local.json
+--- firstmate hook settings written OUTSIDE the worktree ---
+path: /tmp/fm-busy-adapter-wiring.71wBSB/claude-project-settings/home/state/busy-cl-3.claude-settings.json
+--- claude launch command captured from the tmux spawn ---
+
