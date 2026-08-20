@@ -211,6 +211,9 @@ Hooks from `--settings` are therefore MERGED with the project's own rather than 
 
 This replaces the pre-2026-08-20 behavior, where the spawn wrote `<worktree>/.claude/settings.local.json` wholesale.
 On a project that tracks that path, the spawn destroyed its committed contents for the life of the task and left the tracked file permanently modified, which then blocked `bin/fm-teardown.sh` and re-escalated the finished task on every watcher pass.
+`bin/fm-teardown.sh` removes a leftover pre-fix file only when it is untracked AND carries firstmate's own `fm-busy-event.sh` command, so a tracked or project-authored file is never touched.
+One residue is deliberately left: the old spawn also appended `.claude/settings.local.json` to each project's shared `.git/info/exclude`, which outlives teardown and keeps a project's OWN untracked settings file hidden from `git status` repo-wide.
+It is not auto-removed because nothing proves firstmate rather than the operator wrote a given exclude line; remove it by hand if that repo needs its settings file visible.
 
 Refresh command, opt-in and self-skipping, which fails naming the installed version:
 
