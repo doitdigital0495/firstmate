@@ -1909,6 +1909,38 @@ fm_backend_herdr_pane_agent_state() {  # <session> <pane_id>
   esac
 }
 
+# fm_backend_herdr_tab_matches_label: does the recorded endpoint chain
+# <workspace_id> -> <pane_id> -> <tab_id> in <session> really end at a tab whose
+# label is exactly <label> (the caller-facing "fm-<id>")?
+#
+# Herdr enforces no label uniqueness (see fm_backend_herdr_create_task), and a
+# pane can in principle be re-parented, so proving the label alone would prove
+# nothing about the recorded pane. Every link is therefore checked against the
+# SAME two read-only list calls: the recorded pane must be present in the
+# recorded workspace and report the recorded tab as its owner, and exactly one
+# tab in that workspace may carry <label> - the recorded one.
+#
+# Every failure mode collapses to 1: an unreachable server, a non-array or
+# unparseable response, a missing pane, a re-parented pane, a relabeled tab, or
+# a duplicated label. The caller (fm_backend_endpoint_label_provable) treats 1
+# as "not proven" and refuses, so an inconclusive read never licenses anything.
+fm_backend_herdr_tab_matches_label() {  # <session> <workspace_id> <tab_id> <pane_id> <label>
+  local session=$1 workspace=$2 tab=$3 pane=$4 label=$5 panes tabs
+  [ -n "$session" ] && [ -n "$workspace" ] && [ -n "$tab" ] && [ -n "$pane" ] && [ -n "$label" ] || return 1
+  panes=$(fm_backend_herdr_cli "$session" pane list --workspace "$workspace" 2>/dev/null) || return 1
+  printf '%s' "$panes" | jq -e --arg pane "$pane" --arg tab "$tab" '
+    (.result.panes | type) == "array"
+    and ([.result.panes[] | select(.pane_id == $pane)] | length) == 1
+    and ([.result.panes[] | select(.pane_id == $pane and .tab_id == $tab)] | length) == 1
+  ' >/dev/null 2>&1 || return 1
+  tabs=$(fm_backend_herdr_cli "$session" tab list --workspace "$workspace" 2>/dev/null) || return 1
+  printf '%s' "$tabs" | jq -e --arg tab "$tab" --arg want "$label" '
+    (.result.tabs | type) == "array"
+    and ([.result.tabs[] | select(.label == $want)] | length) == 1
+    and ([.result.tabs[] | select(.tab_id == $tab and .label == $want)] | length) == 1
+  ' >/dev/null 2>&1
+}
+
 # fm_backend_herdr_tab_is_husk: true (0) only for the two conservative husk
 # states (dead, no-agent) fm_backend_herdr_pane_agent_state can positively
 # confirm; live and unknown both refuse (1), so an inconclusive read never

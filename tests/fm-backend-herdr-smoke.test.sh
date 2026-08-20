@@ -101,6 +101,26 @@ printf '%s' "$POST_CREATE_TABS" | jq -e --arg t "$SEEDED_TAB_ID" '.result.tabs[]
   && fail "the seeded default tab ($SEEDED_TAB_ID) should have been pruned but is still present: $POST_CREATE_TABS"
 pass "real herdr: create_task prunes the freshly-created workspace's seeded default tab, leaving exactly one clean fm-<id> task tab"
 
+# --- endpoint label proof (legacy-record identity re-derivation) --------------
+#
+# fm_backend_endpoint_label_provable's whole value is that it reads a REAL
+# herdr server, so a canned fixture can only ever confirm the shape this test
+# assumes. Prove the chain against the live binary: the recorded pane must sit
+# in the recorded workspace, report the recorded tab as its owner, and that tab
+# must uniquely carry the fm-<id> label. Then break each link in turn.
+WSID=${CONTAINER#*:}
+fm_backend_herdr_tab_matches_label "$SESSION" "$WSID" "$TAB_ID" "$PANE_ID" "$LABEL" \
+  || fail "the live endpoint chain for $LABEL should prove its own label"
+fm_backend_herdr_tab_matches_label "$SESSION" "$WSID" "$TAB_ID" "$PANE_ID" "fm-not-this-task" \
+  && fail "a label the live tab does not carry must not be provable"
+fm_backend_herdr_tab_matches_label "$SESSION" "$WSID" "$TAB_ID" "no-such-pane" "$LABEL" \
+  && fail "a pane absent from the recorded workspace must not be provable"
+fm_backend_herdr_tab_matches_label "$SESSION" "$WSID" "no-such-tab" "$PANE_ID" "$LABEL" \
+  && fail "a pane whose owning tab is not the recorded one must not be provable"
+fm_backend_herdr_tab_matches_label "$SESSION" "no-such-workspace" "$TAB_ID" "$PANE_ID" "$LABEL" \
+  && fail "a workspace that does not exist must not be provable"
+pass "real herdr: the endpoint label proof accepts the exact recorded workspace/pane/tab/label chain and refuses every broken link"
+
 # NOTE: create_task no longer refuses EVERY same-labeled duplicate
 # unconditionally - a same-labeled tab whose pane hosts no registered agent is
 # now a close-and-replace candidate (the restored-layout husk fix below), so

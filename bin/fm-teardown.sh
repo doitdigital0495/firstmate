@@ -427,10 +427,18 @@ else
 fi
 [ "$remote_teardown_rc" -eq 3 ] || exit "$remote_teardown_rc"
 
-# This is the first cleanup authorization check. It is metadata-only and must
-# complete before fm-guard, a backend command, file removal, branch deletion,
-# worktree return, registry change, or process termination can run.
-fm_backend_validate_task_endpoint "$META" "$ID" || exit 1
+# This is the first cleanup authorization check. It must complete before
+# fm-guard, a backend command, file removal, branch deletion, worktree return,
+# registry change, or process termination can run.
+#
+# It decides from metadata alone, with one exception: a record written before
+# the endpoint_task_id binding existed carries no offline proof that its opaque
+# Herdr/Zellij/cmux endpoint is this task's, so fm_backend_resolve_task_endpoint
+# re-derives that one fact from the live endpoint's own fm-<id> label and
+# records it before the ordinary offline validation decides. That read is
+# read-only and happens here, still ahead of every mutation above, so a refusal
+# on this line has changed nothing. The meta lock this needs is already held.
+fm_backend_resolve_task_endpoint "$META" "$ID" || exit 1
 BACKEND=$FM_BACKEND_VALIDATED_BACKEND
 T=$FM_BACKEND_VALIDATED_TARGET
 WT=$(fm_meta_get "$META" worktree)

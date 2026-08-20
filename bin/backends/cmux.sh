@@ -335,6 +335,33 @@ fm_backend_cmux_workspace_id_for_label() {  # <label>
     | jq -r --arg want "$label" '.workspaces[]? | select(.title == $want) | .id' 2>/dev/null | head -1
 }
 
+# fm_backend_cmux_workspace_matches_label: is <workspace_id> the one and only
+# live workspace carrying task label <label>?
+#
+# Unlike fm_backend_cmux_workspace_id_for_label, which adopts the first match
+# because its callers only need A workspace, this is an identity proof, so an
+# ambiguous answer must refuse. It checks the home-scoped title every new
+# workspace is created with (fm_backend_cmux_scoped_title), then falls back to
+# the bare caller-facing label for a workspace created before home scoping
+# shipped - and only when exactly one live workspace carries that bare title,
+# mirroring fm_backend_zellij_tab_matches_label's migration posture.
+fm_backend_cmux_workspace_matches_label() {  # <workspace_id> <label>
+  local wsid=$1 label=$2 scoped list
+  [ -n "$wsid" ] && [ -n "$label" ] || return 1
+  scoped=$(fm_backend_cmux_scoped_title "$label")
+  list=$(fm_backend_cmux_cli workspace list --json --id-format uuids 2>/dev/null) || return 1
+  printf '%s' "$list" | jq -e --arg id "$wsid" --arg want "$scoped" '
+    (.workspaces | type) == "array"
+    and ([.workspaces[] | select(.title == $want)] | length) == 1
+    and ([.workspaces[] | select(.id == $id and .title == $want)] | length) == 1
+  ' >/dev/null 2>&1 && return 0
+  printf '%s' "$list" | jq -e --arg id "$wsid" --arg want "$label" '
+    (.workspaces | type) == "array"
+    and ([.workspaces[] | select(.title == $want)] | length) == 1
+    and ([.workspaces[] | select(.id == $id and .title == $want)] | length) == 1
+  ' >/dev/null 2>&1
+}
+
 fm_backend_cmux_surface_id_for_workspace() {  # <workspace_id>
   local wsid=$1
   fm_backend_cmux_cli list-panes --workspace "$wsid" --json --id-format uuids 2>/dev/null \

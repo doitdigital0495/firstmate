@@ -63,10 +63,12 @@
 #
 # Targeting is EXACT: only a bare task id with a state/<id>.meta record in
 # THIS home is accepted, and the record must pass the shared endpoint-identity
-# validation (bin/fm-backend.sh's fm_backend_validate_task_endpoint). A legacy
+# validation (bin/fm-backend.sh's fm_backend_resolve_task_endpoint). A legacy
 # fm-<id> label, an explicit session:window endpoint, and a bare window name
 # are all refused - a lifecycle command delivered to the wrong endpoint is far
-# worse than a loud refusal.
+# worse than a loud refusal. A record predating the endpoint_task_id binding is
+# not refused outright: its identity is re-derived from the live endpoint's own
+# fm-<id> label and recorded, and only an unprovable one is refused.
 #
 # A remotely placed secondmate is refused by name: its agent runs on another
 # host, so no postcondition this plane verifies could be read for it here.
@@ -283,7 +285,20 @@ if [ -n "$(fm_meta_get "$META" remote_host)" ]; then
   die "task $ID is a remotely placed secondmate on $(fm_meta_get "$META" remote_host); its agent runs outside this home, so no lifecycle action here could verify that it interrupted, stopped, or came back. Drive its lifecycle on that host, and reconcile it through the secondmate recovery path rather than this plane"
 fi
 
-fm_backend_validate_task_endpoint "$META" "$ID" || exit 1
+# fm_backend_resolve_task_endpoint, not the bare offline validator: a record
+# written before endpoint_task_id existed carries no offline proof that its
+# opaque Herdr/Zellij/cmux endpoint is this task's, and refusing it outright
+# left an operator with no supported lifecycle action for a live agent at all -
+# only a hand-rolled kill. The resolver re-derives that binding from the live
+# endpoint's own fm-<id> label and records it, so this and every later call take
+# the ordinary offline path. It still refuses whenever the label cannot be
+# proven, and every other refusal is unchanged.
+CONTROL_META_LOCK=$(fm_meta_lock_path "$META") || exit 1
+fm_lock_acquire_wait "$CONTROL_META_LOCK"
+CONTROL_RESOLVE_RC=0
+fm_backend_resolve_task_endpoint "$META" "$ID" || CONTROL_RESOLVE_RC=$?
+fm_lock_release "$CONTROL_META_LOCK"
+[ "$CONTROL_RESOLVE_RC" -eq 0 ] || exit 1
 BACKEND=$FM_BACKEND_VALIDATED_BACKEND
 T=$FM_BACKEND_VALIDATED_TARGET
 LABEL="fm-$ID"

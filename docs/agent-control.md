@@ -85,6 +85,7 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 - Targeting is exact.
   Only a bare task id with a `state/<id>.meta` record in this home is accepted, and that record must pass the shared endpoint-identity validation.
   A legacy `fm-<id>` window label, an explicit `session:window` endpoint, and a record whose `endpoint_task_id` names another task are all refused.
+  A record predating that binding is not refused outright: its identity is re-derived from the live endpoint's own `fm-<id>` label and recorded, so the agent stays drivable through this plane, and only an endpoint whose label cannot be proven is refused.
 - A remotely placed secondmate is refused by name.
   Its agent runs on another host, so none of the postconditions this plane verifies could be read for it here; local endpoint validation would refuse the record regardless, because `window=remote:<id>` can never match a local backend's required shape.
   Drive that lifecycle on its own host and reconcile it through the secondmate recovery path.
