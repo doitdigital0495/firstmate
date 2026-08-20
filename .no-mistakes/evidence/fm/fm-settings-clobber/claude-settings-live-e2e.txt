@@ -1,0 +1,2 @@
+ok - claude 2.1.237 (Claude Code) loads --settings hooks from outside the workspace and merges them with the project's own
+all fm-claude-settings-live-e2e tests passed

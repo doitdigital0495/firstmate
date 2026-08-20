@@ -1,0 +1,26 @@
+== project's committed .claude/settings.local.json (before spawn) ==
+{"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"1"},"permissions":{"allow":["Bash(npm test)"]},"enabledPlugins":{"context7":true}}
+
+== running: bin/fm-spawn.sh (harness=claude) ==
+   warning: /tmp/fm-busy-adapter-wiring.9pPYXC/demo-project-settings/home/data/demo-claude/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+   spawned demo-claude harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-demo-claude worktree=/tmp/fm-busy-adapter-wiring.9pPYXC/demo-project-settings/wt
+
+== worktree .claude/settings.local.json (after spawn) ==
+{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"'/tmp/fmbase2/bin/fm-busy-event.sh' apply '/tmp/fm-busy-adapter-wiring.9pPYXC/demo-project-settings/home/state' 'demo-claude' busy --gen 'g1787227416.3339461.8458' --source claude-hook --event user-prompt-submit 2>/dev/null || true"}]}],"Stop":[{"hooks":[{"type":"command","command":"touch '/tmp/fm-busy-adapter-wiring.9pPYXC/demo-project-settings/home/state/demo-claude.turn-ended'; '/tmp/fmbase2/bin/fm-busy-event.sh' apply '/tmp/fm-busy-adapter-wiring.9pPYXC/demo-project-settings/home/state' 'demo-claude' idle --gen 'g1787227416.3339461.8458' --source claude-hook --event stop 2>/dev/null || true"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"'/tmp/fmbase2/bin/fm-busy-event.sh' apply '/tmp/fm-busy-adapter-wiring.9pPYXC/demo-project-settings/home/state' 'demo-claude' idle --gen 'g1787227416.3339461.8458' --source claude-hook --event stop-failure 2>/dev/null || true"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"'/tmp/fmbase2/bin/fm-busy-event.sh' apply '/tmp/fm-busy-adapter-wiring.9pPYXC/demo-project-settings/home/state' 'demo-claude' idle --gen 'g1787227416.3339461.8458' --source claude-hook --event session-end 2>/dev/null || true"}]}]}}
+
+== git status --porcelain in the task worktree (after spawn) ==
+    M .claude/settings.local.json
+   (empty above == worktree clean)
+
+== ls of worktree .claude/ ==
+   settings.local.json
+
+== claude launch command recorded by the fake tmux ==
+
+== firstmate's own hooks, outside the worktree (demo-claude.claude-settings.json) ==
+sed: can't read /tmp/fm-busy-adapter-wiring.9pPYXC/demo-project-settings/home/state/demo-claude.claude-settings.json: No such file or directory
+
+== busy classifier driven by those out-of-worktree hooks ==
+   after arm:            busy fm-spawn
+jq: error: Could not open file /tmp/fm-busy-adapter-wiring.9pPYXC/demo-project-settings/home/state/demo-claude.claude-settings.json: No such file or directory
+not ok - no UserPromptSubmit hook command in /tmp/fm-busy-adapter-wiring.9pPYXC/demo-project-settings/home/state/demo-claude.claude-settings.json
