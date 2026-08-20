@@ -579,6 +579,13 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
 # a second one, its current-window-scoped listing, documented on
 # fm_backend_cmux_workspace_matches_label in bin/backends/cmux.sh.
 #
+# A third, also left for a follow-up: only the Herdr branch has executable
+# coverage (tests/fm-teardown-endpoint-safety.test.sh). The Zellij branch and
+# fm_backend_cmux_workspace_matches_label have none at all, so their
+# refusal-on-unprovable behavior - including cmux's scoped-title-then-bare-title
+# fallback and the absent-workspace refusal the current-window limitation
+# depends on - is established by code reading only, not by a test.
+#
 # Returns 0 only on an exact, unambiguous live match. An unreachable runtime, an
 # unparseable response, a missing, moved, or duplicated label, and a backend
 # with no label to read all return 1, so an inconclusive read never licenses a
