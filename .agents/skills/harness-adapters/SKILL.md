@@ -184,7 +184,7 @@ The shared symptom is a healthy-looking pane with no work in progress, so each a
 
 | Fact | Value |
 |---|---|
-| Crew hook delivery | `claude --settings <state/<id>.claude-settings.json>`, never a file inside the worktree. Claude merges those hooks with the project's own settings instead of replacing them (live-verified 2026-08-20 on 2.1.237; [`supervision.md`](../../../docs/verification/supervision.md) owns the evidence and refresh command). |
+| Crew hook delivery | `claude --settings <state/<id>.claude-settings.json>`, never a file inside the worktree. Claude merges those hooks with the project's own settings instead of replacing them (live-verified 2026-08-20 on 2.1.237; [`supervision.md`](../../../docs/verification/supervision.md) owns the evidence and refresh command). A spawn given a RAW launch command whose basename is `claude` cannot be guaranteed to carry `--settings`, so `fm-spawn` writes no settings file and arms no busy contract for it, and the task classifies `unknown missing` rather than a permanently stuck busy. |
 | Busy state | Owned lifecycle hooks: `UserPromptSubmit` opens a turn, while `Stop`, `StopFailure`, and `SessionEnd` close it; because Claude fires no hook for a manual interrupt, `bin/fm-control.sh interrupt` reports only delivered keys and the verified endpoint or live agent, publishes no idle event, makes no cancellation claim, and leaves adapter-observed state unchanged, so a mid-turn worker typically remains busy via `claude-hook`. |
 | Exit command | `/exit` |
 | Interrupt | single Escape |
@@ -296,6 +296,7 @@ The decision persists per path in `~/.pi/agent/trust.json`, so later spawns in t
 
 `fm-spawn` keeps the turn-end extension in `state/`, outside the worktree, because project-local extension files make the trust gate strictly worse and pollute the project.
 The extension must listen for pi's `turn_end` event, not `agent_end`, so the watcher wakes after each completed turn instead of only when the whole agent run exits.
+Known gap, PRE-EXISTING and not introduced by the claude settings work: a spawn given a RAW launch command whose basename is `pi` still arms the busy contract even though the extension rides `-e __PIEXT__` in the template only, so those hooks never load and the task can stay busy.
 Pi sets `PI_CODING_AGENT=true` for its children; this is its harness-detection env marker.
 
 **Primary-session guard fact (verified 2026-07-09, Pi 0.80.5).**

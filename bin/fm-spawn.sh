@@ -1195,9 +1195,11 @@ launch_template() {
   esac
 }
 
+RAW_LAUNCH=0
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
     LAUNCH=$ARG3
+    RAW_LAUNCH=1
     HARNESS=""
     for word in $LAUNCH; do
       case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
@@ -2333,13 +2335,25 @@ if [ "$KIND" != secondmate ]; then
       fi
       ;;
   esac
+  # A raw launch command is the operator's verbatim string, so nothing can
+  # guarantee it carries the --settings flag that loads claude's busy hooks.
+  # Arming there would seed a busy record nothing could ever clear, and
+  # permanently busy is strictly worse than unknown because supervision never
+  # re-examines a busy task. Decline like codex and muse do when no verified
+  # wiring exists; the classifier then reports unknown missing.
+  CLAUDE_BUSY_WIRING=1
+  case "$HARNESS" in
+    claude*) [ "$RAW_LAUNCH" -eq 0 ] || CLAUDE_BUSY_WIRING=0 ;;
+  esac
   case "$HARNESS" in
     claude*|opencode*|pi|pi-signed)
-      BUSY_GEN=$("$FM_ROOT/bin/fm-busy-event.sh" arm "$STATE_REAL" "$ID") || {
-        echo "error: failed to arm the busy-state contract for $ID" >&2
-        exit 1
-      }
-      [ "$RELAUNCH" -ne 1 ] || RELAUNCH_REPLACEMENT_BUSY_GEN=$BUSY_GEN
+      if [ "$CLAUDE_BUSY_WIRING" -eq 1 ]; then
+        BUSY_GEN=$("$FM_ROOT/bin/fm-busy-event.sh" arm "$STATE_REAL" "$ID") || {
+          echo "error: failed to arm the busy-state contract for $ID" >&2
+          exit 1
+        }
+        [ "$RELAUNCH" -ne 1 ] || RELAUNCH_REPLACEMENT_BUSY_GEN=$BUSY_GEN
+      fi
       ;;
     kimi*)
       # Standalone Kimi stays unknown until fm_busy_kimi_verified opens on a
@@ -2371,16 +2385,21 @@ if [ "$KIND" != secondmate ]; then
       # permanently modified, which then blocked teardown. --settings is Claude's
       # own supported way to load additional settings from an arbitrary path, and
       # its hooks merge with (never replace) the project's own.
-      claude_settings="$STATE_REAL/$ID.claude-settings.json"
-      busy_cmd_prefix="$(shell_quote "$FM_ROOT/bin/fm-busy-event.sh") apply $(shell_quote "$STATE_REAL") $(shell_quote "$ID")"
-      busy_suffix="--gen $(shell_quote "$BUSY_GEN") --source claude-hook"
-      j_submit=$(json_escape "$busy_cmd_prefix busy $busy_suffix --event user-prompt-submit 2>/dev/null || true")
-      j_stop=$(json_escape "touch $(shell_quote "$TURNEND"); $busy_cmd_prefix idle $busy_suffix --event stop 2>/dev/null || true")
-      j_stopfail=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event stop-failure 2>/dev/null || true")
-      j_sessionend=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event session-end 2>/dev/null || true")
-      cat > "$claude_settings" <<EOF
+      #
+      # A raw launch command arms no busy generation (see above), so there is
+      # nothing to wire and no settings file is written for it either.
+      if [ "$CLAUDE_BUSY_WIRING" -eq 1 ]; then
+        claude_settings="$STATE_REAL/$ID.claude-settings.json"
+        busy_cmd_prefix="$(shell_quote "$FM_ROOT/bin/fm-busy-event.sh") apply $(shell_quote "$STATE_REAL") $(shell_quote "$ID")"
+        busy_suffix="--gen $(shell_quote "$BUSY_GEN") --source claude-hook"
+        j_submit=$(json_escape "$busy_cmd_prefix busy $busy_suffix --event user-prompt-submit 2>/dev/null || true")
+        j_stop=$(json_escape "touch $(shell_quote "$TURNEND"); $busy_cmd_prefix idle $busy_suffix --event stop 2>/dev/null || true")
+        j_stopfail=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event stop-failure 2>/dev/null || true")
+        j_sessionend=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event session-end 2>/dev/null || true")
+        cat > "$claude_settings" <<EOF
 {"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}]}}
 EOF
+      fi
       ;;
     opencode*)
       mkdir -p "$WT/.opencode/plugins"

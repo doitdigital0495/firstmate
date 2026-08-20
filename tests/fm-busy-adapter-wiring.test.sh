@@ -365,6 +365,27 @@ JSON
   pass "a claude spawn arms its hooks without writing anything into the project worktree"
 }
 
+# A raw launch command is the operator's verbatim string, so nothing can
+# guarantee it carries the --settings flag that loads claude's hooks. Arming
+# there seeds a busy record nothing can ever clear, which is strictly worse than
+# unknown because supervision never re-examines a busy task.
+test_claude_raw_launch_arms_no_unclearable_busy() {
+  local rec id=busy-cl-4 out state
+  rec=$(make_spawn_case claude-raw-launch claude "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR" 'claude --dangerously-skip-permissions')
+  expect_code 0 $? "raw-launch claude spawn should succeed: $out"
+  state="$HOME_DIR/state"
+  assert_absent "$state/$id.claude-settings.json" \
+    "a raw launch command cannot be guaranteed to load a settings file, so none must be written"
+  assert_absent "$state/$id.busy-gen" \
+    "a raw launch command must not arm a busy generation nothing can clear"
+  out=$(classify claude "$id" "$state")
+  [ "$out" = "unknown missing" ] \
+    || fail "raw-launch claude must classify unknown, never a permanently stuck busy, got '$out'"
+  pass "a raw-launch claude spawn declines the busy contract and classifies unknown"
+}
+
 test_codex_unverified_until_a_semantic_source_exists() {
   local rec id=busy-cx-1 out state
   rec=$(make_spawn_case codex-unverified codex "$id")
@@ -405,6 +426,7 @@ test_opencode_plugin_semantic_lifecycle
 test_claude_hooks_semantic_lifecycle
 test_claude_hooks_stale_incarnation_harmless
 test_claude_spawn_never_touches_the_projects_settings
+test_claude_raw_launch_arms_no_unclearable_busy
 test_codex_unverified_until_a_semantic_source_exists
 
 echo "all fm-busy-adapter-wiring tests passed"
