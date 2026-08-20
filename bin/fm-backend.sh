@@ -364,10 +364,24 @@ fm_backend_target_of_meta() {  # <meta-file>
 # from its durable metadata before any runtime command or cleanup mutation.
 # The validation binds the exact task id, selected backend, target, project,
 # and worktree. New non-tmux records carry endpoint_task_id because their
-# opaque runtime ids do not encode the task label. Legacy tmux records remain
-# valid only when their window name itself is exactly fm-<task-id>.
+# opaque runtime ids do not encode the task label. Legacy tmux and Orca records
+# remain valid without it, because their recorded window name IS fm-<task-id>:
+# the record carries the task label itself, so a record authored for another
+# task cannot pass as this one.
 # On success, sets FM_BACKEND_VALIDATED_BACKEND and
-# FM_BACKEND_VALIDATED_TARGET. On failure, prints one refusal and returns 1.
+# FM_BACKEND_VALIDATED_TARGET.
+#
+# Return codes. 0 is valid. 1 is a refusal this function can settle offline and
+# nothing may act on. 2 is the ONE recoverable shape: a Herdr, Zellij, or cmux
+# record that is internally consistent in every other respect and whose only
+# missing fact is the endpoint_task_id binding - the pre-#1171 record shape.
+# Those backends record opaque runtime ids, so nothing offline binds such a
+# record to its task, and this function must still refuse it. But refusing with
+# no recoverable outcome leaves an operator with no supported lifecycle action
+# at all, which is exactly how a hand-improvised kill gets invented. Code 2 says
+# "not provable HERE", so a caller that can read live state may try
+# fm_backend_resolve_task_endpoint instead. Every existing caller treats any
+# nonzero return as a refusal and is unaffected.
 fm_backend_meta_exact_value() {  # <meta-file> <key>
   local meta=$1 key=$2 count value
   count=$(grep -c "^$key=" "$meta" 2>/dev/null || true)
@@ -452,10 +466,6 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
       fi
       ;;
     herdr)
-      [ "$binding" = "$id" ] || {
-        echo "REFUSED: legacy Herdr endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
-        return 1
-      }
       recorded_session=$(fm_backend_meta_exact_value "$meta" herdr_session) || recorded_session=
       workspace=$(fm_backend_meta_exact_value "$meta" herdr_workspace_id) || workspace=
       tab=$(fm_backend_meta_exact_value "$meta" herdr_tab_id) || tab=
@@ -469,12 +479,12 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
         echo "REFUSED: Herdr endpoint metadata for task $id is malformed or inconsistent; preserving task state." >&2
         return 1
       fi
+      [ -n "$binding" ] || {
+        echo "REFUSED: legacy Herdr endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
+        return 2
+      }
       ;;
     zellij)
-      [ "$binding" = "$id" ] || {
-        echo "REFUSED: legacy Zellij endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
-        return 1
-      }
       recorded_session=$(fm_backend_meta_exact_value "$meta" zellij_session) || recorded_session=
       tab=$(fm_backend_meta_exact_value "$meta" zellij_tab_id) || tab=
       pane=$(fm_backend_meta_exact_value "$meta" zellij_pane_id) || pane=
@@ -485,12 +495,16 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
         echo "REFUSED: Zellij endpoint metadata for task $id is malformed or inconsistent; preserving task state." >&2
         return 1
       fi
+      [ -n "$binding" ] || {
+        echo "REFUSED: legacy Zellij endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
+        return 2
+      }
       ;;
     orca)
-      [ "$binding" = "$id" ] || {
-        echo "REFUSED: legacy Orca endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
-        return 1
-      }
+      # No endpoint_task_id requirement here, unlike the other non-tmux
+      # backends: an Orca record's own window field must be exactly fm-<id>
+      # (asserted below), so the record carries the task label the same way a
+      # tmux record does and a legacy record is already self-evidencing.
       terminal=$(fm_backend_meta_exact_value "$meta" terminal) || terminal=
       worktree_id=$(fm_backend_meta_exact_value "$meta" orca_worktree_id) || worktree_id=
       [ -n "$terminal" ] || {
@@ -510,10 +524,6 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
       window=$terminal
       ;;
     cmux)
-      [ "$binding" = "$id" ] || {
-        echo "REFUSED: legacy cmux endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
-        return 1
-      }
       workspace=$(fm_backend_meta_exact_value "$meta" cmux_workspace_id) || workspace=
       surface=$(fm_backend_meta_exact_value "$meta" cmux_surface_id) || surface=
       if [ -z "$workspace" ] || [ -z "$surface" ] || [ "$window" != "$workspace:$surface" ] \
@@ -522,6 +532,10 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
         echo "REFUSED: cmux endpoint metadata for task $id is malformed or inconsistent; preserving task state." >&2
         return 1
       fi
+      [ -n "$binding" ] || {
+        echo "REFUSED: legacy cmux endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
+        return 2
+      }
       ;;
   esac
   # shellcheck disable=SC2034 # Output globals are consumed by sourcing callers.
@@ -529,6 +543,142 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
   # shellcheck disable=SC2034 # Output globals are consumed by sourcing callers.
   FM_BACKEND_VALIDATED_TARGET=$window
   return 0
+}
+
+# fm_backend_endpoint_label_provable: can the LIVE runtime prove that the
+# endpoint <meta-file> records is the one carrying task <task-id>'s own
+# fm-<task-id> label?
+#
+# This is the re-derivation path behind fm_backend_validate_task_endpoint's
+# code 2. Herdr, Zellij, and cmux record opaque runtime ids, so a pre-#1171
+# record has nothing OFFLINE that binds it to its task. What every one of those
+# adapters does have is a label: fm-spawn.sh creates each task's tab or
+# workspace with the caller-facing label fm-<id> and nothing else ever renames
+# it, so the binding is readable from live state even when the record predates
+# the metadata field. That is the same fact tmux and Orca get for free from
+# their recorded window name, read from the runtime instead of from the record,
+# so accepting it is not a weaker identity test than the legacy tmux records
+# this validator already accepts - it is the same test against a live source.
+# The residual gap is identical too: two homes sharing one session AND one task
+# id would collide, exactly as they already would on tmux.
+#
+# What it proves differs per backend, and only Herdr is covered end to end.
+# Herdr proves the WHOLE recorded chain - workspace -> pane -> owning tab ->
+# label - so a re-parented pane, a relabeled tab, a duplicated label, a missing
+# pane, and an unreachable server all refuse. Zellij reuses its own tab matcher,
+# which proves only that the recorded tab id carries the expected label, and
+# never that the recorded zellij_pane_id still belongs to that tab. cmux
+# requires exactly one live workspace to carry the title and that workspace to
+# be the recorded one, but likewise never proves that the recorded
+# cmux_surface_id is still in that workspace.
+#
+# That gap matters because the target bin/fm-control.sh and bin/fm-teardown.sh
+# subsequently act on is the PANE or SURFACE, not the tab or workspace, so on
+# Zellij and cmux the residual gap is larger than on Herdr. Both are KNOWN
+# LIMITATIONS left for a follow-up, not coverage that exists today; cmux carries
+# a second one, its current-window-scoped listing, documented on
+# fm_backend_cmux_workspace_matches_label in bin/backends/cmux.sh.
+#
+# A third, also left for a follow-up: only the Herdr branch has executable
+# coverage (tests/fm-teardown-endpoint-safety.test.sh). The Zellij branch and
+# fm_backend_cmux_workspace_matches_label have none at all, so their
+# refusal-on-unprovable behavior - including cmux's scoped-title-then-bare-title
+# fallback and the absent-workspace refusal the current-window limitation
+# depends on - is established by code reading only, not by a test.
+#
+# Returns 0 only on an exact, unambiguous live match. An unreachable runtime, an
+# unparseable response, a missing, moved, or duplicated label, and a backend
+# with no label to read all return 1, so an inconclusive read never licenses a
+# rebind.
+fm_backend_endpoint_label_provable() {  # <meta-file> <task-id>
+  local meta=$1 id=$2 backend label="fm-$2"
+  backend=$(fm_backend_of_meta "$meta")
+  fm_backend_source "$backend" || return 1
+  case "$backend" in
+    herdr)
+      fm_backend_herdr_tab_matches_label \
+        "$(fm_meta_get "$meta" herdr_session)" \
+        "$(fm_meta_get "$meta" herdr_workspace_id)" \
+        "$(fm_meta_get "$meta" herdr_tab_id)" \
+        "$(fm_meta_get "$meta" herdr_pane_id)" \
+        "$label"
+      ;;
+    zellij)
+      fm_backend_zellij_tab_matches_label \
+        "$(fm_meta_get "$meta" zellij_session)" \
+        "$(fm_meta_get "$meta" zellij_tab_id)" \
+        "$label"
+      ;;
+    cmux)
+      fm_backend_cmux_workspace_matches_label \
+        "$(fm_meta_get "$meta" cmux_workspace_id)" "$label"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# fm_backend_bind_task_endpoint: durably record <task-id> as <meta-file>'s
+# endpoint binding, so a record that needed a live proof once takes the ordinary
+# offline path forever after.
+#
+# Only ever called after fm_backend_endpoint_label_provable succeeded, and only
+# for a record that carries NO binding line at all - an existing binding, right
+# or wrong, is never rewritten here, because rewriting one is how a wrong
+# endpoint would get laundered into a right-looking record. The caller holds the
+# task's meta lock. The write is a whole-file replace through a temp file in the
+# same directory, so a crash mid-write leaves the previous record intact, and the
+# replacement lands 0600 - the same private mode bin/fm-pr-check.sh already
+# requires of a task record, never looser than what it replaced.
+fm_backend_bind_task_endpoint() {  # <meta-file> <task-id>
+  local meta=$1 id=$2 dir tmp line
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
+  if grep -q '^endpoint_task_id=' "$meta"; then return 1; fi
+  dir=${meta%/*}
+  [ "$dir" != "$meta" ] || dir=.
+  tmp=$(mktemp "$dir/.fm-endpoint-bind.XXXXXX") || return 1
+  {
+    while IFS= read -r line || [ -n "$line" ]; do
+      printf '%s\n' "$line"
+    done < "$meta"
+    printf 'endpoint_task_id=%s\n' "$id"
+  } > "$tmp" || { rm -f "$tmp"; return 1; }
+  chmod 0600 "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f -- "$tmp" "$meta" || { rm -f "$tmp"; return 1; }
+  return 0
+}
+
+# fm_backend_resolve_task_endpoint: fm_backend_validate_task_endpoint for a
+# caller that can reach the live runtime, and therefore has one more honest
+# answer available than the offline validator does.
+#
+# Identical in every respect except one: on code 2 - the legacy record shape
+# whose ONLY missing fact is the endpoint binding - it asks the runtime to prove
+# the recorded endpoint carries the task's own fm-<id> label, records that
+# binding when the proof succeeds, and revalidates from the upgraded record. The
+# validation that ultimately decides is still the ordinary offline one; the live
+# read only supplies the fact the record was missing. When the proof fails, or
+# the binding cannot be written, the original refusal stands untouched.
+#
+# The runtime read here is read-only and happens before any mutation, so a
+# caller that refuses on a nonzero return has still mutated nothing.
+#
+# The CALLER must already hold the task's meta lock (fm_meta_lock_path), since
+# this may write the record. Locking here instead would deadlock bin/fm-teardown.sh,
+# which holds that lock across its whole validate-and-clean sequence.
+fm_backend_resolve_task_endpoint() {  # <meta-file> <task-id>
+  local meta=$1 id=$2 rc=0
+  fm_backend_validate_task_endpoint "$meta" "$id" || rc=$?
+  [ "$rc" -eq 2 ] || return "$rc"
+  fm_backend_endpoint_label_provable "$meta" "$id" || {
+    echo "REFUSED: could not prove from the live endpoint that task $id's recorded endpoint carries its own fm-$id label; preserving task state." >&2
+    return 1
+  }
+  fm_backend_bind_task_endpoint "$meta" "$id" || {
+    echo "REFUSED: could not record the re-derived endpoint binding for task $id; preserving task state." >&2
+    return 1
+  }
+  echo "note: task $id carried a legacy endpoint record; re-derived its binding from the live endpoint's own fm-$id label and recorded it." >&2
+  fm_backend_validate_task_endpoint "$meta" "$id"
 }
 
 fm_backend_meta_for_window() {  # <target> <state-dir>

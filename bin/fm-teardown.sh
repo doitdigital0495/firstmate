@@ -427,10 +427,26 @@ else
 fi
 [ "$remote_teardown_rc" -eq 3 ] || exit "$remote_teardown_rc"
 
-# This is the first cleanup authorization check. It is metadata-only and must
-# complete before fm-guard, a backend command, file removal, branch deletion,
-# worktree return, registry change, or process termination can run.
-fm_backend_validate_task_endpoint "$META" "$ID" || exit 1
+# This is the first cleanup authorization check. It must complete before
+# fm-guard, a backend command, file removal, branch deletion, worktree return,
+# registry change, or process termination can run.
+#
+# It decides from metadata alone, with one exception: a record written before
+# the endpoint_task_id binding existed carries no offline proof that its opaque
+# Herdr/Zellij/cmux endpoint is this task's, so fm_backend_resolve_task_endpoint
+# re-derives that one fact from the live endpoint's own fm-<id> label and
+# records it before the ordinary offline validation decides.
+#
+# The runtime QUERY is read-only, but on that recoverable legacy path the
+# resolver DOES write before the authorization check concludes: it appends the
+# single missing endpoint_task_id line to this task's own metadata record. That
+# write happens only after the live label proof succeeded, under the meta lock
+# this caller already holds, as a whole-file temp-file-plus-mv replace at mode
+# 0600, and it never overwrites an existing binding. It is metadata-only: no
+# project file, worktree, branch, endpoint, or process is touched here, so a
+# refusal on this line still leaves everything outside the task's own record
+# exactly as it was, ahead of every mutation above.
+fm_backend_resolve_task_endpoint "$META" "$ID" || exit 1
 BACKEND=$FM_BACKEND_VALIDATED_BACKEND
 T=$FM_BACKEND_VALIDATED_TARGET
 WT=$(fm_meta_get "$META" worktree)
@@ -2006,6 +2022,24 @@ preflight_descendant_task_locks() {
   done
 }
 
+# validate_firstmate_home_children_removal: authorize removal of every task
+# record inside a secondmate's own home, recursively.
+#
+# KNOWN LIMITATION, left for a follow-up. This loop deliberately uses the
+# OFFLINE fm_backend_validate_task_endpoint, so it does NOT get the legacy-record
+# recovery the top-level teardown path has. A secondmate home holding a child
+# record written before the endpoint_task_id binding existed (#1171) therefore
+# still refuses teardown on the first such child meta, with the same "lacks an
+# exact task binding" message. That is PRE-EXISTING behavior, not a regression
+# from the recovery work: those records refused identically before it, when the
+# same validator returned 1 instead of today's recoverable 2. It is not wired
+# here because fm_backend_resolve_task_endpoint requires the caller to hold THAT
+# child record's own meta lock before it writes, while teardown holds only the
+# parent task's, so correct wiring needs per-child locking inside a recursive
+# preflight that currently takes no locks at all - deliberately out of scope.
+# Operator workaround: run bin/fm-control.sh <child-id> exit or relaunch against
+# the secondmate's own home first, which upgrades that child record through the
+# resolver, then tear down.
 validate_firstmate_home_children_removal() {
   local home=$1 sub_state child_meta child_id child_wt child_proj child_kind child_home child_backend child_orca_worktree_id
   sub_state="$home/state"
@@ -2013,6 +2047,8 @@ validate_firstmate_home_children_removal() {
   for child_meta in "$sub_state"/*.meta; do
     [ -e "$child_meta" ] || continue
     child_id=$(basename "$child_meta" .meta)
+    # Offline validator by design; a legacy child record refuses here rather
+    # than being recovered - see this function's known limitation above.
     fm_backend_validate_task_endpoint "$child_meta" "$child_id" || return 1
     validate_pr_poll_cleanup "$sub_state" "$child_id" || return 1
     child_wt=$(meta_value "$child_meta" worktree)
@@ -2149,6 +2185,15 @@ $session	$lock_path"
   return 1
 }
 
+# preflight_firstmate_home_herdr_children: reserve every herdr endpoint inside a
+# secondmate's own home before anything is torn down, recursively.
+#
+# Carries the SAME known limitation as validate_firstmate_home_children_removal,
+# for the same reason and with the same operator workaround: this loop uses the
+# OFFLINE validator, so a pre-#1171 child record still refuses teardown here with
+# "lacks an exact task binding" instead of being recovered, which is pre-existing
+# rather than a regression, and wiring the resolver in would need per-child meta
+# locking this recursive preflight does not have. Left for a follow-up.
 preflight_firstmate_home_herdr_children() {  # <home>
   local home=$1 sub_state child_meta child_id child_backend child_target child_kind child_home child_wt
   sub_state="$home/state"
@@ -2156,6 +2201,8 @@ preflight_firstmate_home_herdr_children() {  # <home>
   for child_meta in "$sub_state"/*.meta; do
     [ -e "$child_meta" ] || continue
     child_id=$(basename "$child_meta" .meta)
+    # Offline validator by design; a legacy child record refuses here rather
+    # than being recovered - see this function's known limitation above.
     fm_backend_validate_task_endpoint "$child_meta" "$child_id" || return 1
     child_backend=$FM_BACKEND_VALIDATED_BACKEND
     child_target=$FM_BACKEND_VALIDATED_TARGET

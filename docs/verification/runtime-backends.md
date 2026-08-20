@@ -168,9 +168,24 @@ ok - process cleanup: creation-time PID identity removes only the exact child an
 ok - fm-teardown: dedicated-socket invalid cleanup preserves target/control and valid cleanup removes only the exact target
 ```
 
+The legacy-record half of that boundary was added on 2026-08-20 and pinned by the same portable suite, with `tests/fm-teardown-endpoint-safety.test.sh` run on Linux 6.18 with ShellCheck 0.11.0:
+
+```text
+ok - cleanup identity: a legacy non-tmux record is recoverable through a live label proof, and refuses without one
+```
+
+That case drives a canned herdr CLI, so it pins the decision logic, not herdr's own response shape.
+The live half is `tests/fm-backend-herdr-smoke.test.sh`, which exercises the same proof against a real herdr server in an isolated lab session and refreshes this row; it self-skips where herdr is not installed and has not been run for this row yet.
+
 The dedicated tmux cell removed ambient tmux variables, required a socket-bound wrapper, kept one target and one independent control window, and proved the wrapper was not called for invalid metadata or a direct empty target.
 Valid cleanup removed only the exact task-bound target and left the control window live.
 The metadata-only validation covers tmux, Herdr, Zellij, Orca, and cmux before backend dispatch.
+Its one exception is a record predating the `endpoint_task_id` binding on an opaque-id backend: that record carries no offline proof of its own task, so instead of being refused with no recoverable outcome, its binding is re-derived from one read-only query of the live endpoint's own `fm-<id>` label and recorded before the ordinary metadata-only validation decides.
+A tmux or Orca record needs no such query, because its recorded window name is already `fm-<id>`.
+That query proves the full recorded chain only on herdr; on zellij and cmux it proves just the recorded tab or workspace label, not that the recorded pane or surface still belongs to it, and the cmux proof additionally reads only the currently focused window, so a cmux task whose workspace lives elsewhere is refused and stays stranded.
+Both are known limitations left for a follow-up; in every unproven case the outcome is refusal, never action on an unproven endpoint.
+Only the herdr branch of that proof has executable coverage; the zellij branch and cmux's workspace matcher have none, so their refusal behavior is established by code reading alone and a test for them is left for a follow-up.
+The recursive child loops in `fm-teardown.sh` also keep using the offline validator, so a legacy child record inside a secondmate home still refuses that teardown, pre-existing and likewise left for a follow-up.
 Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that backend cleanup boundary; their harness-specific hook files, tokens, transcript bindings, and session-log sidecars are cleaned only after it, so no harness needs a separate endpoint parser.
 
 ## Composer classification matrix

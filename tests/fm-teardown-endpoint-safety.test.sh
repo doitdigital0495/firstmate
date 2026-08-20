@@ -372,3 +372,199 @@ test_supported_backend_endpoint_records_validate
 test_tmux_empty_target_refuses_without_invocation
 test_recorded_process_identity_cleanup_is_exact
 test_isolated_tmux_invalid_and_valid_cleanup
+
+# --- legacy endpoint records ------------------------------------------------
+#
+# Records written before endpoint_task_id existed (bin/fm-spawn.sh gained it in
+# #1171) still exist in live homes. On tmux and Orca they were always fine: the
+# recorded window name IS fm-<id>, so the record carries its own task label. On
+# Herdr, Zellij, and cmux the recorded ids are opaque, so those records were
+# refused outright - which stranded a LIVE agent with no supported lifecycle
+# action at all. These cases pin both directions of the replacement behavior:
+# the offline validator still refuses such a record on its own (now with the
+# recoverable code 2), and fm_backend_resolve_task_endpoint accepts it only when
+# the live endpoint proves it carries the task's own fm-<id> label.
+
+# make_herdr_label_fakebin: a `herdr` stub answering the two read-only list
+# calls the label proof makes, from files the case writes. A call with no
+# matching file fails, so a proof that asks for something unscripted refuses.
+make_herdr_label_fakebin() {  # <dir>
+  local fb="$1/fakebin"
+  mkdir -p "$fb"
+  cat > "$fb/herdr" <<'SH'
+#!/usr/bin/env bash
+set -u
+{
+  printf 'herdr'
+  for a in "$@"; do printf ' <%s>' "$a"; done
+  printf '\n'
+} >> "${FM_HERDR_CALLS:?}"
+case "${1:-}:${2:-}" in
+  pane:list) f="${FM_HERDR_FIXTURES:?}/panes.json" ;;
+  tab:list) f="${FM_HERDR_FIXTURES:?}/tabs.json" ;;
+  *) exit 1 ;;
+esac
+[ -f "$f" ] || exit 1
+cat "$f"
+SH
+  chmod +x "$fb/herdr"
+}
+
+write_legacy_herdr_meta() {  # <dir> <id>
+  local dir=$1 id=$2
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=lab:w1:p2" "worktree=$dir/worktree" "project=$dir/project" \
+    "backend=herdr" "herdr_session=lab" "herdr_workspace_id=w1" \
+    "herdr_tab_id=w1:t2" "herdr_pane_id=w1:p2"
+}
+
+# The proven shape: the recorded pane lives in the recorded workspace, reports
+# the recorded tab as its owner, and that tab - uniquely - is labeled fm-<id>.
+write_matching_herdr_fixtures() {  # <dir> <id>
+  local dir=$1 id=$2
+  mkdir -p "$dir/fixtures"
+  printf '{"result":{"panes":[{"pane_id":"w1:p2","tab_id":"w1:t2"}]}}\n' > "$dir/fixtures/panes.json"
+  printf '{"result":{"tabs":[{"tab_id":"w1:t2","label":"fm-%s"}]}}\n' "$id" > "$dir/fixtures/tabs.json"
+}
+
+# run_endpoint_check <dir> <id> <function> -> prints "rc=<n>", diagnostics to
+# <dir>/<function>.err. Runs in its own shell so a case's PATH, fake CLI, and
+# home never leak into the next one.
+run_endpoint_check() {
+  local dir=$1 id=$2 fn=$3
+  # shellcheck disable=SC2016 # The inner script takes its inputs positionally.
+  env PATH="$dir/fakebin:$PATH" FM_HERDR_CALLS="$dir/herdr.calls" \
+    FM_HERDR_FIXTURES="$dir/fixtures" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$dir/home" \
+    bash -c '
+      set -u
+      # shellcheck source=/dev/null
+      . "$1/bin/fm-backend.sh"
+      # shellcheck source=/dev/null
+      . "$1/bin/fm-wake-lib.sh"
+      "$4" "$2" "$3"
+      printf "rc=%s\n" "$?"
+    ' _ "$ROOT" "$dir/home/state/$id.meta" "$id" "$fn" 2> "$dir/$fn.err"
+}
+
+run_resolve() {  # <dir> <id>
+  run_endpoint_check "$1" "$2" fm_backend_resolve_task_endpoint
+}
+
+run_validate() {  # <dir> <id>
+  run_endpoint_check "$1" "$2" fm_backend_validate_task_endpoint
+}
+
+test_legacy_endpoint_records_are_recoverable_not_stranded() {
+  local dir id out
+
+  # 1. The exact reported refusal: a legacy Herdr record, internally consistent
+  #    in every other respect, is still refused offline - and now says so with
+  #    the recoverable code 2 rather than the terminal 1.
+  dir=$(make_case legacy-herdr-offline)
+  id=legacy-herdr
+  write_legacy_herdr_meta "$dir" "$id"
+  out=$(run_validate "$dir" "$id")
+  [ "$out" = "rc=2" ] || fail "a legacy Herdr record should refuse offline as recoverable (code 2), got '$out'"
+  grep -q "legacy Herdr endpoint metadata for task $id lacks an exact task binding" \
+    "$dir/fm_backend_validate_task_endpoint.err" \
+    || fail "the offline refusal should name the missing binding: $(cat "$dir/fm_backend_validate_task_endpoint.err")"
+
+  # 2. A legacy Orca record was never ambiguous - its recorded window IS
+  #    fm-<id> - so it validates offline with no binding and no live read.
+  dir=$(make_case legacy-orca)
+  id=legacy-orca
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=fm-$id" "terminal=term-7" "worktree=$dir/worktree" "project=$dir/project" \
+    "backend=orca" "orca_worktree_id=worktree-9"
+  out=$(run_validate "$dir" "$id")
+  [ "$out" = "rc=0" ] || fail "a legacy Orca record carries its own task label and must validate, got '$out'"
+
+  # 3. Recovery: the live endpoint proves the recorded chain ends at a tab
+  #    labeled fm-<id>, so the binding is re-derived, recorded, and the record
+  #    validates. The upgrade is durable - a second resolve needs no live read.
+  dir=$(make_case legacy-herdr-provable)
+  id=legacy-herdr
+  make_herdr_label_fakebin "$dir"
+  write_legacy_herdr_meta "$dir" "$id"
+  write_matching_herdr_fixtures "$dir" "$id"
+  out=$(run_resolve "$dir" "$id")
+  [ "$out" = "rc=0" ] || fail "a provable legacy Herdr record should resolve, got '$out': $(cat "$dir/fm_backend_resolve_task_endpoint.err")"
+  grep -Fqx "endpoint_task_id=$id" "$dir/home/state/$id.meta" \
+    || fail "resolving should have recorded the re-derived binding"
+  : > "$dir/herdr.calls"
+  out=$(run_resolve "$dir" "$id")
+  [ "$out" = "rc=0" ] || fail "the upgraded record should validate, got '$out': $(cat "$dir/fm_backend_resolve_task_endpoint.err")"
+  [ ! -s "$dir/herdr.calls" ] || fail "an upgraded record must take the offline path: $(cat "$dir/herdr.calls")"
+
+  # 4. The other direction. Each of these live shapes leaves the endpoint
+  #    genuinely unidentifiable, so every one refuses and writes no binding.
+  local case_name
+  for case_name in relabeled reparented duplicated missing unreachable; do
+    dir=$(make_case "legacy-herdr-$case_name")
+    id=legacy-herdr
+    write_legacy_herdr_meta "$dir" "$id"
+    write_matching_herdr_fixtures "$dir" "$id"
+    case "$case_name" in
+      relabeled)
+        printf '{"result":{"tabs":[{"tab_id":"w1:t2","label":"fm-other"}]}}\n' > "$dir/fixtures/tabs.json" ;;
+      reparented)
+        printf '{"result":{"panes":[{"pane_id":"w1:p2","tab_id":"w1:t9"}]}}\n' > "$dir/fixtures/panes.json" ;;
+      duplicated)
+        printf '{"result":{"tabs":[{"tab_id":"w1:t2","label":"fm-%s"},{"tab_id":"w1:t3","label":"fm-%s"}]}}\n' \
+          "$id" "$id" > "$dir/fixtures/tabs.json" ;;
+      missing)
+        printf '{"result":{"panes":[]}}\n' > "$dir/fixtures/panes.json" ;;
+      unreachable)
+        rm -f "$dir/fixtures/panes.json" "$dir/fixtures/tabs.json" ;;
+    esac
+    make_herdr_label_fakebin "$dir"
+    out=$(run_resolve "$dir" "$id")
+    [ "$out" = "rc=1" ] \
+      || fail "an unprovable legacy Herdr endpoint ($case_name) must refuse, got '$out': $(cat "$dir/fm_backend_resolve_task_endpoint.err")"
+    grep -q '^endpoint_task_id=' "$dir/home/state/$id.meta" \
+      && fail "an unprovable endpoint ($case_name) must not be bound"
+    grep -q "could not prove from the live endpoint" "$dir/fm_backend_resolve_task_endpoint.err" \
+      || fail "the refusal ($case_name) should name the failed proof: $(cat "$dir/fm_backend_resolve_task_endpoint.err")"
+  done
+
+  # 5. A record naming ANOTHER task is not a legacy record and is never
+  #    laundered by the recovery path: it stays a terminal refusal, with no
+  #    live read attempted at all.
+  dir=$(make_case foreign-binding)
+  id=legacy-herdr
+  make_herdr_label_fakebin "$dir"
+  write_legacy_herdr_meta "$dir" "$id"
+  write_matching_herdr_fixtures "$dir" "$id"
+  printf 'endpoint_task_id=other\n' >> "$dir/home/state/$id.meta"
+  out=$(run_resolve "$dir" "$id")
+  [ "$out" = "rc=1" ] || fail "a record bound to another task must refuse, got '$out': $(cat "$dir/fm_backend_resolve_task_endpoint.err")"
+  grep -q "belongs to task other" "$dir/fm_backend_resolve_task_endpoint.err" \
+    || fail "the refusal should name the conflicting binding: $(cat "$dir/fm_backend_resolve_task_endpoint.err")"
+  [ ! -s "$dir/herdr.calls" ] || fail "a foreign binding must trigger no live read: $(cat "$dir/herdr.calls")"
+  grep -Fqx "endpoint_task_id=other" "$dir/home/state/$id.meta" \
+    || fail "the conflicting binding must be left exactly as found"
+
+  # 6. A legacy record whose last line has no trailing newline - task records
+  #    are line-oriented, so binding one must not fuse the new line onto the
+  #    last pre-existing field and lose both.
+  dir=$(make_case legacy-herdr-no-trailing-newline)
+  id=legacy-herdr
+  make_herdr_label_fakebin "$dir"
+  write_legacy_herdr_meta "$dir" "$id"
+  write_matching_herdr_fixtures "$dir" "$id"
+  printf '%s' "$(cat "$dir/home/state/$id.meta")" > "$dir/home/state/$id.meta"
+  out=$(run_resolve "$dir" "$id")
+  [ "$out" = "rc=0" ] || fail "a legacy record without a trailing newline should resolve, got '$out': $(cat "$dir/fm_backend_resolve_task_endpoint.err")"
+  grep -Fqx "herdr_pane_id=w1:p2" "$dir/home/state/$id.meta" \
+    || fail "binding must leave the last pre-existing field intact: $(cat "$dir/home/state/$id.meta")"
+  grep -Fqx "endpoint_task_id=$id" "$dir/home/state/$id.meta" \
+    || fail "the re-derived binding must be its own line: $(cat "$dir/home/state/$id.meta")"
+  : > "$dir/herdr.calls"
+  out=$(run_validate "$dir" "$id")
+  [ "$out" = "rc=0" ] || fail "the bound record should validate offline, got '$out': $(cat "$dir/fm_backend_validate_task_endpoint.err")"
+  [ ! -s "$dir/herdr.calls" ] || fail "offline validation must make no live call: $(cat "$dir/herdr.calls")"
+
+  pass "cleanup identity: a legacy non-tmux record is recoverable through a live label proof, and refuses without one"
+}
+
+test_legacy_endpoint_records_are_recoverable_not_stranded
