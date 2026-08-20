@@ -182,6 +182,8 @@ Valid cleanup removed only the exact task-bound target and left the control wind
 The metadata-only validation covers tmux, Herdr, Zellij, Orca, and cmux before backend dispatch.
 Its one exception is a record predating the `endpoint_task_id` binding on an opaque-id backend: that record carries no offline proof of its own task, so instead of being refused with no recoverable outcome, its binding is re-derived from one read-only query of the live endpoint's own `fm-<id>` label and recorded before the ordinary metadata-only validation decides.
 A tmux or Orca record needs no such query, because its recorded window name is already `fm-<id>`.
+That query proves the full recorded chain only on herdr; on zellij and cmux it proves just the recorded tab or workspace label, not that the recorded pane or surface still belongs to it, and the cmux proof additionally reads only the currently focused window, so a cmux task whose workspace lives elsewhere is refused and stays stranded.
+Both are known limitations left for a follow-up; in every unproven case the outcome is refusal, never action on an unproven endpoint.
 Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that backend cleanup boundary; their harness-specific hook files, tokens, transcript bindings, and session-log sidecars are cleaned only after it, so no harness needs a separate endpoint parser.
 
 ## Composer classification matrix

@@ -544,6 +544,26 @@ test_legacy_endpoint_records_are_recoverable_not_stranded() {
   grep -Fqx "endpoint_task_id=other" "$dir/home/state/$id.meta" \
     || fail "the conflicting binding must be left exactly as found"
 
+  # 6. A legacy record whose last line has no trailing newline - task records
+  #    are line-oriented, so binding one must not fuse the new line onto the
+  #    last pre-existing field and lose both.
+  dir=$(make_case legacy-herdr-no-trailing-newline)
+  id=legacy-herdr
+  make_herdr_label_fakebin "$dir"
+  write_legacy_herdr_meta "$dir" "$id"
+  write_matching_herdr_fixtures "$dir" "$id"
+  printf '%s' "$(cat "$dir/home/state/$id.meta")" > "$dir/home/state/$id.meta"
+  out=$(run_resolve "$dir" "$id")
+  [ "$out" = "rc=0" ] || fail "a legacy record without a trailing newline should resolve, got '$out': $(cat "$dir/fm_backend_resolve_task_endpoint.err")"
+  grep -Fqx "herdr_pane_id=w1:p2" "$dir/home/state/$id.meta" \
+    || fail "binding must leave the last pre-existing field intact: $(cat "$dir/home/state/$id.meta")"
+  grep -Fqx "endpoint_task_id=$id" "$dir/home/state/$id.meta" \
+    || fail "the re-derived binding must be its own line: $(cat "$dir/home/state/$id.meta")"
+  : > "$dir/herdr.calls"
+  out=$(run_validate "$dir" "$id")
+  [ "$out" = "rc=0" ] || fail "the bound record should validate offline, got '$out': $(cat "$dir/fm_backend_validate_task_endpoint.err")"
+  [ ! -s "$dir/herdr.calls" ] || fail "offline validation must make no live call: $(cat "$dir/herdr.calls")"
+
   pass "cleanup identity: a legacy non-tmux record is recoverable through a live label proof, and refuses without one"
 }
 

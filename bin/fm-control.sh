@@ -150,6 +150,8 @@ die() {  # <message>
 
 CONTROL_LOCK=
 CONTROL_LOCK_HELD=0
+CONTROL_META_LOCK=
+CONTROL_META_LOCK_HELD=0
 RELAUNCH_ACTIVE=0
 RELAUNCH_PHASE=start
 
@@ -158,6 +160,10 @@ control_cleanup() {
   if [ "$RELAUNCH_ACTIVE" = 1 ] \
      && declare -F relaunch_rollback >/dev/null 2>&1; then
     relaunch_rollback || true
+  fi
+  if [ "$CONTROL_META_LOCK_HELD" = 1 ]; then
+    CONTROL_META_LOCK_HELD=0
+    fm_lock_release "$CONTROL_META_LOCK" || true
   fi
   if [ "$CONTROL_LOCK_HELD" = 1 ]; then
     CONTROL_LOCK_HELD=0
@@ -295,9 +301,11 @@ fi
 # proven, and every other refusal is unchanged.
 CONTROL_META_LOCK=$(fm_meta_lock_path "$META") || exit 1
 fm_lock_acquire_wait "$CONTROL_META_LOCK"
+CONTROL_META_LOCK_HELD=1
 CONTROL_RESOLVE_RC=0
 fm_backend_resolve_task_endpoint "$META" "$ID" || CONTROL_RESOLVE_RC=$?
 fm_lock_release "$CONTROL_META_LOCK"
+CONTROL_META_LOCK_HELD=0
 [ "$CONTROL_RESOLVE_RC" -eq 0 ] || exit 1
 BACKEND=$FM_BACKEND_VALIDATED_BACKEND
 T=$FM_BACKEND_VALIDATED_TARGET

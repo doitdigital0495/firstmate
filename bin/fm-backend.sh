@@ -562,11 +562,22 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
 # The residual gap is identical too: two homes sharing one session AND one task
 # id would collide, exactly as they already would on tmux.
 #
-# It proves the whole recorded chain, not just the label. For Herdr that is
-# workspace -> pane -> owning tab -> label, so a pane that has since moved under
-# a different tab cannot pass. Zellij reuses its own tab matcher, which already
-# refuses an ambiguous legacy bare title. cmux requires exactly one live
-# workspace to carry the title and that workspace to be the recorded one.
+# What it proves differs per backend, and only Herdr is covered end to end.
+# Herdr proves the WHOLE recorded chain - workspace -> pane -> owning tab ->
+# label - so a re-parented pane, a relabeled tab, a duplicated label, a missing
+# pane, and an unreachable server all refuse. Zellij reuses its own tab matcher,
+# which proves only that the recorded tab id carries the expected label, and
+# never that the recorded zellij_pane_id still belongs to that tab. cmux
+# requires exactly one live workspace to carry the title and that workspace to
+# be the recorded one, but likewise never proves that the recorded
+# cmux_surface_id is still in that workspace.
+#
+# That gap matters because the target bin/fm-control.sh and bin/fm-teardown.sh
+# subsequently act on is the PANE or SURFACE, not the tab or workspace, so on
+# Zellij and cmux the residual gap is larger than on Herdr. Both are KNOWN
+# LIMITATIONS left for a follow-up, not coverage that exists today; cmux carries
+# a second one, its current-window-scoped listing, documented on
+# fm_backend_cmux_workspace_matches_label in bin/backends/cmux.sh.
 #
 # Returns 0 only on an exact, unambiguous live match. An unreachable runtime, an
 # unparseable response, a missing, moved, or duplicated label, and a backend
@@ -612,14 +623,17 @@ fm_backend_endpoint_label_provable() {  # <meta-file> <task-id>
 # replacement lands 0600 - the same private mode bin/fm-pr-check.sh already
 # requires of a task record, never looser than what it replaced.
 fm_backend_bind_task_endpoint() {  # <meta-file> <task-id>
-  local meta=$1 id=$2 dir tmp
+  local meta=$1 id=$2 dir tmp line
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
   if grep -q '^endpoint_task_id=' "$meta"; then return 1; fi
   dir=${meta%/*}
   [ "$dir" != "$meta" ] || dir=.
   tmp=$(mktemp "$dir/.fm-endpoint-bind.XXXXXX") || return 1
   {
-    cat "$meta" && printf 'endpoint_task_id=%s\n' "$id"
+    while IFS= read -r line || [ -n "$line" ]; do
+      printf '%s\n' "$line"
+    done < "$meta"
+    printf 'endpoint_task_id=%s\n' "$id"
   } > "$tmp" || { rm -f "$tmp"; return 1; }
   chmod 0600 "$tmp" || { rm -f "$tmp"; return 1; }
   mv -f -- "$tmp" "$meta" || { rm -f "$tmp"; return 1; }

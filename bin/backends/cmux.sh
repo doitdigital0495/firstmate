@@ -345,6 +345,18 @@ fm_backend_cmux_workspace_id_for_label() {  # <label>
 # the bare caller-facing label for a workspace created before home scoping
 # shipped - and only when exactly one live workspace carries that bare title,
 # mirroring fm_backend_zellij_tab_matches_label's migration posture.
+#
+# KNOWN LIMITATION, left for a follow-up. `workspace list --json` with no
+# `--window` is scoped to the CURRENT window only (verified live; the
+# fm_backend_cmux_window_of_workspace comment below owns that fact). A cmux task
+# whose workspace is not in the focused window is therefore simply absent from
+# this list, both jq checks fail, and the proof REFUSES - so that task is still
+# stranded with no supported lifecycle action, and the recovery built on this
+# function does NOT cover it. For the same reason the "exactly one live
+# workspace carries the title" ambiguity guard holds only WITHIN the current
+# window: a same-titled workspace in another window is invisible here and would
+# not be detected. The consequence is always refusal, never acting on an
+# unproven endpoint.
 fm_backend_cmux_workspace_matches_label() {  # <workspace_id> <label>
   local wsid=$1 label=$2 scoped list
   [ -n "$wsid" ] && [ -n "$label" ] || return 1
