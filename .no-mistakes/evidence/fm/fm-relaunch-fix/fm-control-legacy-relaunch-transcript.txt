@@ -1,0 +1,121 @@
+# Legacy-metadata second mate relaunch: end-to-end CLI transcript
+
+Reproduces the 2026-08-20 incident through the real entrypoint (bin/fm-control.sh),
+against an isolated sandbox FM_HOME holding a legacy-shaped Herdr record for
+'rentmax-mate' (window=personal:wW:p2 + herdr_session/workspace/tab/pane, no
+endpoint_task_id) and a stub herdr CLI serving the live pane/tab listing.
+
+===============================================================================
+BEFORE (base 1cb900c) - live endpoint genuinely IS this task's
+===============================================================================
+$ bin/fm-control.sh rentmax-mate relaunch
+REFUSED: legacy Herdr endpoint metadata for task rentmax-mate lacks an exact task binding; preserving task state.
+  [exit code: 1]
+
+$ bin/fm-control.sh rentmax-mate exit
+REFUSED: legacy Herdr endpoint metadata for task rentmax-mate lacks an exact task binding; preserving task state.
+  [exit code: 1]
+
+--- state/rentmax-mate.meta after the attempts ---
+window=personal:wW:p2
+worktree=/tmp/nm-e2e/ev-base/worktree
+project=/tmp/nm-e2e/ev-base/project
+backend=herdr
+kind=secondmate
+harness=claude
+herdr_session=personal
+herdr_workspace_id=wW
+herdr_tab_id=wW:t2
+herdr_pane_id=wW:p2
+
+===============================================================================
+AFTER (8dc03cc) - same record, same live endpoint
+===============================================================================
+$ bin/fm-control.sh rentmax-mate relaunch
+REFUSED: legacy Herdr endpoint metadata for task rentmax-mate lacks an exact task binding; preserving task state.
+note: task rentmax-mate carried a legacy endpoint record; re-derived its binding from the live endpoint's own fm-rentmax-mate label and recorded it.
+error: task rentmax-mate's recorded worktree /tmp/nm-e2e/ev-fixed/worktree is not a git worktree; refusing to relaunch without a checkout whose unlanded work can be accounted for
+  [exit code: 1]
+
+$ bin/fm-control.sh rentmax-mate exit
+error: task rentmax-mate's endpoint reads 'unreadable' rather than a positively classified state; refusing to send a lifecycle command into an unattributed endpoint
+  [exit code: 1]
+
+--- state/rentmax-mate.meta after the attempts ---
+window=personal:wW:p2
+worktree=/tmp/nm-e2e/ev-fixed/worktree
+project=/tmp/nm-e2e/ev-fixed/project
+backend=herdr
+kind=secondmate
+harness=claude
+herdr_session=personal
+herdr_workspace_id=wW
+herdr_tab_id=wW:t2
+herdr_pane_id=wW:p2
+endpoint_task_id=rentmax-mate
+
+NOTE: after the fix both verbs get PAST the identity refusal and the record is
+upgraded with endpoint_task_id=rentmax-mate. The remaining errors are ordinary
+downstream checks failing on sandbox scaffolding (the temp worktree is not a git
+checkout; the stub herdr cannot report an agent state) - not identity refusals.
+
+===============================================================================
+AFTER (8dc03cc) - live endpoint CANNOT be proven: tab relabeled to fm-someone-else
+===============================================================================
+$ bin/fm-control.sh rentmax-mate relaunch
+REFUSED: legacy Herdr endpoint metadata for task rentmax-mate lacks an exact task binding; preserving task state.
+REFUSED: could not prove from the live endpoint that task rentmax-mate's recorded endpoint carries its own fm-rentmax-mate label; preserving task state.
+  [exit code: 1]
+
+$ bin/fm-control.sh rentmax-mate exit
+REFUSED: legacy Herdr endpoint metadata for task rentmax-mate lacks an exact task binding; preserving task state.
+REFUSED: could not prove from the live endpoint that task rentmax-mate's recorded endpoint carries its own fm-rentmax-mate label; preserving task state.
+  [exit code: 1]
+
+--- state/rentmax-mate.meta after the attempts ---
+window=personal:wW:p2
+worktree=/tmp/nm-e2e/ev-relabeled/worktree
+project=/tmp/nm-e2e/ev-relabeled/project
+backend=herdr
+kind=secondmate
+harness=claude
+herdr_session=personal
+herdr_workspace_id=wW
+herdr_tab_id=wW:t2
+herdr_pane_id=wW:p2
+
+===============================================================================
+AFTER (8dc03cc) - herdr server unreachable
+===============================================================================
+$ bin/fm-control.sh rentmax-mate relaunch
+REFUSED: legacy Herdr endpoint metadata for task rentmax-mate lacks an exact task binding; preserving task state.
+REFUSED: could not prove from the live endpoint that task rentmax-mate's recorded endpoint carries its own fm-rentmax-mate label; preserving task state.
+  [exit code: 1]
+
+$ bin/fm-control.sh rentmax-mate exit
+REFUSED: legacy Herdr endpoint metadata for task rentmax-mate lacks an exact task binding; preserving task state.
+REFUSED: could not prove from the live endpoint that task rentmax-mate's recorded endpoint carries its own fm-rentmax-mate label; preserving task state.
+  [exit code: 1]
+
+--- state/rentmax-mate.meta after the attempts ---
+window=personal:wW:p2
+worktree=/tmp/nm-e2e/ev-unreachable/worktree
+project=/tmp/nm-e2e/ev-unreachable/project
+backend=herdr
+kind=secondmate
+harness=claude
+herdr_session=personal
+herdr_workspace_id=wW
+herdr_tab_id=wW:t2
+herdr_pane_id=wW:p2
+
+===============================================================================
+The same recovery on the other lifecycle entrypoint: bin/fm-teardown.sh --force
+===============================================================================
+--- BASE (1cb900c) ---
+REFUSED: legacy Herdr endpoint metadata for task rentmax-mate lacks an exact task binding; preserving task state.
+--- FIXED (8dc03cc) ---
+REFUSED: legacy Herdr endpoint metadata for task rentmax-mate lacks an exact task binding; preserving task state.
+note: task rentmax-mate carried a legacy endpoint record; re-derived its binding from the live endpoint's own fm-rentmax-mate label and recorded it.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF

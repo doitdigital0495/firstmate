@@ -1,0 +1,33 @@
+# Scope of the gap: which backends and which crew kinds
+
+Same legacy-record scenario driven through bin/fm-control.sh, varying kind and backend.
+
+--- legacy herdr record, kind=ship ---
+REFUSED: legacy Herdr endpoint metadata for task crew-a lacks an exact task binding; preserving task state.
+note: task crew-a carried a legacy endpoint record; re-derived its binding from the live endpoint's own fm-crew-a label and recorded it.
+binding lines now in record: 1
+
+--- legacy herdr record, kind=scout ---
+REFUSED: legacy Herdr endpoint metadata for task crew-a lacks an exact task binding; preserving task state.
+note: task crew-a carried a legacy endpoint record; re-derived its binding from the live endpoint's own fm-crew-a label and recorded it.
+binding lines now in record: 1
+
+--- legacy herdr record, kind=secondmate ---
+REFUSED: legacy Herdr endpoint metadata for task crew-a lacks an exact task binding; preserving task state.
+note: task crew-a carried a legacy endpoint record; re-derived its binding from the live endpoint's own fm-crew-a label and recorded it.
+binding lines now in record: 1
+
+--- tmux, on the FIXED code ---
+--- legacy tmux record, kind=ship ---
+(no identity refusal - endpoint identity accepted)
+binding lines now in record: 0
+
+--- the identical tmux record, on the BASE code (unchanged behavior) ---
+--- legacy tmux record, kind=ship ---
+(no identity refusal - endpoint identity accepted)
+binding lines now in record: 0
+
+CONCLUSION: the gap is kind-independent (ordinary crewmates and scouts recover
+exactly like second mates), and tmux never had it - a legacy tmux record carries
+fm-<id> in its own recorded window, is accepted offline on base and on fixed alike,
+and gets no binding written.
