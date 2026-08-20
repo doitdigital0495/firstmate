@@ -274,7 +274,12 @@
 #     __CURSORBIN__ resolved, cursor-verified executable for a cursor launch
 #     __GEMINISETTINGS__ firstmate-owned per-task gemini settings file (busy-state hooks)
 #     __ROVOBIN__   resolved, rovo-verified executable for a rovo launch
+#     __CLAUDESETTINGS__ absolute path to state/<id>.claude-settings.json, the one
+#                  settings source every claude launch is handed through --settings
 # Verified per-harness turn-end hooks are installed automatically where enabled; some live outside the worktree.
+# claude uses state/<id>.claude-settings.json handed to the launch through --settings,
+# so no file is written into the worktree; claude merges those settings with the
+# project's own instead of replacing them.
 # Kimi uses one surgically installed Firstmate region in $HOME/.kimi-code/config.toml,
 # a firstmate-owned global hook and registry, and a gitignored per-task pointer.
 # grok uses a firstmate-owned global hook under ${GROK_HOME:-$HOME/.grok}/hooks
@@ -1254,6 +1259,9 @@ PROJ=
 ARG3=
 FIRSTMATE_HOME=
 RAW_LAUNCH=0
+# Claude busy-state hook entries, resolved only for a kind that arms the busy
+# contract; empty leaves the per-launch settings file carrying policy keys alone.
+CLAUDE_HOOK_ENTRIES=
 
 # --relaunch adoption: every identity axis comes from the task's own validated
 # durable record, never from the command line, so a relaunch can only ever
@@ -1435,13 +1443,13 @@ launch_template() {
     # feedback flow (the SendFeedback tool), deliberately layered so a fleet-launched
     # agent never queues or submits a bug-report draft on the captain's behalf even
     # under a managed Claude settings policy: CLAUDE_CODE_SEND_FEEDBACK=0 is read
-    # directly and is not subject to managed-settings precedence, while --settings
-    # '{"feedbackDrafts":"off"}' sets the documented settings key (Claude Code
-    # changelog 2.1.247) that a managed policy CAN override back on. Either control
-    # alone disables the feature; keep both so a managed override of one still
-    # leaves the other in force. Both are per-launch, scoped to this invocation only,
-    # and never touch the captain's global ~/.claude/settings.json.
-    # The same inline --settings JSON also carries the attribution policy
+    # directly and is not subject to managed-settings precedence, while the
+    # "feedbackDrafts": "off" settings key (Claude Code changelog 2.1.247) is one a
+    # managed policy CAN override back on. Either control alone disables the
+    # feature; keep both so a managed override of one still leaves the other in
+    # force. Both are per-launch, scoped to this invocation only, and never touch
+    # the captain's global ~/.claude/settings.json.
+    # The settings file also carries the attribution policy
     # ("attribution": {"commit": "", "pr": "", "sessionUrl": false}), which
     # suppresses Claude Code's Co-Authored-By trailer, Claude-Session link, and
     # generated-with line in commits and PR bodies. The captain sets that
@@ -1449,7 +1457,21 @@ launch_template() {
     # sources are not guaranteed to load that scope, so a worker would
     # otherwise run with attribution back on; carrying it per launch keeps the
     # policy in force regardless of which settings scopes end up loaded.
-    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '\''{"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false}}'\'' __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    # Both policies travel in the SAME firstmate-owned file in state/ that carries
+    # the semantic busy-state hooks, rather than as a second inline --settings
+    # argument: claude takes one --settings source, and a file keeps every
+    # per-launch key in one place while writing nothing inside the worktree - the
+    # same keep-it-out-of-the-project reasoning grok, kimi, and pi already follow.
+    # A worktree write would have to land on .claude/settings.local.json, a path
+    # the PROJECT owns and frequently tracks. Claude merges --settings with the
+    # project's own settings rather than replacing them, so a project's committed
+    # hooks keep firing. Every kind gets the file, including a secondmate, which
+    # arms no busy contract and so receives the policy keys with no "hooks".
+    claude)
+      printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions '
+      printf '%s' '--settings __CLAUDESETTINGS__ '
+      printf '%s' '__MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+      ;;
     codex)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
@@ -1600,10 +1622,12 @@ launch_template() {
   esac
 }
 
+RAW_LAUNCH=0
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
     RAW_LAUNCH=1
     LAUNCH=$ARG3
+    RAW_LAUNCH=1
     HARNESS=""
     for word in $LAUNCH; do
       case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
@@ -3321,13 +3345,25 @@ if [ "$KIND" != secondmate ]; then
       fi
       ;;
   esac
+  # A raw launch command is the operator's verbatim string, so nothing can
+  # guarantee it carries the --settings flag that loads claude's busy hooks.
+  # Arming there would seed a busy record nothing could ever clear, and
+  # permanently busy is strictly worse than unknown because supervision never
+  # re-examines a busy task. Decline like codex and muse do when no verified
+  # wiring exists; the classifier then reports unknown missing.
+  CLAUDE_BUSY_WIRING=1
+  case "$HARNESS" in
+    claude*) [ "$RAW_LAUNCH" -eq 0 ] || CLAUDE_BUSY_WIRING=0 ;;
+  esac
   case "$HARNESS" in
     claude*|opencode*|pi|pi-signed|omp)
-      BUSY_GEN=$("$FM_ROOT/bin/fm-busy-event.sh" arm "$STATE_REAL" "$ID") || {
-        echo "error: failed to arm the busy-state contract for $ID" >&2
-        exit 1
-      }
-      [ "$RELAUNCH" -ne 1 ] || RELAUNCH_REPLACEMENT_BUSY_GEN=$BUSY_GEN
+      if [ "$CLAUDE_BUSY_WIRING" -eq 1 ]; then
+        BUSY_GEN=$("$FM_ROOT/bin/fm-busy-event.sh" arm "$STATE_REAL" "$ID") || {
+          echo "error: failed to arm the busy-state contract for $ID" >&2
+          exit 1
+        }
+        [ "$RELAUNCH" -ne 1 ] || RELAUNCH_REPLACEMENT_BUSY_GEN=$BUSY_GEN
+      fi
       ;;
     gemini)
       if [ "$RAW_LAUNCH" -eq 0 ]; then
@@ -3360,17 +3396,34 @@ if [ "$KIND" != secondmate ]; then
       # the turn-ended NOTIFICATION touch for the watcher. Every
       # hook command tolerates a refused event (|| true) so a stale-gen writer
       # can never break Claude's own lifecycle.
-      mkdir -p "$WT/.claude"
-      busy_cmd_prefix="$(shell_quote "$FM_ROOT/bin/fm-busy-event.sh") apply $(shell_quote "$STATE_REAL") $(shell_quote "$ID")"
-      busy_suffix="--gen $(shell_quote "$BUSY_GEN") --source claude-hook"
-      j_submit=$(json_escape "$busy_cmd_prefix busy $busy_suffix --event user-prompt-submit 2>/dev/null || true")
-      j_stop=$(json_escape "touch $(shell_quote "$TURNEND"); $busy_cmd_prefix idle $busy_suffix --event stop 2>/dev/null || true")
-      j_stopfail=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event stop-failure 2>/dev/null || true")
-      j_sessionend=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event session-end 2>/dev/null || true")
-      cat > "$WT/.claude/settings.local.json" <<EOF
-{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}]}}
-EOF
-      exclude_path '.claude/settings.local.json'
+      #
+      # The settings file lives in state/, NOT in the worktree. A worktree write
+      # would have to land on .claude/settings.local.json, a path the PROJECT owns
+      # and frequently tracks; firstmate wrote it wholesale, destroying the
+      # project's own settings for the life of the task and leaving a tracked file
+      # permanently modified, which then blocked teardown. --settings is Claude's
+      # own supported way to load additional settings from an arbitrary path, and
+      # its hooks merge with (never replace) the project's own.
+      #
+      # A raw launch command arms no busy generation (see above), so there is
+      # nothing to wire and no settings file is written for it either.
+      if [ "$CLAUDE_BUSY_WIRING" -eq 1 ]; then
+        busy_cmd_prefix="$(shell_quote "$FM_ROOT/bin/fm-busy-event.sh") apply $(shell_quote "$STATE_REAL") $(shell_quote "$ID")"
+        busy_suffix="--gen $(shell_quote "$BUSY_GEN") --source claude-hook"
+        claude_hook_entries=
+        for claude_hook_pair in $FM_BUSY_CLAUDE_HOOK_EVENTS; do
+          claude_hook_key=${claude_hook_pair%%:*}
+          claude_hook_event=${claude_hook_pair#*:}
+          case "$claude_hook_key" in
+            UserPromptSubmit) claude_hook_cmd="$busy_cmd_prefix busy $busy_suffix" ;;
+            Stop) claude_hook_cmd="touch $(shell_quote "$TURNEND"); $busy_cmd_prefix idle $busy_suffix" ;;
+            *) claude_hook_cmd="$busy_cmd_prefix idle $busy_suffix" ;;
+          esac
+          claude_hook_cmd=$(json_escape "$claude_hook_cmd --event $claude_hook_event 2>/dev/null || true")
+          claude_hook_entries="$claude_hook_entries${claude_hook_entries:+,}\"$claude_hook_key\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$claude_hook_cmd\"}]}]"
+        done
+        CLAUDE_HOOK_ENTRIES=$claude_hook_entries
+      fi
       ;;
     gemini)
       if [ "$RAW_LAUNCH" -eq 0 ]; then
@@ -3668,6 +3721,25 @@ EOF
   esac
 fi
 
+# The single --settings source every claude launch is handed. It carries the
+# per-launch feedback-draft and attribution policy for EVERY kind, including a
+# secondmate, which arms no busy contract and so gets those keys with no "hooks";
+# a crewmate or scout additionally gets the semantic busy-state hooks resolved
+# above. One file rather than a second inline --settings argument, because claude
+# takes one settings source. It lives in state/, never in the worktree, so a
+# project's own .claude/settings.local.json is never written or clobbered. A raw
+# launch command is the operator's verbatim string and never reaches the template
+# that passes this flag, so no file is written for it.
+case "$HARNESS" in
+  claude*)
+    if [ "$RAW_LAUNCH" -eq 0 ]; then
+      printf '{"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false}%s}\n' \
+        "${CLAUDE_HOOK_ENTRIES:+,\"hooks\":{$CLAUDE_HOOK_ENTRIES}}" \
+        > "$STATE_REAL/$ID.claude-settings.json"
+    fi
+    ;;
+esac
+
 # Delivery posture recorded in meta so fm-teardown's safety check and the
 # validate/merge stages can branch on it. A ship task carries the explicit
 # per-task decision validated above; a secondmate's posture is fixed; a scout
@@ -3878,6 +3950,7 @@ fi
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
+sq_claudesettings=$(shell_quote "$STATE_REAL/$ID.claude-settings.json")
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
 sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_ompext=$(shell_quote "$STATE/$ID.omp-ext.ts")
@@ -3898,6 +3971,7 @@ fi
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
 LAUNCH=${LAUNCH//__TURNEND__/$sq_turnend}
 LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
+LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$sq_claudesettings}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
 LAUNCH=${LAUNCH//__OMPEXT__/$sq_ompext}

@@ -7,6 +7,7 @@ Busy hooks verified 2026-07-28 on Claude Code 2.1.220.
 | Fact | Value |
 |---|---|
 | Busy | Owned hooks: `UserPromptSubmit` opens while `Stop`, `StopFailure`, and `SessionEnd` close; manual interrupt emits no hook, so control reports delivered keys and live endpoint only, publishes no idle event or cancellation claim, and usually leaves `claude-hook` busy. |
+| Hook delivery | `claude --settings <state/<id>.claude-settings.json>`, never a file inside the worktree. Claude merges that file with the project's own settings instead of replacing them (live-verified 2026-08-20 on 2.1.237; [`supervision.md`](../../../../../docs/verification/supervision.md) owns the evidence and refresh command). A spawn given a RAW launch command whose basename is `claude` cannot be guaranteed to carry `--settings`, so `fm-spawn` writes no settings file and arms no busy contract for it, and the task classifies `unknown missing` rather than a permanently stuck busy. |
 | Exit | `/exit`. |
 | Interrupt | Single Escape. |
 | Skill | `/<skill>`, for example `/no-mistakes`. |
@@ -47,7 +48,7 @@ The controls are scoped to the launched process and never modify the captain's g
 ## Primary integration
 
 Primary behavior was verified 2026-07-04 on 2.1.201, preserved 2026-07-08 on 2.1.204, and Stop auto-arm revalidated 2026-07-24 on 2.1.219.
-This differs from the worker hook, which only touches a task marker through `.claude/settings.local.json`.
+This differs from the worker hook, which only touches a task marker from the settings file `fm-spawn` hands the worker through `--settings`; Firstmate writes no Claude settings file into a worktree, so a project's own `.claude/settings.local.json` is never touched.
 
 Primary `.claude/settings.json` registers `../../../bin/fm-turnend-guard.sh --claude` and `../../../bin/fm-claude-stop-autoarm.sh` with `asyncRewake: true` and `timeout: 28800`.
 Guard exit 2 plus stderr forces continuation.
