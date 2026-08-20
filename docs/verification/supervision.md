@@ -197,6 +197,27 @@ In this 2026-07-28 Codex 0.145.0 semantic-busy probe, Firstmate-written lifecycl
 Codex also exposes no `StopFailure` hook, so an API-error turn end would need separate coverage even after hook discovery works.
 The app-server protocol schema does define the required lifecycle (`turn/started`, plus a `turn/completed` status of `completed`, `interrupted`, `failed`, or `inProgress`), so the gate is a reachability problem rather than a protocol gap.
 
+### Claude hooks load from outside the workspace, 2026-08-20
+
+Claude's per-task busy hooks are delivered through `claude --settings <file>` and live in `state/<id>.claude-settings.json`, so `fm-spawn` writes nothing into the project worktree.
+Verified on 2026-08-20 against Claude Code 2.1.237 in a throwaway workspace holding its own `.claude/settings.local.json` with a `Stop` hook of its own.
+
+```sh
+claude --dangerously-skip-permissions --settings /tmp/fmprobe-external.json -p "say hi"
+```
+
+All three markers were created: the project `Stop` hook, and the `Stop` and `UserPromptSubmit` hooks supplied only through `--settings`.
+Hooks from `--settings` are therefore MERGED with the project's own rather than replacing them, and the project's settings file was byte-identical after the run.
+
+This replaces the pre-2026-08-20 behavior, where the spawn wrote `<worktree>/.claude/settings.local.json` wholesale.
+On a project that tracks that path, the spawn destroyed its committed contents for the life of the task and left the tracked file permanently modified, which then blocked `bin/fm-teardown.sh` and re-escalated the finished task on every watcher pass.
+
+Refresh command, opt-in and self-skipping, which fails naming the installed version:
+
+```sh
+FM_CLAUDE_SETTINGS_LIVE_E2E=1 tests/fm-claude-settings-live-e2e.test.sh
+```
+
 Deterministic entry points:
 
 ```sh

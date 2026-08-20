@@ -931,6 +931,95 @@ test_dirty_worktree_refuses() {
   pass "dirty worktree is refused even when its committed work has landed (dirty always wins)"
 }
 
+# Regression (observed 2026-08-20 on a real project): the claude spawn used to
+# write <worktree>/.claude/settings.local.json wholesale, and teardown used to
+# `rm -f` that same path while its dirty check ignored everything untracked under
+# .claude/. Both halves treated a PROJECT-owned path as firstmate's own. firstmate
+# now writes nothing into the worktree for claude, so teardown must leave .claude/
+# exactly as it found it - and anything untracked there is the project's or the
+# worker's work and must be able to refuse teardown like any other dirty file.
+test_teardown_leaves_the_projects_claude_settings_alone() {
+  local case_dir rc before after
+  case_dir=$(make_case claude-settings-kept)
+  write_meta "$case_dir" no-mistakes ship
+  fm_write_meta "$case_dir/state/task-x1.meta" \
+    "window=firstmate:fm-task-x1" "endpoint_task_id=task-x1" \
+    "worktree=$case_dir/wt" "project=$case_dir/project" \
+    "kind=ship" "mode=no-mistakes" "harness=claude"
+  mkdir -p "$case_dir/wt/.claude"
+  printf '%s\n' '{"permissions":{"allow":["Bash(npm test)"]}}' \
+    > "$case_dir/wt/.claude/settings.local.json"
+  git -C "$case_dir/wt" add -f -- .claude/settings.local.json
+  git -C "$case_dir/wt" -c user.email=t@t -c user.name=t commit -q -m "project settings"
+  before=$(cat "$case_dir/wt/.claude/settings.local.json")
+  # Land the branch content so the safety check allows teardown.
+  git -C "$case_dir/wt" push -q origin HEAD:main
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "claude-settings-kept: teardown should allow landed work"$'\n'"$(cat "$case_dir/stderr")"
+  [ -f "$case_dir/wt/.claude/settings.local.json" ] \
+    || fail "claude-settings-kept: teardown deleted the project's own settings file"
+  after=$(cat "$case_dir/wt/.claude/settings.local.json")
+  [ "$after" = "$before" ] \
+    || fail "claude-settings-kept: teardown rewrote the project's settings, got: $after"
+  pass "teardown leaves a project's tracked .claude/settings.local.json exactly as it found it"
+}
+
+test_untracked_claude_file_refuses_teardown() {
+  local case_dir rc
+  case_dir=$(make_case claude-untracked-dirty)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  git -C "$case_dir/wt" push -q origin HEAD:main
+  # A file the WORKER wrote under .claude/, not firstmate's own wiring.
+  mkdir -p "$case_dir/wt/.claude/agents"
+  printf '%s\n' 'reviewer agent' > "$case_dir/wt/.claude/agents/reviewer.md"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "claude-untracked-dirty: an untracked .claude/ file is not firstmate's to discard"
+  grep -q "uncommitted changes" "$case_dir/stderr" \
+    || fail "claude-untracked-dirty: refusal did not cite uncommitted changes"
+  pass "an untracked file under .claude/ refuses teardown instead of being silently discarded"
+}
+
+test_legacy_firstmate_claude_leftover_is_removed() {
+  local case_dir rc
+  case_dir=$(make_case claude-legacy-leftover)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  git -C "$case_dir/wt" push -q origin HEAD:main
+  # Exactly what a pre-2026-08-20 claude spawn left behind: firstmate's own hooks,
+  # untracked and hidden from git status by the exclude entry that spawn also wrote.
+  mkdir -p "$case_dir/wt/.claude"
+  printf '%s\n' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/x/bin/fm-busy-event.sh apply /s id idle"}]}]}}' \
+    > "$case_dir/wt/.claude/settings.local.json"
+  mkdir -p "$case_dir/project/.git/info"
+  printf '%s\n' '.claude/settings.local.json' >> "$case_dir/project/.git/info/exclude"
+  # A project file next to it, which teardown must not touch.
+  printf '%s\n' 'keep me' > "$case_dir/wt/.claude/project-note.md"
+  printf '%s\n' '.claude/project-note.md' >> "$case_dir/project/.git/info/exclude"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "claude-legacy-leftover: teardown should allow landed work"$'\n'"$(cat "$case_dir/stderr")"
+  [ ! -e "$case_dir/wt/.claude/settings.local.json" ] \
+    || fail "claude-legacy-leftover: firstmate's own pre-fix hook file must not survive teardown"
+  [ -f "$case_dir/wt/.claude/project-note.md" ] \
+    || fail "claude-legacy-leftover: teardown removed a file firstmate never wrote"
+  pass "teardown removes only the pre-fix hook file firstmate itself wrote under .claude/"
+}
+
 test_gh_error_and_content_absent_refuses() {
   local case_dir rc
   case_dir=$(make_case gh-error)
@@ -2621,6 +2710,9 @@ test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_fallback_allows
 test_content_fallback_refreshes_stale_origin_ref
 test_dirty_worktree_refuses
+test_teardown_leaves_the_projects_claude_settings_alone
+test_untracked_claude_file_refuses_teardown
+test_legacy_firstmate_claude_leftover_is_removed
 test_gh_error_and_content_absent_refuses
 test_stale_index_lock_cleared_and_teardown_succeeds
 test_live_index_lock_is_never_removed_and_teardown_refuses
