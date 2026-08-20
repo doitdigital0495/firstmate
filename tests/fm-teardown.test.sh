@@ -990,6 +990,20 @@ test_untracked_claude_file_refuses_teardown() {
   pass "an untracked file under .claude/ refuses teardown instead of being silently discarded"
 }
 
+# The full four-event lifecycle shape a pre-2026-08-20 claude spawn wrote into
+# the worktree, which is what proves the leftover is firstmate's own.
+write_legacy_claude_hooks() {  # <path>
+  local cmd='/x/bin/fm-busy-event.sh apply /s id'
+  {
+    printf '%s' '{"hooks":{'
+    printf '"UserPromptSubmit":[{"hooks":[{"type":"command","command":"%s busy --gen g --source claude-hook --event user-prompt-submit"}]}],' "$cmd"
+    printf '"Stop":[{"hooks":[{"type":"command","command":"touch /s/id.turn-ended; %s idle --gen g --source claude-hook --event stop"}]}],' "$cmd"
+    printf '"StopFailure":[{"hooks":[{"type":"command","command":"%s idle --gen g --source claude-hook --event stop-failure"}]}],' "$cmd"
+    printf '"SessionEnd":[{"hooks":[{"type":"command","command":"%s idle --gen g --source claude-hook --event session-end"}]}]' "$cmd"
+    printf '%s\n' '}}'
+  } > "$1"
+}
+
 test_legacy_firstmate_claude_leftover_is_removed() {
   local case_dir rc
   case_dir=$(make_case claude-legacy-leftover)
@@ -999,8 +1013,7 @@ test_legacy_firstmate_claude_leftover_is_removed() {
   # Exactly what a pre-2026-08-20 claude spawn left behind: firstmate's own hooks,
   # untracked and hidden from git status by the exclude entry that spawn also wrote.
   mkdir -p "$case_dir/wt/.claude"
-  printf '%s\n' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/x/bin/fm-busy-event.sh apply /s id idle"}]}]}}' \
-    > "$case_dir/wt/.claude/settings.local.json"
+  write_legacy_claude_hooks "$case_dir/wt/.claude/settings.local.json"
   mkdir -p "$case_dir/project/.git/info"
   printf '%s\n' '.claude/settings.local.json' >> "$case_dir/project/.git/info/exclude"
   # A project file next to it, which teardown must not touch.
@@ -1018,6 +1031,36 @@ test_legacy_firstmate_claude_leftover_is_removed() {
   [ -f "$case_dir/wt/.claude/project-note.md" ] \
     || fail "claude-legacy-leftover: teardown removed a file firstmate never wrote"
   pass "teardown removes only the pre-fix hook file firstmate itself wrote under .claude/"
+}
+
+# A hand-written settings file may wire an fm-busy-event.sh hook of its own
+# without ever being firstmate's. Only the full four-event lifecycle shape proves
+# firstmate wrote the file; anything short of it must survive teardown.
+test_handwritten_claude_settings_with_busy_hook_is_preserved() {
+  local case_dir rc before after
+  case_dir=$(make_case claude-handwritten-busy-hook)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  git -C "$case_dir/wt" push -q origin HEAD:main
+  mkdir -p "$case_dir/wt/.claude"
+  printf '%s\n' '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/x/bin/fm-busy-event.sh apply /s id idle --event stop"}]}]},"permissions":{"allow":["Bash(npm test)"]}}' \
+    > "$case_dir/wt/.claude/settings.local.json"
+  mkdir -p "$case_dir/project/.git/info"
+  printf '%s\n' '.claude/settings.local.json' >> "$case_dir/project/.git/info/exclude"
+  before=$(cat "$case_dir/wt/.claude/settings.local.json")
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "claude-handwritten-busy-hook: teardown should allow landed work"$'\n'"$(cat "$case_dir/stderr")"
+  [ -f "$case_dir/wt/.claude/settings.local.json" ] \
+    || fail "claude-handwritten-busy-hook: a hand-written settings file must survive teardown"
+  after=$(cat "$case_dir/wt/.claude/settings.local.json")
+  [ "$after" = "$before" ] \
+    || fail "claude-handwritten-busy-hook: the hand-written file must be untouched, got: $after"
+  pass "teardown preserves a hand-written settings file that merely wires an fm-busy-event.sh hook"
 }
 
 test_gh_error_and_content_absent_refuses() {
@@ -2713,6 +2756,7 @@ test_dirty_worktree_refuses
 test_teardown_leaves_the_projects_claude_settings_alone
 test_untracked_claude_file_refuses_teardown
 test_legacy_firstmate_claude_leftover_is_removed
+test_handwritten_claude_settings_with_busy_hook_is_preserved
 test_gh_error_and_content_absent_refuses
 test_stale_index_lock_cleared_and_teardown_succeeds
 test_live_index_lock_is_never_removed_and_teardown_refuses

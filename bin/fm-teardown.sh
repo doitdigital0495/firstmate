@@ -168,6 +168,8 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-busy-lib.sh
+. "$SCRIPT_DIR/fm-busy-lib.sh"
 if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   echo "error: invalid teardown request" >&2
   exit 2
@@ -1139,13 +1141,33 @@ teardown_treehouse_return() {
 # info/exclude, so a leftover from a task already under way at update time stays
 # invisible to git status and its stale hooks would fire for the NEXT task in a
 # pooled worktree. Remove ONLY a file firstmate provably wrote: untracked, and
-# carrying firstmate's own busy-event command. A tracked or project-authored file
-# is never touched - that path belongs to the project.
+# carrying firstmate's own busy-event command bound to EVERY event of the
+# claude-hook lifecycle contract (FM_BUSY_CLAUDE_HOOK_EVENTS in
+# bin/fm-busy-lib.sh, the same list bin/fm-spawn.sh emits from, so the writer and
+# this proof cannot drift apart). A bare fm-busy-event.sh substring was not
+# enough: a captain's own hand-written settings file in a firstmate checkout may
+# wire one such hook itself, and deleting that is exactly the data loss this
+# branch exists to stop. Anything short of the full shape is preserved, and a
+# tracked or project-authored file is never touched - that path belongs to the
+# project.
+#
+# This migration deliberately runs AFTER validate_worktree_teardown_safety, so it
+# only ever reaches a leftover git status cannot see, which is the case the old
+# spawn's info/exclude entry creates. If that exclude line is absent the leftover
+# is visible as an untracked file, teardown refuses first, and a human clears it
+# by hand. That is an accepted best-effort limitation and it fails in the safe
+# direction. Do NOT move the migration ahead of the dirty check: it would delete a
+# file before the safety gate ran and suppress a legitimate refusal.
 remove_legacy_claude_settings() {  # <worktree>
-  local wt=$1 f="$1/.claude/settings.local.json"
+  local wt=$1 f="$1/.claude/settings.local.json" pair key event
   [ -f "$f" ] || return 0
   git -C "$wt" ls-files --error-unmatch -- .claude/settings.local.json >/dev/null 2>&1 && return 0
-  grep -q 'fm-busy-event.sh' "$f" 2>/dev/null || return 0
+  for pair in $FM_BUSY_CLAUDE_HOOK_EVENTS; do
+    key=${pair%%:*}
+    event=${pair#*:}
+    grep -q "\"$key\"" "$f" 2>/dev/null || return 0
+    grep -q "fm-busy-event.sh.*--event $event" "$f" 2>/dev/null || return 0
+  done
   rm -f "$f"
 }
 
