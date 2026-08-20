@@ -16,6 +16,8 @@ GitHub Actions and Dependabot are exempt so their automation keeps working, but 
 ## Workflow
 
 1. Fork the repo, then clone the parent repo or set your local `origin` back to the parent (`git@github.com:kunchenguid/firstmate.git`).
+   This targets your PR at the parent, which is what you want when contributing a change back.
+   See "Running your own line from a fork" below when you are running firstmate as your own fleet instead.
 2. Create a branch and make your changes.
 3. Initialize the gate with your fork as the push target: `no-mistakes init --fork-url git@github.com:<you>/firstmate.git` (firstmate expects **no-mistakes v1.31.2+**; without a fork, plain `no-mistakes init` still works for maintainers with push access).
 4. Commit your changes.
@@ -30,6 +32,30 @@ GitHub Actions and Dependabot are exempt so their automation keeps working, but 
 7. Once the pipeline passes, it pushes the branch to your fork and opens the PR against the parent repo for you.
 
 See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/start-here/quick-start/) for the full first-run walkthrough.
+
+## Running your own line from a fork
+
+The workflow above opens the PR against the parent repo, and GitHub holds a fork PR's workflow runs at `action_required` until someone with write access on the parent approves them.
+Until that approval lands, neither `CI` nor `Require no-mistakes` reports at all, so the PR cannot be judged green by its author.
+If you are running firstmate as your own fleet rather than contributing a change back, make your own fork the PR base instead of the parent:
+
+```sh
+git remote set-url origin https://github.com/<you>/firstmate
+git config --unset remote.origin.pushurl   # only if you followed step 1's parent-origin setup
+git remote add upstream https://github.com/kunchenguid/firstmate
+gh repo set-default <you>/firstmate
+no-mistakes init                           # re-record the gate with no --fork-url
+```
+
+This has to be fixed in remote configuration rather than per run.
+`no-mistakes` opens PRs against `origin` and exposes no per-run base override, so `origin` itself must be the fork, and `--fork-url` is then unnecessary because push target and PR base are the same repo.
+`gh pr create` independently defaults a fork's base repo to its parent, so `gh repo set-default` is what pins it.
+That pin lives in git config as `remote.origin.gh-resolved`, so a fresh clone needs the command run again.
+
+Keep the parent reachable as `upstream`.
+`/updatefirstmate` (`bin/fm-update.sh`) fast-forwards from the remote literally named `origin`, so after this change it tracks your fork rather than the parent, which is the intended behavior once your fork is your trunk.
+Pull the parent's work in deliberately with `git fetch upstream` and a merge of `upstream/main`, and note that once you have merged your own PRs your fork's `main` has diverged from the parent and can no longer be fast-forwarded from it.
+`gh` still reaches the parent explicitly with `gh -R kunchenguid/firstmate ...`.
 
 ## Repo conventions
 
