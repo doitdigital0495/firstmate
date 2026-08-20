@@ -30,7 +30,10 @@ esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
   list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window|send-keys) exit 0 ;;
+  send-keys)
+    [ -z "${FM_FAKE_TMUX_LOG:-}" ] || printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
+    exit 0 ;;
+  has-session|new-session|new-window|kill-window) exit 0 ;;
 esac
 exit 0
 SH
@@ -263,7 +266,7 @@ test_claude_hooks_semantic_lifecycle() {
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
   expect_code 0 $? "claude spawn should succeed: $out"
   state="$HOME_DIR/state"
-  settings="$WT_DIR/.claude/settings.local.json"
+  settings="$state/$id.claude-settings.json"
   assert_present "$settings" "claude spawn did not write hook settings"
   jq -e . "$settings" >/dev/null || fail "claude hook settings are not valid JSON"
   for ev in UserPromptSubmit Stop StopFailure SessionEnd; do
@@ -301,13 +304,86 @@ test_claude_hooks_stale_incarnation_harmless() {
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
   expect_code 0 $? "claude spawn should succeed: $out"
   state="$HOME_DIR/state"
-  settings="$WT_DIR/.claude/settings.local.json"
+  settings="$state/$id.claude-settings.json"
   "$ROOT/bin/fm-busy-event.sh" arm "$state" "$id" >/dev/null
   run_claude_hook "$settings" UserPromptSubmit \
     || fail "a stale-gen hook must still exit 0 so Claude's lifecycle is never broken"
   out=$(classify claude "$id" "$state")
   [ "$out" = "busy fm-spawn" ] || fail "a stale-gen hook event must not change state, got '$out'"
   pass "claude hook events from a superseded incarnation are rejected without breaking the hook"
+}
+
+# Regression (observed 2026-08-20 on a real project): the claude branch used to
+# write <worktree>/.claude/settings.local.json WHOLESALE. On a project that tracks
+# that file, the spawn destroyed its committed contents for the life of the task
+# and left the tracked file permanently modified, which then blocked teardown and
+# produced an endless stale-wake loop. firstmate now writes no file into the
+# worktree at all: the hooks ride claude's own --settings flag from state/.
+test_claude_spawn_never_touches_the_projects_settings() {
+  local rec id=busy-cl-3 out state settings tracked before after launch_log
+  rec=$(make_spawn_case claude-project-settings claude "$id")
+  read_case_record "$rec"
+
+  # A project that TRACKS .claude/settings.local.json with real content, landed on
+  # the default branch so the spawn's base refresh brings it into the worktree.
+  mkdir -p "$PROJ_DIR/.claude"
+  cat > "$PROJ_DIR/.claude/settings.local.json" <<'JSON'
+{"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"1"},"permissions":{"allow":["Bash(npm test)"]},"enabledPlugins":{"context7":true}}
+JSON
+  git -C "$PROJ_DIR" add -f .claude/settings.local.json
+  git -C "$PROJ_DIR" -c user.email=t@t -c user.name=t commit -q -m "project settings"
+  git -C "$PROJ_DIR" push -q origin HEAD
+  before=$(cat "$PROJ_DIR/.claude/settings.local.json")
+  tracked="$WT_DIR/.claude/settings.local.json"
+
+  launch_log="$CASE_DIR/launch.log"
+  out=$(FM_FAKE_TMUX_LOG="$launch_log" run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
+  expect_code 0 $? "claude spawn should succeed: $out"
+  state="$HOME_DIR/state"
+
+  assert_present "$tracked" "the project's tracked settings must be present in the worktree"
+  after=$(cat "$tracked")
+  [ "$after" = "$before" ] \
+    || fail "the project's tracked settings must survive the spawn byte for byte, got: $after"
+  [ -z "$(git -C "$WT_DIR" status --porcelain)" ] \
+    || fail "the spawn must leave the worktree clean, got: $(git -C "$WT_DIR" status --porcelain)"
+  [ ! -e "$WT_DIR/.claude/settings.json" ] \
+    || fail "the spawn must not write any other claude settings file into the worktree"
+
+  # The hooks are armed all the same, from a firstmate-owned file outside the worktree.
+  settings="$state/$id.claude-settings.json"
+  assert_present "$settings" "claude spawn did not write its own hook settings into state/"
+  assert_grep "--settings '$(cd "$state" && pwd -P)/$id.claude-settings.json'" "$launch_log" \
+    "the launch command must load the hooks through claude's own --settings flag"
+  assert_no_grep "$WT_DIR/.claude" "$launch_log" \
+    "the launch command must not reference any claude settings inside the worktree"
+  rm -f "$state/$id.turn-ended"
+  run_claude_hook "$settings" Stop || fail "Stop hook command failed"
+  [ -f "$state/$id.turn-ended" ] || fail "the out-of-worktree hook no longer touches the marker"
+  out=$(classify claude "$id" "$state")
+  [ "$out" = "idle claude-hook" ] || fail "Stop must classify 'idle claude-hook', got '$out'"
+  pass "a claude spawn arms its hooks without writing anything into the project worktree"
+}
+
+# A raw launch command is the operator's verbatim string, so nothing can
+# guarantee it carries the --settings flag that loads claude's hooks. Arming
+# there seeds a busy record nothing can ever clear, which is strictly worse than
+# unknown because supervision never re-examines a busy task.
+test_claude_raw_launch_arms_no_unclearable_busy() {
+  local rec id=busy-cl-4 out state
+  rec=$(make_spawn_case claude-raw-launch claude "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR" 'claude --dangerously-skip-permissions')
+  expect_code 0 $? "raw-launch claude spawn should succeed: $out"
+  state="$HOME_DIR/state"
+  assert_absent "$state/$id.claude-settings.json" \
+    "a raw launch command cannot be guaranteed to load a settings file, so none must be written"
+  assert_absent "$state/$id.busy-gen" \
+    "a raw launch command must not arm a busy generation nothing can clear"
+  out=$(classify claude "$id" "$state")
+  [ "$out" = "unknown missing" ] \
+    || fail "raw-launch claude must classify unknown, never a permanently stuck busy, got '$out'"
+  pass "a raw-launch claude spawn declines the busy contract and classifies unknown"
 }
 
 test_codex_unverified_until_a_semantic_source_exists() {
@@ -349,6 +425,8 @@ test_kimi_and_grok_install_no_unverified_wiring
 test_opencode_plugin_semantic_lifecycle
 test_claude_hooks_semantic_lifecycle
 test_claude_hooks_stale_incarnation_harmless
+test_claude_spawn_never_touches_the_projects_settings
+test_claude_raw_launch_arms_no_unclearable_busy
 test_codex_unverified_until_a_semantic_source_exists
 
 echo "all fm-busy-adapter-wiring tests passed"

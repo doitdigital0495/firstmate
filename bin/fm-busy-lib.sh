@@ -174,6 +174,14 @@ fm_busy_current_gen() {  # <state-dir> <id>
   printf '%s' "$gen"
 }
 
+# The claude-hook lifecycle contract, as <settings-key>:<event-token> pairs.
+# bin/fm-spawn.sh EMITS exactly these four hook entries into
+# state/<id>.claude-settings.json, and bin/fm-teardown.sh proves ownership of a
+# pre-2026-08-20 worktree leftover against the same list, so the writer and the
+# ownership proof cannot drift apart.
+# shellcheck disable=SC2034 # read by bin/fm-spawn.sh and bin/fm-teardown.sh
+FM_BUSY_CLAUDE_HOOK_EVENTS='UserPromptSubmit:user-prompt-submit Stop:stop StopFailure:stop-failure SessionEnd:session-end'
+
 # fm_busy_sources_for_harness: the semantic sources trusted to classify a
 # task recorded with <harness>. One line, space-separated, possibly empty.
 # The firstmate-owned sources are appended for every converted adapter.
