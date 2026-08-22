@@ -1,7 +1,11 @@
-$ # real consumer: git check-ignore inside a clone of this repo tree
---- .gitignore @ bc57f60: projects/ state/ data/ scratchpad/ .no-mistakes/ .lavish/ .fm-secondmate-home .fm-secondmate-parent .DS_Store __pycache__/ *.pyc .env config/ 
-  config/startup-memory-budget       IGNORED
-  bin/backends/config/settings       IGNORED
---- .gitignore @ HEAD: projects/ state/ data/ scratchpad/ .no-mistakes/ .lavish/ .fm-secondmate-home .fm-secondmate-parent .DS_Store __pycache__/ *.pyc .env /config 
-  config/startup-memory-budget       IGNORED
-  bin/backends/config/settings       tracked
+=== .gitignore anchoring: /config vs config/ (real consumer: git check-ignore) ===
+IGNORED  config/startup-memory-budget   <- .gitignore:13:/config	config/startup-memory-budget
+IGNORED  config/nested/deep   <- .gitignore:13:/config	config/nested/deep
+TRACKED  docs/config/example.yml
+TRACKED  skills/foo/config/bar.json
+
+--- same probes against the base .gitignore (config/) ---
+IGNORED  config/startup-memory-budget   <- .gitignore:13:config/	config/startup-memory-budget
+IGNORED  config/nested/deep   <- .gitignore:13:config/	config/nested/deep
+IGNORED  docs/config/example.yml   <- .gitignore:13:config/	docs/config/example.yml
+IGNORED  skills/foo/config/bar.json   <- .gitignore:13:config/	skills/foo/config/bar.json

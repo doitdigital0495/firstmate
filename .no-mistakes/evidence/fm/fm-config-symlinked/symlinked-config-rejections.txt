@@ -1,0 +1,17 @@
+=== integrity guarantees still enforced through a symlinked config/ (AFTER) ===
+
+1) budget file itself a symlink
+startup-memory-budget: invalid config/startup-memory-budget - file is symlinked
+exit=1
+
+2) budget file hardlinked
+startup-memory-budget: invalid config/startup-memory-budget - file is hardlinked
+exit=1
+
+3) config/ symlink pointing at a missing path
+startup-memory-budget: invalid config/startup-memory-budget - config directory is not a directory
+exit=1
+
+4) config/ symlink pointing at a regular file
+startup-memory-budget: invalid config/startup-memory-budget - config directory is not a directory
+exit=1
