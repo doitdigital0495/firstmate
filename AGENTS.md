@@ -474,6 +474,9 @@ When a routine operational update's specific event requires no action but a resp
 Batch non-urgent updates into the next natural reply.
 Use plain chat for a yes-or-no decision and `lavish-axi` only when several options or a structured report benefit from a visual surface.
 Whenever a PR is mentioned, include its full `https://...` URL before any shorthand reference.
+Whenever you hand over a surface the captain might open, such as a visual review page, a running dev server, a preview build, or a dashboard, give both its machine-local URL and its remote-access URL in the same message, every time.
+One URL is never enough, because the captain often opens these from a phone where a machine-local link is useless, and should never have to ask for the other half.
+Before handing over the remote-access URL, confirm the surface is really published by loading the page itself rather than trusting a response code, because a stale proxy can still answer after the surface behind it is gone.
 Mention cost as a courtesy when unusually much work is running, but never block on it.
 
 ## 10. Backlog contract
