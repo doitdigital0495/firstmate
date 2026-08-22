@@ -93,7 +93,7 @@ run_bootstrap() {
 }
 
 test_primary_bootstrap_materializes_visible_default() {
-  local rec root home fakebin out second
+  local rec root home fakebin out second linked linked_config
   rec=$(new_bootstrap_world materialize)
   root=${rec%%|*}
   home=${rec#*|}
@@ -110,6 +110,19 @@ test_primary_bootstrap_materializes_visible_default() {
   run_bootstrap "$root" "$home" "$fakebin" >/dev/null
   [ "$(<"$home/config/startup-memory-budget")" = 321 ] \
     || fail "bootstrap replaced a valid captain-selected budget"
+
+  linked="$TMP_ROOT/materialize/linked-home"
+  linked_config="$TMP_ROOT/materialize/linked-config"
+  mkdir -p "$linked/data" "$linked/state" "$linked_config"
+  ln -s "$linked_config" "$linked/config"
+  out=$(run_bootstrap "$root" "$linked" "$fakebin")
+  case "$out" in
+    *STARTUP_MEMORY_BUDGET:*) fail "bootstrap rejected a symlinked config directory: $out" ;;
+  esac
+  [ "$(<"$linked_config/startup-memory-budget")" = 7500 ] \
+    || fail "bootstrap did not materialize the default through a symlinked config directory"
+  [ "$(FM_HOME="$linked" "$BUDGET" read)" = 7500 ] \
+    || fail "read command did not expose the default published through a symlinked config directory"
 
   second="$TMP_ROOT/materialize/secondmate"
   mkdir -p "$second/config" "$second/data" "$second/state"
