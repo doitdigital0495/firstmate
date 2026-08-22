@@ -1,0 +1,7 @@
+$ # real consumer: git check-ignore inside a clone of this repo tree
+--- .gitignore @ bc57f60: projects/ state/ data/ scratchpad/ .no-mistakes/ .lavish/ .fm-secondmate-home .fm-secondmate-parent .DS_Store __pycache__/ *.pyc .env config/ 
+  config/startup-memory-budget       IGNORED
+  bin/backends/config/settings       IGNORED
+--- .gitignore @ HEAD: projects/ state/ data/ scratchpad/ .no-mistakes/ .lavish/ .fm-secondmate-home .fm-secondmate-parent .DS_Store __pycache__/ *.pyc .env /config 
+  config/startup-memory-budget       IGNORED
+  bin/backends/config/settings       tracked

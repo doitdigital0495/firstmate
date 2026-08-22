@@ -1,0 +1,36 @@
+################ BEFORE fix (base bc57f60) ################
+$ ls -l $FM_HOME/config
+lrwxrwxrwx 1 daan daan   55 Aug 22 17:43 config -> /tmp/fm-evidence.xxrZCx/machine-config/firstmate-config
+
+=== session start (bin/fm-bootstrap.sh) ===
+STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - config directory is symlinked
+(bootstrap output above; empty means a clean, complete session start)
+
+$ ls -l $FM_HOME/config/startup-memory-budget   # materialized through the symlink
+ls: cannot access '<tmp>/machine-config/firstmate-config/startup-memory-budget': No such file or directory
+$ cat $FM_HOME/config/startup-memory-budget
+cat: /tmp/fm-evidence.xxrZCx/machine-config/firstmate-config/startup-memory-budget: No such file or directory
+
+
+################ AFTER fix (c362928) ################
+$ ls -l $FM_HOME/config
+lrwxrwxrwx 1 daan daan   55 Aug 22 17:43 config -> /tmp/fm-evidence.Fj37VE/machine-config/firstmate-config
+
+=== session start (bin/fm-bootstrap.sh) ===
+(bootstrap output above; empty means a clean, complete session start)
+
+$ ls -l $FM_HOME/config/startup-memory-budget   # materialized through the symlink
+-rw------- 1 daan daan 5 Aug 22 17:43 <tmp>/machine-config/firstmate-config/startup-memory-budget
+$ cat $FM_HOME/config/startup-memory-budget
+7500
+
+=== integrity guarantees still enforced through the symlink ===
+$ # budget file itself a symlink:
+startup-memory-budget: invalid config/startup-memory-budget - file is symlinked
+exit=1
+$ # config/ symlink pointing at a missing path:
+startup-memory-budget: invalid config/startup-memory-budget - config directory is not a directory
+exit=1
+$ # config/ symlink pointing at a regular file:
+startup-memory-budget: invalid config/startup-memory-budget - config directory is not a directory
+exit=1

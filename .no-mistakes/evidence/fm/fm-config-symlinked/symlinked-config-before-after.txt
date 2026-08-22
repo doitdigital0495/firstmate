@@ -1,0 +1,27 @@
+$ ls -l ~/.firstmate/config          # config/ linked into a machine-configuration repo
+lrwxrwxrwx 1 daan daan   44 Aug 22 17:42 config -> /tmp/fm-demo/machine-config/firstmate-config
+$ cat machine-config/firstmate-config/startup-memory-budget
+9000
+
+=== BEFORE (bc57f60) ===========================================
+$ bin/fm-startup-memory-budget.sh read
+startup-memory-budget: invalid config/startup-memory-budget - config directory is symlinked
+exit=1
+$ bin/fm-startup-memory-budget.sh report
+startup-memory-budget: invalid config/startup-memory-budget - config directory is symlinked
+exit=2
+
+=== AFTER (c362928) ============================================
+$ bin/fm-startup-memory-budget.sh read
+9000
+exit=0
+$ bin/fm-startup-memory-budget.sh report
+estimator=ceil(UTF-8 bytes / 3) conservative-local-estimate
+role=primary
+effective_budget_tokens=9000
+file=data/captain.md bytes=14 estimated_tokens=5 status=present
+file=data/captain-shared.md bytes=0 estimated_tokens=0 status=absent
+file=data/learnings.md bytes=0 estimated_tokens=0 status=absent
+total_estimated_tokens=5
+budget_status=within-budget
+exit=0
