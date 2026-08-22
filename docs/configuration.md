@@ -163,7 +163,7 @@ To select another allowance, replace the primary home's file with one valid posi
 A secondmate does not create an independent default and instead receives the primary value through the inherited-local-material contract in [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md).
 The file must be one positive base-10 integer followed by exactly one newline in a regular, single-linked file beneath a `config/` directory that resolves to a real directory.
 A `config/` that is itself a symlink into a machine-configuration repo is a supported layout and is resolved through, exactly as every other setting on this page already is.
-Malformed, multi-line, symlinked, hardlinked, special, or otherwise unsafe values are rejected rather than treated as a default.
+Malformed or multi-line values, a symlinked, hardlinked, or special budget file, and anything else unsafe are rejected rather than treated as a default.
 Use `bin/fm-startup-memory-budget.sh read` to validate and print the effective value, or `bin/fm-startup-memory-budget.sh report` to account for the three files.
 The stable local estimate is `ceil(UTF-8 bytes / 3)` per file, a conservative portable approximation rather than a provider-exact tokenizer.
 An inherited `data/captain-shared.md` counts in a secondmate's total but remains primary-owned and read-only there.
