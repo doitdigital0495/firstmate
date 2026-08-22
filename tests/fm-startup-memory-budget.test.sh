@@ -158,10 +158,23 @@ test_safe_parser_rejects_ambiguous_and_unsafe_values() {
 
   rm -f "$home/config/startup-memory-budget"
   rm -rf "$home/config"
-  ln -s "$TMP_ROOT/parser-config-target" "$home/config"
   mkdir -p "$TMP_ROOT/parser-config-target"
   printf '88\n' > "$TMP_ROOT/parser-config-target/startup-memory-budget"
-  expect_rejected_read "$home" 'config directory is symlinked'
+  ln -s "$TMP_ROOT/parser-config-target" "$home/config"
+  [ "$(FM_HOME="$home" "$BUDGET" read)" = 88 ] || fail "a symlinked config directory was not resolved through"
+
+  rm -f "$home/config/startup-memory-budget"
+  ln -s "$outside" "$TMP_ROOT/parser-config-target/startup-memory-budget"
+  expect_rejected_read "$home" 'file is symlinked'
+
+  rm -f "$home/config"
+  ln -s "$TMP_ROOT/parser-config-missing" "$home/config"
+  expect_rejected_read "$home" 'config directory is not a directory'
+
+  rm -f "$home/config"
+  printf '99\n' > "$TMP_ROOT/parser-config-file"
+  ln -s "$TMP_ROOT/parser-config-file" "$home/config"
+  expect_rejected_read "$home" 'config directory is not a directory'
   pass "budget parser accepts one exact positive value and rejects malformed or unsafe inputs"
 }
 
