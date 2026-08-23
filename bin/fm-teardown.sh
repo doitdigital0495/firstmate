@@ -874,13 +874,40 @@ pr_is_merged() {
   unpushed_patches_are_in_pr_head "$head"
 }
 
+# 3-way merge of the default branch and HEAD into a throwaway index, echoing the
+# merged tree. This is the fallback for a git without `merge-tree --write-tree`,
+# which arrived only in git 2.38: Ubuntu 22.04 and its WSL image still ship git
+# 2.34, where the content check below silently answered "not landed" for every
+# branch and teardown then refused genuinely landed work.
+#
+# `read-tree -i -m` touches neither the worktree nor the real index. It resolves
+# only trivial merges and leaves unmerged stages otherwise, so `write-tree` then
+# fails and the caller treats the comparison as inconclusive - the same refusing
+# direction a merge conflict already takes.
+trivially_merged_tree() {  # <default-ref>
+  local ref=$1 base index tree
+  base=$(git -C "$WT" merge-base "$ref" HEAD 2>/dev/null) || return 1
+  [ -n "$base" ] || return 1
+  # A directory, so the index path itself does not exist yet: git rejects a
+  # zero-length index file ("index file smaller than expected"), which is
+  # exactly what an mktemp-created file would be.
+  index=$(mktemp -d "${TMPDIR:-/tmp}/fm-teardown-merge-index.XXXXXX") || return 1
+  tree=
+  if GIT_INDEX_FILE="$index/index" git -C "$WT" read-tree -i -m "$base" "$ref" HEAD 2>/dev/null; then
+    tree=$(GIT_INDEX_FILE="$index/index" git -C "$WT" write-tree 2>/dev/null) || tree=
+  fi
+  rm -rf -- "$index"
+  [ -n "$tree" ] || return 1
+  printf '%s\n' "$tree"
+}
+
 # Is the branch's content already present in the up-to-date default branch? Fetches
 # first, then 3-way merges the default branch with HEAD: when HEAD introduces nothing
 # the default branch does not already contain (e.g. its change landed via squash) the
 # merged tree equals the default branch's tree. This isolates branch-only changes, so
 # unrelated commits the default branch gained past the merge-base do not count as
-# "added". Returns non-zero when inconclusive (no default ref, or a merge conflict),
-# so the caller refuses rather than guesses.
+# "added". Returns non-zero when inconclusive (no default ref, no merge base, or a
+# merge neither path can resolve), so the caller refuses rather than guesses.
 content_in_default() {
   local name ref default_tree merged_tree
   name=$(default_branch) || return 1
@@ -894,8 +921,16 @@ content_in_default() {
   fi
   default_tree=$(git -C "$WT" rev-parse --quiet --verify "$ref^{tree}" 2>/dev/null) || return 1
   [ -n "$default_tree" ] || return 1
-  merged_tree=$(git -C "$WT" merge-tree --write-tree "$ref" HEAD 2>/dev/null) || return 1
-  merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
+  # Try the full merge first so a git that has it keeps resolving content-level
+  # merges, then fall back for the older gits that do not, rather than dropping
+  # every host to the more conservative trivial merge.
+  if ! merged_tree=$(git -C "$WT" merge-tree --write-tree "$ref" HEAD 2>/dev/null); then
+    merged_tree=
+  fi
+  merged_tree=${merged_tree%%$'\n'*}
+  if [ -z "$merged_tree" ]; then
+    merged_tree=$(trivially_merged_tree "$ref") || return 1
+  fi
   [ "$merged_tree" = "$default_tree" ]
 }
 
