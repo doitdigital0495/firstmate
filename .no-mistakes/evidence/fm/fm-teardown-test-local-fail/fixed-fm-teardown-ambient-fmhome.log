@@ -1,0 +1,447 @@
+FM_TEST_BEGIN 2026-08-23T22:05:36Z tests/fm-teardown.test.sh family=pr-forge expected_gate_skip=none
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 110ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 116ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+ok - local-only worktree with HEAD on a fork remote is torn down (fix holds)
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 118ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+ok - teardown prompts tasks-axi backlog refresh when compatible
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 108ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+ok - teardown honors config/backlog-backend=manual even when tasks-axi is compatible
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 126ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 110ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+ok - local-only worktree with truly unpushed work is refused (safety preserved)
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 121ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 118ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+ok - local-only worktree with work merged into local main is torn down (no regression)
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 131ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 140ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+ok - no-mistakes worktree with HEAD on origin is torn down (no regression)
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 116ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 117ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+ok - no-mistakes worktree with genuinely unlanded work is refused (safety preserved)
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 120ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 123ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+ok - local-only worktree with unpushed work is torn down under --force (escape hatch)
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 118ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+ok - teardown completes when an exact busy-state sidecar is already absent
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 114ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+ok - herdr teardown removes pane-owned escalation dedupe state
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 116ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+ok - herdr flat teardown refuses before returning the isolated copy under lock contention and the retry completes cleanly
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 108ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+ok - herdr flat teardown never erases records when pane presence is unparseable
+[90m12:05AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:05AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 118ms[0m
+[90m12:05AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 115ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 116ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 115ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - herdr flat teardown preflight refuses before every destructive change
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 116ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - forced secondmate teardown preflights every Herdr child before cleanup mutation
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 120ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - forced secondmate teardown holds every descendant lifecycle and metadata lock
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 114ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - forced secondmate teardown retains Herdr child identity until exact pane disappearance
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 114ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - forced teardown retains a nested secondmate home and its grandchild's Herdr identity when the grandchild close is unconfirmed
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 115ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - herdr projection teardown retires its journal only after confirming the exact recorded pane is gone
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 118ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - herdr projection teardown retains every record when post-close presence is unknown
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 106ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - herdr projection teardown surfaces failed focus restoration without turning confirmed cleanup into a hard failure
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 105ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 104ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - squash-merged + deleted-branch worktree (PR merged) is torn down (the fix)
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 103ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 112ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - squash-merged PR accepts a local HEAD that is an ancestor of the final PR head
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 109ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 107ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 114ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - teardown discovers a merged PR by branch name and tears down when no pr= was ever recorded
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 109ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~7 bytes (7 bytes) in 107ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 107ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 115ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - squash-merged PR accepts replayed unpushed local patches contained in the PR head
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 108ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 112ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~11 bytes (11 bytes) in 118ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - merged PR does not allow teardown after a later local commit
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 112ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 114ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~11 bytes (11 bytes) in 147ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - fm-pr-check does not refresh PR head after HEAD moves
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 118ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 116ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - fm-pr-check records the remote PR head when the local worktree lags
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 118ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 117ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 115ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - worktree whose content already landed in the default branch is torn down (content fallback)
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 117ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 118ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 108ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - content fallback recognizes landed work on a git without merge-tree --write-tree
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 114ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 106ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - the merge-tree-free content check still refuses genuinely unlanded work
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 110ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 113ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 117ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - content fallback refreshes origin default before comparing trees
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 105ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 116ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 116ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - dirty worktree is refused even when its committed work has landed (dirty always wins)
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 109ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~45 bytes (45 bytes) in 105ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - teardown leaves a project's tracked .claude/settings.local.json exactly as it found it
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 116ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 108ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - an untracked file under .claude/ refuses teardown instead of being silently discarded
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 107ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 119ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - teardown removes only the pre-fix hook file firstmate itself wrote under .claude/
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 108ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 115ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - teardown preserves a hand-written settings file that merely wires an fm-busy-event.sh hook
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 120ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~6 bytes (6 bytes) in 115ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - gh lookup error with content not in default refuses (fail-safe)
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 117ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 117ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - provably-stale worktree index.lock (old, no live holder) is cleared and teardown succeeds
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 121ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 118ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - live-held worktree index.lock is never removed and teardown refuses
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 122ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 154ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - lsof errors leave worktree index.lock in place and refuse teardown
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 118ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~7 bytes (7 bytes) in 120ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - stale lock cleanup rechecks and refuses dirty worktree before return
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 122ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 122ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - normal repo index.lock is resolved from the worktree and cleared when stale
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 119ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 122ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - lock mtime read failures leave worktree index.lock in place and refuse teardown
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 110ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 112ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - transient index.lock cleared after first failed return is retried successfully without force-remove
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 115ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 107ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - persistent index.lock exhausts retries and refuses without force-removing the lock
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 114ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 121ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - empty retry wait overrides use the default without aborting teardown
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 118ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 123ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - fractional legacy retry wait remains supported without arithmetic
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 128ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 117ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a task's own parked no-mistakes run is aborted, not orphaned, before the worker is removed
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 109ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 114ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - teardown refuses before reap or removal when a task-owned run remains parked
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 115ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 109ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a different run cannot confirm the targeted abort
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 106ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 118ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - empty post-abort status is not accepted as confirmation
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 123ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:06AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:06AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 114ms[0m
+[90m12:06AM[0m [32mINF[0m [1mno leaks found[0m
+ok - the CLI's exact run-not-found signal confirms completion
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 117ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 117ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a parked run on another branch is never aborted by this task's teardown (ownership is precise)
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 123ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 129ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a task-owned autonomous running step is left alone rather than aborted
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 113ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 119ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a leaked descendant process rooted under the task's worktree is reaped by teardown, not left surviving
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 117ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 114ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a leaked descendant process rooted under the task's per-task tasktmp is reaped by teardown too
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 115ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 117ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+ok - missing lsof falls back to reaping the tmux pane process group
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 118ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 124ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+ok - an erroring lsof scan refuses teardown and preserves the task
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 113ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 115ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a reused pid with a different start time is never force-killed
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 116ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 129ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+ok - an exec change preserves birth identity and the process is reaped
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 121ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 163ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a process spawned during grace is reaped on a later pass
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 129ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 116ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+ok - persistent leaked processes refuse teardown after bounded retries
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 122ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 117ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a process exiting during identity lookup does not block teardown
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 116ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:07AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:07AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 114ms[0m
+[90m12:07AM[0m [32mINF[0m [1mno leaks found[0m
+ok - the run abort and the leaked-process reap both complete before the destructive worktree return
+FM_TEST_END 2026-08-23T22:07:38Z tests/fm-teardown.test.sh exit=0 duration_ms=122130 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=122158
+FM_TEST_SUMMARY_FAMILY family=pr-forge count=1 duration_ms=122130 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-teardown.test.sh duration_ms=122130

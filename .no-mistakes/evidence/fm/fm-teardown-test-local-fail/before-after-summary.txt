@@ -1,0 +1,21 @@
+host: git version 2.34.1 (Ubuntu 22.04 / WSL)
+ambient FM_HOME at test time: /home/daan/.firstmate
+
+BASE ba5f4c4 (script+tests), ambient FM_HOME:
+not ok - herdr-child-preflight: refusal did not explain its non-mutating boundary
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=28085
+  cases passed before abort: 13
+
+BASE bin/fm-teardown.sh + NEW tests (isolates the git-2.34 product bug):
+not ok - content-landed: teardown should succeed when content is already in the default branch: expected exit 0, got 1
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=56550
+
+TARGET 59b863c, ambient FM_HOME present:
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=122158
+ok - content fallback recognizes landed work on a git without merge-tree --write-tree
+ok - the merge-tree-free content check still refuses genuinely unlanded work
+  cases passed: 64
+
+TARGET 59b863c, FM_HOME unset (CI-like):
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=123163
+  cases passed: 64

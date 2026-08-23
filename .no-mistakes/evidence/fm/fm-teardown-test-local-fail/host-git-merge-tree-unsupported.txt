@@ -1,0 +1,4 @@
+# host git: git version 2.34.1
+$ git merge-tree --write-tree master HEAD
+fatal: unknown rev --write-tree
+exit=128
