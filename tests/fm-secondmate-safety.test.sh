@@ -3030,3 +3030,158 @@ test_secondmate_idle_pane_is_not_stale
 test_secondmate_charter_brief_is_idle_by_default
 test_backlog_handoff_aborts_safely
 test_backlog_handoff_refuses_done_items_and_non_secondmate_homes
+
+# --- legacy child endpoint records inside a secondmate home -----------------
+#
+# A child task record written before the endpoint_task_id binding existed
+# (bin/fm-spawn.sh) carries no OFFLINE proof that its opaque zellij/cmux/Herdr
+# endpoint is that child's. Forced secondmate teardown used to refuse such a
+# record outright, stranding the whole home. It now recovers exactly as the
+# top-level teardown path does - through the live endpoint's own fm-<id> label -
+# and only while it already holds that child record's own metadata lock.
+
+# make_legacy_child_case <name> [child-key=value...]: a parent home holding one
+# secondmate whose own home holds one child ship record, plus a fake tmux, a
+# fake zellij whose `action list-tabs --json` answers from <dir>/tabs.json and
+# whose every call is logged to <dir>/zellij.calls, and a real child worktree.
+# Echoes the case directory. The child record is legacy (no endpoint_task_id)
+# unless the caller passes one.
+make_legacy_child_case() {  # <name> [extra-meta-line...]
+  local name=$1 dir home subhome childproj childwt fakebin
+  shift
+  dir="$TMP_ROOT/$name"
+  home="$dir/home"
+  subhome="$dir/subhome"
+  childproj="$subhome/projects/alpha"
+  childwt="$dir/child-worktree"
+  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  fm_git_worktree "$childproj" "$childwt" "legacy-child-$name"
+  : > "$childwt/sentinel"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' \
+    > "$home/data/secondmates.md"
+  fm_write_meta "$subhome/state/child.meta" \
+    "window=lab:7" "worktree=$childwt" "project=$childproj" \
+    "harness=echo" "kind=ship" "mode=no-mistakes" "yolo=off" \
+    "backend=zellij" "zellij_session=lab" "zellij_tab_id=3" "zellij_pane_id=7" "$@"
+  fakebin=$(make_fake_tmux "$dir/fake")
+  cat > "$fakebin/zellij" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf 'zellij %s\n' "$*" >> "${FM_FAKE_ZELLIJ_CALLS:?}"
+for arg in "$@"; do
+  case "$arg" in
+    list-tabs) cat "${FM_FAKE_ZELLIJ_TABS:?}"; exit 0 ;;
+    list-sessions) printf 'lab\n'; exit 0 ;;
+  esac
+done
+exit 0
+SH
+  chmod +x "$fakebin/zellij"
+  : > "$dir/zellij.calls"
+  # The proven shape: exactly one live tab, id 3, carrying the child's own label.
+  printf '[{"tab_id":3,"name":"fm-child"}]\n' > "$dir/tabs.json"
+  printf '%s\n' "$dir"
+}
+
+run_legacy_child_teardown() {  # <dir>
+  local dir=$1
+  PATH="$dir/fake/fakebin:$PATH" FM_HOME="$dir/home" \
+    FM_FAKE_TMUX_LOG="$dir/fake/tmux.log" FM_FAKE_TMUX_CAPTURE="$dir/fake/pane.txt" \
+    FM_FAKE_ZELLIJ_CALLS="$dir/zellij.calls" FM_FAKE_ZELLIJ_TABS="$dir/tabs.json" \
+    "$ROOT/bin/fm-teardown.sh" domain --force >"$dir/out" 2>"$dir/err"
+}
+
+test_secondmate_force_teardown_recovers_provable_legacy_child() {
+  local dir
+  dir=$(make_legacy_child_case legacy-child-provable)
+  run_legacy_child_teardown "$dir" \
+    || fail "forced teardown refused a legacy child whose live endpoint proves its own label: $(cat "$dir/err")"
+  grep -F 'action list-tabs' "$dir/zellij.calls" >/dev/null \
+    || fail "recovery did not read the live endpoint at all: $(cat "$dir/zellij.calls")"
+  grep -F "re-derived its binding from the live endpoint's own fm-child label" "$dir/err" >/dev/null \
+    || fail "recovery did not report the re-derived binding: $(cat "$dir/err")"
+  assert_absent "$dir/subhome" "recovered forced teardown left the secondmate home behind"
+  assert_absent "$dir/child-worktree" "recovered forced teardown left the discarded child worktree behind"
+  pass "forced secondmate teardown recovers a legacy child record from its live endpoint label"
+}
+
+test_secondmate_force_teardown_refuses_unprovable_legacy_child() {
+  local dir rc
+  dir=$(make_legacy_child_case legacy-child-unprovable)
+  # The recorded tab now carries someone else's label, so nothing binds this
+  # record to this child and the endpoint stays unidentified.
+  printf '[{"tab_id":3,"name":"fm-other"}]\n' > "$dir/tabs.json"
+  set +e
+  run_legacy_child_teardown "$dir"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "forced teardown accepted a legacy child its live endpoint cannot identify"
+  grep -F 'could not prove from the live endpoint' "$dir/err" >/dev/null \
+    || fail "the refusal should name the failed proof: $(cat "$dir/err")"
+  assert_present "$dir/subhome/state/child.meta" "an unprovable legacy child lost its durable record"
+  assert_present "$dir/child-worktree/sentinel" "an unprovable legacy child lost its unlanded work"
+  assert_present "$dir/home/state/domain.meta" "an unprovable legacy child cost the secondmate its own record"
+  grep -q '^endpoint_task_id=' "$dir/subhome/state/child.meta" \
+    && fail "an unprovable endpoint must not be bound"
+  pass "forced secondmate teardown refuses a legacy child whose endpoint cannot be proven, changing nothing"
+}
+
+test_secondmate_force_teardown_keeps_current_format_child_offline() {
+  local dir
+  dir=$(make_legacy_child_case legacy-child-current endpoint_task_id=child)
+  run_legacy_child_teardown "$dir" \
+    || fail "forced teardown refused a current-format child record: $(cat "$dir/err")"
+  grep -F 'lacks an exact task binding' "$dir/err" >/dev/null \
+    && fail "a current-format child was treated as a legacy record: $(cat "$dir/err")"
+  grep -F 're-derived its binding' "$dir/err" >/dev/null \
+    && fail "a current-format child must be identified offline, with no label re-derivation: $(cat "$dir/err")"
+  assert_absent "$dir/subhome" "forced teardown left the secondmate home behind"
+  pass "forced secondmate teardown decides a current-format child offline, with no live endpoint read"
+}
+
+test_secondmate_force_teardown_refuses_legacy_child_under_foreign_meta_lock() {
+  local dir lock holder i=0 rc
+  dir=$(make_legacy_child_case legacy-child-meta-lock)
+  lock="$dir/subhome/state/.meta-child.lock"
+  (
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$lock" || exit 1
+    sleep 30
+  ) &
+  holder=$!
+  while [ ! -e "$lock" ] && [ "$i" -lt 100 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -e "$lock" ] || {
+    kill "$holder" 2>/dev/null || true
+    wait "$holder" 2>/dev/null || true
+    fail "could not stage a held child metadata lock"
+  }
+  set +e
+  run_legacy_child_teardown "$dir"
+  rc=$?
+  set -e
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$rc" -ne 0 ] || fail "forced teardown recovered a legacy child without owning its metadata lock"
+  grep -F 'metadata update in flight' "$dir/err" >/dev/null \
+    || fail "the refusal should name the contended child metadata lock: $(cat "$dir/err")"
+  [ ! -s "$dir/zellij.calls" ] \
+    || fail "the contended teardown reached the runtime at all: $(cat "$dir/zellij.calls")"
+  grep -F 're-derived its binding' "$dir/err" >/dev/null \
+    && fail "recovery re-derived a binding without owning the child's metadata lock: $(cat "$dir/err")"
+  grep -q '^endpoint_task_id=' "$dir/subhome/state/child.meta" \
+    && fail "a record whose lock is held elsewhere must not be bound"
+  assert_present "$dir/subhome/state/child.meta" "contended forced teardown removed the child record"
+  assert_present "$dir/child-worktree/sentinel" "contended forced teardown discarded unlanded child work"
+  pass "forced secondmate teardown never recovers a legacy child whose metadata lock is held elsewhere"
+}
+
+test_secondmate_force_teardown_recovers_provable_legacy_child
+test_secondmate_force_teardown_refuses_unprovable_legacy_child
+test_secondmate_force_teardown_keeps_current_format_child_offline
+test_secondmate_force_teardown_refuses_legacy_child_under_foreign_meta_lock
