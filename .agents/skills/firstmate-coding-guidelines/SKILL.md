@@ -78,6 +78,10 @@ Firstmate adds this skill's load instruction to firstmate-repo briefs by hand in
 Before changing shared tracked behavior, review every affected supported primary harness and runtime backend rather than checking only the adapters active in the current fleet.
 Mark an axis not applicable only after inspecting its integration surface, and update the corresponding verification evidence when behavior changes.
 
+The version of an external tool is one of those axes.
+Scripts run on the oldest release a supported host ships, and Ubuntu 22.04 with its WSL image still ships git 2.34, so confirm a git subcommand exists there before depending on it - `merge-tree --write-tree` (git 2.38) silently turned firstmate's landed-work check into a permanent "not landed" on every such host.
+When a newer subcommand is genuinely better where it exists, keep the older path as a fallback and cover it with a test that shims the newer one away, so CI proves the fallback on a modern git too - `tests/fm-teardown.test.sh`'s `content-landed-old-git` and `content-unlanded-old-git` cases are the worked example.
+
 For critical safety, routing, startup, and supervision infrastructure, prefer deterministic and idempotent enforcement over relying on agent memory alone.
 Keep instructions as the authority and discovery layer, but make repeated execution converge safely and make invalid or unsafe states fail closed wherever the runtime can enforce them.
 
