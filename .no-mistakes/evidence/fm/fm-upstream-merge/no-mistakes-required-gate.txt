@@ -1,0 +1,22 @@
+### Case 1: real PR body produced by the installed no-mistakes (no-mistakes version v1.48.0 (2ac3769) 2026-08-08T06:39:01Z)
+Found no-mistakes signature in PR #6 body.
+Pipeline step attestation is valid: review, test, and document are completed.
+exit=0
+
+### Case 2: legacy body - signature line only, no structured attestation
+Found no-mistakes signature in PR #99 body.
+::error::This repository requires no-mistakes >= 1.46.0; structured pipeline step attestation is missing or unparseable.
+
+The no-mistakes signature was found, but this check also requires one
+HTML comment in the PR body:
+
+    <!-- no-mistakes-pipeline-attestation:v1 {"head_sha":"...","steps":[...]} -->
+
+exit=141
+
+### Case 3: attestation present but a required step skipped
+Found no-mistakes signature in PR #98 body.
+::error::Required no-mistakes pipeline steps are not completed: test=skipped, document=missing.
+
+This repository requires review, test, and document to each have status
+exit=141

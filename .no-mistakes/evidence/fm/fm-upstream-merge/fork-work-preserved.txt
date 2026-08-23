@@ -1,0 +1,15 @@
+$ git log --oneline HEAD --not 197afbb   # the five fork-only commits, still reachable after the merge
+842fddc chore: merge upstream firstmate main into the fork
+66bda59 fix(bin): resolve the startup-memory budget through a symlinked config directory (#6)
+bc57f60 docs(agents): require both local and remote URLs for captain-facing surfaces (#4)
+b075b8a docs(contributing): make your own fork the PR base, and unbreak the gotmp teardown fixture (#3)
+610ccbc fix(bin): stop claude spawn from overwriting a project's .claude/settings.local.json (#2)
+5543cd0 fix(bin): recover legacy endpoint bindings instead of refusing lifecycle actions (#1)
+
+# fork-authored AGENTS.md both-URLs rule (bc57f60) still verbatim in the merged AGENTS.md:
+PRESENT: Whenever you hand over a surface the captain might open, such as a visual review page, a running dev server, a preview build, or a dashboard, give both its machine-local URL and its remote-access URL in the same message, every time.
+PRESENT: One URL is never enough, because the captain often opens these from a phone where a machine-local link is useless, and should never have to ask for the other half.
+PRESENT: Before handing over the remote-access URL, confirm the surface is really published by loading the page itself rather than trusting a response code, because a stale proxy can still answer after the surface behind it is gone.
+
+# fork-authored CONTRIBUTING.md fork-base section still present:
+40:If you are running firstmate as your own fleet rather than contributing a change back, make your own fork the PR base instead of the parent:

@@ -1,0 +1,7 @@
+# Two failures in the targeted set, re-run against the PRE-MERGE fork head (66bda59) extracted to /tmp:
+$ (pre-merge tree) bin/fm-test-run.sh tests/fm-teardown.test.sh tests/fm-startup-memory-budget.test.sh
+not ok - herdr-child-preflight: refusal did not explain its non-mutating boundary
+not ok - config push did not report the new budget as inherited (missing: 'startup-memory-budget: pushed')
+FM_TEST_SUMMARY total=2 failed=2 skipped_gate=0
+
+# Identical failures post-merge -> pre-existing on this machine (no provisionable Herdr lab, no seeded secondmate home); the merge introduces neither.
