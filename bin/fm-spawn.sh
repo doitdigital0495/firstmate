@@ -1676,17 +1676,30 @@ delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task
   esac
 }
 
-# A refusal of the push or of opening the PR, on one sentence clause of a
-# lowercased line: a refusing token that opens a line or a clause, then the push
-# itself, an opening verb on a PR, or a bare PR right after the refusal. Naming
-# the PR as the object of some other verb ("never merge a PR", "do not approve
-# the PR") is not a refusal to open one, and a refusal that only appears mid
-# sentence is prose about pushing rather than an instruction not to.
-DELIVERY_REFUSE_TOKEN='(^[-*>[:space:]0-9.)]*|[.;:][[:space:]]+)(do[[:space:]]+not|don.t|dont|cannot|never|no)[^a-z]'
-DELIVERY_REFUSE_PUSH='[^.;]{0,25}push([^a-z]|$)'
-DELIVERY_REFUSE_OPEN='[^.;]{0,12}(open|raise|create|file|submit)[^.;]{0,8}(pr|pull[[:space:]]+request)([^a-z]|$)'
-DELIVERY_REFUSE_BARE='[[:space:]]*(a[[:space:]]+|an[[:space:]]+|the[[:space:]]+|any[[:space:]]+)?(pr|pull[[:space:]]+request)([^a-z]|$)'
+# A refusal of the delivery action itself, on one sentence clause of a lowercased
+# line: a refusing token that opens a line or a clause, then the push, an opening
+# verb on a PR, or a bare PR right after the refusal.
+#
+# Both objects must end the clause or continue into a word that keeps the
+# delivery action itself as the object, because the same words routinely appear
+# with a narrower object that delivery is not: "do not push secrets", "no push
+# notifications", and "do not create a PR template file" all scope the ban to
+# something other than shipping this branch. Naming the PR as the object of some
+# other verb ("never merge a PR", "do not approve the PR") is not a refusal to
+# open one either, and a refusal written mid sentence is prose about pushing
+# rather than an instruction not to push.
+DELIVERY_REFUSE_TOKEN='(^[-*>[:space:]0-9.)]*|[.;:][[:space:]]+)(you[[:space:]]+|we[[:space:]]+)?(do[[:space:]]+not|don.t|dont|cannot|never|no)[^a-z]'
+DELIVERY_PUSH_OBJECT='([[:space:]]*[.;,]|[[:space:]]+(and|or|until|unless|before|without|to|here)([^a-z]|$)|[[:space:]]+(this|your|the|that|any|it)([^a-z]|$)|$)'
+DELIVERY_PR_OBJECT='([[:space:]]*[.;,]|[[:space:]]+(for|until|unless|before|without|at|on|yourself|here|now)([^a-z]|$)|$)'
+DELIVERY_REFUSE_PUSH="[^.;]{0,25}push$DELIVERY_PUSH_OBJECT"
+DELIVERY_REFUSE_OPEN="[^.;]{0,12}(open|raise|create|file|submit)[^.;]{0,8}(pr|pull[[:space:]]+request)$DELIVERY_PR_OBJECT"
+DELIVERY_REFUSE_BARE="[[:space:]]*(a[[:space:]]+|an[[:space:]]+|the[[:space:]]+|any[[:space:]]+)?(pr|pull[[:space:]]+request)$DELIVERY_PR_OBJECT"
 DELIVERY_NO_PUSH_RE="$DELIVERY_REFUSE_TOKEN($DELIVERY_REFUSE_PUSH|$DELIVERY_REFUSE_OPEN|$DELIVERY_REFUSE_BARE)"
+
+# A line that also permits the delivery later ("do not push until the tests are
+# green, then open the PR as usual") sequences the mandate rather than refusing
+# it, so it is dropped before matching.
+DELIVERY_PERMIT_RE='then[[:space:]]+(open|raise|create|submit|push)'
 
 # Print the first "# Task" line that forbids the push or the PR, or return 1.
 # Only the task text firstmate fills in is read. The generated Rules and
@@ -1700,7 +1713,10 @@ brief_task_forbids_delivery() {  # <brief-file>
   task=$(awk '/^# Task[ \t]*$/ { t = 1; next } /^# / { t = 0 } t' "$1")
   lc=$(printf '%s\n' "$task" | tr '[:upper:]' '[:lower:]' \
     | sed -E 's/force[- ]?push(es|ing|ed)?/x/g; s/push(es|ing)?[[:space:]]+(to|onto)[[:space:]]+(the[[:space:]]+)?(default[[:space:]]+branch|main|master|production|prod|upstream)/x/g')
-  n=$(printf '%s\n' "$lc" | grep -nE "$DELIVERY_NO_PUSH_RE" | head -n 1 | cut -d: -f1)
+  # Blank rather than drop a permitting line, so the reported number still
+  # addresses the same line of the original task text.
+  n=$(printf '%s\n' "$lc" | sed -E "/$DELIVERY_PERMIT_RE/s/.*//" \
+    | grep -nE "$DELIVERY_NO_PUSH_RE" | head -n 1 | cut -d: -f1)
   [ -n "$n" ] || return 1
   printf '%s\n' "$task" | sed -n "${n}p"
 }

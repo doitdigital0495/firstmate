@@ -175,6 +175,11 @@ test_spawn_refuses_a_brief_that_contradicts_its_own_delivery() {
   IFS='|' read -r home proj fakebin <<EOF
 $rec
 EOF
+  # The delivery checks run before any backend call, so the first thing this fake
+  # tmux prints is proof that a launching row got past them. Without it a row
+  # could pass vacuously on a spawn that stopped even earlier.
+  printf '#!/bin/sh\necho DELIVERY_CHECKS_CLEARED >&2\nexit 1\n' > "$fakebin/tmux"
+  chmod +x "$fakebin/tmux"
   while IFS='|' read -r label mode task expect quote; do
     [ -n "$label" ] || continue
     n=$((n + 1))
@@ -191,9 +196,13 @@ $task" >/dev/null
         assert_contains "$out" "$quote" \
           "$label: refusal did not quote the task line it read as forbidding delivery"
         assert_contains "$out" "--mode local-only" "$label: refusal did not name the mode that fits this stop point"
-        assert_absent "$home/state/delivery-contra-$n.meta" "$label: refused spawn wrote task metadata" ;;
+        assert_absent "$home/state/delivery-contra-$n.meta" "$label: refused spawn wrote task metadata"
+        assert_not_contains "$out" "DELIVERY_CHECKS_CLEARED" \
+          "$label: a refused spawn still reached the backend" ;;
       launch)
-        assert_not_contains "$out" "contradictory brief" "$label: a brief that agrees with its mode was refused" ;;
+        assert_not_contains "$out" "contradictory brief" "$label: a brief that agrees with its mode was refused"
+        assert_contains "$out" "DELIVERY_CHECKS_CLEARED" \
+          "$label: the spawn never reached the backend, so the row proves nothing" ;;
     esac
   done <<'ROWS'
 the 2026-08-22 stop point shipped direct-PR|direct-PR|- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA.|refuse|Do NOT push and do NOT open a PR
@@ -201,10 +210,17 @@ the 2026-08-22 stop point shipped no-mistakes|no-mistakes|- Do NOT push and do N
 the same stop point shipped local-only|local-only|- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA.|launch|
 a refusal buried mid-line|no-mistakes|5. Commit the branch and stop. Do not invoke no-mistakes, push, or open a PR without captain approval.|refuse|Do not invoke no-mistakes, push, or open a PR
 the PR refused without naming the push|direct-PR|- Never open a pull request; the captain reviews the running preview first.|refuse|Never open a pull request
+the push refused without naming the PR|direct-PR|- Never push this branch; leave the dev server running for the captain's QA.|refuse|Never push this branch
+the refusal carrying its own subject|direct-PR|You cannot push until the captain signs off on the preview.|refuse|You cannot push until the captain
 ordinary work that discusses its own PR|direct-PR|If the re-encode misses the budget, fall back to option A and say so plainly in the PR body.|launch|
 the push bounded to the default branch|direct-PR|Never push to the default branch, and do not merge the PR yourself.|launch|
 history rewriting refused, delivery not|direct-PR|- Do not force-push, do not rewrite history, do not discard any unlanded work.|launch|
 prose describing a no-push stop point|no-mistakes|Reproduce the failure: scaffold a task whose stop point is a running preview with no push or PR.|launch|
+a ban scoped to what may be pushed|direct-PR|- Do not push secrets or .env files to the remote.|launch|
+push naming an unrelated product feature|direct-PR|- No push notifications in this milestone; skip the service worker.|launch|
+a sequencing condition that permits the PR|direct-PR|- Do not push until the tests are green, then open the PR as usual.|launch|
+a PR routed at a specific target|direct-PR|Do not open a PR against upstream; open it against the fork.|launch|
+a ban scoped to a PR-related file|direct-PR|- Do not create a PR template file.|launch|
 ROWS
   pass "fm-spawn: a push mode refuses a brief whose task text forbids the push or the PR"
 }
