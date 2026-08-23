@@ -184,8 +184,9 @@ Its one exception is a record predating the `endpoint_task_id` binding on an opa
 A tmux or Orca record needs no such query, because its recorded window name is already `fm-<id>`.
 That query proves the full recorded chain only on herdr; on zellij and cmux it proves just the recorded tab or workspace label, not that the recorded pane or surface still belongs to it, and the cmux proof additionally reads only the currently focused window, so a cmux task whose workspace lives elsewhere is refused and stays stranded.
 Both are known limitations left for a follow-up; in every unproven case the outcome is refusal, never action on an unproven endpoint.
-Only the herdr branch of that proof has executable coverage; the zellij branch and cmux's workspace matcher have none, so their refusal behavior is established by code reading alone and a test for them is left for a follow-up.
-The recursive child loops in `fm-teardown.sh` also keep using the offline validator, so a legacy child record inside a secondmate home still refuses that teardown, pre-existing and likewise left for a follow-up.
+The zellij branch is covered by the forced-teardown legacy-child cases in `tests/fm-secondmate-safety.test.sh` and by the no-read case in `tests/fm-backend-zellij.test.sh`, which pins that an unreachable or silent zellij returns no tab list and so proves nothing, rather than passing vacuously because `jq -e` over empty input exits 0.
+cmux's workspace matcher still has no executable coverage, so its refusal behavior is established by code reading alone and a test for it is left for a follow-up.
+The recursive child loops in `fm-teardown.sh` settle a legacy child record inside a secondmate home through that same proof, under the child's own metadata lock; [`docs/configuration.md`](../configuration.md) owns that contract, and the four forced-teardown cases in `tests/fm-secondmate-safety.test.sh` pin recovery, refusal with nothing mutated, the offline current-format path, and refusal under a foreign metadata lock.
 Claude, Codex, OpenCode, Pi, pi-signed, Grok, Kimi, Cursor, and Muse share that backend cleanup boundary; their harness-specific hook files, tokens, transcript bindings, and session-log sidecars are cleaned only after it, so no harness needs a separate endpoint parser.
 
 ## Composer classification matrix
