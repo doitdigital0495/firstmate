@@ -1,0 +1,68 @@
+
+================ CASE 1  legacy child (no endpoint_task_id), live tab proves label fm-child ================
+$ bin/fm-teardown.sh domain --force
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: legacy Zellij endpoint metadata for task child lacks an exact task binding; preserving task state.
+  exit status: 1
+  secondmate home /tmp/fm-legacy-child-evidence.KMXWbz/provable/subhome still present: yes
+  child record still present: yes
+  child worktree unlanded work still present: yes
+  endpoint_task_id written into the child record: (record gone or unbound)
+  live endpoint reads: 0
+
+================ CASE 2  same legacy child, live tab carries SOMEONE ELSE's label ================
+$ bin/fm-teardown.sh domain --force
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: legacy Zellij endpoint metadata for task child lacks an exact task binding; preserving task state.
+  exit status: 1
+  secondmate home /tmp/fm-legacy-child-evidence.KMXWbz/unprovable/subhome still present: yes
+  child record still present: yes
+  child worktree unlanded work still present: yes
+  endpoint_task_id written into the child record: (record gone or unbound)
+  live endpoint reads: 0
+
+================ CASE 3  current-format child (endpoint_task_id=child) - offline path ================
+$ bin/fm-teardown.sh domain --force
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+teardown domain complete (window firstmate:fm-domain, worktree /tmp/fm-legacy-child-evidence.KMXWbz/current/subhome)
+  exit status: 0
+  secondmate home /tmp/fm-legacy-child-evidence.KMXWbz/current/subhome still present: no
+  child record still present: no
+  child worktree unlanded work still present: no
+  endpoint_task_id written into the child record: (record gone or unbound)
+  live endpoint reads: 4
+
+================ CASE 4  legacy child whose OWN metadata lock is held by another process ================
+$ bin/fm-teardown.sh domain --force   # child meta lock held elsewhere
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: legacy Zellij endpoint metadata for task child lacks an exact task binding; preserving task state.
+  exit status: 1
+  secondmate home /tmp/fm-legacy-child-evidence.KMXWbz/metalock/subhome still present: yes
+  child record still present: yes
+  child worktree unlanded work still present: yes
+  endpoint_task_id written into the child record: (record gone or unbound)
+  live endpoint reads: 0
