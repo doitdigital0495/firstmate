@@ -15,7 +15,10 @@
 #   push mode (no-mistakes, direct-PR) additionally REFUSES when the brief's own
 #   "# Task" text forbids the push or the pull request that its generated
 #   definition of done mandates, because that generated section is what the worker
-#   follows; scaffold such a task --mode local-only instead. When
+#   follows; scaffold such a task --mode local-only instead. Both refusals read
+#   only local files and run before any worktree, endpoint, or task metadata
+#   exists, so they apply identically on every supported harness and runtime
+#   backend, including a --relaunch and each pair of a batch spawn. When
 #   the explicit mode carries less rigor than the project's standing posture, a
 #   loud one-line deviation notice is printed and the spawn continues.
 #   no-mistakes-prod-only is a registry policy rather than a task mode and is
