@@ -1358,3 +1358,27 @@ test_send_text_submit_send_failed_when_pane_absent
 test_scripts_route_explicit_target_through_meta_backend
 test_scripts_verify_label_for_fm_targets
 test_scripts_reject_fm_target_label_mismatch
+
+test_expected_label_refuses_when_no_tab_list_was_read() {
+  local dir fb status
+  dir="$TMP_ROOT/label-no-read"; mkdir -p "$dir/responses"
+  fb=$(make_zellij_fakebin "$dir")
+  # The label proof must actually READ a tab list before it can prove anything,
+  # and `jq -e` over EMPTY input exits 0 (verified: jq 1.6) - so without a guard
+  # a list that was never read would "prove" the label. Both no-read shapes:
+  # 1. an unreachable zellij that fails outright.
+  printf '1\n' > "$dir/responses/1.exit"
+  PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_tab_matches_label firstmate 3 fm-task' "$ROOT"
+  status=$?
+  [ "$status" -ne 0 ] || fail "an unreachable zellij must not prove a tab label"
+
+  # 2. a reachable zellij that answers with nothing at all.
+  PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    bash -c '. "$0/bin/backends/zellij.sh"; fm_backend_zellij_tab_matches_label firstmate 3 fm-task' "$ROOT"
+  status=$?
+  [ "$status" -ne 0 ] || fail "an empty tab list must not prove a tab label"
+  pass "fm_backend_zellij_tab_matches_label: refuses when no tab list could be read at all"
+}
+
+test_expected_label_refuses_when_no_tab_list_was_read

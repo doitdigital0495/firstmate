@@ -304,7 +304,12 @@ fm_backend_zellij_pane_exists() {  # <session> <pane_id>
 fm_backend_zellij_tab_matches_label() {  # <session> <tab_id> <label>
   local session=$1 tab_id=$2 label=$3 scoped tabs count
   scoped=$(fm_backend_zellij_scoped_title "$label")
-  tabs=$(fm_backend_zellij_cli "$session" action list-tabs --json 2>/dev/null)
+  tabs=$(fm_backend_zellij_cli "$session" action list-tabs --json 2>/dev/null) || return 1
+  # An absent or unreachable zellij yields NO output, and `jq -e` over empty
+  # input exits 0 (verified: jq 1.6) - so without this guard the checks below
+  # would pass vacuously and prove a label nothing was read from. This is an
+  # identity proof, so no read means not proven.
+  [ -n "$tabs" ] || return 1
   printf '%s' "$tabs" | jq -e --argjson t "$tab_id" --arg want "$scoped" \
     '[.[]? | select(.tab_id == $t and .name == $want)] | length > 0' >/dev/null 2>&1 && return 0
   printf '%s' "$tabs" | jq -e --argjson t "$tab_id" --arg want "$label" \
