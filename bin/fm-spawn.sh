@@ -1674,12 +1674,13 @@ delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task
 }
 
 # A refusal of the push or of opening the PR, on one sentence clause of a
-# lowercased line: a refusing token, then the push itself, an opening verb on a
-# PR, or a bare PR right after the refusal. Naming the PR as the object of some
-# other verb ("never merge a PR", "do not approve the PR") is not a refusal to
-# open one and must not match.
-DELIVERY_REFUSE_TOKEN='(^|[^a-z])(do[[:space:]]+not|don.t|dont|cannot|never|no)[^a-z]'
-DELIVERY_REFUSE_PUSH='[^.;]{0,20}push([^a-z]|$)'
+# lowercased line: a refusing token that opens a line or a clause, then the push
+# itself, an opening verb on a PR, or a bare PR right after the refusal. Naming
+# the PR as the object of some other verb ("never merge a PR", "do not approve
+# the PR") is not a refusal to open one, and a refusal that only appears mid
+# sentence is prose about pushing rather than an instruction not to.
+DELIVERY_REFUSE_TOKEN='(^[-*>[:space:]0-9.)]*|[.;:][[:space:]]+)(do[[:space:]]+not|don.t|dont|cannot|never|no)[^a-z]'
+DELIVERY_REFUSE_PUSH='[^.;]{0,25}push([^a-z]|$)'
 DELIVERY_REFUSE_OPEN='[^.;]{0,12}(open|raise|create|file|submit)[^.;]{0,8}(pr|pull[[:space:]]+request)([^a-z]|$)'
 DELIVERY_REFUSE_BARE='[[:space:]]*(a[[:space:]]+|an[[:space:]]+|the[[:space:]]+|any[[:space:]]+)?(pr|pull[[:space:]]+request)([^a-z]|$)'
 DELIVERY_NO_PUSH_RE="$DELIVERY_REFUSE_TOKEN($DELIVERY_REFUSE_PUSH|$DELIVERY_REFUSE_OPEN|$DELIVERY_REFUSE_BARE)"
@@ -1688,13 +1689,14 @@ DELIVERY_NO_PUSH_RE="$DELIVERY_REFUSE_TOKEN($DELIVERY_REFUSE_PUSH|$DELIVERY_REFU
 # Only the task text firstmate fills in is read. The generated Rules and
 # Definition of done carry their own prohibitions ("Never push to the default
 # branch", "Never merge a PR") that bound HOW the mandate is carried out rather
-# than refusing it, and the same default-branch qualifier is stripped from the
-# task text before matching so it reads the same way there.
+# than refusing it. A force-push ban and a default-branch qualifier are the same
+# kind of bound, so both are stripped before matching and read the same way in
+# the task text as they do in the generated sections.
 brief_task_forbids_delivery() {  # <brief-file>
   local task lc n
   task=$(awk '/^# Task[ \t]*$/ { t = 1; next } /^# / { t = 0 } t' "$1")
   lc=$(printf '%s\n' "$task" | tr '[:upper:]' '[:lower:]' \
-    | sed -E 's/push(es|ing)?[[:space:]]+(to|onto)[[:space:]]+(the[[:space:]]+)?(default[[:space:]]+branch|main|master|production|prod|upstream)/x/g')
+    | sed -E 's/force[- ]?push(es|ing|ed)?/x/g; s/push(es|ing)?[[:space:]]+(to|onto)[[:space:]]+(the[[:space:]]+)?(default[[:space:]]+branch|main|master|production|prod|upstream)/x/g')
   n=$(printf '%s\n' "$lc" | grep -nE "$DELIVERY_NO_PUSH_RE" | head -n 1 | cut -d: -f1)
   [ -n "$n" ] || return 1
   printf '%s\n' "$task" | sed -n "${n}p"

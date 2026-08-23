@@ -170,28 +170,17 @@ scaffold_brief() {  # <home> <id> <mode> <task-text>
 # while local-only - whose contract already stops at a reviewable branch - takes
 # the same task text and launches.
 test_spawn_refuses_a_brief_that_contradicts_its_own_delivery() {
-  local rec home proj fakebin label mode task expect out status n=0 preview ordinary
+  local rec home proj fakebin label mode task expect quote out status n=0
   rec=$(make_home contradiction)
   IFS='|' read -r home proj fakebin <<EOF
 $rec
 EOF
-  preview='Import the catalogue and verify it in the running app.
-
-Constraints:
-- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA.
-- Start this worktree'"'"'s dev server, leave it running, and report the port.'
-  ordinary='Re-encode the hero loop to a hard budget.
-If the re-encode cannot hit 1.5 MB, fall back to option A and say so plainly in the PR body.
-Never push to the default branch, and do not merge the PR yourself.'
-
-  while IFS='|' read -r label mode expect; do
+  while IFS='|' read -r label mode task expect quote; do
     [ -n "$label" ] || continue
     n=$((n + 1))
-    case "$expect" in
-      refuse) task=$preview ;;
-      *) [ "$label" = "the same stop point shipped local-only" ] && task=$preview || task=$ordinary ;;
-    esac
-    scaffold_brief "$home" "delivery-contra-$n" "$mode" "$task" >/dev/null
+    scaffold_brief "$home" "delivery-contra-$n" "$mode" "Do the work and verify it in the running app.
+
+$task" >/dev/null
     out=$(run_spawn "$home" "$fakebin" "delivery-contra-$n" "$proj" claude --mode "$mode" --yolo off)
     status=$?
     case "$expect" in
@@ -199,7 +188,7 @@ Never push to the default branch, and do not merge the PR yourself.'
         [ "$status" -ne 0 ] || fail "$label: a contradictory brief should exit non-zero"
         assert_contains "$out" "contradictory brief for delivery-contra-$n" \
           "$label: refusal did not name the task"
-        assert_contains "$out" "Do NOT push and do NOT open a PR" \
+        assert_contains "$out" "$quote" \
           "$label: refusal did not quote the task line it read as forbidding delivery"
         assert_contains "$out" "--mode local-only" "$label: refusal did not name the mode that fits this stop point"
         assert_absent "$home/state/delivery-contra-$n.meta" "$label: refused spawn wrote task metadata" ;;
@@ -207,11 +196,15 @@ Never push to the default branch, and do not merge the PR yourself.'
         assert_not_contains "$out" "contradictory brief" "$label: a brief that agrees with its mode was refused" ;;
     esac
   done <<'ROWS'
-preview stop point shipped direct-PR|direct-PR|refuse
-preview stop point shipped no-mistakes|no-mistakes|refuse
-the same stop point shipped local-only|local-only|launch
-ordinary work shipped direct-PR|direct-PR|launch
-ordinary work shipped no-mistakes|no-mistakes|launch
+the 2026-08-22 stop point shipped direct-PR|direct-PR|- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA.|refuse|Do NOT push and do NOT open a PR
+the 2026-08-22 stop point shipped no-mistakes|no-mistakes|- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA.|refuse|Do NOT push and do NOT open a PR
+the same stop point shipped local-only|local-only|- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA.|launch|
+a refusal buried mid-line|no-mistakes|5. Commit the branch and stop. Do not invoke no-mistakes, push, or open a PR without captain approval.|refuse|Do not invoke no-mistakes, push, or open a PR
+the PR refused without naming the push|direct-PR|- Never open a pull request; the captain reviews the running preview first.|refuse|Never open a pull request
+ordinary work that discusses its own PR|direct-PR|If the re-encode misses the budget, fall back to option A and say so plainly in the PR body.|launch|
+the push bounded to the default branch|direct-PR|Never push to the default branch, and do not merge the PR yourself.|launch|
+history rewriting refused, delivery not|direct-PR|- Do not force-push, do not rewrite history, do not discard any unlanded work.|launch|
+prose describing a no-push stop point|no-mistakes|Reproduce the failure: scaffold a task whose stop point is a running preview with no push or PR.|launch|
 ROWS
   pass "fm-spawn: a push mode refuses a brief whose task text forbids the push or the PR"
 }
