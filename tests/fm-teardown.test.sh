@@ -49,6 +49,11 @@
 #   (w) index.lock mtime read failure                         -> lock kept, REFUSE
 #   (x) transient lock cleared after first failed return      -> retry ALLOW
 #   (y) persistent lock (never clears, not provably stale)    -> REFUSE loudly
+#
+# And the portability of the content check itself, which must not depend on a git
+# newer than the one a supported host ships (Ubuntu 22.04/WSL: git 2.34):
+#   (z)  content in default, git without merge-tree           -> ALLOW  (portable check)
+#   (aa) unlanded work, git without merge-tree                -> REFUSE (safety preserved)
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -67,6 +72,11 @@ export REAL_LSOF_FOR_TEST
 
 # Build a fresh sandbox for one test case. Sets up:
 #   $CASE/state/        - firstmate state dir (with a fresh watcher beacon)
+#   $CASE/home/         - empty firstmate home the run pins FM_HOME to, so the
+#                         run never reads the operator's real ~/.firstmate
+#                         (registry, .env). Deliberately NOT the case dir
+#                         itself: teardown refuses removal targets inside the
+#                         active home, and the case worktrees live there.
 #   $CASE/fakebin/      - mocks for treehouse, tmux (PATH-prepended by caller)
 #   $CASE/origin.git/   - bare upstream repo (so the project clone has origin)
 #   $CASE/project/      - clone of origin; acts as the firstmate project dir
@@ -76,7 +86,7 @@ make_case() {
   local name=$1 case_dir fakebin
   case_dir="$TMP_ROOT/$name"
   fakebin="$case_dir/fakebin"
-  mkdir -p "$case_dir/state" "$case_dir/config" "$fakebin"
+  mkdir -p "$case_dir/state" "$case_dir/config" "$case_dir/home" "$fakebin"
 
   # Mocks for the post-check teardown steps. Refuse logic exits before these
   # run; the ALLOW cases need them so the script can complete cleanly.
@@ -539,10 +549,44 @@ SH
   chmod +x "$case_dir/fakebin/git"
 }
 
+# Make git behave like a release without `merge-tree --write-tree`, which only
+# exists from git 2.38. Ubuntu 22.04 and its WSL image still ship git 2.34, so a
+# landed-work check built on that subcommand answers "not landed" for every
+# genuinely landed branch there. Everything else runs on the real git.
+add_git_without_merge_tree() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/git" <<'SH'
+#!/usr/bin/env bash
+real=${REAL_GIT_FOR_TEST:?}
+args=("$@")
+i=0
+while [ "$i" -lt "${#args[@]}" ]; do
+  case "${args[$i]}" in
+    -C|-c) i=$((i + 2)) ;;
+    merge-tree)
+      echo "usage: git merge-tree <base-tree> <branch1> <branch2>" >&2
+      exit 129
+      ;;
+    -*) i=$((i + 1)) ;;
+    *) break ;;
+  esac
+done
+exec "$real" "$@"
+SH
+  chmod +x "$case_dir/fakebin/git"
+}
+
 # Run teardown with PATH mocking. Args: case_dir [extra args...]
+#
+# FM_HOME is pinned, not just left to FM_ROOT_OVERRIDE: teardown resolves its
+# data dir, secondmate registry and Relay .env from FM_HOME, and an ambient
+# FM_HOME (every session firstmate itself launches exports one) otherwise makes
+# the run read the operator's real home and answer from real secondmate
+# bindings. That is a test-host-dependent verdict, not the behavior under test.
 run_teardown() {
   local case_dir=$1; shift
   FM_ROOT_OVERRIDE="$ROOT" \
+  FM_HOME="$case_dir/home" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   FM_CONFIG_OVERRIDE="$case_dir/config" \
   PATH="$case_dir/fakebin:${FM_TEARDOWN_TEST_PATH:-$PATH}" \
@@ -885,6 +929,41 @@ test_content_in_default_fallback_allows() {
   expect_code 0 "$rc" "content-landed: teardown should succeed when content is already in the default branch"
   ! grep -q REFUSED "$case_dir/stderr" || fail "content-landed: teardown printed a REFUSED line"
   pass "worktree whose content already landed in the default branch is torn down (content fallback)"
+}
+
+test_content_fallback_without_merge_tree_support() {
+  local case_dir rc
+  case_dir=$(make_case content-landed-old-git)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  land_on_origin_main "$case_dir" feature.txt hello
+  add_git_without_merge_tree "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "content-landed-old-git: landed content must be recognized without merge-tree"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "content-landed-old-git: teardown printed a REFUSED line"
+  pass "content fallback recognizes landed work on a git without merge-tree --write-tree"
+}
+
+test_content_fallback_refuses_unlanded_work_without_merge_tree_support() {
+  local case_dir rc
+  case_dir=$(make_case content-unlanded-old-git)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  add_git_without_merge_tree "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "content-unlanded-old-git: teardown should refuse work that never landed"
+  grep -q REFUSED "$case_dir/stderr" || fail "content-unlanded-old-git: no REFUSED line in stderr"
+  pass "the merge-tree-free content check still refuses genuinely unlanded work"
 }
 
 test_content_fallback_refreshes_stale_origin_ref() {
@@ -1783,7 +1862,16 @@ printf '%s\n' "\$*" >> "$thlog"
 exit 0
 SH
   chmod +x "$case_dir/fakebin/treehouse"
+  # A decoy ambient FM_HOME carrying a secondmate registry that knows nothing
+  # about this task - exactly what a session launched by a real firstmate
+  # exports. The run must answer from its own pinned home: reading this one
+  # instead refuses at the registry binding, long before the child preflight
+  # this case is about.
+  mkdir -p "$case_dir/decoy-home/data"
+  printf '%s\n' '- other-mate: home=/nonexistent/other-home; scope=decoy' \
+    > "$case_dir/decoy-home/data/secondmates.md"
   rc=0
+  FM_HOME="$case_dir/decoy-home" \
   FM_FAKE_HERDR_LOG="$log" FM_FAKE_HERDR_CLOSED="$closed" \
     FM_FAKE_HERDR_SESSION_LIST_GARBAGE=1 \
     run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
@@ -2751,6 +2839,8 @@ test_merged_pr_with_later_local_commit_refuses
 test_pr_check_does_not_refresh_stale_pr_head
 test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_fallback_allows
+test_content_fallback_without_merge_tree_support
+test_content_fallback_refuses_unlanded_work_without_merge_tree_support
 test_content_fallback_refreshes_stale_origin_ref
 test_dirty_worktree_refuses
 test_teardown_leaves_the_projects_claude_settings_alone
