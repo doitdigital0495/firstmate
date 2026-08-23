@@ -1689,17 +1689,19 @@ delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task
 # open one either, and a refusal written mid sentence is prose about pushing
 # rather than an instruction not to push.
 DELIVERY_REFUSE_TOKEN='(^[-*>[:space:]0-9.)]*|[.;:][[:space:]]+)(you[[:space:]]+|we[[:space:]]+)?(do[[:space:]]+not|don.t|dont|cannot|never|no)[^a-z]'
-DELIVERY_PUSH_OBJECT='([[:space:]]*[.;,]|[[:space:]]+(and|or|until|unless|before|without|to|here)([^a-z]|$)|[[:space:]]+(this|your|the|that|any|it)([^a-z]|$)|$)'
+DELIVERY_PUSH_OBJECT='([[:space:]]*[.;,]|[[:space:]]+(and|or|until|unless|before|without|to|here)([^a-z]|$)|[[:space:]]+(this|your|the|that|anything|any|it)([^a-z]|$)|$)'
 DELIVERY_PR_OBJECT='([[:space:]]*[.;,]|[[:space:]]+(for|until|unless|before|without|at|on|yourself|here|now)([^a-z]|$)|$)'
-DELIVERY_REFUSE_PUSH="[^.;]{0,25}push$DELIVERY_PUSH_OBJECT"
+DELIVERY_REFUSE_PUSH="[^.;]{0,25}push(ing)?$DELIVERY_PUSH_OBJECT"
 DELIVERY_REFUSE_OPEN="[^.;]{0,12}(open|raise|create|file|submit)[^.;]{0,8}(pr|pull[[:space:]]+request)$DELIVERY_PR_OBJECT"
 DELIVERY_REFUSE_BARE="[[:space:]]*(a[[:space:]]+|an[[:space:]]+|the[[:space:]]+|any[[:space:]]+)?(pr|pull[[:space:]]+request)$DELIVERY_PR_OBJECT"
 DELIVERY_NO_PUSH_RE="$DELIVERY_REFUSE_TOKEN($DELIVERY_REFUSE_PUSH|$DELIVERY_REFUSE_OPEN|$DELIVERY_REFUSE_BARE)"
 
 # A line that also permits the delivery later ("do not push until the tests are
 # green, then open the PR as usual") sequences the mandate rather than refusing
-# it, so it is dropped before matching.
-DELIVERY_PERMIT_RE='then[[:space:]]+(open|raise|create|submit|push)'
+# it, so it is dropped before matching. The permitting verb must take the
+# delivery itself as its object: ordinary sequencing ("then create a summary",
+# "then open the preview") continues the task rather than permitting the push.
+DELIVERY_PERMIT_RE='then[[:space:]]+((open|raise|create|file|submit)[^.;]{0,12}(pr|pull[[:space:]]+request)([^a-z]|$)|push([^a-z]|$))'
 
 # Print the first "# Task" line that forbids the push or the PR, or return 1.
 # Only the task text firstmate fills in is read. The generated Rules and

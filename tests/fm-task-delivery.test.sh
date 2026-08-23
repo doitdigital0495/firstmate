@@ -211,6 +211,10 @@ the same stop point shipped local-only|local-only|- Do NOT push and do NOT open 
 a refusal buried mid-line|no-mistakes|5. Commit the branch and stop. Do not invoke no-mistakes, push, or open a PR without captain approval.|refuse|Do not invoke no-mistakes, push, or open a PR
 the PR refused without naming the push|direct-PR|- Never open a pull request; the captain reviews the running preview first.|refuse|Never open a pull request
 the push refused without naming the PR|direct-PR|- Never push this branch; leave the dev server running for the captain's QA.|refuse|Never push this branch
+the push refused without an explicit object|direct-PR|- Do not push anything.|refuse|Do not push anything
+the refusal written as a gerund|direct-PR|- No pushing and no PR until the captain approves.|refuse|No pushing and no PR
+the stop point followed by ordinary sequencing|direct-PR|- Do NOT push and do NOT open a PR. Run the tests, then create a summary in the status file.|refuse|Do NOT push and do NOT open a PR
+the stop point followed by opening the preview|no-mistakes|- Do NOT push and do NOT open a PR. Start the dev server, then open the preview for the captain.|refuse|Do NOT push and do NOT open a PR
 the refusal carrying its own subject|direct-PR|You cannot push until the captain signs off on the preview.|refuse|You cannot push until the captain
 ordinary work that discusses its own PR|direct-PR|If the re-encode misses the budget, fall back to option A and say so plainly in the PR body.|launch|
 the push bounded to the default branch|direct-PR|Never push to the default branch, and do not merge the PR yourself.|launch|
@@ -240,7 +244,13 @@ EOF
   brief=$(scaffold_brief "$home" delivery-stop-e2 local-only 'Ordinary work.')
   assert_grep 'Do NOT push, do NOT open a PR' "$brief" \
     "local-only no longer stops the worker before the remote"
-  pass "fm-brief: direct-PR still opens the PR and local-only still stops before it"
+
+  brief=$(scaffold_brief "$home" delivery-stop-e3 no-mistakes 'Ordinary work.')
+  assert_grep 'run /no-mistakes to validate and ship a PR' "$brief" \
+    "no-mistakes no longer ships its PR through the pipeline"
+  assert_grep 'done: PR {url} checks green' "$brief" \
+    "no-mistakes no longer ends at a PR whose checks are green"
+  pass "fm-brief: all three modes still state the stop point their contract promises"
 }
 
 # The registry is the captain's standing posture, so dropping below its rigor is
