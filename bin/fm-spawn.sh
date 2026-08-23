@@ -1693,12 +1693,19 @@ delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task
 # A bare comma does not end the clause: it separates enumerations and
 # appositives that talk about something else ("no push, no pull, no fetch in the
 # test harness"), so it only ends the object when the next clause names the
-# delivery again ("do not invoke no-mistakes, push, or open a PR"). "file" takes
-# a determiner for the same reason, so a filename that happens to read PR is not
-# a refusal to file one.
+# delivery again ("do not invoke no-mistakes, push, or open a PR"). "and" and
+# "or" carry the same requirement. "file" takes a determiner for the same
+# reason, so a filename that happens to read PR is not a refusal to file one.
+#
+# Anything the push continues into must itself be git delivery - this branch,
+# your commits, the remote, origin, the fork, a forge - because push is an
+# ordinary verb in this fleet's own work ("do not push to the analytics queue",
+# "do not push this event to the dataLayer", "do not push and pop the same
+# stack twice"), and a bare determiner cannot tell those from shipping.
 DELIVERY_REFUSE_TOKEN='(^[-*>[:space:]0-9.)]*|[.;:][[:space:]]+)(you[[:space:]]+|we[[:space:]]+)?(do[[:space:]]+not|don.t|dont|cannot|never|no)[^a-z]'
 DELIVERY_AGAIN='[^.;]{0,30}(push|pr|pull[[:space:]]+request)([^a-z]|$)'
-DELIVERY_PUSH_OBJECT="([[:space:]]*[.;]|[[:space:]]*,$DELIVERY_AGAIN|[[:space:]]+(and|or|until|unless|before|without|to|here|yet)([^a-z]|\$)|[[:space:]]+(this|your|the|that|anything|any|it)([^a-z]|\$)|\$)"
+DELIVERY_PUSH_TARGET='(this|the|your)[[:space:]]+(branch|changes|commits)|to[[:space:]]+(the[[:space:]]+)?(remote|origin|fork|repo(sitory)?|github|gitlab|bitbucket)'
+DELIVERY_PUSH_OBJECT="([[:space:]]*[.;]|[[:space:]]*,$DELIVERY_AGAIN|[[:space:]]+(and|or)$DELIVERY_AGAIN|[[:space:]]+(until|yet|anything)([^a-z]|\$)|[[:space:]]+($DELIVERY_PUSH_TARGET)([^a-z]|\$)|\$)"
 DELIVERY_PR_OBJECT="([[:space:]]*[.;]|[[:space:]]*,$DELIVERY_AGAIN|[[:space:]]+(for|until|unless|before|without|at|on|yourself|here|now|yet)([^a-z]|\$)|\$)"
 DELIVERY_REFUSE_PUSH="[^.;]{0,25}push(ing)?$DELIVERY_PUSH_OBJECT"
 DELIVERY_REFUSE_OPEN="[^.;]{0,12}((open|raise|create|submit)[^.;]{0,8}|file[[:space:]]+(a|an|the|any)[[:space:]]+)(pr|pull[[:space:]]+request)$DELIVERY_PR_OBJECT"

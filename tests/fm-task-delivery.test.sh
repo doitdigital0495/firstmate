@@ -222,6 +222,24 @@ a push feature described with an appositive|direct-PR|- No user-visible push, th
 a guard against writing a pushing command|direct-PR|- Do not add a command that can push, it is unsafe.|launch|
 a release step that must not run twice|direct-PR|- Do not let the release push, or the deploy, run twice.|launch|
 a filename that happens to read as a PR|direct-PR|- Do not name the file PR.md.|launch|
+a queue push in the analytics layer|direct-PR|- Do not push to the analytics queue on every keystroke.|launch|
+a publish step banned for a package registry|direct-PR|- Never push to npm from CI.|launch|
+an array push|direct-PR|- Do not push it to the array; use concat.|launch|
+a dataLayer push|direct-PR|- Do not push this event to the dataLayer.|launch|
+state pushed into the URL|direct-PR|- Do not push any state into the URL.|launch|
+a layout pushed off screen|direct-PR|- Do not push the modal off screen on mobile.|launch|
+a stack pushed and popped|direct-PR|- Do not push and pop the same stack twice.|launch|
+the push refused with a bare clause end|direct-PR|- Do not push; the captain reviews the branch himself.|refuse|Do not push
+both actions refused across or|direct-PR|- Do not push or ever open a pull request without captain approval.|refuse|Do not push or ever open a pull request
+the changes named as the object|direct-PR|- Do not push the changes; the captain reviews them first.|refuse|Do not push the changes
+the commits named as the object|direct-PR|- Never push your commits until the captain approves.|refuse|Never push your commits
+the remote named as the target|direct-PR|- Do not push to the remote.|refuse|Do not push to the remote
+origin named as the target|direct-PR|- Do not push to origin.|refuse|Do not push to origin
+the fork named as the target|no-mistakes|- Never push to the fork.|refuse|Never push to the fork
+the repository named as the target|direct-PR|- Do not push to the repository.|refuse|Do not push to the repository
+GitHub named as the target|direct-PR|- Do not push to GitHub.|refuse|Do not push to GitHub
+GitLab named as the target|direct-PR|- Do not push to GitLab.|refuse|Do not push to GitLab
+Bitbucket named as the target|direct-PR|- Do not push to Bitbucket.|refuse|Do not push to Bitbucket
 the stop point followed by ordinary sequencing|direct-PR|- Do NOT push and do NOT open a PR. Run the tests, then create a summary in the status file.|refuse|Do NOT push and do NOT open a PR
 the stop point followed by opening the preview|no-mistakes|- Do NOT push and do NOT open a PR. Start the dev server, then open the preview for the captain.|refuse|Do NOT push and do NOT open a PR
 the refusal carrying its own subject|direct-PR|You cannot push until the captain signs off on the preview.|refuse|You cannot push until the captain
