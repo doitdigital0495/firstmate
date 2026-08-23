@@ -29,12 +29,16 @@ fm_startup_memory_budget_link_count() {
   fi
 }
 
+# fm_startup_memory_budget_config_dir_safe <dir>
+# The directory only has to resolve to a real directory.  A symlinked config/ is
+# a legitimate deployment layout - a home whose config/ is linked into a
+# machine-configuration repo - and every other config consumer already resolves
+# through it.  Rejecting it here bought no integrity property either, because
+# the test could only ever see the final path component: a symlinked ancestor
+# passed silently.  The per-file symlink and hardlink checks below are what
+# actually stop this scalar from being aliased or shared.
 fm_startup_memory_budget_config_dir_safe() {
   local dir=$1
-  if [ -L "$dir" ]; then
-    fm_startup_memory_budget_fail "config directory is symlinked"
-    return 1
-  fi
   if [ ! -d "$dir" ]; then
     fm_startup_memory_budget_fail "config directory is not a directory"
     return 1
