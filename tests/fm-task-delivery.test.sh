@@ -20,6 +20,7 @@ set -u
 SPAWN="$ROOT/bin/fm-spawn.sh"
 PROMOTE="$ROOT/bin/fm-promote.sh"
 PROJECT_MODE="$ROOT/bin/fm-project-mode.sh"
+BRIEF_SCAFFOLD="$ROOT/bin/fm-brief.sh"
 TMP_ROOT=$(fm_test_tmproot fm-task-delivery)
 
 # A home with one registered project, one project directory, and a fake tmux that
@@ -144,6 +145,93 @@ EOF
   assert_contains "$out" "records no delivery contract line" "a legacy brief did not warn about its missing contract"
   assert_not_contains "$out" "delivery mismatch" "a legacy brief was treated as a mismatch"
   pass "fm-spawn: the brief's recorded mode and the spawn's explicit mode must agree"
+}
+
+# Scaffold a real ship brief through fm-brief.sh and fill its {TASK} placeholder,
+# so the case runs against the definition of done a worker is actually handed.
+scaffold_brief() {  # <home> <id> <mode> <task-text>
+  local home=$1 id=$2 mode=$3 task=$4 brief tmp
+  brief="$home/data/$id/brief.md"
+  rm -rf "$home/data/$id"
+  FM_ROOT_OVERRIDE='' FM_HOME="$home" FM_DATA_OVERRIDE="$home/data" FM_STATE_OVERRIDE="$home/state" \
+    "$BRIEF_SCAFFOLD" "$id" proj --mode "$mode" >/dev/null \
+    || fail "scaffolding a $mode brief for $id failed"
+  tmp="$brief.filled"
+  awk -v repl="$task" '$0 == "{TASK}" { print repl; next } { print }' "$brief" > "$tmp"
+  mv "$tmp" "$brief"
+  grep -q '{TASK}' "$brief" && fail "$id: the task placeholder was never filled"
+  printf '%s\n' "$brief"
+}
+
+# The 2026-08-22 failure: a task text that forbids the push and the PR, inside a
+# brief whose generated definition of done mandates both. The generated section is
+# what the worker follows, so three workers opened PRs the captain had not
+# approved. A push mode must now refuse that brief before anything is created,
+# while local-only - whose contract already stops at a reviewable branch - takes
+# the same task text and launches.
+test_spawn_refuses_a_brief_that_contradicts_its_own_delivery() {
+  local rec home proj fakebin label mode task expect out status n=0 preview ordinary
+  rec=$(make_home contradiction)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  preview='Import the catalogue and verify it in the running app.
+
+Constraints:
+- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA.
+- Start this worktree'"'"'s dev server, leave it running, and report the port.'
+  ordinary='Re-encode the hero loop to a hard budget.
+If the re-encode cannot hit 1.5 MB, fall back to option A and say so plainly in the PR body.
+Never push to the default branch, and do not merge the PR yourself.'
+
+  while IFS='|' read -r label mode expect; do
+    [ -n "$label" ] || continue
+    n=$((n + 1))
+    case "$expect" in
+      refuse) task=$preview ;;
+      *) [ "$label" = "the same stop point shipped local-only" ] && task=$preview || task=$ordinary ;;
+    esac
+    scaffold_brief "$home" "delivery-contra-$n" "$mode" "$task" >/dev/null
+    out=$(run_spawn "$home" "$fakebin" "delivery-contra-$n" "$proj" claude --mode "$mode" --yolo off)
+    status=$?
+    case "$expect" in
+      refuse)
+        [ "$status" -ne 0 ] || fail "$label: a contradictory brief should exit non-zero"
+        assert_contains "$out" "contradictory brief for delivery-contra-$n" \
+          "$label: refusal did not name the task"
+        assert_contains "$out" "Do NOT push and do NOT open a PR" \
+          "$label: refusal did not quote the task line it read as forbidding delivery"
+        assert_contains "$out" "--mode local-only" "$label: refusal did not name the mode that fits this stop point"
+        assert_absent "$home/state/delivery-contra-$n.meta" "$label: refused spawn wrote task metadata" ;;
+      launch)
+        assert_not_contains "$out" "contradictory brief" "$label: a brief that agrees with its mode was refused" ;;
+    esac
+  done <<'ROWS'
+preview stop point shipped direct-PR|direct-PR|refuse
+preview stop point shipped no-mistakes|no-mistakes|refuse
+the same stop point shipped local-only|local-only|launch
+ordinary work shipped direct-PR|direct-PR|launch
+ordinary work shipped no-mistakes|no-mistakes|launch
+ROWS
+  pass "fm-spawn: a push mode refuses a brief whose task text forbids the push or the PR"
+}
+
+# The other half of the guarantee: the modes themselves still say what they always
+# said, so refusing the contradiction did not quietly disarm ordinary delivery.
+test_generated_definitions_of_done_keep_their_stop_points() {
+  local rec home proj fakebin brief
+  rec=$(make_home stop-points)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  brief=$(scaffold_brief "$home" delivery-stop-e1 direct-PR 'Ordinary work.')
+  assert_grep 'push your branch and open a PR' "$brief" \
+    "direct-PR no longer tells the worker to push and open the PR itself"
+
+  brief=$(scaffold_brief "$home" delivery-stop-e2 local-only 'Ordinary work.')
+  assert_grep 'Do NOT push, do NOT open a PR' "$brief" \
+    "local-only no longer stops the worker before the remote"
+  pass "fm-brief: direct-PR still opens the PR and local-only still stops before it"
 }
 
 # The registry is the captain's standing posture, so dropping below its rigor is
@@ -275,6 +363,8 @@ EOF
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
+test_spawn_refuses_a_brief_that_contradicts_its_own_delivery
+test_generated_definitions_of_done_keep_their_stop_points
 test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract

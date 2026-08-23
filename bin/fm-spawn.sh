@@ -11,7 +11,11 @@
 #   the mode up. A ship spawn additionally reads the brief's recorded
 #   "Delivery contract: mode=<mode>" line and REFUSES a mismatch, so the worker's
 #   instructions and the recorded task delivery cannot drift apart; a brief
-#   scaffolded before that line existed warns once and launches on the flag. When
+#   scaffolded before that line existed warns once and launches on the flag. A
+#   push mode (no-mistakes, direct-PR) additionally REFUSES when the brief's own
+#   "# Task" text forbids the push or the pull request that its generated
+#   definition of done mandates, because that generated section is what the worker
+#   follows; scaffold such a task --mode local-only instead. When
 #   the explicit mode carries less rigor than the project's standing posture, a
 #   loud one-line deviation notice is printed and the spawn continues.
 #   no-mistakes-prod-only is a registry policy rather than a task mode and is
@@ -1669,6 +1673,33 @@ delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task
   esac
 }
 
+# A refusal of the push or of opening the PR, on one sentence clause of a
+# lowercased line: a refusing token, then the push itself, an opening verb on a
+# PR, or a bare PR right after the refusal. Naming the PR as the object of some
+# other verb ("never merge a PR", "do not approve the PR") is not a refusal to
+# open one and must not match.
+DELIVERY_REFUSE_TOKEN='(^|[^a-z])(do[[:space:]]+not|don.t|dont|cannot|never|no)[^a-z]'
+DELIVERY_REFUSE_PUSH='[^.;]{0,20}push([^a-z]|$)'
+DELIVERY_REFUSE_OPEN='[^.;]{0,12}(open|raise|create|file|submit)[^.;]{0,8}(pr|pull[[:space:]]+request)([^a-z]|$)'
+DELIVERY_REFUSE_BARE='[[:space:]]*(a[[:space:]]+|an[[:space:]]+|the[[:space:]]+|any[[:space:]]+)?(pr|pull[[:space:]]+request)([^a-z]|$)'
+DELIVERY_NO_PUSH_RE="$DELIVERY_REFUSE_TOKEN($DELIVERY_REFUSE_PUSH|$DELIVERY_REFUSE_OPEN|$DELIVERY_REFUSE_BARE)"
+
+# Print the first "# Task" line that forbids the push or the PR, or return 1.
+# Only the task text firstmate fills in is read. The generated Rules and
+# Definition of done carry their own prohibitions ("Never push to the default
+# branch", "Never merge a PR") that bound HOW the mandate is carried out rather
+# than refusing it, and the same default-branch qualifier is stripped from the
+# task text before matching so it reads the same way there.
+brief_task_forbids_delivery() {  # <brief-file>
+  local task lc n
+  task=$(awk '/^# Task[ \t]*$/ { t = 1; next } /^# / { t = 0 } t' "$1")
+  lc=$(printf '%s\n' "$task" | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/push(es|ing)?[[:space:]]+(to|onto)[[:space:]]+(the[[:space:]]+)?(default[[:space:]]+branch|main|master|production|prod|upstream)/x/g')
+  n=$(printf '%s\n' "$lc" | grep -nE "$DELIVERY_NO_PUSH_RE" | head -n 1 | cut -d: -f1)
+  [ -n "$n" ] || return 1
+  printf '%s\n' "$task" | sed -n "${n}p"
+}
+
 # Brief/spawn delivery agreement, checked before any endpoint exists.
 # fm-brief.sh records a ship brief's mode as a fixed "Delivery contract: mode=<mode>"
 # line. A spawn that disagrees would launch a worker whose instructions and whose
@@ -1682,6 +1713,20 @@ if [ "$KIND" = ship ]; then
     echo "error: delivery mismatch for $ID: the brief says mode=$BRIEF_MODE but this spawn passed --mode $MODE; correct the flag or re-scaffold the brief so the worker's instructions and the task record agree" >&2
     exit 1
   fi
+  # Brief self-agreement. fm-brief.sh's no-mistakes and direct-PR definitions of
+  # done both end in a pushed branch and an open PR, and that generated section is
+  # what the worker follows: on 2026-08-22 three workers opened PRs the captain had
+  # not approved after their own task text said not to. A task text that forbids
+  # exactly what the mode mandates is a contradiction no worker judgment can
+  # resolve, so it stops here rather than launching.
+  case "$MODE" in
+    no-mistakes|direct-PR)
+      if BRIEF_FORBIDS=$(brief_task_forbids_delivery "$BRIEF"); then
+        echo "error: contradictory brief for $ID: mode=$MODE ends in a pushed branch and an open PR, but the task text forbids it: \"$BRIEF_FORBIDS\"" >&2
+        echo "       scaffold this task --mode local-only so the worker stops at a branch the captain reviews first, or drop the prohibition from the task text" >&2
+        exit 1
+      fi ;;
+  esac
   # The registry holds the captain's standing posture, so dropping below it is
   # allowed (a current explicit captain instruction wins) but never silent. An
   # unregistered project resolves to the same no-mistakes standing default, which
