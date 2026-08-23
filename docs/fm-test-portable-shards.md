@@ -66,7 +66,7 @@ Each shard is still strictly serial in itself, and separate runners mean no two 
 Assignment is longest-processing-time bin packing over per-script duration hints embedded in `bin/fm-test-run.sh`.
 The hints came from the `fm-test-timing-portable-serial-*` artifacts of green CI run [32491999845](https://github.com/kunchenguid/firstmate/actions/runs/32491999845) on 2026-08-21, where the lane ran 116 scripts in 2541548 ms of serial work.
 `tests/fm-tool-update-check.test.sh` did not exist on that run, so its 12846 ms hint comes from the shard 3 artifact of run [32461816719](https://github.com/kunchenguid/firstmate/actions/runs/32461816719), which is the first run that measured it.
-`tests/fm-voice-relay.test.sh` and this fork's `tests/fm-claude-settings-live-e2e.test.sh` are unmeasured and carry the default weight, so the serial lane is 119 scripts against that run's 116.
+`tests/fm-voice-relay.test.sh` and this fork's `tests/fm-claude-settings-live-e2e.test.sh` are unmeasured and carry the default weight, so the serial lane is 120 scripts against that run's 116.
 A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default.
 Hints only affect balance: the coverage guard keeps the partition complete and disjoint whatever they say, so a stale hint costs a slower shard rather than lost coverage.
 Balance is still worth keeping current, because enough unmeasured scripts let one shard carry more than twice another shard's real work and reach the job cap while another runner sits idle.
@@ -74,11 +74,11 @@ Refresh the hints whenever the serial lane gains scripts, rather than waiting fo
 
 | Lane | Script count | Estimated duration |
 |---|---:|---:|
-| `portable-serial-1of4` | 28 | 648600 ms (~648.6 s) |
-| `portable-serial-2of4` | 30 | 648598 ms (~648.6 s) |
-| `portable-serial-3of4` | 30 | 648591 ms (~648.6 s) |
-| `portable-serial-4of4` | 31 | 648605 ms (~648.6 s) |
-| imbalance | | 14 ms |
+| `portable-serial-1of4` | 29 | 648666 ms (~648.7 s) |
+| `portable-serial-2of4` | 30 | 648662 ms (~648.7 s) |
+| `portable-serial-3of4` | 31 | 648679 ms (~648.7 s) |
+| `portable-serial-4of4` | 30 | 648663 ms (~648.7 s) |
+| imbalance | | 17 ms |
 
 The single longest script, `tests/fm-pr-check-security.test.sh` at 250417 ms, is the floor for any shard count.
 

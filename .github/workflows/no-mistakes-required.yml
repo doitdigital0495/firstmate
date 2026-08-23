@@ -45,19 +45,26 @@ jobs:
             body="${PR_BODY:-}"
             json=''
             parse_ok=0
-            case "$body" in
-              *"$prefix"*)
-                rest="${body#*"$prefix"}"
-                case "$rest" in
-                  *"$suffix"*)
-                    json="${rest%%"$suffix"*}"
-                    if printf '%s' "$json" | jq -e . >/dev/null 2>&1; then
-                      parse_ok=1
-                    fi
-                    ;;
-                esac
-                ;;
-            esac
+            # A PR body can quote the attestation comment in prose or evidence
+            # (the placeholder in this check's own error text, for one), so scan
+            # every occurrence and take the first that is a real attestation
+            # object rather than assuming the first one is.
+            rest="$body"
+            while :; do
+              case "$rest" in
+                *"$prefix"*) rest="${rest#*"$prefix"}" ;;
+                *) break ;;
+              esac
+              case "$rest" in
+                *"$suffix"*) candidate="${rest%%"$suffix"*}" ;;
+                *) break ;;
+              esac
+              if printf '%s' "$candidate" | jq -e 'type == "object" and (.steps | type == "array")' >/dev/null 2>&1; then
+                json="$candidate"
+                parse_ok=1
+                break
+              fi
+            done
             if [ "$parse_ok" -ne 1 ]; then
               {
                 echo "::error::This repository requires no-mistakes >= 1.46.0; structured pipeline step attestation is missing or unparseable."
