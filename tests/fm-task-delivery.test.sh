@@ -213,6 +213,15 @@ the PR refused without naming the push|direct-PR|- Never open a pull request; th
 the push refused without naming the PR|direct-PR|- Never push this branch; leave the dev server running for the captain's QA.|refuse|Never push this branch
 the push refused without an explicit object|direct-PR|- Do not push anything.|refuse|Do not push anything
 the refusal written as a gerund|direct-PR|- No pushing and no PR until the captain approves.|refuse|No pushing and no PR
+both actions refused across a comma|direct-PR|- Do not push, do not open a PR. The captain approves after his own QA.|refuse|Do not push, do not open a PR
+the push refused with a natural stop word|direct-PR|- Do not push yet.|refuse|Do not push yet
+the PR refused with a natural stop word|no-mistakes|- No PR yet; the captain reviews first.|refuse|No PR yet
+a push named as a noun the captain owns|direct-PR|- Do not worry about the push; the captain handles it.|launch|
+an enumeration of transports the harness bans|direct-PR|- No push, no pull, no fetch in the test harness.|launch|
+a push feature described with an appositive|direct-PR|- No user-visible push, the sync is silent.|launch|
+a guard against writing a pushing command|direct-PR|- Do not add a command that can push, it is unsafe.|launch|
+a release step that must not run twice|direct-PR|- Do not let the release push, or the deploy, run twice.|launch|
+a filename that happens to read as a PR|direct-PR|- Do not name the file PR.md.|launch|
 the stop point followed by ordinary sequencing|direct-PR|- Do NOT push and do NOT open a PR. Run the tests, then create a summary in the status file.|refuse|Do NOT push and do NOT open a PR
 the stop point followed by opening the preview|no-mistakes|- Do NOT push and do NOT open a PR. Start the dev server, then open the preview for the captain.|refuse|Do NOT push and do NOT open a PR
 the refusal carrying its own subject|direct-PR|You cannot push until the captain signs off on the preview.|refuse|You cannot push until the captain
