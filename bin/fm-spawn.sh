@@ -15,7 +15,9 @@
 #   push mode (no-mistakes, direct-PR) additionally REFUSES when the brief's own
 #   "# Task" text forbids the push or the pull request that its generated
 #   definition of done mandates, because that generated section is what the worker
-#   follows; scaffold such a task --mode local-only instead. Both refusals read
+#   follows; scaffold such a task --mode local-only instead. That check fails
+#   closed: a matcher that cannot run its pattern refuses the spawn rather than
+#   reading its own failure as agreement. Both refusals read
 #   only local files and create no worktree, endpoint, or task metadata, so they
 #   apply identically on every supported harness and runtime backend, including a
 #   --relaunch (which reaches the same block with the mode it read back out of
@@ -1734,7 +1736,12 @@ DELIVERY_NO_PUSH_RE="$DELIVERY_REFUSE_TOKEN($DELIVERY_REFUSE_PUSH|$DELIVERY_REFU
 # into a clause parser.
 DELIVERY_PERMIT_RE='then[[:space:]]+((open|raise|create|file|submit)[^.;]{0,12}(pr|pull[[:space:]]+request)([^a-z]|$)|push([^a-z]|$))'
 
-# Print the first "# Task" line that forbids the push or the PR, or return 1.
+# Print the first "# Task" line that forbids the push or the PR, return 1 when
+# the task text carries no such line, and return 2 when the matcher itself could
+# not answer. A classifier that cannot run must fail closed: grep exit 1 is a
+# genuine no-match, but any status above it (an engine that cannot compile this
+# extended regular expression, a matcher missing from PATH) would otherwise be
+# read as "no contradiction" and launch the very brief this block exists to stop.
 # Only the task text firstmate fills in is read. The generated Rules and
 # Definition of done carry their own prohibitions ("Never push to the default
 # branch", "Never merge a PR") that bound HOW the mandate is carried out rather
@@ -1742,15 +1749,18 @@ DELIVERY_PERMIT_RE='then[[:space:]]+((open|raise|create|file|submit)[^.;]{0,12}(
 # kind of bound, so both are stripped before matching and read the same way in
 # the task text as they do in the generated sections.
 brief_task_forbids_delivery() {  # <brief-file>
-  local task lc n
+  local task lc n hits st=0
   task=$(awk '/^# Task[ \t]*$/ { t = 1; next } /^# / { t = 0 } t' "$1")
   lc=$(printf '%s\n' "$task" | tr '[:upper:]' '[:lower:]' \
     | sed -E 's/force[- ]?push(es|ing|ed)?/x/g; s/push(es|ing)?[[:space:]]+(to|onto)[[:space:]]+(the[[:space:]]+)?(default[[:space:]]+branch|main|master|production|prod|upstream)/x/g; s/(the|a|an|any|this|that)[[:space:]]+push(es)?([^a-z]|$)/x\3/g')
   # Blank rather than drop a permitting line, so the reported number still
   # addresses the same line of the original task text.
-  n=$(printf '%s\n' "$lc" | sed -E "/$DELIVERY_PERMIT_RE/s/.*//" \
-    | grep -nE "$DELIVERY_NO_PUSH_RE" | head -n 1 | cut -d: -f1)
-  [ -n "$n" ] || return 1
+  hits=$(printf '%s\n' "$lc" | sed -E "/$DELIVERY_PERMIT_RE/s/.*//" \
+    | grep -nE "$DELIVERY_NO_PUSH_RE") || st=$?
+  [ "$st" -le 1 ] || return 2
+  [ "$st" -eq 0 ] || return 1
+  n=$(printf '%s\n' "$hits" | head -n 1)
+  n=${n%%:*}
   printf '%s\n' "$task" | sed -n "${n}p"
 }
 
@@ -1775,7 +1785,14 @@ if [ "$KIND" = ship ]; then
   # resolve, so it stops here rather than launching.
   case "$MODE" in
     no-mistakes|direct-PR)
-      if BRIEF_FORBIDS=$(brief_task_forbids_delivery "$BRIEF"); then
+      BRIEF_FORBIDS=; DELIVERY_SCAN_ST=0
+      BRIEF_FORBIDS=$(brief_task_forbids_delivery "$BRIEF") || DELIVERY_SCAN_ST=$?
+      if [ "$DELIVERY_SCAN_ST" -gt 1 ]; then
+        echo "error: cannot check the brief for $ID: the matcher (grep -E) failed on the delivery-refusal pattern, so a task text that forbids the push cannot be ruled out; refusing to launch mode=$MODE rather than shipping an unchecked brief" >&2
+        echo "       put a grep that supports POSIX extended regular expressions first on PATH and spawn again" >&2
+        exit 1
+      fi
+      if [ "$DELIVERY_SCAN_ST" -eq 0 ]; then
         echo "error: contradictory brief for $ID: mode=$MODE ends in a pushed branch and an open PR, but the task text forbids it: \"$BRIEF_FORBIDS\"" >&2
         echo "       scaffold this task --mode local-only so the worker stops at a branch the captain reviews first, or drop the prohibition from the task text" >&2
         exit 1

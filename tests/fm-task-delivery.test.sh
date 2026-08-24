@@ -266,6 +266,42 @@ ROWS
   pass "fm-spawn: a push mode refuses a brief whose task text forbids the push or the PR"
 }
 
+# A safety classifier must fail closed. grep exit 1 (no match) and grep exit >1
+# (a matcher that cannot compile this pattern, or is missing) used to be
+# indistinguishable, so a brief carrying the 2026-08-22 contradiction launched
+# silently whenever the matcher itself could not answer.
+test_spawn_refuses_when_the_delivery_matcher_cannot_run() {
+  local rec home proj fakebin real out status
+  rec=$(make_home matcher)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  printf '#!/bin/sh\necho DELIVERY_CHECKS_CLEARED >&2\nexit 1\n' > "$fakebin/tmux"
+  chmod +x "$fakebin/tmux"
+  real=$(command -v grep) || fail "no grep on PATH to delegate to"
+  cat > "$fakebin/grep" <<EOF
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in *'pull[[:space:]]+request'*) echo 'grep: unsupported regular expression' >&2; exit 2 ;; esac
+done
+exec $real "\$@"
+EOF
+  chmod +x "$fakebin/grep"
+
+  scaffold_brief "$home" delivery-matcher-e1 direct-PR "Do the work and verify it in the running app.
+
+- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA." >/dev/null
+  out=$(run_spawn "$home" "$fakebin" delivery-matcher-e1 "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a spawn whose delivery matcher failed should exit non-zero"
+  assert_contains "$out" "cannot check the brief for delivery-matcher-e1" \
+    "the refusal did not name the matcher failure"
+  assert_absent "$home/state/delivery-matcher-e1.meta" "a matcher-failure refusal wrote task metadata"
+  assert_not_contains "$out" "DELIVERY_CHECKS_CLEARED" \
+    "a matcher-failure refusal still reached the backend"
+  pass "fm-spawn: a delivery matcher that cannot run refuses the spawn instead of launching it"
+}
+
 # The other half of the guarantee: the modes themselves still say what they always
 # said, so refusing the contradiction did not quietly disarm ordinary delivery.
 test_generated_definitions_of_done_keep_their_stop_points() {
@@ -420,6 +456,7 @@ test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
 test_spawn_refuses_a_brief_that_contradicts_its_own_delivery
+test_spawn_refuses_when_the_delivery_matcher_cannot_run
 test_generated_definitions_of_done_keep_their_stop_points
 test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_scout_records_no_delivery_posture
