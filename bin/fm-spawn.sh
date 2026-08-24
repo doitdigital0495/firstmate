@@ -1777,7 +1777,9 @@ brief_task_forbids_delivery() {  # <brief-file>
   printf '%s\n' "$line"
 }
 
-# Brief/spawn delivery agreement, checked before any endpoint exists.
+# Brief/spawn delivery agreement, checked before this spawn creates any worktree,
+# endpoint, or task metadata; on a --relaunch the adopted record and endpoint are
+# read earlier, but this block still creates neither.
 # fm-brief.sh records a ship brief's mode as a fixed "Delivery contract: mode=<mode>"
 # line. A spawn that disagrees would launch a worker whose instructions and whose
 # recorded task delivery differ, which is the exact drift this contract prevents.
