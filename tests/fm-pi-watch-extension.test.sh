@@ -1910,9 +1910,11 @@ cleanup() { rm -f "$marker"; }
 trap cleanup EXIT
 trap 'exit 0' TERM INT
 printf 'watcher: started pid=%s\n' "$$"
-printf '%s\n' "$$" > "${FM_CHILD_PID_FILE:?}"
-printf '%s\n' "$marker" > "${FM_CHILD_MARKER_FILE:?}"
+# The arm log is appended before the pid file so that seeing the pid file
+# always implies this child already appears in the live-arm log.
 printf 'arm pid=%s marker=%s\n' "$$" "$marker" >> "${FM_ARM_LOG:?}"
+printf '%s\n' "$marker" > "${FM_CHILD_MARKER_FILE:?}"
+printf '%s\n' "$$" > "${FM_CHILD_PID_FILE:?}"
 while :; do sleep 0.2; done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
