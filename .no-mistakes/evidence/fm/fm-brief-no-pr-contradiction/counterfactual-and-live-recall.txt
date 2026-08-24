@@ -1,0 +1,27 @@
+==============================================================
+COUNTERFACTUAL - the identical contradictory brief, two fm-spawn.sh
+
+  base commit 69e445c:
+    [backend] tmux reached - delivery checks cleared
+    [backend] tmux reached - delivery checks cleared
+    [backend] tmux reached - delivery checks cleared
+
+  this branch:
+    error: contradictory brief for cosmic-sets-import: mode=direct-PR ends in a pushed branch and an open PR, but the task text forbids it: "- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA."
+           scaffold this task --mode local-only so the worker stops at a branch the captain reviews first, or drop the prohibition from the task text
+
+==============================================================
+LIVE FLEET RECALL - every real ship brief in ~/.firstmate/data,
+driven through this branch's fm-spawn.sh with its own recorded mode
+
+  REFUSED  agentic-portability-impl           mode=direct-PR   "- Do NOT push and do NOT open a PR. The captain approves that himself."
+  REFUSED  cosmic-brand-accents               mode=direct-PR   "- Do NOT push and do NOT open a PR. Start the dev server, leave it running and report the
+  REFUSED  cosmic-catalogue-threshold         mode=direct-PR   "- Do NOT push and do NOT open a PR. Start the dev server, verify at 390x844 and 1440px, l
+  REFUSED  cosmic-homepage-pin                mode=direct-PR   "- Do NOT push and do NOT open a PR. Start the dev server in this worktree, verify in a re
+  REFUSED  cosmic-sets-import                 mode=direct-PR   "- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA."
+  REFUSED  fm-autocompact-175k-b8             mode=no-mistakes "5. Run targeted checks, `bin/fm-lint.sh`, and repository-required validation. Commit the 
+  REFUSED  fm-config-symlinked                mode=direct-PR   "- Do NOT push and do NOT open a PR; the captain approves that himself."
+
+  ship briefs with a recorded contract : 53
+  of those in a push mode              : 49
+  refused as self-contradictory        : 7

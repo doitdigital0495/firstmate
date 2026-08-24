@@ -1,0 +1,69 @@
+==============================================================
+1. The real 2026-08-22 incident (cosmic-sets-import), scaffolded
+   --mode direct-PR, whose generated definition of done says:
+   | # Definition of done
+   | Delivery contract: mode=direct-PR
+   | This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
+   | The task is complete only when committed on your branch.
+   | When it is implemented and committed, push your branch and open a PR with `gh-axi`, then append `done: PR {url}` to the status file and stop.
+   | Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
+
+   ...while the task text the captain wrote says:
+   | Rebuild the product sets import screen and verify it in the running preview at 390px.
+   | 
+   | - Do NOT push and do NOT open a PR. The captain approves that himself after his own QA.
+   | 
+   | # Herdr lifecycle declaration - NOT ENABLED
+
+   $ fm-spawn.sh cosmic-sets-import <proj> claude --mode direct-PR --yolo off
+   error: contradictory brief for cosmic-sets-import: mode=direct-PR ends in a pushed branch and an open PR, but the task text forbids it: "- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA."
+          scaffold this task --mode local-only so the worker stops at a branch the captain reviews first, or drop the prohibition from the task text
+   [exit 1]
+   metadata written? no - nothing was created
+
+==============================================================
+2. Same task text through the mode whose contract fits the stop point
+   $ fm-spawn.sh cosmic-sets-import-local <proj> claude --mode local-only --yolo off
+   notice: cosmic-sets-import-local ships mode=local-only while the standing posture for proj is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+   [backend] tmux reached - delivery checks cleared
+   [backend] tmux reached - delivery checks cleared
+   [backend] tmux reached - delivery checks cleared
+   [exit 1]
+
+==============================================================
+3. Ordinary direct-PR work still launches (control: cosmic-hero-video,
+   the 2026-08-22 incident that carried no prohibition)
+   $ fm-spawn.sh cosmic-hero-video <proj> claude --mode direct-PR --yolo off
+   notice: cosmic-hero-video ships mode=direct-PR while the standing posture for proj is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+   [backend] tmux reached - delivery checks cleared
+   [backend] tmux reached - delivery checks cleared
+   [backend] tmux reached - delivery checks cleared
+   [exit 1]
+
+==============================================================
+4. Ordinary programming senses of push are NOT delivery refusals
+   launched - Do not push to the analytics queue on every keystroke.
+   launched - Never push to npm from CI.
+   launched - Do not push it to the array; use concat.
+   launched - Do not push this event to the dataLayer.
+   launched - Do not push and pop the same stack twice.
+   launched - Do not push anything to the CDN.
+   launched - Do not push until the animation finishes.
+   launched - No push notifications in this milestone; skip the service worker.
+   launched - Do not push secrets or .env files to the remote.
+   launched - Do not create a PR template file.
+   launched - Do not push until the tests are green, then open the PR as usual.
+   launched Do not open a PR against upstream; open it against the fork.
+
+==============================================================
+5. Real delivery prohibitions still refuse
+   refused         - Do NOT push and do NOT open a PR. The captain approves that himself after his own QA.
+   refused         - Do not push, do not open a PR. The captain approves after his own QA.
+   refused         5. Commit the branch and stop. Do not invoke no-mistakes, push, or open a PR without captain approval.
+   refused         - Never push this branch; leave the dev server running for the captain's QA.
+   refused         - Never open a pull request; the captain reviews the running preview first.
+   refused         - Do not push anything.
+   refused         - No pushing and no PR until the captain approves.
+   refused         - Do not push yet.
+   refused         - No PR yet; the captain reviews first.
+   refused         You cannot push until the captain signs off on the preview.
