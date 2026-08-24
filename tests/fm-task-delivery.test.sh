@@ -266,40 +266,62 @@ ROWS
   pass "fm-spawn: a push mode refuses a brief whose task text forbids the push or the PR"
 }
 
-# A safety classifier must fail closed. grep exit 1 (no match) and grep exit >1
-# (a matcher that cannot compile this pattern, or is missing) used to be
-# indistinguishable, so a brief carrying the 2026-08-22 contradiction launched
-# silently whenever the matcher itself could not answer.
+# A safety classifier must fail closed at every stage. A failure anywhere in the
+# classifier used to be indistinguishable from a genuine no-match - grep exit >1
+# read as "nothing found", and a sed that could not run printed nothing so grep
+# exited 1 on the empty input - so a brief carrying the 2026-08-22 contradiction
+# launched silently whenever the classifier itself could not answer.
+# Each stub shadows one stage for the pattern only that stage is handed, and
+# delegates every other invocation to the real tool, so the row proves the stage
+# it names rather than breaking the spawn somewhere earlier.
+stub_stage() {  # <fakebin> <tool> <pattern-fragment>
+  local fakebin=$1 tool=$2 frag=$3 real
+  real=$(command -v "$tool") || fail "no $tool on PATH to delegate to"
+  cat > "$fakebin/$tool" <<EOF
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in *'$frag'*) echo '$tool: unsupported regular expression' >&2; exit 2 ;; esac
+done
+exec $real "\$@"
+EOF
+  chmod +x "$fakebin/$tool"
+}
+
 test_spawn_refuses_when_the_delivery_matcher_cannot_run() {
-  local rec home proj fakebin real out status
+  local rec home proj fakebin label tool frag out status n=0
   rec=$(make_home matcher)
   IFS='|' read -r home proj fakebin <<EOF
 $rec
 EOF
   printf '#!/bin/sh\necho DELIVERY_CHECKS_CLEARED >&2\nexit 1\n' > "$fakebin/tmux"
   chmod +x "$fakebin/tmux"
-  real=$(command -v grep) || fail "no grep on PATH to delegate to"
-  cat > "$fakebin/grep" <<EOF
-#!/bin/sh
-for a in "\$@"; do
-  case "\$a" in *'pull[[:space:]]+request'*) echo 'grep: unsupported regular expression' >&2; exit 2 ;; esac
-done
-exec $real "\$@"
-EOF
-  chmod +x "$fakebin/grep"
 
-  scaffold_brief "$home" delivery-matcher-e1 direct-PR "Do the work and verify it in the running app.
+  while IFS='|' read -r label tool frag; do
+    [ -n "$label" ] || continue
+    n=$((n + 1))
+    rm -f "$fakebin/grep" "$fakebin/sed" "$fakebin/tr" "$fakebin/awk"
+    stub_stage "$fakebin" "$tool" "$frag"
+    scaffold_brief "$home" "delivery-matcher-e$n" direct-PR "Do the work and verify it in the running app.
 
 - Do NOT push and do NOT open a PR. The captain approves that himself after his own QA." >/dev/null
-  out=$(run_spawn "$home" "$fakebin" delivery-matcher-e1 "$proj" claude --mode direct-PR --yolo off)
-  status=$?
-  [ "$status" -ne 0 ] || fail "a spawn whose delivery matcher failed should exit non-zero"
-  assert_contains "$out" "cannot check the brief for delivery-matcher-e1" \
-    "the refusal did not name the matcher failure"
-  assert_absent "$home/state/delivery-matcher-e1.meta" "a matcher-failure refusal wrote task metadata"
-  assert_not_contains "$out" "DELIVERY_CHECKS_CLEARED" \
-    "a matcher-failure refusal still reached the backend"
-  pass "fm-spawn: a delivery matcher that cannot run refuses the spawn instead of launching it"
+    out=$(run_spawn "$home" "$fakebin" "delivery-matcher-e$n" "$proj" claude --mode direct-PR --yolo off)
+    status=$?
+    [ "$status" -ne 0 ] || fail "$label: a spawn whose classifier failed should exit non-zero"
+    assert_contains "$out" "cannot check the brief for delivery-matcher-e$n" \
+      "$label: the refusal did not report the classifier failure"
+    assert_contains "$out" "delivery-refusal classifier could not" \
+      "$label: the refusal did not name the failing stage"
+    assert_absent "$home/state/delivery-matcher-e$n.meta" "$label: the refusal wrote task metadata"
+    assert_not_contains "$out" "DELIVERY_CHECKS_CLEARED" "$label: the refusal still reached the backend"
+    assert_not_contains "$out" "contradictory brief" \
+      "$label: a classifier that could not run still claimed a verdict"
+  done <<'ROWS'
+the refusal matcher cannot compile its pattern|grep|pull[[:space:]]+request
+the permit strip cannot run|sed|then[[:space:]]+
+the bounded-push strip cannot run|sed|force[- ]?push
+ROWS
+  rm -f "$fakebin/grep" "$fakebin/sed"
+  pass "fm-spawn: a delivery classifier stage that cannot run refuses the spawn instead of launching it"
 }
 
 # The other half of the guarantee: the modes themselves still say what they always

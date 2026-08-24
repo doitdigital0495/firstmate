@@ -1738,10 +1738,14 @@ DELIVERY_PERMIT_RE='then[[:space:]]+((open|raise|create|file|submit)[^.;]{0,12}(
 
 # Print the first "# Task" line that forbids the push or the PR, return 1 when
 # the task text carries no such line, and return 2 when the matcher itself could
-# not answer. A classifier that cannot run must fail closed: grep exit 1 is a
-# genuine no-match, but any status above it (an engine that cannot compile this
-# extended regular expression, a matcher missing from PATH) would otherwise be
-# read as "no contradiction" and launch the very brief this block exists to stop.
+# not answer. A classifier that cannot run must fail closed: only grep exit 1 is
+# a genuine no-match, and every other outcome - an engine that cannot compile
+# these extended regular expressions, a stage missing from PATH, a stage that
+# rejects its own flags - would otherwise be read as "no contradiction" and
+# launch the very brief this block exists to stop. Each stage therefore runs into
+# its own variable rather than a pipeline, because a pipeline reports only its
+# last stage's status: a sed that cannot run prints nothing, grep then exits 1 on
+# the empty input, and the failure reads as agreement.
 # Only the task text firstmate fills in is read. The generated Rules and
 # Definition of done carry their own prohibitions ("Never push to the default
 # branch", "Never merge a PR") that bound HOW the mandate is carried out rather
@@ -1749,19 +1753,28 @@ DELIVERY_PERMIT_RE='then[[:space:]]+((open|raise|create|file|submit)[^.;]{0,12}(
 # kind of bound, so both are stripped before matching and read the same way in
 # the task text as they do in the generated sections.
 brief_task_forbids_delivery() {  # <brief-file>
-  local task lc n hits st=0
-  task=$(awk '/^# Task[ \t]*$/ { t = 1; next } /^# / { t = 0 } t' "$1")
-  lc=$(printf '%s\n' "$task" | tr '[:upper:]' '[:lower:]' \
-    | sed -E 's/force[- ]?push(es|ing|ed)?/x/g; s/push(es|ing)?[[:space:]]+(to|onto)[[:space:]]+(the[[:space:]]+)?(default[[:space:]]+branch|main|master|production|prod|upstream)/x/g; s/(the|a|an|any|this|that)[[:space:]]+push(es)?([^a-z]|$)/x\3/g')
+  local task lc bounded permitted line n hits st=0
+  task=$(awk '/^# Task[ \t]*$/ { t = 1; next } /^# / { t = 0 } t' "$1") \
+    || { echo "error: the delivery-refusal classifier could not read the brief's task section (awk exited $?)" >&2; return 2; }
+  lc=$(printf '%s\n' "$task" | tr '[:upper:]' '[:lower:]') \
+    || { echo "error: the delivery-refusal classifier could not case-fold the task text (tr exited $?)" >&2; return 2; }
+  bounded=$(printf '%s\n' "$lc" | sed -E 's/force[- ]?push(es|ing|ed)?/x/g; s/push(es|ing)?[[:space:]]+(to|onto)[[:space:]]+(the[[:space:]]+)?(default[[:space:]]+branch|main|master|production|prod|upstream)/x/g; s/(the|a|an|any|this|that)[[:space:]]+push(es)?([^a-z]|$)/x\3/g') \
+    || { echo "error: the delivery-refusal classifier could not strip its bounded-push phrasings (sed -E exited $?)" >&2; return 2; }
   # Blank rather than drop a permitting line, so the reported number still
   # addresses the same line of the original task text.
-  hits=$(printf '%s\n' "$lc" | sed -E "/$DELIVERY_PERMIT_RE/s/.*//" \
-    | grep -nE "$DELIVERY_NO_PUSH_RE") || st=$?
-  [ "$st" -le 1 ] || return 2
+  permitted=$(printf '%s\n' "$bounded" | sed -E "/$DELIVERY_PERMIT_RE/s/.*//") \
+    || { echo "error: the delivery-refusal classifier could not apply its permit rule (sed -E exited $?)" >&2; return 2; }
+  hits=$(printf '%s\n' "$permitted" | grep -nE "$DELIVERY_NO_PUSH_RE") || st=$?
+  if [ "$st" -gt 1 ]; then
+    echo "error: the delivery-refusal classifier could not match its refusal pattern (grep -E exited $st)" >&2
+    return 2
+  fi
   [ "$st" -eq 0 ] || return 1
   n=$(printf '%s\n' "$hits" | head -n 1)
   n=${n%%:*}
-  printf '%s\n' "$task" | sed -n "${n}p"
+  line=$(printf '%s\n' "$task" | sed -n "${n}p") \
+    || { echo "error: the delivery-refusal classifier could not quote the task line it matched (sed -n exited $?)" >&2; return 2; }
+  printf '%s\n' "$line"
 }
 
 # Brief/spawn delivery agreement, checked before any endpoint exists.
@@ -1788,8 +1801,8 @@ if [ "$KIND" = ship ]; then
       BRIEF_FORBIDS=; DELIVERY_SCAN_ST=0
       BRIEF_FORBIDS=$(brief_task_forbids_delivery "$BRIEF") || DELIVERY_SCAN_ST=$?
       if [ "$DELIVERY_SCAN_ST" -gt 1 ]; then
-        echo "error: cannot check the brief for $ID: the matcher (grep -E) failed on the delivery-refusal pattern, so a task text that forbids the push cannot be ruled out; refusing to launch mode=$MODE rather than shipping an unchecked brief" >&2
-        echo "       put a grep that supports POSIX extended regular expressions first on PATH and spawn again" >&2
+        echo "error: cannot check the brief for $ID: the stage named above failed, so a task text that forbids the push cannot be ruled out; refusing to launch mode=$MODE rather than shipping an unchecked brief" >&2
+        echo "       put an awk, tr, sed and grep supporting POSIX extended regular expressions first on PATH and spawn again" >&2
         exit 1
       fi
       if [ "$DELIVERY_SCAN_ST" -eq 0 ]; then
