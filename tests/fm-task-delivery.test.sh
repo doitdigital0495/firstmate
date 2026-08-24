@@ -229,6 +229,16 @@ a dataLayer push|direct-PR|- Do not push this event to the dataLayer.|launch|
 state pushed into the URL|direct-PR|- Do not push any state into the URL.|launch|
 a layout pushed off screen|direct-PR|- Do not push the modal off screen on mobile.|launch|
 a stack pushed and popped|direct-PR|- Do not push and pop the same stack twice.|launch|
+a bounded push to a content network|direct-PR|- Do not push anything to the CDN.|launch|
+a bounded push to a deploy target|direct-PR|- Do not push anything to production without captain approval.|launch|
+a bounded push into a client-side store|direct-PR|- Do not push anything into the global store.|launch|
+a push sequenced behind an animation|direct-PR|- Do not push until the animation finishes.|launch|
+a push sequenced behind a queue|direct-PR|- Do not push until the queue drains.|launch|
+a cache whose name opens with a forge word|direct-PR|- Do not push to the repo cache on read.|launch|
+a cache whose name opens with a forge host|direct-PR|- Do not push to github actions cache.|launch|
+a PR-shaped noun popped off a stack|direct-PR|- Do not push or pop the PR badge.|launch|
+a PR opened for someone other than delivery|direct-PR|- Do not open a PR for the mobile team.|launch|
+the stop word carried into the hold clause|direct-PR|- Do not push anything yet; wait for captain approval.|refuse|Do not push anything yet
 the push refused with a bare clause end|direct-PR|- Do not push; the captain reviews the branch himself.|refuse|Do not push
 both actions refused across or|direct-PR|- Do not push or ever open a pull request without captain approval.|refuse|Do not push or ever open a pull request
 the changes named as the object|direct-PR|- Do not push the changes; the captain reviews them first.|refuse|Do not push the changes

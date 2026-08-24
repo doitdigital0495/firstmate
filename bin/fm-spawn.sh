@@ -1701,12 +1701,23 @@ delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task
 # your commits, the remote, origin, the fork, a forge - because push is an
 # ordinary verb in this fleet's own work ("do not push to the analytics queue",
 # "do not push this event to the dataLayer", "do not push and pop the same
-# stack twice"), and a bare determiner cannot tell those from shipping.
+# stack twice"), and a bare determiner cannot tell those from shipping. A git
+# target must itself end the clause or continue into a condition, so a longer
+# object that merely opens with one is not delivery ("push to the repo cache",
+# "push to github actions cache").
+#
+# A generic stop word is only a stop point when it ends the clause: "do not push
+# anything." and "do not push yet." refuse, while "do not push anything to the
+# CDN." names the object it really bans. A condition is only a stop point when
+# it waits on the captain - approval, a review, a sign-off - because "do not
+# push until the queue drains" is an ordinary sequencing bound on a queue push.
 DELIVERY_REFUSE_TOKEN='(^[-*>[:space:]0-9.)]*|[.;:][[:space:]]+)(you[[:space:]]+|we[[:space:]]+)?(do[[:space:]]+not|don.t|dont|cannot|never|no)[^a-z]'
-DELIVERY_AGAIN='[^.;]{0,30}(push|pr|pull[[:space:]]+request)([^a-z]|$)'
+DELIVERY_AGAIN='[^.;]{0,20}(do[[:space:]]+not|don.t|dont|cannot|never|no|not|open|raise|create|submit|file)[[:space:]][^.;]{0,12}(push|pr|pull[[:space:]]+request)([^a-z]|$)'
+DELIVERY_HOLD='[^.;]{0,40}(captain|approv|sign(s|ed)?[-[:space:]]?off|review|permission|green[[:space:]]+light|go[- ]ahead)'
 DELIVERY_PUSH_TARGET='(this|the|your)[[:space:]]+(branch|changes|commits)|to[[:space:]]+(the[[:space:]]+)?(remote|origin|fork|repo(sitory)?|github|gitlab|bitbucket)'
-DELIVERY_PUSH_OBJECT="([[:space:]]*[.;]|[[:space:]]*,$DELIVERY_AGAIN|[[:space:]]+(and|or)$DELIVERY_AGAIN|[[:space:]]+(until|yet|anything)([^a-z]|\$)|[[:space:]]+($DELIVERY_PUSH_TARGET)([^a-z]|\$)|\$)"
-DELIVERY_PR_OBJECT="([[:space:]]*[.;]|[[:space:]]*,$DELIVERY_AGAIN|[[:space:]]+(for|until|unless|before|without|at|on|yourself|here|now|yet)([^a-z]|\$)|\$)"
+DELIVERY_CONDITION='[[:space:]]+(until|unless|before|without|and|or|yet|for)([^a-z]|$)'
+DELIVERY_PUSH_OBJECT="([[:space:]]*[.;]|[[:space:]]*,$DELIVERY_AGAIN|[[:space:]]+(and|or)$DELIVERY_AGAIN|[[:space:]]+(anything[[:space:]]+)?(yet|anything)[[:space:]]*([.;,]|\$)|[[:space:]]+(anything[[:space:]]+)?until$DELIVERY_HOLD|[[:space:]]+($DELIVERY_PUSH_TARGET)([[:space:]]*[.;,]|$DELIVERY_CONDITION|\$)|\$)"
+DELIVERY_PR_OBJECT="([[:space:]]*[.;]|[[:space:]]*,$DELIVERY_AGAIN|[[:space:]]+(yet|now|here|yourself)[[:space:]]*([.;,]|\$)|[[:space:]]+(for|until|unless|before|without|at|on)$DELIVERY_HOLD|\$)"
 DELIVERY_REFUSE_PUSH="[^.;]{0,25}push(ing)?$DELIVERY_PUSH_OBJECT"
 DELIVERY_REFUSE_OPEN="[^.;]{0,12}((open|raise|create|submit)[^.;]{0,8}|file[[:space:]]+(a|an|the|any)[[:space:]]+)(pr|pull[[:space:]]+request)$DELIVERY_PR_OBJECT"
 DELIVERY_REFUSE_BARE="[[:space:]]*(a[[:space:]]+|an[[:space:]]+|the[[:space:]]+|any[[:space:]]+)?(pr|pull[[:space:]]+request)$DELIVERY_PR_OBJECT"
