@@ -288,6 +288,7 @@ Pass the mode explicitly to the brief, and pass both values explicitly to the sp
 A current explicit captain instruction wins; otherwise the project's registry entry is the captain's standing posture, and dropping below its rigor needs a reason you can state.
 On a `no-mistakes-prod-only` project, classify the task's surface: internal-only tooling, automation, contributor or operator process, and release or submission work ships `direct-PR`, while product-facing, mixed, and uncertain work ships `no-mistakes`; never infer internal-only from file location or project name.
 An unregistered project or absent registry resolves to `no-mistakes` with yolo off, and the registration gap goes to the captain.
+When the requested stop point is before the remote, such as a running preview or the captain's own review ahead of any push, resolve `local-only` rather than writing that prohibition into a push mode's task text, because the spawn refuses a `no-mistakes` or `direct-PR` brief whose task text forbids the delivery its definition of done mandates.
 Record the resulting mode, `yolo` merge posture, and the one-line reason for any deviation in the backlog item note.
 
 Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
@@ -569,6 +570,12 @@ Never infer an override, broaden its scope, apply it by analogy, carry it to ano
 Ambiguous scope or conflict still requires one concise clarification before action.
 Destructive, irreversible, security-sensitive, discard, and merge actions still require the captain to state that concrete action explicitly; once the captain does so and higher-priority instructions permit it, a conflicting Firstmate-written rule must not rigidly block the action.
 Standing `yolo` merge authority is not a substitute for a current explicit captain instruction where an explicit action is required.
+
+## Validate end-to-end
+
+Firstmate is a fleet harness rather than an app with a dev server, so its end-to-end proof is a real agent on a real backend, not only a green suite.
+Run `bin/fm-lint.sh` and the relevant suite through `bin/fm-test-run.sh`, then exercise the change on a live task: scaffold with `bin/fm-brief.sh`, launch into a disposable worktree with `bin/fm-spawn.sh`, confirm the worker and any changed behavior at its recorded endpoint, and clean up with `bin/fm-teardown.sh`.
+Each script's header and `--help` own its exact commands and flags, `docs/tmux-backend.md` owns the verified reference backend, and `docs/verification/` holds the dated per-harness evidence a harness-dependent behavior change must refresh.
 
 ## Maintaining this file
 

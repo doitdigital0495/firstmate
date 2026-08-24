@@ -11,7 +11,17 @@
 #   the mode up. A ship spawn additionally reads the brief's recorded
 #   "Delivery contract: mode=<mode>" line and REFUSES a mismatch, so the worker's
 #   instructions and the recorded task delivery cannot drift apart; a brief
-#   scaffolded before that line existed warns once and launches on the flag. When
+#   scaffolded before that line existed warns once and launches on the flag. A
+#   push mode (no-mistakes, direct-PR) additionally REFUSES when the brief's own
+#   "# Task" text forbids the push or the pull request that its generated
+#   definition of done mandates, because that generated section is what the worker
+#   follows; scaffold such a task --mode local-only instead. That check fails
+#   closed: a matcher that cannot run its pattern refuses the spawn rather than
+#   reading its own failure as agreement. Both refusals read
+#   only local files and create no worktree, endpoint, or task metadata, so they
+#   apply identically on every supported harness and runtime backend, including a
+#   --relaunch (which reaches the same block with the mode it read back out of
+#   the task's own record) and each pair of a batch spawn. When
 #   the explicit mode carries less rigor than the project's standing posture, a
 #   loud one-line deviation notice is printed and the spawn continues.
 #   no-mistakes-prod-only is a registry policy rather than a task mode and is
@@ -1669,7 +1679,107 @@ delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task
   esac
 }
 
-# Brief/spawn delivery agreement, checked before any endpoint exists.
+# A refusal of the delivery action itself, on one sentence clause of a lowercased
+# line: a refusing token that opens a line or a clause, then the push, an opening
+# verb on a PR, or a bare PR right after the refusal.
+#
+# Both objects must end the clause or continue into a word that keeps the
+# delivery action itself as the object, because the same words routinely appear
+# with a narrower object that delivery is not: "do not push secrets", "no push
+# notifications", and "do not create a PR template file" all scope the ban to
+# something other than shipping this branch. Naming the PR as the object of some
+# other verb ("never merge a PR", "do not approve the PR") is not a refusal to
+# open one either, and a refusal written mid sentence is prose about pushing
+# rather than an instruction not to push.
+#
+# A bare comma does not end the clause: it separates enumerations and
+# appositives that talk about something else ("no push, no pull, no fetch in the
+# test harness"), so it only ends the object when the next clause names the
+# delivery again ("do not invoke no-mistakes, push, or open a PR"). "and" and
+# "or" carry the same requirement. "file" takes a determiner for the same
+# reason, so a filename that happens to read PR is not a refusal to file one.
+#
+# Anything the push continues into must itself be git delivery - this branch,
+# your commits, the remote, origin, the fork, a forge - because push is an
+# ordinary verb in this fleet's own work ("do not push to the analytics queue",
+# "do not push this event to the dataLayer", "do not push and pop the same
+# stack twice"), and a bare determiner cannot tell those from shipping. A git
+# target must itself end the clause or continue into a condition, so a longer
+# object that merely opens with one is not delivery ("push to the repo cache",
+# "push to github actions cache").
+#
+# A generic stop word is only a stop point when it ends the clause: "do not push
+# anything." and "do not push yet." refuse, while "do not push anything to the
+# CDN." names the object it really bans. A condition is only a stop point when
+# it waits on the captain - approval, a review, a sign-off - because "do not
+# push until the queue drains" is an ordinary sequencing bound on a queue push.
+DELIVERY_REFUSE_TOKEN='(^[-*>[:space:]0-9.)]*|[.;:][[:space:]]+)(you[[:space:]]+|we[[:space:]]+)?(do[[:space:]]+not|don.t|dont|cannot|never|no)[^a-z]'
+DELIVERY_AGAIN='[^.;]{0,20}(do[[:space:]]+not|don.t|dont|cannot|never|no|not|open|raise|create|submit|file)[[:space:]][^.;]{0,12}(push|pr|pull[[:space:]]+request)([^a-z]|$)'
+DELIVERY_HOLD='[^.;]{0,40}(captain|approv|sign(s|ed)?[-[:space:]]?off|review|permission|green[[:space:]]+light|go[- ]ahead)'
+DELIVERY_PUSH_TARGET='(this|the|your)[[:space:]]+(branch|changes|commits)|to[[:space:]]+(the[[:space:]]+)?(remote|origin|fork|repo(sitory)?|github|gitlab|bitbucket)'
+DELIVERY_CONDITION='[[:space:]]+(until|unless|before|without|and|or|yet|for)([^a-z]|$)'
+DELIVERY_PUSH_OBJECT="([[:space:]]*[.;]|[[:space:]]*,$DELIVERY_AGAIN|[[:space:]]+(and|or)$DELIVERY_AGAIN|[[:space:]]+(anything[[:space:]]+)?(yet|anything)[[:space:]]*([.;,]|\$)|[[:space:]]+(anything[[:space:]]+)?until$DELIVERY_HOLD|[[:space:]]+($DELIVERY_PUSH_TARGET)([[:space:]]*[.;,]|$DELIVERY_CONDITION|\$)|\$)"
+DELIVERY_PR_OBJECT="([[:space:]]*[.;]|[[:space:]]*,$DELIVERY_AGAIN|[[:space:]]+(yet|now|here|yourself)[[:space:]]*([.;,]|\$)|[[:space:]]+(for|until|unless|before|without|at|on)$DELIVERY_HOLD|\$)"
+DELIVERY_REFUSE_PUSH="[^.;]{0,25}push(ing)?$DELIVERY_PUSH_OBJECT"
+DELIVERY_REFUSE_OPEN="[^.;]{0,12}((open|raise|create|submit)[^.;]{0,8}|file[[:space:]]+(a|an|the|any)[[:space:]]+)(pr|pull[[:space:]]+request)$DELIVERY_PR_OBJECT"
+DELIVERY_REFUSE_BARE="[[:space:]]*(a[[:space:]]+|an[[:space:]]+|the[[:space:]]+|any[[:space:]]+)?(pr|pull[[:space:]]+request)$DELIVERY_PR_OBJECT"
+DELIVERY_NO_PUSH_RE="$DELIVERY_REFUSE_TOKEN($DELIVERY_REFUSE_PUSH|$DELIVERY_REFUSE_OPEN|$DELIVERY_REFUSE_BARE)"
+
+# A line that also permits the delivery later ("do not push until the tests are
+# green, then open the PR as usual") sequences the mandate rather than refusing
+# it, so it is dropped before matching. The permitting verb must take the
+# delivery itself as its object: ordinary sequencing ("then create a summary",
+# "then open the preview") continues the task rather than permitting the push.
+# The strip is still whole-line, so a genuine refusal followed on the same line
+# by a permitting verb over a PR-shaped noun ("do NOT push. Then create a PR
+# template file.") is suppressed; that ceiling is left as is rather than grown
+# into a clause parser.
+DELIVERY_PERMIT_RE='then[[:space:]]+((open|raise|create|file|submit)[^.;]{0,12}(pr|pull[[:space:]]+request)([^a-z]|$)|push([^a-z]|$))'
+
+# Print the first "# Task" line that forbids the push or the PR, return 1 when
+# the task text carries no such line, and return 2 when the matcher itself could
+# not answer. A classifier that cannot run must fail closed: only grep exit 1 is
+# a genuine no-match, and every other outcome - an engine that cannot compile
+# these extended regular expressions, a stage missing from PATH, a stage that
+# rejects its own flags - would otherwise be read as "no contradiction" and
+# launch the very brief this block exists to stop. Each stage therefore runs into
+# its own variable rather than a pipeline, because a pipeline reports only its
+# last stage's status: a sed that cannot run prints nothing, grep then exits 1 on
+# the empty input, and the failure reads as agreement.
+# Only the task text firstmate fills in is read. The generated Rules and
+# Definition of done carry their own prohibitions ("Never push to the default
+# branch", "Never merge a PR") that bound HOW the mandate is carried out rather
+# than refusing it. A force-push ban and a default-branch qualifier are the same
+# kind of bound, so both are stripped before matching and read the same way in
+# the task text as they do in the generated sections.
+brief_task_forbids_delivery() {  # <brief-file>
+  local task lc bounded permitted line n hits st=0
+  task=$(awk '/^# Task[ \t]*$/ { t = 1; next } /^# / { t = 0 } t' "$1") \
+    || { echo "error: the delivery-refusal classifier could not read the brief's task section (awk exited $?)" >&2; return 2; }
+  lc=$(printf '%s\n' "$task" | tr '[:upper:]' '[:lower:]') \
+    || { echo "error: the delivery-refusal classifier could not case-fold the task text (tr exited $?)" >&2; return 2; }
+  bounded=$(printf '%s\n' "$lc" | sed -E 's/force[- ]?push(es|ing|ed)?/x/g; s/push(es|ing)?[[:space:]]+(to|onto)[[:space:]]+(the[[:space:]]+)?(default[[:space:]]+branch|main|master|production|prod|upstream)/x/g; s/(the|a|an|any|this|that)[[:space:]]+push(es)?([^a-z]|$)/x\3/g') \
+    || { echo "error: the delivery-refusal classifier could not strip its bounded-push phrasings (sed -E exited $?)" >&2; return 2; }
+  # Blank rather than drop a permitting line, so the reported number still
+  # addresses the same line of the original task text.
+  permitted=$(printf '%s\n' "$bounded" | sed -E "/$DELIVERY_PERMIT_RE/s/.*//") \
+    || { echo "error: the delivery-refusal classifier could not apply its permit rule (sed -E exited $?)" >&2; return 2; }
+  hits=$(printf '%s\n' "$permitted" | grep -nE "$DELIVERY_NO_PUSH_RE") || st=$?
+  if [ "$st" -gt 1 ]; then
+    echo "error: the delivery-refusal classifier could not match its refusal pattern (grep -E exited $st)" >&2
+    return 2
+  fi
+  [ "$st" -eq 0 ] || return 1
+  n=$(printf '%s\n' "$hits" | head -n 1)
+  n=${n%%:*}
+  line=$(printf '%s\n' "$task" | sed -n "${n}p") \
+    || { echo "error: the delivery-refusal classifier could not quote the task line it matched (sed -n exited $?)" >&2; return 2; }
+  printf '%s\n' "$line"
+}
+
+# Brief/spawn delivery agreement, checked before this spawn creates any worktree,
+# endpoint, or task metadata; on a --relaunch the adopted record and endpoint are
+# read earlier, but this block still creates neither.
 # fm-brief.sh records a ship brief's mode as a fixed "Delivery contract: mode=<mode>"
 # line. A spawn that disagrees would launch a worker whose instructions and whose
 # recorded task delivery differ, which is the exact drift this contract prevents.
@@ -1682,6 +1792,27 @@ if [ "$KIND" = ship ]; then
     echo "error: delivery mismatch for $ID: the brief says mode=$BRIEF_MODE but this spawn passed --mode $MODE; correct the flag or re-scaffold the brief so the worker's instructions and the task record agree" >&2
     exit 1
   fi
+  # Brief self-agreement. fm-brief.sh's no-mistakes and direct-PR definitions of
+  # done both end in a pushed branch and an open PR, and that generated section is
+  # what the worker follows: on 2026-08-22 three workers opened PRs the captain had
+  # not approved after their own task text said not to. A task text that forbids
+  # exactly what the mode mandates is a contradiction no worker judgment can
+  # resolve, so it stops here rather than launching.
+  case "$MODE" in
+    no-mistakes|direct-PR)
+      BRIEF_FORBIDS=; DELIVERY_SCAN_ST=0
+      BRIEF_FORBIDS=$(brief_task_forbids_delivery "$BRIEF") || DELIVERY_SCAN_ST=$?
+      if [ "$DELIVERY_SCAN_ST" -gt 1 ]; then
+        echo "error: cannot check the brief for $ID: the stage named above failed, so a task text that forbids the push cannot be ruled out; refusing to launch mode=$MODE rather than shipping an unchecked brief" >&2
+        echo "       put an awk, tr, sed and grep supporting POSIX extended regular expressions first on PATH and spawn again" >&2
+        exit 1
+      fi
+      if [ "$DELIVERY_SCAN_ST" -eq 0 ]; then
+        echo "error: contradictory brief for $ID: mode=$MODE ends in a pushed branch and an open PR, but the task text forbids it: \"$BRIEF_FORBIDS\"" >&2
+        echo "       scaffold this task --mode local-only so the worker stops at a branch the captain reviews first, or drop the prohibition from the task text" >&2
+        exit 1
+      fi ;;
+  esac
   # The registry holds the captain's standing posture, so dropping below it is
   # allowed (a current explicit captain instruction wins) but never silent. An
   # unregistered project resolves to the same no-mistakes standing default, which

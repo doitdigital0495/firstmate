@@ -20,6 +20,7 @@ set -u
 SPAWN="$ROOT/bin/fm-spawn.sh"
 PROMOTE="$ROOT/bin/fm-promote.sh"
 PROJECT_MODE="$ROOT/bin/fm-project-mode.sh"
+BRIEF_SCAFFOLD="$ROOT/bin/fm-brief.sh"
 TMP_ROOT=$(fm_test_tmproot fm-task-delivery)
 
 # A home with one registered project, one project directory, and a fake tmux that
@@ -144,6 +145,207 @@ EOF
   assert_contains "$out" "records no delivery contract line" "a legacy brief did not warn about its missing contract"
   assert_not_contains "$out" "delivery mismatch" "a legacy brief was treated as a mismatch"
   pass "fm-spawn: the brief's recorded mode and the spawn's explicit mode must agree"
+}
+
+# Scaffold a real ship brief through fm-brief.sh and fill its {TASK} placeholder,
+# so the case runs against the definition of done a worker is actually handed.
+scaffold_brief() {  # <home> <id> <mode> <task-text>
+  local home=$1 id=$2 mode=$3 task=$4 brief tmp
+  brief="$home/data/$id/brief.md"
+  rm -rf "$home/data/$id"
+  FM_ROOT_OVERRIDE='' FM_HOME="$home" FM_DATA_OVERRIDE="$home/data" FM_STATE_OVERRIDE="$home/state" \
+    "$BRIEF_SCAFFOLD" "$id" proj --mode "$mode" >/dev/null \
+    || fail "scaffolding a $mode brief for $id failed"
+  tmp="$brief.filled"
+  awk -v repl="$task" '$0 == "{TASK}" { print repl; next } { print }' "$brief" > "$tmp"
+  mv "$tmp" "$brief"
+  grep -q '{TASK}' "$brief" && fail "$id: the task placeholder was never filled"
+  printf '%s\n' "$brief"
+}
+
+# The 2026-08-22 failure: a task text that forbids the push and the PR, inside a
+# brief whose generated definition of done mandates both. The generated section is
+# what the worker follows, so three workers opened PRs the captain had not
+# approved. A push mode must now refuse that brief before anything is created,
+# while local-only - whose contract already stops at a reviewable branch - takes
+# the same task text and launches.
+test_spawn_refuses_a_brief_that_contradicts_its_own_delivery() {
+  local rec home proj fakebin label mode task expect quote out status n=0
+  rec=$(make_home contradiction)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  # The delivery checks run before any backend call, so the first thing this fake
+  # tmux prints is proof that a launching row got past them. Without it a row
+  # could pass vacuously on a spawn that stopped even earlier.
+  printf '#!/bin/sh\necho DELIVERY_CHECKS_CLEARED >&2\nexit 1\n' > "$fakebin/tmux"
+  chmod +x "$fakebin/tmux"
+  while IFS='|' read -r label mode task expect quote; do
+    [ -n "$label" ] || continue
+    n=$((n + 1))
+    scaffold_brief "$home" "delivery-contra-$n" "$mode" "Do the work and verify it in the running app.
+
+$task" >/dev/null
+    out=$(run_spawn "$home" "$fakebin" "delivery-contra-$n" "$proj" claude --mode "$mode" --yolo off)
+    status=$?
+    case "$expect" in
+      refuse)
+        [ "$status" -ne 0 ] || fail "$label: a contradictory brief should exit non-zero"
+        assert_contains "$out" "contradictory brief for delivery-contra-$n" \
+          "$label: refusal did not name the task"
+        assert_contains "$out" "$quote" \
+          "$label: refusal did not quote the task line it read as forbidding delivery"
+        assert_contains "$out" "--mode local-only" "$label: refusal did not name the mode that fits this stop point"
+        assert_absent "$home/state/delivery-contra-$n.meta" "$label: refused spawn wrote task metadata"
+        assert_not_contains "$out" "DELIVERY_CHECKS_CLEARED" \
+          "$label: a refused spawn still reached the backend" ;;
+      launch)
+        assert_not_contains "$out" "contradictory brief" "$label: a brief that agrees with its mode was refused"
+        assert_contains "$out" "DELIVERY_CHECKS_CLEARED" \
+          "$label: the spawn never reached the backend, so the row proves nothing" ;;
+    esac
+  done <<'ROWS'
+the 2026-08-22 stop point shipped direct-PR|direct-PR|- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA.|refuse|Do NOT push and do NOT open a PR
+the 2026-08-22 stop point shipped no-mistakes|no-mistakes|- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA.|refuse|Do NOT push and do NOT open a PR
+the same stop point shipped local-only|local-only|- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA.|launch|
+a refusal buried mid-line|no-mistakes|5. Commit the branch and stop. Do not invoke no-mistakes, push, or open a PR without captain approval.|refuse|Do not invoke no-mistakes, push, or open a PR
+the PR refused without naming the push|direct-PR|- Never open a pull request; the captain reviews the running preview first.|refuse|Never open a pull request
+the push refused without naming the PR|direct-PR|- Never push this branch; leave the dev server running for the captain's QA.|refuse|Never push this branch
+the push refused without an explicit object|direct-PR|- Do not push anything.|refuse|Do not push anything
+the refusal written as a gerund|direct-PR|- No pushing and no PR until the captain approves.|refuse|No pushing and no PR
+both actions refused across a comma|direct-PR|- Do not push, do not open a PR. The captain approves after his own QA.|refuse|Do not push, do not open a PR
+the push refused with a natural stop word|direct-PR|- Do not push yet.|refuse|Do not push yet
+the PR refused with a natural stop word|no-mistakes|- No PR yet; the captain reviews first.|refuse|No PR yet
+a push named as a noun the captain owns|direct-PR|- Do not worry about the push; the captain handles it.|launch|
+an enumeration of transports the harness bans|direct-PR|- No push, no pull, no fetch in the test harness.|launch|
+a push feature described with an appositive|direct-PR|- No user-visible push, the sync is silent.|launch|
+a guard against writing a pushing command|direct-PR|- Do not add a command that can push, it is unsafe.|launch|
+a release step that must not run twice|direct-PR|- Do not let the release push, or the deploy, run twice.|launch|
+a filename that happens to read as a PR|direct-PR|- Do not name the file PR.md.|launch|
+a queue push in the analytics layer|direct-PR|- Do not push to the analytics queue on every keystroke.|launch|
+a publish step banned for a package registry|direct-PR|- Never push to npm from CI.|launch|
+an array push|direct-PR|- Do not push it to the array; use concat.|launch|
+a dataLayer push|direct-PR|- Do not push this event to the dataLayer.|launch|
+state pushed into the URL|direct-PR|- Do not push any state into the URL.|launch|
+a layout pushed off screen|direct-PR|- Do not push the modal off screen on mobile.|launch|
+a stack pushed and popped|direct-PR|- Do not push and pop the same stack twice.|launch|
+a bounded push to a content network|direct-PR|- Do not push anything to the CDN.|launch|
+a bounded push to a deploy target|direct-PR|- Do not push anything to production without captain approval.|launch|
+a bounded push into a client-side store|direct-PR|- Do not push anything into the global store.|launch|
+a push sequenced behind an animation|direct-PR|- Do not push until the animation finishes.|launch|
+a push sequenced behind a queue|direct-PR|- Do not push until the queue drains.|launch|
+a cache whose name opens with a forge word|direct-PR|- Do not push to the repo cache on read.|launch|
+a cache whose name opens with a forge host|direct-PR|- Do not push to github actions cache.|launch|
+a PR-shaped noun popped off a stack|direct-PR|- Do not push or pop the PR badge.|launch|
+a PR opened for someone other than delivery|direct-PR|- Do not open a PR for the mobile team.|launch|
+the stop word carried into the hold clause|direct-PR|- Do not push anything yet; wait for captain approval.|refuse|Do not push anything yet
+the push refused with a bare clause end|direct-PR|- Do not push; the captain reviews the branch himself.|refuse|Do not push
+both actions refused across or|direct-PR|- Do not push or ever open a pull request without captain approval.|refuse|Do not push or ever open a pull request
+the changes named as the object|direct-PR|- Do not push the changes; the captain reviews them first.|refuse|Do not push the changes
+the commits named as the object|direct-PR|- Never push your commits until the captain approves.|refuse|Never push your commits
+the remote named as the target|direct-PR|- Do not push to the remote.|refuse|Do not push to the remote
+origin named as the target|direct-PR|- Do not push to origin.|refuse|Do not push to origin
+the fork named as the target|no-mistakes|- Never push to the fork.|refuse|Never push to the fork
+the repository named as the target|direct-PR|- Do not push to the repository.|refuse|Do not push to the repository
+GitHub named as the target|direct-PR|- Do not push to GitHub.|refuse|Do not push to GitHub
+GitLab named as the target|direct-PR|- Do not push to GitLab.|refuse|Do not push to GitLab
+Bitbucket named as the target|direct-PR|- Do not push to Bitbucket.|refuse|Do not push to Bitbucket
+the stop point followed by ordinary sequencing|direct-PR|- Do NOT push and do NOT open a PR. Run the tests, then create a summary in the status file.|refuse|Do NOT push and do NOT open a PR
+the stop point followed by opening the preview|no-mistakes|- Do NOT push and do NOT open a PR. Start the dev server, then open the preview for the captain.|refuse|Do NOT push and do NOT open a PR
+the refusal carrying its own subject|direct-PR|You cannot push until the captain signs off on the preview.|refuse|You cannot push until the captain
+ordinary work that discusses its own PR|direct-PR|If the re-encode misses the budget, fall back to option A and say so plainly in the PR body.|launch|
+the push bounded to the default branch|direct-PR|Never push to the default branch, and do not merge the PR yourself.|launch|
+history rewriting refused, delivery not|direct-PR|- Do not force-push, do not rewrite history, do not discard any unlanded work.|launch|
+prose describing a no-push stop point|no-mistakes|Reproduce the failure: scaffold a task whose stop point is a running preview with no push or PR.|launch|
+a ban scoped to what may be pushed|direct-PR|- Do not push secrets or .env files to the remote.|launch|
+push naming an unrelated product feature|direct-PR|- No push notifications in this milestone; skip the service worker.|launch|
+a sequencing condition that permits the PR|direct-PR|- Do not push until the tests are green, then open the PR as usual.|launch|
+a PR routed at a specific target|direct-PR|Do not open a PR against upstream; open it against the fork.|launch|
+a ban scoped to a PR-related file|direct-PR|- Do not create a PR template file.|launch|
+ROWS
+  pass "fm-spawn: a push mode refuses a brief whose task text forbids the push or the PR"
+}
+
+# A safety classifier must fail closed at every stage. A failure anywhere in the
+# classifier used to be indistinguishable from a genuine no-match - grep exit >1
+# read as "nothing found", and a sed that could not run printed nothing so grep
+# exited 1 on the empty input - so a brief carrying the 2026-08-22 contradiction
+# launched silently whenever the classifier itself could not answer.
+# Each stub shadows one stage for the pattern only that stage is handed, and
+# delegates every other invocation to the real tool, so the row proves the stage
+# it names rather than breaking the spawn somewhere earlier.
+stub_stage() {  # <fakebin> <tool> <pattern-fragment>
+  local fakebin=$1 tool=$2 frag=$3 real
+  real=$(command -v "$tool") || fail "no $tool on PATH to delegate to"
+  cat > "$fakebin/$tool" <<EOF
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in *'$frag'*) echo '$tool: unsupported regular expression' >&2; exit 2 ;; esac
+done
+exec $real "\$@"
+EOF
+  chmod +x "$fakebin/$tool"
+}
+
+test_spawn_refuses_when_the_delivery_matcher_cannot_run() {
+  local rec home proj fakebin label tool frag out status n=0
+  rec=$(make_home matcher)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  printf '#!/bin/sh\necho DELIVERY_CHECKS_CLEARED >&2\nexit 1\n' > "$fakebin/tmux"
+  chmod +x "$fakebin/tmux"
+
+  while IFS='|' read -r label tool frag; do
+    [ -n "$label" ] || continue
+    n=$((n + 1))
+    rm -f "$fakebin/grep" "$fakebin/sed" "$fakebin/tr" "$fakebin/awk"
+    stub_stage "$fakebin" "$tool" "$frag"
+    scaffold_brief "$home" "delivery-matcher-e$n" direct-PR "Do the work and verify it in the running app.
+
+- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA." >/dev/null
+    out=$(run_spawn "$home" "$fakebin" "delivery-matcher-e$n" "$proj" claude --mode direct-PR --yolo off)
+    status=$?
+    [ "$status" -ne 0 ] || fail "$label: a spawn whose classifier failed should exit non-zero"
+    assert_contains "$out" "cannot check the brief for delivery-matcher-e$n" \
+      "$label: the refusal did not report the classifier failure"
+    assert_contains "$out" "delivery-refusal classifier could not" \
+      "$label: the refusal did not name the failing stage"
+    assert_absent "$home/state/delivery-matcher-e$n.meta" "$label: the refusal wrote task metadata"
+    assert_not_contains "$out" "DELIVERY_CHECKS_CLEARED" "$label: the refusal still reached the backend"
+    assert_not_contains "$out" "contradictory brief" \
+      "$label: a classifier that could not run still claimed a verdict"
+  done <<'ROWS'
+the refusal matcher cannot compile its pattern|grep|pull[[:space:]]+request
+the permit strip cannot run|sed|then[[:space:]]+
+the bounded-push strip cannot run|sed|force[- ]?push
+ROWS
+  rm -f "$fakebin/grep" "$fakebin/sed"
+  pass "fm-spawn: a delivery classifier stage that cannot run refuses the spawn instead of launching it"
+}
+
+# The other half of the guarantee: the modes themselves still say what they always
+# said, so refusing the contradiction did not quietly disarm ordinary delivery.
+test_generated_definitions_of_done_keep_their_stop_points() {
+  local rec home proj fakebin brief
+  rec=$(make_home stop-points)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  brief=$(scaffold_brief "$home" delivery-stop-e1 direct-PR 'Ordinary work.')
+  assert_grep 'push your branch and open a PR' "$brief" \
+    "direct-PR no longer tells the worker to push and open the PR itself"
+
+  brief=$(scaffold_brief "$home" delivery-stop-e2 local-only 'Ordinary work.')
+  assert_grep 'Do NOT push, do NOT open a PR' "$brief" \
+    "local-only no longer stops the worker before the remote"
+
+  brief=$(scaffold_brief "$home" delivery-stop-e3 no-mistakes 'Ordinary work.')
+  assert_grep 'run /no-mistakes to validate and ship a PR' "$brief" \
+    "no-mistakes no longer ships its PR through the pipeline"
+  assert_grep 'done: PR {url} checks green' "$brief" \
+    "no-mistakes no longer ends at a PR whose checks are green"
+  pass "fm-brief: all three modes still state the stop point their contract promises"
 }
 
 # The registry is the captain's standing posture, so dropping below its rigor is
@@ -275,6 +477,9 @@ EOF
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
+test_spawn_refuses_a_brief_that_contradicts_its_own_delivery
+test_spawn_refuses_when_the_delivery_matcher_cannot_run
+test_generated_definitions_of_done_keep_their_stop_points
 test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract

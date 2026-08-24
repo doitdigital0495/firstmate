@@ -39,7 +39,10 @@
 # The generated ship brief records the chosen mode as a fixed machine-readable
 # "Delivery contract: mode=<mode>" line. bin/fm-spawn.sh reads that line and refuses
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
-# recorded task metadata cannot drift apart.
+# recorded task metadata cannot drift apart. That spawn also refuses a no-mistakes or
+# direct-PR brief whose filled-in {TASK} text forbids the push or the PR its generated
+# definition of done mandates: this scaffold cannot see that text, and the generated
+# section is what the worker follows. Use local-only for a stop point before the remote.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
