@@ -1,0 +1,45 @@
+Reported end-user problem: a project registered local-only with no origin remote.
+Real bin/fm-spawn.sh driven with a fake terminal; project has no remote at all.
+
+=== BEFORE (base commit fc6a4e1 bin/fm-spawn.sh) ===
+$ git -C project remote -v      # registered local-only, no remote at all
+(no output: no origin configured)
+
+$ fm-spawn.sh demo-local-only-task <project> --mode local-only --yolo off
+warning: <work>/home/data/demo-local-only-task/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: demo-local-only-task ships mode=local-only while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+fatal: 'origin' does not appear to be a git repository
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+error: could not fetch origin for pooled worktree '<work>/pool'; refusing to launch from a potentially stale base
+exit=1
+
+$ git -C pool log --oneline -1  # base the worker actually starts from
+2f34d82 initial
+$ git -C project rev-parse main
+46a19dd75e2e0d0d489f9e13976daf346b191708
+$ git -C pool rev-parse HEAD   
+2f34d82c55acf0c6bc51ace04ee429c214c057d1
+$ ls pool/newer.txt
+ls: cannot access '<work>/pool/newer.txt': No such file or directory
+
+=== AFTER (target commit 7a827f4) ===
+$ git -C project remote -v      # registered local-only, no remote at all
+(no output: no origin configured)
+
+$ fm-spawn.sh demo-local-only-task <project> --mode local-only --yolo off
+warning: <work>/home/data/demo-local-only-task/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: demo-local-only-task ships mode=local-only while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned demo-local-only-task harness=codex kind=ship mode=local-only yolo=off window=firstmate:fm-demo-local-only-task worktree=<work>/pool
+exit=0
+
+$ git -C pool log --oneline -1  # base the worker actually starts from
+68e2be8 advance-main
+$ git -C project rev-parse main
+68e2be8156e1396c2fe18b74955e22802b387b59
+$ git -C pool rev-parse HEAD   
+68e2be8156e1396c2fe18b74955e22802b387b59
+$ ls pool/newer.txt
+<work>/pool/newer.txt
