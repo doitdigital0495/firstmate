@@ -6,6 +6,9 @@
 # These tests drive the real spawn path with a fake terminal, then prove it
 # starts the worker from the fetched origin/main tip or stops when origin is
 # unreachable.
+# A project can also intentionally have no origin at all; these tests pin that a
+# local-only ship task then starts from that repository's own default branch
+# while every push mode and every scout still refuses.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -63,6 +66,40 @@ make_case() {
   git -C "$publisher" add advanced-main.txt
   git -C "$publisher" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm advance-main
   git -C "$publisher" push --quiet origin "$default"
+
+  printf '%s\n' "$case_dir|$home|$project|$pool|$fakebin|$initial|$default"
+}
+
+# A project that intentionally has no remote at all: the shape a repository
+# takes once it lives only inside the home that works on it. No clone, no
+# origin, and a local default branch that has advanced past the pooled
+# worktree's base, so a spawn that starts here is provably stale unless it
+# refreshes from that local branch.
+make_no_origin_case() {
+  local name=$1 id=$2 default=${3:-main} case_dir home project pool fakebin initial
+  case_dir="$TMP_ROOT/$name"
+  home="$case_dir/home"
+  project="$case_dir/project"
+  pool="$case_dir/pool"
+  fakebin=$(make_spawn_fakebin "$case_dir/fake")
+
+  mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
+  printf 'codex\n' > "$home/config/crew-harness"
+  printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
+  touch "$home/state/.last-watcher-beat"
+
+  git init --quiet -b "$default" "$project"
+  printf 'base\n' > "$project/README.md"
+  git -C "$project" add README.md
+  git -C "$project" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm initial
+  initial=$(git -C "$project" rev-parse HEAD)
+  git -C "$project" worktree add --quiet --detach "$pool" "$initial"
+
+  printf 'must survive a newly spawned branch\n' > "$project/advanced-main.txt"
+  git -C "$project" add advanced-main.txt
+  git -C "$project" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm advance-main
+
+  [ -z "$(git -C "$pool" remote)" ] || fail "the no-origin fixture still has a remote configured"
 
   printf '%s\n' "$case_dir|$home|$project|$pool|$fakebin|$initial|$default"
 }
@@ -227,11 +264,84 @@ test_unresolved_remote_default_refuses_pool() {
   pass "an unresolved remote default branch refuses the pooled worktree"
 }
 
+test_local_only_starts_from_the_local_default_branch_without_origin() {
+  local rec id out status current branch_head
+  id='pool-no-origin-local-only-r6'
+  rec=$(make_no_origin_case no-origin-local-only "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$id" --mode local-only --yolo off)
+  status=$?
+  expect_code 0 "$status" "a local-only ship task should launch in a project with no origin"
+  assert_contains "$out" "spawned $id" "spawn did not report success without an origin"
+  current=$(git -C "$PROJECT_DIR" rev-parse "$DEFAULT_BRANCH")
+  branch_head=$(git -C "$POOL_DIR" rev-parse HEAD)
+  [ "$branch_head" = "$current" ] || fail "spawn did not start from the local default branch tip"
+  [ "$branch_head" != "$INITIAL_SHA" ] || fail "fixture did not prove the local default branch advanced past the pool base"
+  assert_grep 'must survive a newly spawned branch' "$POOL_DIR/advanced-main.txt" \
+    "the local-only spawn started from stale local history"
+  if [ "${FM_TEST_EVIDENCE:-0}" = 1 ]; then
+    printf '# observed no-origin local-only spawn: %s\n' "$(printf '%s\n' "$out" | tail -n 1)"
+    printf '# observed base: HEAD=%s local-%s=%s\n' "$branch_head" "$DEFAULT_BRANCH" "$current"
+  fi
+  pass "a local-only ship task refreshes from the local default branch when the project has no origin"
+}
+
+test_push_modes_and_scouts_refuse_a_project_without_origin() {
+  local rec id out status before contract n=0
+  for contract in no-mistakes direct-PR scout; do
+    n=$((n + 1))
+    id="pool-no-origin-refusal-r6-$n"
+    rec=$(make_no_origin_case "no-origin-refusal-$n" "$id")
+    read_case_record "$rec"
+    before=$(git -C "$POOL_DIR" rev-parse HEAD)
+    if [ "$contract" = scout ]; then
+      out=$(run_spawn "$id" --scout)
+    else
+      out=$(run_spawn "$id" --mode "$contract" --yolo off)
+    fi
+    status=$?
+    [ "$status" -ne 0 ] || fail "$contract spawn succeeded in a project with no origin"
+    assert_contains "$out" "has no 'origin' remote" \
+      "$contract spawn did not clearly refuse a project with no origin"
+    [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$before" ] \
+      || fail "$contract spawn moved the pooled worktree while refusing a project with no origin"
+    if [ "${FM_TEST_EVIDENCE:-0}" = 1 ]; then
+      printf '# observed %s no-origin refusal: %s\n' "$contract" "$(printf '%s\n' "$out" | tail -n 1)"
+    fi
+  done
+  pass "push modes and scouts still refuse a project that has no origin"
+}
+
+test_local_only_still_refuses_an_existing_unreachable_origin() {
+  local rec id out status before
+  id='pool-local-only-unreachable-origin-r6'
+  rec=$(make_case local-only-unreachable-origin "$id")
+  read_case_record "$rec"
+  git -C "$POOL_DIR" remote set-url origin "file://$CASE_DIR/missing-origin.git"
+  before=$(git -C "$POOL_DIR" rev-parse HEAD)
+
+  out=$(run_spawn "$id" --mode local-only --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a local-only spawn accepted an existing but unreachable origin"
+  assert_contains "$out" "could not fetch origin" \
+    "a local-only spawn did not refuse an existing but unreachable origin the way every other mode does"
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$before" ] \
+    || fail "a local-only spawn moved the pooled worktree after origin became unreachable"
+  if [ "${FM_TEST_EVIDENCE:-0}" = 1 ]; then
+    printf '# observed local-only unreachable-origin refusal: %s\n' "$(printf '%s\n' "$out" | tail -n 1)"
+  fi
+  pass "a configured but unreachable origin still refuses a local-only spawn"
+}
+
 test_stale_pool_base_refreshes_before_branching
 test_non_main_default_branch_refreshes_before_branching
 test_direct_pr_and_scout_refresh_before_launch
 test_dirty_pool_refuses_without_discarding_work
 test_unresolved_remote_default_refuses_pool
 test_unreachable_origin_refuses_stale_pool_base
+test_local_only_starts_from_the_local_default_branch_without_origin
+test_push_modes_and_scouts_refuse_a_project_without_origin
+test_local_only_still_refuses_an_existing_unreachable_origin
 
 echo "# all fm-spawn-pool-base-freshen tests passed"
