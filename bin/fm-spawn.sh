@@ -2,6 +2,7 @@
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
 # Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+#        [--priority <1-99>] (release order on a shaped Claude credential store; lower goes first, default 50 - bin/fm-claude-admission.sh)
 #        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -293,6 +294,7 @@ BACKEND_ARG=
 MODE=
 YOLO=
 TRACEPARENT_ARG=
+PRIORITY_ARG=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
@@ -316,6 +318,7 @@ for a in "$@"; do
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
       traceparent) TRACEPARENT_ARG=$a; TRACEPARENT_SET=1 ;;
+      priority) PRIORITY_ARG=$a ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -339,6 +342,8 @@ for a in "$@"; do
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
     --traceparent) want_value=traceparent ;;
     --traceparent=*) TRACEPARENT_ARG=${a#--traceparent=}; TRACEPARENT_SET=1 ;;
+    --priority) want_value=priority ;;
+    --priority=*) PRIORITY_ARG=${a#--priority=} ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -1829,6 +1834,81 @@ if [ "$KIND" = ship ]; then
   fi
 fi
 
+# THE TASK'S OWN Claude credential binding, resolved once and then used for the
+# release decision, the launch, and the durable record alike.
+#
+# The account a Claude worker bills is selected by CLAUDE_CONFIG_DIR, which the
+# operator's shell derives from the terminal session the pane was opened in. A
+# relaunch, though, runs in whatever session firstmate happens to be in now, so
+# forwarding the ambient value silently moved a task from the account it started
+# on to the caller's. That is the defect this binding closes: the account follows
+# the TASK, never the caller. A first launch records the ambient store (or the
+# literal "default" for the unset, personal-store case), and every later relaunch
+# reuses exactly what the record says - including actively unsetting an inherited
+# CLAUDE_CONFIG_DIR when the record says default, so a personal-bound task cannot
+# drift onto a work account by inheritance either.
+# The home's own session/account pin comes first: a spawn is a fleet mutation,
+# and a home driven from a session it does not belong to must be refused rather
+# than quietly staffed from the caller's account. bin/fm-home-identity.sh owns
+# that pin, pins an unpinned home from this session, and refuses everything else.
+HOME_IDENTITY_OUT=
+if ! HOME_IDENTITY_OUT=$("$FM_ROOT/bin/fm-home-identity.sh" ensure 2>&1); then
+  printf '%s\n' "$HOME_IDENTITY_OUT" >&2
+  echo "error: $ID was not launched; this firstmate home does not belong to the current session, and nothing was created" >&2
+  exit 1
+fi
+HOME_PIN=$("$FM_ROOT/bin/fm-home-identity.sh" show) || HOME_PIN=
+HOME_PIN_SESSION=$(printf '%s\n' "$HOME_PIN" | sed -n 's/^herdr_session=//p')
+HOME_PIN_STORE=$(printf '%s\n' "$HOME_PIN" | sed -n 's/^claude_config_dir=//p')
+if [ -z "$HOME_PIN_SESSION" ] || [ -z "$HOME_PIN_STORE" ]; then
+  echo "error: $ID was not launched; this firstmate home's recorded session and account could not be read, and neither is guessed" >&2
+  exit 1
+fi
+
+SPAWN_CLAUDE_STORE=
+if [ "$RELAUNCH" -eq 1 ] && [ -n "${RELAUNCH_META:-}" ] && [ -f "$RELAUNCH_META" ]; then
+  SPAWN_CLAUDE_STORE=$(fm_meta_get "$RELAUNCH_META" claude_config_dir) || SPAWN_CLAUDE_STORE=
+fi
+if [ -z "$SPAWN_CLAUDE_STORE" ] && [ "$HARNESS" = claude ]; then
+  # A first launch inherits the HOME's pinned account, never the ambient one, so
+  # a worker can only ever be staffed onto the account its firstmate belongs to.
+  SPAWN_CLAUDE_STORE=$HOME_PIN_STORE
+fi
+
+# A second mate is a firstmate home of its own, so it carries the SAME pin as the
+# parent that created it: its own workers then inherit that identity too, and the
+# whole subtree stays on one account. Seeding is idempotent and never re-pins a
+# home that already carries a different identity.
+if [ "$KIND" = secondmate ]; then
+  SECONDMATE_IDENTITY_OUT=
+  if ! SECONDMATE_IDENTITY_OUT=$("$FM_ROOT/bin/fm-home-identity.sh" seed \
+      "$PROJ_ABS" "$HOME_PIN_SESSION" "$HOME_PIN_STORE" 2>&1); then
+    printf '%s\n' "$SECONDMATE_IDENTITY_OUT" >&2
+    echo "error: $ID was not launched; its home could not be bound to this firstmate's session and account, and nothing was created" >&2
+    exit 1
+  fi
+fi
+
+# Per-credential-store release shaping for Claude workers, checked here for the
+# same reason the delivery agreement above is: this point creates no worktree,
+# no endpoint, and no task metadata, so a withheld launch leaves nothing behind
+# to reconcile. bin/fm-claude-admission.sh owns the whole decision, including
+# which stores this home shapes at all - a store the home does not shape takes
+# no state and returns admitted, which is what keeps an unshaped store's spawns
+# byte-for-byte what they were. A withheld launch is recorded in that script's
+# durable queue and released on its own schedule; it is never cancelled here.
+if [ "$HARNESS" = claude ]; then
+  ADMISSION_ARGS=("$ID")
+  [ -z "$PRIORITY_ARG" ] || ADMISSION_ARGS+=(--priority "$PRIORITY_ARG")
+  ADMISSION_ARGS+=(--reason "$KIND $MODE spawn" --store "$SPAWN_CLAUDE_STORE")
+  if ! ADMISSION_OUT=$("$FM_ROOT/bin/fm-claude-admission.sh" gate "${ADMISSION_ARGS[@]}" 2>&1); then
+    printf '%s\n' "$ADMISSION_OUT" >&2
+    echo "error: $ID was not released onto its Claude credential store; nothing was created and the request is preserved above" >&2
+    exit 1
+  fi
+  printf '%s\n' "$ADMISSION_OUT" >&2
+fi
+
 BRIEF_DIR_REAL=$(cd "$(dirname "$BRIEF")" && pwd -P)
 BRIEF_REAL="$BRIEF_DIR_REAL/$(basename "$BRIEF")"
 
@@ -2838,7 +2918,7 @@ fi
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent claude_config_dir backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -2856,6 +2936,10 @@ preserve_relaunch_meta() {
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
+  # The task's own Claude credential binding, written once at first launch and
+  # carried forward verbatim by every relaunch. Kept even while the task runs on
+  # another harness, so switching back to claude returns to the same account.
+  [ -z "$SPAWN_CLAUDE_STORE" ] || echo "claude_config_dir=$SPAWN_CLAUDE_STORE"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
@@ -2935,21 +3019,30 @@ case "$HARNESS" in
   cursor) LAUNCH=${LAUNCH//__CURSORBIN__/"$(shell_quote "$CURSOR_BIN")"} ;;
 esac
 LAUNCH=${LAUNCH//__WORKTREE__/$sq_worktree}
+# A claude launch bound to the recorded "default" store unsets any inherited
+# CLAUDE_CONFIG_DIR in the same env call, rather than adding a second one.
+CLAUDE_STORE_UNSET=
+if [ "$HARNESS" = claude ]; then
+  case "$SPAWN_CLAUDE_STORE" in
+    ''|default) CLAUDE_STORE_UNSET=' -u CLAUDE_CONFIG_DIR' ;;
+  esac
+fi
 case "$HARNESS" in
   claude|codex|opencode|pi|pi-signed|grok|kimi|muse)
-    LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS $LAUNCH"
+    LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS$CLAUDE_STORE_UNSET $LAUNCH"
     ;;
 esac
-# Crewmate panes are created by a long-lived tmux/herdr daemon that does not
-# inherit firstmate's current environment, so a bare `claude` in the pane falls
-# back to the default ~/.claude store even when firstmate itself runs under a
-# different CLAUDE_CONFIG_DIR (for example a work-vs-personal subscription split).
-# Forward firstmate's own resolved store onto the claude launch so the crewmate
-# uses the same credential/config firstmate is authenticated with. Only when set;
-# an unset value is the single-store default and needs no prefix.
-if [ "$HARNESS" = claude ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
-  LAUNCH="CLAUDE_CONFIG_DIR=$(shell_quote "$CLAUDE_CONFIG_DIR") $LAUNCH"
-fi
+# Pin the claude launch to THIS TASK'S recorded credential store (resolved far
+# above). Crewmate panes are created by a long-lived tmux/herdr daemon whose
+# environment is not firstmate's, so neither the presence nor the absence of a
+# store can be left to inheritance: a recorded store is set explicitly, and the
+# recorded "default" binding is enforced by unsetting whatever the pane would
+# otherwise inherit. That is what keeps a task on the account it started on
+# across every later relaunch, whatever session firstmate is in.
+case "${HARNESS}:${SPAWN_CLAUDE_STORE}" in
+  claude:|claude:default) : ;;  # handled by the -u above
+  claude:*) LAUNCH="CLAUDE_CONFIG_DIR=$(shell_quote "$SPAWN_CLAUDE_STORE") $LAUNCH" ;;
+esac
 if [ "$KIND" = secondmate ]; then
   sq_home=$(shell_quote "$PROJ_ABS")
   sq_primary_home=$(shell_quote "$FM_HOME")

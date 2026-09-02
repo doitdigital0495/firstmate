@@ -3,8 +3,10 @@ name: quota-array-dispatch
 description: >-
   Agent-only decision procedure for resolving a matched crew-dispatch profile
   array from quota-axi's default TOON, ranking by spendPriority after three
-  orthogonal gates.
-  Load when a dispatch rule or default resolves to more than one profile candidate.
+  orthogonal gates, and for discounting a shaped Claude credential store's
+  headroom by its committed parked demand.
+  Load when a dispatch rule or default resolves to more than one profile candidate,
+  and before treating a store listed in config/claude-shaped-store as having headroom.
 user-invocable: false
 metadata:
   internal: true
@@ -37,6 +39,22 @@ Below-floor is rare: bootstrap enforces `FM_QUOTA_AXI_MIN` and normally reports 
 Read `quota-axi auth --json` only when a candidate's credential surface is in question.
 
 For each candidate, preserve explicit `harness`, `model`, and `provider`; `harness-adapters` owns identity, and model/provider never infer harness.
+
+## Committed demand on a shaped Claude credential store
+
+`quota-axi` reports point-in-time headroom, and at a subscription window's reset instant that reading is at its most misleading: every Claude Code session holding the vendor's own auto-continue timer for that edge is one second from firing, and none of them has spent anything yet.
+A home can declare which Claude credential stores carry that hazard in `config/claude-shaped-store`.
+When a `harness=claude` candidate's store is listed there, read `bin/fm-claude-admission.sh demand` once alongside the intake TOON and discount that candidate's headroom and ranking by what it reports.
+
+Keep the two readings distinct and both visible in the rationale.
+`quota-axi`'s `effectivePercentRemaining` and `spendPriority` stay exactly what the producer published; the census is a separate subtrahend you apply in the open, never folded back into the published scalar and never used to rewrite it.
+`parkedSessions` is the count of live parked sessions, and `floorInputTokens` is their measured floor: one resumed turn each, at each session's own observed average billable input tokens per turn.
+It is a floor, not a forecast - a resumed session runs a burst of turns, not one - so treat a candidate whose remaining window is close to that floor as already committed rather than free, and say so.
+
+This applies only to a store the home actually lists.
+An unlisted store, including the default personal one, has no census to read and no discount to apply, and a Claude candidate on it is ranked from `quota-axi` alone exactly as before.
+The census is evidence, never a route: it can lower a shaped candidate's standing, and it never selects, blocks a candidate on its own, or authorizes pausing authorized work.
+An unreadable census is disclosed uncertainty for the ranking, the same as any other unmeasurable fact, and the script's own refusal is what stops a launch.
 
 ## Three gates, then spendPriority
 

@@ -13,6 +13,7 @@
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
 #                 "PR_CHECK_MIGRATION: <private remediation>",
 #                 "TANGLE: <remediation>",
+#                 "HOME_IDENTITY: <this home belongs to another session>",
 #                 "SECONDMATE_SYNC: secondmate <id>: skipped: <reason>",
 #                 "NUDGE_SECONDMATES: secondmate <id>: send failed: <reason>",
 #                 "BOOTSTRAP_INFO: nudged fm-<id> with '<message>'",
@@ -1161,6 +1162,17 @@ detect_local_tools() {
 }
 
 detect_local_config() {
+  # Home-identity check: this home is pinned to the terminal session and Claude
+  # account it was started from, and every fleet mutation is refused from another
+  # one (bin/fm-home-identity.sh). Reporting it here is what makes that refusal
+  # legible at session open instead of only at the first blocked command; the
+  # refusal itself lives in the mutating entry points, never in this detector.
+  if ! home_identity_problem=$("$SCRIPT_DIR/fm-home-identity.sh" check 2>&1); then
+    case "$home_identity_problem" in
+      *"has no recorded identity yet"*) : ;;  # a home is pinned by its first use
+      *) echo "HOME_IDENTITY: $(printf '%s' "$home_identity_problem" | tr '\n' ' ')" ;;
+    esac
+  fi
   # Worktree-tangle check: the firstmate primary checkout (FM_ROOT) must sit on its
   # default branch, not a feature branch (see fm-tangle-lib.sh). Scoped to the
   # primary only; detached-HEAD worktrees and secondmate homes never trip it.
