@@ -794,17 +794,22 @@ action_poll() {
   # A home that lists no shaped store has nothing to do here and is never a
   # fault, so it stays silent even when this environment could not name a store
   # at all. Past that point, "cannot tell" is a refusal firstmate must hear.
-  [ -f "$CONFIG" ] && [ ! -L "$CONFIG" ] || return 0
+  # The home-scoped refusal marker is retired the moment its condition no longer
+  # holds, on every one of these exits: a refusal that clears and later recurs
+  # must wake firstmate again rather than matching a stale stamp forever.
+  if [ ! -f "$CONFIG" ] || [ -L "$CONFIG" ]; then
+    rm -f -- "$HOME_REFUSAL"
+    return 0
+  fi
   store=$(launch_store 2>&1) || poll_refuse "$?" "$store"
   shaped=$(store_is_shaped "$store" 2>&1); shaped_status=$?
   case "$shaped_status" in
-    0) ;;
-    1) return 0 ;;
+    0|1) rm -f -- "$HOME_REFUSAL" ;;
     *) poll_refuse "$shaped_status" "$shaped" ;;
   esac
+  [ "$shaped_status" -eq 0 ] || return 0
   slug=$(store_slug "$store" 2>&1) || poll_refuse "$?" "$slug"
   resolve_store_state "$store"
-  rm -f -- "$HOME_REFUSAL"
   [ -d "$STORE_DIR" ] || return 0
   sorted=$(sorted_queue 2>&1) || poll_refuse "$?" "$sorted"
   head_row=$(printf '%s\n' "$sorted" | head -n 1)

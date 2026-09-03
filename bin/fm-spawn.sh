@@ -1630,6 +1630,51 @@ validate_firstmate_operational_dirs() {
   done
 }
 
+# --- REFUSAL BOUNDARY -------------------------------------------------------
+# Everything above this line is resolution and validation; everything below it
+# can change durable state. On EVERY path - ship, scout, secondmate, relaunch -
+# the refusals a spawn can make must sit ABOVE this boundary, so the messages
+# below it that promise "nothing was created" are literally true.
+#
+# The second-mate path is the one that keeps catching this out, because it
+# mutates a home this process does not own: below here it fast-forwards the
+# child worktree (ff_target), creates $PROJ_ABS/state, copies the parent's local
+# config in (propagate_secondmate_inheritance), seeds the child's identity pin,
+# and then publishes task metadata and an endpoint. Two refusals used to sit
+# behind those: the home session/account pin, now resolved right after the task
+# id, and the Claude release gate, now here. A new pre-flight check belongs
+# above this line; a new mutation belongs below it.
+
+SPAWN_CLAUDE_STORE=
+if [ "$RELAUNCH" -eq 1 ] && [ -n "${RELAUNCH_META:-}" ] && [ -f "$RELAUNCH_META" ]; then
+  SPAWN_CLAUDE_STORE=$(fm_meta_get "$RELAUNCH_META" claude_config_dir) || SPAWN_CLAUDE_STORE=
+fi
+if [ -z "$SPAWN_CLAUDE_STORE" ] && [ "$HARNESS" = claude ]; then
+  # A first launch inherits the HOME's pinned account, never the ambient one, so
+  # a worker can only ever be staffed onto the account its firstmate belongs to.
+  SPAWN_CLAUDE_STORE=$HOME_PIN_STORE
+fi
+
+# Per-credential-store release shaping for Claude workers, checked here for the
+# same reason the delivery agreement above is: this point creates no worktree,
+# no endpoint, and no task metadata, so a withheld launch leaves nothing behind
+# to reconcile. bin/fm-claude-admission.sh owns the whole decision, including
+# which stores this home shapes at all - a store the home does not shape takes
+# no state and returns admitted, which is what keeps an unshaped store's spawns
+# byte-for-byte what they were. A withheld launch is recorded in that script's
+# durable queue and released on its own schedule; it is never cancelled here.
+if [ "$HARNESS" = claude ]; then
+  ADMISSION_ARGS=("$ID")
+  [ -z "$PRIORITY_ARG" ] || ADMISSION_ARGS+=(--priority "$PRIORITY_ARG")
+  ADMISSION_ARGS+=(--reason "$KIND $MODE spawn" --store "$SPAWN_CLAUDE_STORE")
+  if ! ADMISSION_OUT=$("$FM_ROOT/bin/fm-claude-admission.sh" gate "${ADMISSION_ARGS[@]}" 2>&1); then
+    printf '%s\n' "$ADMISSION_OUT" >&2
+    echo "error: $ID was not released onto its Claude credential store; nothing was created and the request is preserved above" >&2
+    exit 1
+  fi
+  printf '%s\n' "$ADMISSION_OUT" >&2
+fi
+
 if [ "$KIND" = secondmate ]; then
   if [ -z "$FIRSTMATE_HOME" ] && [ -f "$STATE/$ID.meta" ]; then
     FIRSTMATE_HOME=$(grep '^home=' "$STATE/$ID.meta" | cut -d= -f2- || true)
@@ -1870,36 +1915,6 @@ fi
 # reuses exactly what the record says - including actively unsetting an inherited
 # CLAUDE_CONFIG_DIR when the record says default, so a personal-bound task cannot
 # drift onto a work account by inheritance either.
-SPAWN_CLAUDE_STORE=
-if [ "$RELAUNCH" -eq 1 ] && [ -n "${RELAUNCH_META:-}" ] && [ -f "$RELAUNCH_META" ]; then
-  SPAWN_CLAUDE_STORE=$(fm_meta_get "$RELAUNCH_META" claude_config_dir) || SPAWN_CLAUDE_STORE=
-fi
-if [ -z "$SPAWN_CLAUDE_STORE" ] && [ "$HARNESS" = claude ]; then
-  # A first launch inherits the HOME's pinned account, never the ambient one, so
-  # a worker can only ever be staffed onto the account its firstmate belongs to.
-  SPAWN_CLAUDE_STORE=$HOME_PIN_STORE
-fi
-
-# Per-credential-store release shaping for Claude workers, checked here for the
-# same reason the delivery agreement above is: this point creates no worktree,
-# no endpoint, and no task metadata, so a withheld launch leaves nothing behind
-# to reconcile. bin/fm-claude-admission.sh owns the whole decision, including
-# which stores this home shapes at all - a store the home does not shape takes
-# no state and returns admitted, which is what keeps an unshaped store's spawns
-# byte-for-byte what they were. A withheld launch is recorded in that script's
-# durable queue and released on its own schedule; it is never cancelled here.
-if [ "$HARNESS" = claude ]; then
-  ADMISSION_ARGS=("$ID")
-  [ -z "$PRIORITY_ARG" ] || ADMISSION_ARGS+=(--priority "$PRIORITY_ARG")
-  ADMISSION_ARGS+=(--reason "$KIND $MODE spawn" --store "$SPAWN_CLAUDE_STORE")
-  if ! ADMISSION_OUT=$("$FM_ROOT/bin/fm-claude-admission.sh" gate "${ADMISSION_ARGS[@]}" 2>&1); then
-    printf '%s\n' "$ADMISSION_OUT" >&2
-    echo "error: $ID was not released onto its Claude credential store; nothing was created and the request is preserved above" >&2
-    exit 1
-  fi
-  printf '%s\n' "$ADMISSION_OUT" >&2
-fi
-
 # A second mate is a firstmate home of its own, so it carries the SAME pin as the
 # parent that created it: its own workers then inherit that identity too, and the
 # whole subtree stays on one account. Seeding is idempotent and never re-pins a

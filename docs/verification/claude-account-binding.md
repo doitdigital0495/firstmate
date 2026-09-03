@@ -59,6 +59,8 @@ A session counts as live committed demand only when its park is the last decisiv
 | A home refuses the other session in both directions, and survives a restart | `tests/fm-home-identity.test.sh` |
 | A spawn from a foreign session is refused and creates nothing | `tests/fm-home-identity.test.sh` |
 | A second-mate spawn from a foreign session refuses before touching the child home's worktree, state, or config | `tests/fm-home-identity.test.sh` |
+| A withheld second-mate spawn leaves the child home byte-for-byte untouched and keeps the request queued | `tests/fm-claude-admission.test.sh` |
+| A pre-store poll refusal that clears and later recurs wakes firstmate again | `tests/fm-claude-admission.test.sh` |
 | A worker records and launches on its home's account | `tests/fm-home-identity.test.sh` |
 | A relaunch keeps the task's own recorded account, in both directions | `tests/fm-control-relaunch.test.sh` |
 | A relaunch that is not released yet refuses before the agent is stopped | `tests/fm-control-relaunch.test.sh` |

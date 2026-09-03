@@ -445,7 +445,7 @@ test_poll_wakes_on_a_malformed_shaped_store_list() {
 }
 
 test_poll_wakes_before_a_store_can_even_be_named() {
-  local case_dir store home out status
+  local case_dir store home out status unshaped
 
   # An unconfigured home shapes nothing, so a broken environment is not its
   # problem and must never wake firstmate.
@@ -471,7 +471,19 @@ test_poll_wakes_before_a_store_can_even_be_named() {
   out=$(admission_poll "$home" "relative/path" poll); status=$?
   expect_code 3 "$status" "a repeated pre-store refusal must still refuse"
   [ -z "$out" ] || fail "a pre-store refusal must wake firstmate once, not every poll: $out"
-  pass "a poll that cannot name a store wakes firstmate once, and an unconfigured home stays silent"
+
+  # The condition clears - the environment is repointed at a real store this
+  # home does not shape - and then recurs. Quiet while unchanged must not mean
+  # blind forever.
+  unshaped=$(make_store "$case_dir/unshaped")
+  out=$(admission_poll "$home" "$unshaped" poll); status=$?
+  expect_code 0 "$status" "a store this home does not shape must not refuse"
+  [ -z "$out" ] || fail "an unshaped store must stay silent: $out"
+  out=$(admission_poll "$home" "relative/path" poll); status=$?
+  expect_code 3 "$status" "the recurring misconfiguration must refuse again"
+  assert_contains "$out" "not an absolute path" \
+    "a refusal that cleared and recurred must wake firstmate again"
+  pass "a poll that cannot name a store wakes firstmate once per occurrence, and an unconfigured home stays silent"
 }
 
 test_queue_removal_matches_the_task_id_literally() {
@@ -741,6 +753,51 @@ test_spawn_withholds_before_creating_anything() {
   pass "a withheld Claude spawn creates nothing and keeps the request durable"
 }
 
+test_withheld_secondmate_spawn_leaves_the_child_home_untouched() {
+  local home wt fakebin launchlog proj store child out status before after
+  IFS='|' read -r home wt fakebin launchlog proj <<< "$(spawn_case spawn-sm-withhold ship-one sm-b)"
+  store=$(make_store "$TMP_ROOT/spawn-sm-withhold/store")
+  add_turn_then_park "$store" parked-1 60 100000
+  printf '%s\n' "$store" > "$home/config/claude-shaped-store"
+
+  # A second-mate home of its own. The secondmate spawn path fast-forwards this
+  # checkout, creates its state directory, and copies the parent's local config
+  # into it, so a withheld launch that claims "nothing was created" must not
+  # have reached any of that.
+  child="$TMP_ROOT/spawn-sm-withhold/child"
+  fm_git_worktree "$TMP_ROOT/spawn-sm-withhold/child-origin" "$child" sm-child
+  mkdir -p "$child/bin" "$child/data" "$child/config" "$child/projects"
+  printf 'sm-b\n' > "$child/.fm-secondmate-home"
+  printf '# child home\n' > "$child/AGENTS.md"
+  printf 'claude\n' > "$home/config/crew-harness"
+
+  run_claude_spawn "$home" "$wt" "$fakebin" "$launchlog" "$store" ship-one "$proj" >/dev/null \
+    || fail "the first Claude spawn onto a shaped store must be released"
+
+  before=$(cd "$child" && { git rev-parse HEAD; find . -path ./.git -prune -o -print | sort; })
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
+    CLAUDE_CONFIG_DIR="$store" HERDR_SESSION=fm-test FM_FAKE_LAUNCH_LOG="$launchlog" \
+    FM_CLAUDE_RELEASE_INTERVAL=600 PATH="$fakebin:$PATH" \
+    "$SPAWN" sm-b "$child" --secondmate --harness claude 2>&1); status=$?
+  [ "$status" -ne 0 ] || fail "a second Claude spawn inside one release slot must be withheld"
+  assert_contains "$out" "nothing was created" \
+    "the withheld secondmate spawn must claim it created nothing"
+  after=$(cd "$child" && { git rev-parse HEAD; find . -path ./.git -prune -o -print | sort; })
+  [ "$before" = "$after" ] \
+    || fail "a withheld secondmate spawn changed the child home:"$'\n'"--- before ---"$'\n'"$before"$'\n'"--- after ---"$'\n'"$after"
+  assert_absent "$child/state" "a withheld secondmate spawn must create no child state directory"
+  assert_absent "$child/config/claude-shaped-store" \
+    "a withheld secondmate spawn must copy no parent config into the child home"
+  assert_absent "$child/data/home-identity" \
+    "a withheld secondmate spawn must not pin the child home"
+  assert_grep "sm-b" "$(store_state_dir "$home")/queue" \
+    "a withheld secondmate spawn must be preserved in the durable queue"
+  pass "a withheld secondmate spawn leaves the child home byte-for-byte untouched"
+}
+
 test_spawn_on_unshaped_store_is_unchanged() {
   local home wt fakebin launchlog proj store baseline shaped_elsewhere with_config
   IFS='|' read -r home wt fakebin launchlog proj <<< "$(spawn_case spawn-unshaped ship-one)"
@@ -788,4 +845,5 @@ test_poll_reports_one_slot_once
 test_arm_binds_the_check_shim
 test_check_is_non_consuming
 test_spawn_withholds_before_creating_anything
+test_withheld_secondmate_spawn_leaves_the_child_home_untouched
 test_spawn_on_unshaped_store_is_unchanged
