@@ -453,8 +453,7 @@ test_a_different_store_problem_wakes_firstmate_again() {
     "a different store fault must wake firstmate again, not inherit the first one's stamp"
 
   # Both repaired, but the release slot is still closed: the poll withholds
-  # silently and must retire the refusal stamp anyway, so a later recurrence is
-  # announced rather than swallowed.
+  # silently and must retire the refusal stamp anyway.
   rm -f "$dir/queue"
   mv "$dir/queue.moved" "$dir/queue"
   rm -f "$store/projects/-fixture/torn.jsonl"
@@ -463,12 +462,15 @@ test_a_different_store_problem_wakes_firstmate_again() {
   [ -z "$out" ] || fail "a withheld poll must stay silent: $out"
   assert_grep "pc2-head" "$dir/queue" "the waiting work must still be queued"
 
-  printf '{"type":"user"}\nnot json at all\n{"type":"user"}\n' \
-    > "$store/projects/-fixture/torn.jsonl"
+  # The fault that returns is the SAME one that was last reported, so the only
+  # thing that can produce a second wake is that clean poll having retired the
+  # stamp.
+  mv "$dir/queue" "$dir/queue.moved"
+  ln -s "$dir/queue.moved" "$dir/queue"
   out=$(FM_TEST_INTERVAL=600 admission_poll "$home" "$store" poll); status=$?
   expect_code 3 "$status" "the recurring fault must refuse again"
-  assert_contains "$out" "unreadable record" \
-    "a fault that cleared and recurred must wake firstmate again"
+  assert_contains "$out" "is a symlink" \
+    "a fault that cleared and recurred must wake firstmate again, even though it is the one last reported"
   pass "each distinct store fault wakes firstmate once, and a cleared one wakes again if it returns"
 }
 
