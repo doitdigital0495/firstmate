@@ -778,14 +778,19 @@ poll_refuse() {  # <status> <reason>
 
 action_poll() {
   local store head_row head priority waiting stamp line sorted last armed
-  local shaped shaped_status census parked
-  store=$(launch_store 2>/dev/null) || return 0
+  local shaped shaped_status census parked slug
+  # A home that lists no shaped store has nothing to do here and is never a
+  # fault, so it stays silent even when this environment could not name a store
+  # at all. Past that point, "cannot tell" is a refusal firstmate must hear.
+  [ -f "$CONFIG" ] && [ ! -L "$CONFIG" ] || return 0
+  store=$(launch_store 2>&1) || poll_refuse "$?" "$store"
   shaped=$(store_is_shaped "$store" 2>&1); shaped_status=$?
   case "$shaped_status" in
     0) ;;
     1) return 0 ;;
     *) poll_refuse "$shaped_status" "$shaped" ;;
   esac
+  slug=$(store_slug "$store" 2>&1) || poll_refuse "$?" "$slug"
   resolve_store_state "$store"
   [ -d "$STORE_DIR" ] || return 0
   sorted=$(sorted_queue 2>&1) || poll_refuse "$?" "$sorted"

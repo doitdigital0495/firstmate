@@ -15,6 +15,7 @@ set -u
 ADMISSION="$ROOT/bin/fm-claude-admission.sh"
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-claude-admission)
+mkdir -p "$TMP_ROOT"
 
 # --- fixtures ---------------------------------------------------------------
 
@@ -104,6 +105,23 @@ admission() {
     FM_CLAUDE_HEAD_MAX_WAIT="${FM_TEST_HEAD_WAIT:-3600}" \
     FM_CLAUDE_DEMAND_HORIZON="${FM_TEST_HORIZON:-1800}" \
     "$ADMISSION" "$@" 2>&1
+}
+
+# The watcher keeps a check's STDOUT and discards its stderr (bin/fm-watch.sh),
+# so every poll wake assertion must be made against stdout ALONE: a refusal that
+# only reaches stderr is the silent-forever regression this coverage exists for.
+# admission_poll runs the poll with stderr diverted to $ADMISSION_STDERR, so a
+# case can assert both what firstmate sees and what it does not.
+ADMISSION_STDERR="$TMP_ROOT/admission.stderr"
+admission_poll() {  # <home> <store> <args...>
+  local home=$1 store=$2
+  shift 2
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_CONFIG_OVERRIDE="$home/config" \
+    CLAUDE_CONFIG_DIR="$store" \
+    FM_CLAUDE_RELEASE_INTERVAL="${FM_TEST_INTERVAL:-420}" \
+    FM_CLAUDE_HEAD_MAX_WAIT="${FM_TEST_HEAD_WAIT:-3600}" \
+    FM_CLAUDE_DEMAND_HORIZON="${FM_TEST_HORIZON:-1800}" \
+    "$ADMISSION" "$@" 2>"$ADMISSION_STDERR"
 }
 
 store_state_dir() {  # <home>
@@ -348,11 +366,13 @@ test_unreadable_queue_refuses_everywhere() {
 
   # The watcher reads the poll's stdout only, so a stuck queue must arrive there
   # as a wake line rather than as silence.
-  out=$(FM_TEST_INTERVAL=1 admission "$home" "$store" poll); status=$?
+  out=$(FM_TEST_INTERVAL=1 admission_poll "$home" "$store" poll); status=$?
   expect_code 3 "$status" "the poll must preserve the refusal status"
   assert_contains "$out" "claude admission:" \
-    "an unreadable queue must reach firstmate as a wake line, not silence"
+    "an unreadable queue must reach firstmate as a wake line on stdout, not silence"
   assert_contains "$out" "is a symlink" "the wake line must name the concrete problem"
+  assert_no_grep "claude admission:" "$ADMISSION_STDERR" \
+    "the wake line must not go to stderr, which the watcher discards"
   pass "an unreadable durable queue fails closed on every path and wakes firstmate"
 }
 
@@ -374,8 +394,10 @@ test_poll_wakes_on_unreadable_committed_demand() {
   # cannot be released, and the poll is the only surface that can say so.
   printf '{"type":"user"}\nnot json at all\n{"type":"user"}\n' \
     > "$store/projects/-fixture/torn.jsonl"
-  out=$(FM_TEST_INTERVAL=1 admission "$home" "$store" poll); status=$?
+  out=$(FM_TEST_INTERVAL=1 admission_poll "$home" "$store" poll); status=$?
   expect_code 3 "$status" "unreadable committed-demand evidence must refuse from the poll too"
+  assert_no_grep "claude admission:" "$ADMISSION_STDERR" \
+    "the wake line must reach stdout, not the stderr the watcher discards"
   assert_contains "$out" "unreadable record" \
     "the wake line must name the census problem, not just fail silently"
   assert_contains "$out" "until that is repaired" \
@@ -392,7 +414,7 @@ test_poll_wakes_on_unreadable_committed_demand() {
   # Repairing the evidence returns the poll to its ordinary release line.
   rm -f "$store/projects/-fixture/torn.jsonl"
   sleep 2
-  out=$(FM_TEST_INTERVAL=1 admission "$home" "$store" poll) \
+  out=$(FM_TEST_INTERVAL=1 admission_poll "$home" "$store" poll) \
     || fail "a repaired store must poll cleanly again"
   assert_contains "$out" "pc-head can be released now" \
     "the ordinary release wake must return once the evidence is readable"
@@ -406,13 +428,41 @@ test_poll_wakes_on_a_malformed_shaped_store_list() {
   home=$(make_home "$case_dir/home" "$store")
 
   printf 'relative/path\n' > "$home/config/claude-shaped-store"
-  out=$(admission "$home" "$store" poll); status=$?
+  out=$(admission_poll "$home" "$store" poll); status=$?
   expect_code 3 "$status" "a malformed shaped-store list must refuse from the poll"
   assert_contains "$out" "not an absolute path" \
     "the wake line must name the configuration problem"
+  assert_no_grep "claude admission:" "$ADMISSION_STDERR" \
+    "the wake line must reach stdout, not the stderr the watcher discards"
   assert_absent "$home/state/claude-admission" \
     "a poll that cannot tell whether a store is shaped must still write no state"
   pass "a malformed shaped-store list wakes firstmate and takes no state"
+}
+
+test_poll_wakes_before_a_store_can_even_be_named() {
+  local case_dir store home out status
+
+  # An unconfigured home shapes nothing, so a broken environment is not its
+  # problem and must never wake firstmate.
+  case_dir="$TMP_ROOT/prestore"
+  store=$(make_store "$case_dir/store")
+  home=$(make_home "$case_dir/quiet-home")
+  out=$(admission_poll "$home" "relative/path" poll); status=$?
+  expect_code 0 "$status" "an unconfigured home must not refuse on a broken environment"
+  [ -z "$out" ] || fail "an unconfigured home must stay silent: $out"
+
+  # A home that does shape a store cannot tell whether this launch would land on
+  # it, so it says so where firstmate can see it.
+  home=$(make_home "$case_dir/shaping-home" "$store")
+  out=$(admission_poll "$home" "relative/path" poll); status=$?
+  expect_code 3 "$status" "a shaping home must refuse when no store can be named"
+  assert_contains "$out" "not an absolute path" \
+    "the wake line must name why no credential store could be identified"
+  assert_no_grep "claude admission:" "$ADMISSION_STDERR" \
+    "the wake line must reach stdout, not the stderr the watcher discards"
+  assert_absent "$home/state/claude-admission" \
+    "a poll that cannot name a store must still write no state"
+  pass "a poll that cannot name a store wakes firstmate, and an unconfigured home stays silent"
 }
 
 test_queue_removal_matches_the_task_id_literally() {
@@ -524,21 +574,21 @@ test_poll_reports_one_slot_once() {
   add_turn_then_park "$store" parked-1 60 100000
   home=$(make_home "$case_dir/home" "$store")
 
-  out=$(admission "$home" "$store" poll)
+  out=$(admission_poll "$home" "$store" poll)
   [ -z "$out" ] || fail "poll must be silent when nothing is waiting: $out"
 
   FM_TEST_INTERVAL=600 admission "$home" "$store" gate p-a >/dev/null \
     || fail "the first launch must be released"
   FM_TEST_INTERVAL=600 admission "$home" "$store" gate p-b --priority 20 >/dev/null 2>&1 \
     && fail "the second launch must be withheld"
-  out=$(FM_TEST_INTERVAL=600 admission "$home" "$store" poll)
+  out=$(FM_TEST_INTERVAL=600 admission_poll "$home" "$store" poll)
   [ -z "$out" ] || fail "poll must stay silent while the slot is still closed: $out"
 
   sleep 2
-  out=$(FM_TEST_INTERVAL=1 admission "$home" "$store" poll)
+  out=$(FM_TEST_INTERVAL=1 admission_poll "$home" "$store" poll)
   assert_contains "$out" "p-b can be released now" "poll must name the task to release"
   assert_contains "$out" "1 task(s) waiting" "poll must say how much is waiting"
-  out=$(FM_TEST_INTERVAL=1 admission "$home" "$store" poll)
+  out=$(FM_TEST_INTERVAL=1 admission_poll "$home" "$store" poll)
   [ -z "$out" ] || fail "poll must report one release slot once, not every cycle: $out"
   pass "the watcher poll reports an open release slot exactly once"
 }
@@ -721,6 +771,7 @@ test_queue_removal_matches_the_task_id_literally
 test_unreadable_queue_refuses_everywhere
 test_poll_wakes_on_unreadable_committed_demand
 test_poll_wakes_on_a_malformed_shaped_store_list
+test_poll_wakes_before_a_store_can_even_be_named
 test_malformed_evidence_refuses_without_losing_work
 test_withdraw_clears_a_head_block
 test_head_block_is_bounded
