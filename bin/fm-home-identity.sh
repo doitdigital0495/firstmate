@@ -158,6 +158,8 @@ refuse_mismatch() {
 }
 
 action_ensure() {
+  [ -d "$FM_HOME" ] \
+    || die_refuse "'$FM_HOME' is not an existing directory, so it is not a firstmate home and no identity is recorded for it"
   read_environment_identity
   if read_pin; then
     { [ "$PIN_SESSION" = "$ENV_SESSION" ] && [ "$PIN_STORE" = "$ENV_STORE" ]; } || refuse_mismatch

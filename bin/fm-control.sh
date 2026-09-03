@@ -120,6 +120,11 @@ if [ -z "${FM_HOME+x}" ] || [ -z "${FM_HOME:-}" ]; then
   exit 1
 fi
 
+[ -d "$FM_HOME" ] || {
+  echo "error: FM_HOME '$FM_HOME' is not a directory" >&2
+  exit 1
+}
+
 # Fail closed before any fleet action: this home is pinned to the session and
 # Claude account it was started from, and a session that does not match is
 # refused rather than allowed to drive another home's work
@@ -130,10 +135,6 @@ if ! FM_HOME_IDENTITY_OUT=$("$SCRIPT_DIR/fm-home-identity.sh" ensure 2>&1); then
   printf '%s\n' "$FM_HOME_IDENTITY_OUT" >&2
   exit 1
 fi
-[ -d "$FM_HOME" ] || {
-  echo "error: FM_HOME '$FM_HOME' is not a directory" >&2
-  exit 1
-}
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 [ -d "$STATE" ] || {

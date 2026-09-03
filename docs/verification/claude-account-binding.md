@@ -50,8 +50,11 @@ A session counts as live committed demand only when its park is the last decisiv
 | Malformed or unreadable evidence refuses without losing work | `tests/fm-claude-admission.test.sh` |
 | Shaping disarms a horizon after parked demand clears, however many gates arrive inside it | `tests/fm-claude-admission.test.sh` |
 | A corrupted durable queue row refuses instead of releasing the herd | `tests/fm-claude-admission.test.sh` |
+| An unreadable durable queue refuses on the gate, queue, and withdraw paths | `tests/fm-claude-admission.test.sh` |
+| An FM_HOME that is not an existing home refuses and is never pinned | `tests/fm-home-identity.test.sh` |
 | Withdrawing one task never drops another whose id differs only by a regex metacharacter | `tests/fm-claude-admission.test.sh` |
 | A remote second mate is steered under its home's recorded session and account, and refused under any other | `tests/fm-remote-secondmate-identity.test.sh` |
+| A remote second mate's recorded account beats a caller that exports another one, store-bound or default | `tests/fm-remote-secondmate-identity.test.sh` |
 | A home refuses the other session in both directions, and survives a restart | `tests/fm-home-identity.test.sh` |
 | A spawn from a foreign session is refused and creates nothing | `tests/fm-home-identity.test.sh` |
 | A worker records and launches on its home's account | `tests/fm-home-identity.test.sh` |

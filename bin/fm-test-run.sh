@@ -455,7 +455,7 @@ tests/fm-remote-job-orphan-reap.test.sh 2903
 tests/fm-remote-job.test.sh 48068
 tests/fm-remote-reply.test.sh 40906
 tests/fm-remote-secondmate-lifecycle-e2e.test.sh 170240
-tests/fm-remote-secondmate-identity.test.sh 2311
+tests/fm-remote-secondmate-identity.test.sh 5593
 tests/fm-remote-secondmate-parent-binding.test.sh 13064
 tests/fm-remote-secondmate-trace-context.test.sh 39927
 tests/fm-secondmate-harness.test.sh 123471

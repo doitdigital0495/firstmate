@@ -413,7 +413,7 @@ LOCK=
 
 resolve_store_state() {  # <canonical-store>
   STORE=$1
-  SLUG=$(store_slug "$STORE")
+  SLUG=$(store_slug "$STORE") || exit $?
   STORE_DIR="$ADMISSION_ROOT/$SLUG"
   QUEUE="$STORE_DIR/queue"
   LAST_RELEASE="$STORE_DIR/last-release"
@@ -467,7 +467,7 @@ read_queue() {
 # highest-priority oldest request. Malformed rows refuse rather than reorder.
 sorted_queue() {
   local queue row epoch priority id
-  queue=$(read_queue)
+  queue=$(read_queue) || exit $?
   [ -n "$queue" ] || return 0
   while IFS= read -r row; do
     [ -n "$row" ] || continue
@@ -494,7 +494,7 @@ queue_has() {  # <task-id>
 queue_enqueue() {  # <task-id> <priority> <reason>
   local id=$1 priority=$2 reason=$3 queue
   queue_has "$id" && return 0
-  queue=$(read_queue)
+  queue=$(read_queue) || exit $?
   reason=${reason//$'\t'/ }
   reason=${reason//$'\n'/ }
   if [ -n "$queue" ]; then
@@ -506,7 +506,7 @@ queue_enqueue() {  # <task-id> <priority> <reason>
 
 queue_remove() {  # <task-id>
   local id=$1 queue kept
-  queue=$(read_queue)
+  queue=$(read_queue) || exit $?
   [ -n "$queue" ] || return 0
   kept=$(printf '%s\n' "$queue" | awk -F'\t' -v id="$id" '$0 != "" && $3 != id')
   if [ -n "$kept" ]; then

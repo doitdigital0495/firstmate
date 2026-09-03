@@ -57,9 +57,17 @@ META="$TARGET_HOME/state/parent-route/$ID.meta"
 printf 'window=%s:%s\nworktree=%s\nproject=%s\nbackend=herdr\nendpoint_task_id=%s\nherdr_session=%s\nherdr_workspace_id=w1\nherdr_tab_id=w1:t2\nherdr_pane_id=%s\nharness=codex\n' \
   "$SESSION" "$PANE" "$TARGET_HOME" "$TARGET_HOME" "$ID" "$SESSION" "$PANE" > "$META"
 
-# write_pin <herdr-session>: the durable home identity a launch seeds.
+# A throwaway store standing in for the Claude account a work-session launch
+# billed, and a second one standing in for the foreign account a host's own
+# login shell might export.
+WORK_STORE="$TMP_ROOT/store-work"
+FOREIGN_STORE="$TMP_ROOT/store-foreign"
+mkdir -p "$WORK_STORE/projects" "$FOREIGN_STORE/projects"
+
+# write_pin <herdr-session> [claude-store]: the durable home identity a launch
+# seeds. The store defaults to the personal "default" binding.
 write_pin() {
-  printf 'fm-home-identity-v1\nherdr_session=%s\nclaude_config_dir=default\n' "$1" \
+  printf 'fm-home-identity-v1\nherdr_session=%s\nclaude_config_dir=%s\n' "$1" "${2:-default}" \
     > "$TARGET_HOME/data/home-identity"
 }
 
@@ -67,6 +75,15 @@ write_pin() {
 # and no Claude account, exactly as a job worker's does.
 control() {
   env -u HERDR_SESSION -u CLAUDE_CONFIG_DIR \
+    FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$ROOT" \
+    "$CONTROL" "$@" 2>&1
+}
+
+# control_with_foreign_env <args...>: the leg runs on a host whose login shell
+# exports another session and another Claude account, which is exactly the
+# ambient identity the recorded pin must beat.
+control_with_foreign_env() {
+  env HERDR_SESSION=personal CLAUDE_CONFIG_DIR="$FOREIGN_STORE" \
     FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$ROOT" \
     "$CONTROL" "$@" 2>&1
 }
@@ -91,6 +108,37 @@ test_recorded_identity_is_propagated() {
   assert_grep "report the build result" "$HERDR_LOG" \
     "the message must reach the recorded pane"
   pass "remote send and key carry the home's recorded session and account"
+}
+
+test_a_recorded_store_beats_the_caller_environment() {
+  local out status
+
+  # A store-bound second mate keeps its own store even though the caller's
+  # environment names a different session and a different account.
+  write_pin "$SESSION" "$WORK_STORE"
+  seed_host
+  out=$(control_with_foreign_env send "$ID" 'keep the recorded account'); status=$?
+  assert_not_contains "$out" "fm-home-identity" \
+    "the recorded store must satisfy the pin check, not the caller's"
+  expect_code 0 "$status" "a store-bound remote second mate must still be steerable"
+  assert_grep "keep the recorded account" "$HERDR_LOG" \
+    "the steer must land on the recorded pane"
+  assert_grep "claude_config_dir=$WORK_STORE" "$TARGET_HOME/data/home-identity" \
+    "the pin must never be rewritten to the caller's account"
+
+  # A default-bound second mate must have the foreign account actively removed
+  # rather than inherited.
+  write_pin "$SESSION"
+  seed_host
+  out=$(control_with_foreign_env send "$ID" 'do not inherit the foreign account'); status=$?
+  assert_not_contains "$out" "fm-home-identity" \
+    "a default-bound home must not inherit the caller's account"
+  expect_code 0 "$status" "a default-bound remote second mate must still be steerable"
+  assert_grep "do not inherit the foreign account" "$HERDR_LOG" \
+    "the steer must land on the recorded pane"
+  assert_grep "claude_config_dir=default" "$TARGET_HOME/data/home-identity" \
+    "the default binding must survive a caller that exports another account"
+  pass "the recorded account wins over the caller's, in both the store-bound and default cases"
 }
 
 test_conflicting_identity_still_refuses() {
@@ -121,4 +169,5 @@ test_conflicting_identity_still_refuses() {
 }
 
 test_recorded_identity_is_propagated
+test_a_recorded_store_beats_the_caller_environment
 test_conflicting_identity_still_refuses

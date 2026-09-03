@@ -224,6 +224,36 @@ test_send_refuses_a_foreign_session() {
   pass "a message driven from a foreign session is refused"
 }
 
+test_a_phantom_home_is_never_pinned() {
+  local out status missing rel
+  missing="$TMP_ROOT/phantom/never-created"
+
+  out=$(FM_HOME="$missing" HERDR_SESSION=geris CLAUDE_CONFIG_DIR="$GERIS_STORE" \
+    "$IDENTITY" ensure 2>&1); status=$?
+  expect_code 3 "$status" "a home directory that does not exist must not be pinned"
+  assert_absent "$missing" "a refused pin must not materialize the home"
+
+  out=$(FM_HOME="$missing" FM_STATE_OVERRIDE="$missing/state" \
+    HERDR_SESSION=geris CLAUDE_CONFIG_DIR="$GERIS_STORE" \
+    "$SEND" some-task "hello" 2>&1); status=$?
+  [ "$status" -ne 0 ] || fail "a send against a non-existent home must be refused"
+  assert_contains "$out" "is not a directory" \
+    "the refusal must be the home-directory error, not an identity pin"
+  assert_absent "$missing" "a refused send must not materialize the home"
+
+  # A relative FM_HOME would otherwise pin a phantom home under the caller's
+  # working directory.
+  rel=$TMP_ROOT/phantom/cwd
+  mkdir -p "$rel"
+  out=$(cd "$rel" && FM_HOME=not-a-home FM_STATE_OVERRIDE=not-a-home/state \
+    HERDR_SESSION=geris CLAUDE_CONFIG_DIR="$GERIS_STORE" \
+    "$SEND" some-task "hello" 2>&1); status=$?
+  [ "$status" -ne 0 ] || fail "a send against a relative non-home must be refused"
+  assert_absent "$rel/not-a-home" \
+    "a relative FM_HOME must leave no identity record in the working directory"
+  pass "an FM_HOME that is not an existing home is refused and never pinned"
+}
+
 test_a_home_pins_itself_on_first_use() {
   local home out
   home=$(new_home "$TMP_ROOT/firstuse/home")
@@ -239,6 +269,7 @@ test_a_home_refuses_the_other_session_in_both_directions
 test_the_pin_survives_a_restart
 test_an_unreadable_pin_is_never_replaced
 test_a_home_pins_itself_on_first_use
+test_a_phantom_home_is_never_pinned
 test_spawn_refuses_a_foreign_session_and_creates_nothing
 test_a_worker_records_the_account_its_home_is_pinned_to
 test_a_personal_worker_is_never_handed_a_work_account

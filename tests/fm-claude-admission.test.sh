@@ -316,6 +316,38 @@ test_corrupted_queue_refuses_instead_of_admitting() {
   pass "a corrupted durable queue row fails closed instead of releasing the herd"
 }
 
+test_unreadable_queue_refuses_everywhere() {
+  local case_dir store home out status dir
+  case_dir="$TMP_ROOT/unreadablequeue"
+  store=$(make_store "$case_dir/store")
+  add_turn_then_park "$store" parked-1 60 100000
+  home=$(make_home "$case_dir/home" "$store")
+
+  FM_TEST_INTERVAL=600 admission "$home" "$store" gate uq-a >/dev/null \
+    || fail "the first launch must be released"
+  FM_TEST_INTERVAL=600 admission "$home" "$store" gate uq-head --priority 5 >/dev/null 2>&1 \
+    && fail "the second launch must be withheld"
+
+  # The durable queue is replaced by a symlink, which read_queue refuses to
+  # treat as a durable record.
+  dir=$(store_state_dir "$home")
+  mv "$dir/queue" "$dir/queue.moved"
+  ln -s "$dir/queue.moved" "$dir/queue"
+
+  out=$(admission "$home" "$store" queue); status=$?
+  expect_code 3 "$status" "an unreadable durable queue must refuse rather than report an empty queue"
+  assert_contains "$out" "is a symlink" "the refusal must name the queue problem"
+
+  out=$(FM_TEST_INTERVAL=1 admission "$home" "$store" gate uq-b); status=$?
+  expect_code 3 "$status" "an unreadable durable queue must refuse on the gate path"
+
+  out=$(admission "$home" "$store" withdraw uq-head); status=$?
+  expect_code 3 "$status" "an unreadable durable queue must refuse on the withdraw path"
+  assert_grep "uq-head" "$dir/queue.moved" \
+    "a refusal must leave the recorded work untouched"
+  pass "an unreadable durable queue fails closed on every path"
+}
+
 test_queue_removal_matches_the_task_id_literally() {
   local case_dir store home out
   case_dir="$TMP_ROOT/literalid"
@@ -619,6 +651,7 @@ test_shaping_disarms_when_no_demand_remains
 test_shaping_expires_a_horizon_after_demand_clears
 test_corrupted_queue_refuses_instead_of_admitting
 test_queue_removal_matches_the_task_id_literally
+test_unreadable_queue_refuses_everywhere
 test_malformed_evidence_refuses_without_losing_work
 test_withdraw_clears_a_head_block
 test_head_block_is_bounded
