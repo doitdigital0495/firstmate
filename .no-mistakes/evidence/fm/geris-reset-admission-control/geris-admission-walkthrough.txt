@@ -1,0 +1,182 @@
+
+=== Fleet state: three Geris Claude Code sessions parked on 'continuing automatically', one personal session parked too ===
+
+$ cat '/tmp/geris-demo.XPl3BS/fm-home/config/claude-shaped-store'
+/tmp/geris-demo.XPl3BS/geris-store
+[exit 0]
+
+=== REC 2 - committed-demand census for the Geris store (evidence, not a quota reading) ===
+
+$ CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/geris-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' demand
+store=/tmp/geris-demo.XPl3BS/geris-store
+shaped=yes
+scannedFiles=3
+skippedStaleFiles=0
+parkedSessions=3
+floorInputTokens=730000
+maxAgeSeconds=21600
+turnsAveraged=10
+sessions{sessionId,parkedAtEpoch,parkedAgeSeconds,turnsObserved,avgInputTokensPerTurn}:
+  geris-session-c,1788405074,120,1,300000
+  geris-session-b,1788405104,90,1,180000
+  geris-session-a,1788405134,60,1,250000
+[exit 0]
+
+=== REC 2 - the personal/default store is a separate, unshaped census ===
+
+$ CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/personal-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' demand
+store=/tmp/geris-demo.XPl3BS/personal-store
+shaped=no
+scannedFiles=1
+skippedStaleFiles=0
+parkedSessions=1
+floorInputTokens=500000
+maxAgeSeconds=21600
+turnsAveraged=10
+sessions{sessionId,parkedAtEpoch,parkedAgeSeconds,turnsObserved,avgInputTokensPerTurn}:
+  personal-session-x,1788405134,60,1,500000
+[exit 0]
+
+=== REC 1 - the reset edge: four Geris workers ask to launch at once, priority 10/20/30/40 ===
+
+$ CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/geris-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' gate task-urgent-fix --priority 10 --reason 'p1 incident'
+admitted: task-urgent-fix (release slot open on /tmp/geris-demo.XPl3BS/geris-store with 3 parked session(s) of committed demand)
+[exit 0]
+
+$ CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/geris-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' gate task-feature --priority 20 --reason 'feature work'
+withheld: task-feature (a Claude worker was released onto /tmp/geris-demo.XPl3BS/geris-store 0s ago; the next release slot opens in 8s)
+          the request is held in /tmp/geris-demo.XPl3BS/fm-home/state/claude-admission/geris-store-6caaba7cccc1/queue and released when the slot opens; nothing was cancelled
+[exit 1]
+
+$ CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/geris-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' gate task-docs --priority 30 --reason 'docs pass'
+withheld: task-docs (a Claude worker was released onto /tmp/geris-demo.XPl3BS/geris-store 0s ago; the next release slot opens in 8s)
+          the request is held in /tmp/geris-demo.XPl3BS/fm-home/state/claude-admission/geris-store-6caaba7cccc1/queue and released when the slot opens; nothing was cancelled
+[exit 1]
+
+$ CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/geris-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' gate task-chore --priority 40 --reason 'cleanup'
+withheld: task-chore (a Claude worker was released onto /tmp/geris-demo.XPl3BS/geris-store 0s ago; the next release slot opens in 8s)
+          the request is held in /tmp/geris-demo.XPl3BS/fm-home/state/claude-admission/geris-store-6caaba7cccc1/queue and released when the slot opens; nothing was cancelled
+[exit 1]
+
+=== Nothing was cancelled: the withheld work sits in a durable queue, highest priority first ===
+
+$ CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/geris-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' queue
+store=/tmp/geris-demo.XPl3BS/geris-store
+shaped=yes
+parkedSessions=3
+floorInputTokens=730000
+releaseIntervalSeconds=8
+lastReleaseEpoch=1788405194
+waiting{enqueuedEpoch,priority,taskId,reason}:
+  1788405194,20,task-feature,feature work
+  1788405194,30,task-docs,docs pass
+  1788405194,40,task-chore,cleanup
+[exit 0]
+
+=== Waiting out one release interval (8s here; 420s = 7 min in production) ===
+
+$ CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/geris-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' gate task-feature --priority 20
+admitted: task-feature (release slot open on /tmp/geris-demo.XPl3BS/geris-store with 3 parked session(s) of committed demand)
+[exit 0]
+
+$ CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/geris-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' queue
+store=/tmp/geris-demo.XPl3BS/geris-store
+shaped=yes
+parkedSessions=3
+floorInputTokens=730000
+releaseIntervalSeconds=8
+lastReleaseEpoch=1788405204
+waiting{enqueuedEpoch,priority,taskId,reason}:
+  1788405194,30,task-docs,docs pass
+  1788405194,40,task-chore,cleanup
+[exit 0]
+
+=== Lower-priority work still waits behind the queue head - one release per interval, not a stampede ===
+
+$ CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/geris-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' gate task-chore --priority 40
+withheld: task-chore (a Claude worker was released onto /tmp/geris-demo.XPl3BS/geris-store 0s ago; the next release slot opens in 8s)
+          the request is held in /tmp/geris-demo.XPl3BS/fm-home/state/claude-admission/geris-store-6caaba7cccc1/queue and released when the slot opens; nothing was cancelled
+[exit 1]
+
+=== The durable queue survives a firstmate restart (state on disk, not in memory) ===
+
+$ ls '/tmp/geris-demo.XPl3BS/fm-home/state/claude-admission'
+geris-store-6caaba7cccc1
+[exit 0]
+
+=== Personal/default Claude is untouched: every launch is admitted, and no state, lock or decision is taken ===
+
+$ CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/personal-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' gate personal-task-1 --priority 40
+admitted: personal-task-1 (store /tmp/geris-demo.XPl3BS/personal-store is not shaped by this home)
+[exit 0]
+
+$ CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/personal-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' gate personal-task-2 --priority 40
+admitted: personal-task-2 (store /tmp/geris-demo.XPl3BS/personal-store is not shaped by this home)
+[exit 0]
+
+$ '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' gate default-store-task --priority 40
+admitted: default-store-task (store /home/daan/.claude is not shaped by this home)
+[exit 0]
+
+$ CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/personal-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-claude-admission.sh' queue
+store=/tmp/geris-demo.XPl3BS/personal-store
+shaped=no
+[exit 0]
+
+=== CAPTAIN CLARIFICATION 2 - a home is pinned to its originating Herdr session AND account ===
+
+$ FM_HOME='/tmp/geris-demo.XPl3BS/geris-home' HERDR_SESSION=geris CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/geris-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-home-identity.sh' ensure
+identity: session=geris store=/tmp/geris-demo.XPl3BS/geris-store (pinned now)
+[exit 0]
+
+$ FM_HOME='/tmp/geris-demo.XPl3BS/geris-home' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-home-identity.sh' show
+fm-home-identity-v1
+herdr_session=geris
+claude_config_dir=/tmp/geris-demo.XPl3BS/geris-store
+[exit 0]
+
+$ FM_HOME='/tmp/geris-demo.XPl3BS/personal-home' HERDR_SESSION=personal '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-home-identity.sh' ensure
+identity: session=personal store=/home/daan/.claude (pinned now)
+[exit 0]
+
+$ FM_HOME='/tmp/geris-demo.XPl3BS/personal-home' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-home-identity.sh' show
+fm-home-identity-v1
+herdr_session=personal
+claude_config_dir=/home/daan/.claude
+[exit 0]
+
+=== Refusal direction 1: the personal session tries to use the Geris home ===
+
+$ FM_HOME='/tmp/geris-demo.XPl3BS/geris-home' HERDR_SESSION=personal '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-home-identity.sh' check
+fm-home-identity: refused: this firstmate home belongs to session geris on Claude store /tmp/geris-demo.XPl3BS/geris-store, but the current session is personal on /home/daan/.claude.
+                  Homes are never migrated or merged across sessions. Open this home from its own session, or use the home that belongs to this one.
+[exit 3]
+
+=== Refusal direction 2: the Geris session tries to use the personal home ===
+
+$ FM_HOME='/tmp/geris-demo.XPl3BS/personal-home' HERDR_SESSION=geris CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/geris-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-home-identity.sh' check
+fm-home-identity: refused: this firstmate home belongs to session personal on Claude store /home/daan/.claude, but the current session is geris on /tmp/geris-demo.XPl3BS/geris-store.
+                  Homes are never migrated or merged across sessions. Open this home from its own session, or use the home that belongs to this one.
+[exit 3]
+
+=== Same session, store repointed at the other account - still a refusal, never a silent migration ===
+
+$ FM_HOME='/tmp/geris-demo.XPl3BS/geris-home' HERDR_SESSION=geris CLAUDE_CONFIG_DIR='/tmp/geris-demo.XPl3BS/personal-store' '/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M1JBYWD6RQGPRQTV2B39NWD3/bin/fm-home-identity.sh' check
+fm-home-identity: refused: this firstmate home belongs to session geris on Claude store /tmp/geris-demo.XPl3BS/geris-store, but the current session is geris on /tmp/geris-demo.XPl3BS/personal-store.
+                  Homes are never migrated or merged across sessions. Open this home from its own session, or use the home that belongs to this one.
+[exit 3]
+
+=== Both homes survive the refusals byte-for-byte - no migration, no cleanup ===
+
+$ find '/tmp/geris-demo.XPl3BS/geris-home' '/tmp/geris-demo.XPl3BS/personal-home' -name home-identity -exec sh -c 'echo "-- $1"; cat "$1"' _ {} \;
+-- /tmp/geris-demo.XPl3BS/geris-home/data/home-identity
+fm-home-identity-v1
+herdr_session=geris
+claude_config_dir=/tmp/geris-demo.XPl3BS/geris-store
+-- /tmp/geris-demo.XPl3BS/personal-home/data/home-identity
+fm-home-identity-v1
+herdr_session=personal
+claude_config_dir=/home/daan/.claude
+[exit 0]
+
+(lab: /tmp/geris-demo.XPl3BS)
