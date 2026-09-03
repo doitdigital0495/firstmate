@@ -345,7 +345,15 @@ test_unreadable_queue_refuses_everywhere() {
   expect_code 3 "$status" "an unreadable durable queue must refuse on the withdraw path"
   assert_grep "uq-head" "$dir/queue.moved" \
     "a refusal must leave the recorded work untouched"
-  pass "an unreadable durable queue fails closed on every path"
+
+  # The watcher reads the poll's stdout only, so a stuck queue must arrive there
+  # as a wake line rather than as silence.
+  out=$(FM_TEST_INTERVAL=1 admission "$home" "$store" poll); status=$?
+  expect_code 3 "$status" "the poll must preserve the refusal status"
+  assert_contains "$out" "claude admission:" \
+    "an unreadable queue must reach firstmate as a wake line, not silence"
+  assert_contains "$out" "is a symlink" "the wake line must name the concrete problem"
+  pass "an unreadable durable queue fails closed on every path and wakes firstmate"
 }
 
 test_queue_removal_matches_the_task_id_literally() {

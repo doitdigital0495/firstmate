@@ -751,20 +751,39 @@ action_queue() {
 # release slot: the report record retires when the head changes or a release
 # happens. Silent-and-cheap when nothing waits, so the census never runs on the
 # ordinary cycle.
+# The watcher reads this verb's STDOUT and discards its stderr, so an evidence
+# refusal that only writes stderr leaves a stuck queue invisible to firstmate
+# forever. Every refusal a poll can hit is therefore reported as the one wake
+# line before the status is preserved for a direct caller. The report record
+# retires the repeat the same way a release slot does.
+poll_refuse() {  # <status> <reason>
+  local status=$1 reason=$2 stamp=evidence-refusal
+  reason=${reason#fm-claude-admission: }
+  reason=${reason//$'\n'/ }
+  if [ ! -f "$REPORTED" ] || [ "$(cat -- "$REPORTED" 2>/dev/null)" != "$stamp" ]; then
+    fm_cap_line "claude admission: $SLUG holds waiting work that cannot be released; ${reason:-its durable evidence could not be read}"
+    ensure_store_dir
+    write_record "$REPORTED" "$stamp"
+  fi
+  exit "$status"
+}
+
 action_poll() {
-  local store head_row head priority waiting stamp line sorted
+  local store head_row head priority waiting stamp line sorted last armed
   store=$(launch_store 2>/dev/null) || return 0
   store_is_shaped "$store" 2>/dev/null || return 0
   resolve_store_state "$store"
   [ -d "$STORE_DIR" ] || return 0
-  sorted=$(sorted_queue) || return 0
+  sorted=$(sorted_queue 2>&1) || poll_refuse "$?" "$sorted"
   head_row=$(printf '%s\n' "$sorted" | head -n 1)
   [ -n "$head_row" ] || return 0
+  armed=$(read_epoch_record "$ARMED_SINCE" 2>&1) || poll_refuse "$?" "$armed"
+  last=$(read_epoch_record "$LAST_RELEASE" 2>&1) || poll_refuse "$?" "$last"
   IFS=$'\t' read -r _ priority head _ <<< "$head_row"
   waiting=$(printf '%s\n' "$sorted" | grep -c '' || true)
   evaluate "$head" "$priority"
   [ "$DECISION" = admit ] || return 0
-  stamp="$head:$(read_epoch_record "$LAST_RELEASE")"
+  stamp="$head:$last"
   if [ -f "$REPORTED" ] && [ "$(cat -- "$REPORTED" 2>/dev/null)" = "$stamp" ]; then
     return 0
   fi

@@ -1875,20 +1875,6 @@ if [ -z "$SPAWN_CLAUDE_STORE" ] && [ "$HARNESS" = claude ]; then
   SPAWN_CLAUDE_STORE=$HOME_PIN_STORE
 fi
 
-# A second mate is a firstmate home of its own, so it carries the SAME pin as the
-# parent that created it: its own workers then inherit that identity too, and the
-# whole subtree stays on one account. Seeding is idempotent and never re-pins a
-# home that already carries a different identity.
-if [ "$KIND" = secondmate ]; then
-  SECONDMATE_IDENTITY_OUT=
-  if ! SECONDMATE_IDENTITY_OUT=$("$FM_ROOT/bin/fm-home-identity.sh" seed \
-      "$PROJ_ABS" "$HOME_PIN_SESSION" "$HOME_PIN_STORE" 2>&1); then
-    printf '%s\n' "$SECONDMATE_IDENTITY_OUT" >&2
-    echo "error: $ID was not launched; its home could not be bound to this firstmate's session and account, and nothing was created" >&2
-    exit 1
-  fi
-fi
-
 # Per-credential-store release shaping for Claude workers, checked here for the
 # same reason the delivery agreement above is: this point creates no worktree,
 # no endpoint, and no task metadata, so a withheld launch leaves nothing behind
@@ -1907,6 +1893,20 @@ if [ "$HARNESS" = claude ]; then
     exit 1
   fi
   printf '%s\n' "$ADMISSION_OUT" >&2
+fi
+
+# A second mate is a firstmate home of its own, so it carries the SAME pin as the
+# parent that created it: its own workers then inherit that identity too, and the
+# whole subtree stays on one account. Seeding is idempotent and never re-pins a
+# home that already carries a different identity.
+if [ "$KIND" = secondmate ]; then
+  SECONDMATE_IDENTITY_OUT=
+  if ! SECONDMATE_IDENTITY_OUT=$("$FM_ROOT/bin/fm-home-identity.sh" seed \
+      "$PROJ_ABS" "$HOME_PIN_SESSION" "$HOME_PIN_STORE" 2>&1); then
+    printf '%s\n' "$SECONDMATE_IDENTITY_OUT" >&2
+    echo "error: $ID was not launched; its home could not be bound to this firstmate's session and account, and nothing was created" >&2
+    exit 1
+  fi
 fi
 
 BRIEF_DIR_REAL=$(cd "$(dirname "$BRIEF")" && pwd -P)

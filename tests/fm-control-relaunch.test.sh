@@ -861,21 +861,26 @@ test_missing_worktree_refuses_before_stopping_anything() {
 }
 
 test_relaunch_keeps_the_task_recorded_claude_account() {
-  local dir store
+  local dir store ambient
   dir=$(new_case acctbind rl41)
   add_ship_task "$dir" rl41 claude
-  # The task started on a work account; this session's environment carries the
-  # personal one. The recorded binding, not the environment, must win.
-  store="$dir/work-store"
-  mkdir -p "$store"
+  # The task started on a work account, and this session genuinely carries a
+  # DIFFERENT account: the home is pinned to the ambient one, so the home gate
+  # passes and the only thing that can keep the work store on the relaunch
+  # command is the task's own recorded binding winning.
+  mkdir -p "$dir/work-store" "$dir/ambient-store"
+  store=$(cd "$dir/work-store" && pwd -P)
+  ambient=$(cd "$dir/ambient-store" && pwd -P)
   printf 'claude_config_dir=%s\n' "$store" >> "$dir/home/state/rl41.meta"
   mkdir -p "$dir/home/data"
-  printf 'fm-home-identity-v1\nherdr_session=default\nclaude_config_dir=default\n' \
+  printf 'fm-home-identity-v1\nherdr_session=default\nclaude_config_dir=%s\n' "$ambient" \
     > "$dir/home/data/home-identity"
 
-  FM_TEST_CLAUDE_CONFIG_DIR='' run_control "$dir" rl41 relaunch --note "x" >/dev/null 2>&1
+  FM_TEST_CLAUDE_CONFIG_DIR="$ambient" run_control "$dir" rl41 relaunch --note "x" >/dev/null 2>&1
   assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$store'" \
     "a relaunch must launch on the task's own recorded account, not this session's"
+  assert_not_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$ambient'" \
+    "a relaunch must never forward the account sitting in the environment"
   assert_contains "$(cat "$dir/home/state/rl41.meta")" "claude_config_dir=$store" \
     "a relaunch must carry the recorded account forward unchanged"
   pass "fm-control relaunch: a task keeps the Claude account it started on"
@@ -885,16 +890,18 @@ test_relaunch_keeps_a_personal_task_off_a_work_account() {
   local dir store
   dir=$(new_case acctpersonal rl42)
   add_ship_task "$dir" rl42 claude
-  store="$dir/work-store"
-  mkdir -p "$store"
-  # The task started on the personal default store; a work account is sitting in
-  # the environment. The recorded default binding must still win.
+  # The task started on the personal default store, and a work account really is
+  # sitting in the environment: the home is pinned to that same work store so the
+  # home gate passes, leaving the task's recorded default binding as the only
+  # thing that can keep the work account off the relaunch command.
+  mkdir -p "$dir/work-store"
+  store=$(cd "$dir/work-store" && pwd -P)
   printf 'claude_config_dir=default\n' >> "$dir/home/state/rl42.meta"
   mkdir -p "$dir/home/data"
-  printf 'fm-home-identity-v1\nherdr_session=default\nclaude_config_dir=default\n' \
+  printf 'fm-home-identity-v1\nherdr_session=default\nclaude_config_dir=%s\n' "$store" \
     > "$dir/home/data/home-identity"
 
-  FM_TEST_CLAUDE_CONFIG_DIR='' run_control "$dir" rl42 relaunch --note "x" >/dev/null 2>&1
+  FM_TEST_CLAUDE_CONFIG_DIR="$store" run_control "$dir" rl42 relaunch --note "x" >/dev/null 2>&1
   assert_not_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR=" \
     "a personal task must never gain a work account on relaunch"
   assert_contains "$(cat "$dir/fake/literal")" "-u CLAUDE_CONFIG_DIR" \
