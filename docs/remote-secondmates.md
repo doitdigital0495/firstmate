@@ -170,6 +170,8 @@ FM_HOME=<primary-home> bin/fm-send.sh fm-<id> '<request>'
 
 The [`fm-send.sh` header](../bin/fm-send.sh) owns the exact delivery-status contract.
 When the verified remote endpoint accepts the text and Enter but synchronous submit confirmation remains pending, the primary reports the request as delivered rather than failed; do not resend it, because its pending-reply expectation remains armed.
+Every steer and key the primary routes to a remote second mate runs under that home's own recorded Herdr session and Claude account pin rather than the remote entrypoint's environment; a missing, unreadable, or foreign pin refuses instead of falling back (see [Home session and account pin](configuration.md#home-session-and-account-pin-datahome-identity)).
+
 `fm-peek.sh` and `fm-crew-state.sh` route remote-secondmate reads to the endpoint's host instead of consulting local worktree or backend state.
 An unreachable or unreadable remote read is unknown, not evidence that the endpoint is dead.
 
