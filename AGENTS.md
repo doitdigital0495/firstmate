@@ -110,7 +110,7 @@ state/               runtime records and signals; gitignored
   .pr-check-migration-scan-v1  private marker proving the non-executing scan disabled every unsafe legacy check; .pr-check-migration-v1 separately records completed private repairs
   x-watch.check.sh   generated Relay poll shim; present only when opted in (section 14)
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/fm-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
-  claude-admission.check.sh  generated Claude release-shaping poll shim and its .check-trust binding; present only after bin/fm-claude-admission.sh arm; silent unless a shaped store has waiting work whose release slot is open
+  claude-admission.check.sh  generated Claude release-shaping poll shim and its .check-trust binding; present only after bin/fm-claude-admission.sh arm; silent unless a shaped store has waiting work whose release slot is open, or its evidence is unreadable and that waiting work cannot be released at all
   pending-replies/   parent-owned secondmate pending-reply records (correlation id, delivery vs reply, recovery, escalation); fm-pending-reply-lib.sh
   claude-admission/  per-credential-store release-shaping records: the durable waiting queue, last release, armed-since, and report marker for each shaped Claude store; written only by bin/fm-claude-admission.sh
   procevent/         registered process-to-event sources, one private record per canonical source id; written only by bin/fm-procevent.sh, and their presence alone keeps supervision required (section 13)

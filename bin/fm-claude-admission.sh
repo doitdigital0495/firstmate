@@ -525,9 +525,9 @@ DECISION_WAIT=
 DECISION_PARKED=0
 
 # Fills the DECISION_* globals for <task-id> at <priority>. Mutates nothing.
-evaluate() {  # <task-id> <priority>
-  local id=$1 priority=$2 census parked now armed_since last head head_epoch head_row sorted waited
-  census=$(demand_census "$STORE") || exit $?
+evaluate() {  # <task-id> <priority> [census]
+  local id=$1 priority=$2 census=${3:-} parked now armed_since last head head_epoch head_row sorted waited
+  [ -n "$census" ] || census=$(demand_census "$STORE") || exit $?
   parked=$(census_value "$census" parkedSessions)
   case "$parked" in
     ''|*[!0-9]*) die_evidence "the committed-demand census for $STORE returned no readable parked-session count" ;;
@@ -753,16 +753,24 @@ action_queue() {
 # ordinary cycle.
 # The watcher reads this verb's STDOUT and discards its stderr, so an evidence
 # refusal that only writes stderr leaves a stuck queue invisible to firstmate
-# forever. Every refusal a poll can hit is therefore reported as the one wake
-# line before the status is preserved for a direct caller. The report record
-# retires the repeat the same way a release slot does.
+# forever. EVERY refusal reachable from a poll is therefore pre-captured and
+# reported as the one wake line before the status is preserved for a direct
+# caller: the poll still releases nothing on bad evidence, it just says so where
+# firstmate can see it. The reason leads the line because fm_cap_line cuts the
+# tail, and the report record retires the repeat the same way a release slot
+# does - except before a store is resolved, where there is no record to write
+# and writing one would give an unlisted store state it must never take.
 poll_refuse() {  # <status> <reason>
   local status=$1 reason=$2 stamp=evidence-refusal
   reason=${reason#fm-claude-admission: }
   reason=${reason//$'\n'/ }
-  if [ ! -f "$REPORTED" ] || [ "$(cat -- "$REPORTED" 2>/dev/null)" != "$stamp" ]; then
-    fm_cap_line "claude admission: $SLUG holds waiting work that cannot be released; ${reason:-its durable evidence could not be read}"
-    ensure_store_dir
+  [ -n "$reason" ] || reason="its durable evidence could not be read"
+  if [ -n "$STORE_DIR" ] && [ -f "$REPORTED" ] \
+    && [ "$(cat -- "$REPORTED" 2>/dev/null)" = "$stamp" ]; then
+    exit "$status"
+  fi
+  fm_cap_line "claude admission: $reason; no Claude worker is released${SLUG:+ onto $SLUG} until that is repaired"
+  if [ -n "$STORE_DIR" ] && [ -d "$STORE_DIR" ]; then
     write_record "$REPORTED" "$stamp"
   fi
   exit "$status"
@@ -770,8 +778,14 @@ poll_refuse() {  # <status> <reason>
 
 action_poll() {
   local store head_row head priority waiting stamp line sorted last armed
+  local shaped shaped_status census parked
   store=$(launch_store 2>/dev/null) || return 0
-  store_is_shaped "$store" 2>/dev/null || return 0
+  shaped=$(store_is_shaped "$store" 2>&1); shaped_status=$?
+  case "$shaped_status" in
+    0) ;;
+    1) return 0 ;;
+    *) poll_refuse "$shaped_status" "$shaped" ;;
+  esac
   resolve_store_state "$store"
   [ -d "$STORE_DIR" ] || return 0
   sorted=$(sorted_queue 2>&1) || poll_refuse "$?" "$sorted"
@@ -779,9 +793,14 @@ action_poll() {
   [ -n "$head_row" ] || return 0
   armed=$(read_epoch_record "$ARMED_SINCE" 2>&1) || poll_refuse "$?" "$armed"
   last=$(read_epoch_record "$LAST_RELEASE" 2>&1) || poll_refuse "$?" "$last"
+  census=$(demand_census "$STORE" 2>&1) || poll_refuse "$?" "$census"
+  parked=$(census_value "$census" parkedSessions)
+  case "$parked" in
+    ''|*[!0-9]*) poll_refuse 3 "the committed-demand census for $STORE returned no readable parked-session count" ;;
+  esac
   IFS=$'\t' read -r _ priority head _ <<< "$head_row"
   waiting=$(printf '%s\n' "$sorted" | grep -c '' || true)
-  evaluate "$head" "$priority"
+  evaluate "$head" "$priority" "$census"
   [ "$DECISION" = admit ] || return 0
   stamp="$head:$last"
   if [ -f "$REPORTED" ] && [ "$(cat -- "$REPORTED" 2>/dev/null)" = "$stamp" ]; then
