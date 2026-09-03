@@ -53,26 +53,45 @@ A session counts as live committed demand only when its park is the last decisiv
 | A worker records and launches on its home's account | `tests/fm-home-identity.test.sh` |
 | A relaunch keeps the task's own recorded account, in both directions | `tests/fm-control-relaunch.test.sh` |
 | A relaunch that is not released yet refuses before the agent is stopped | `tests/fm-control-relaunch.test.sh` |
+| A lab anchors to running named sessions while `default` is stopped | `tests/fm-herdr-lab.test.sh` |
+| A change to any live session during lab work is a hard tripwire failure | `tests/fm-herdr-lab.test.sh` |
+| A fleet with nothing running, or with an ambiguous default, refuses | `tests/fm-herdr-lab.test.sh` |
 
 Run them with `bin/fm-test-run.sh tests/fm-claude-admission.test.sh tests/fm-home-identity.test.sh tests/fm-control-relaunch.test.sh`.
 
-## Live Herdr end-to-end
+## Live verification
 
-The portable tests above use a fake terminal, so the release decision is additionally exercised against a real Herdr session and a real `fm-spawn.sh`.
-That run uses an isolated named lab session through `bin/fm-herdr-lab.sh` and a throwaway credential store, never the captain's `default` session and never a real quota reset or account exhaustion.
+Verified 2026-09-03 on Linux 6.18 (WSL2) with `herdr 0.8.0` and `treehouse 2.1.1`.
+Both runs used throwaway credential stores and a stub harness, so no real Claude account was reached and no quota was consumed.
+The operator fleet at the time was `default` present but stopped, with two running named sessions kept strictly separate; it was byte-identical afterward.
 
-Refresh it with the procedure below and update the dated result.
+### Isolated Herdr lab
+
+`bin/fm-herdr-lab.sh` provisioned a named lab session against that fleet, and its tripwire recorded all three sessions.
+Proved live on the real Herdr backend through `bin/fm-spawn.sh`: the home pinned itself on first use, a second launch inside one release slot was withheld with no task record created and the request preserved in the durable queue, a work-pinned home refused a personal session and created nothing, and a personal-pinned home refused a work session.
+Teardown re-read the fleet and confirmed every session unchanged.
+
+One thing the Herdr path cannot prove from an ordinary operator pane: firstmate's own Herdr backend refuses to place a worker whose launcher pane belongs to a different Herdr server, so a worker cannot be launched into a lab session from a pane living in another session.
+That refusal is correct and was not worked around; the pane-level proof below runs on tmux, the verified reference backend, instead.
 
 ```
-HERDR_LAB_HELPER=<repo>/bin/fm-herdr-lab.sh
-HERDR_LAB_SESSION=$("$HERDR_LAB_HELPER" name claude-admission)
-trap '"$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION"' EXIT
-"$HERDR_LAB_HELPER" provision "$HERDR_LAB_SESSION"
-# one shaped store with a synthetic parked session, then two spawns:
-# the first is released and creates a tab, worktree, and task record;
-# the second is withheld and creates none of them.
+error: herdr launcher pane '<id>' belongs to the server at '<...>/sessions/<other>/herdr.sock',
+not session 'fm-lab-<...>' at '<...>/sessions/fm-lab-<...>/herdr.sock';
+refusing to place a worker from a cross-session parent identity
 ```
 
-Not yet recorded on this host.
-As of 2026-09-02 the lab helper refuses to provision here, because its fleet-state tripwire requires exactly one RUNNING `default` Herdr session and this host runs none: `herdr 0.8.0` reports `default` present but `running: false`, alongside two running named sessions.
-That refusal is the tripwire working as designed and is never bypassed, so the live run is pending an operator starting the default session; the portable coverage above stands in the meantime and exercises the same decision against a fake terminal.
+### Pane-level account binding, on a private tmux server
+
+The tmux adapter has no session override: `fm_backend_tmux_container_ensure` reuses the current `$TMUX` session, else a fixed `firstmate` one.
+So the run happened inside a private tmux server (`tmux -L fmlab`), which scopes every call the spawn makes to that server and cannot reach the operator's sessions.
+
+Two real spawns, then each launched process's own environment read from `/proc/<pid>/environ`:
+
+```
+work-bound task:      CLAUDE_CONFIG_DIR=<throwaway work store>
+personal-bound task:  (no CLAUDE_CONFIG_DIR at all)
+```
+
+The personal result is the load-bearing one: the tmux server environment carried a `CLAUDE_CONFIG_DIR`, and the launched process still had none, so the recorded default binding is enforced by unsetting an inherited value rather than by omitting a prefix.
+
+Relaunch account preservation is covered by `tests/fm-control-relaunch.test.sh` rather than here: a stub harness is not a recognizable agent, so the live relaunch path refuses with `endpoint reads 'ambiguous'` before reaching the launch.

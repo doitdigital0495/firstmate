@@ -33,13 +33,22 @@ lab_state=absent
 
 case "$1 ${2:-}" in
   "session list")
+    # The fleet OUTSIDE the lab session. Defaults to one running default session
+    # so the original cases are unchanged; a case that needs an operator-shaped
+    # fleet (a stopped default beside running named sessions) supplies its own.
+    if [ -n "${FM_FAKE_HERDR_FLEET:-}" ]; then
+      fleet=$FM_FAKE_HERDR_FLEET
+    else
+      fleet=$(jq -nc --arg socket "$default_socket" \
+        '[{default:true,name:"default",running:true,socket_path:$socket}]')
+    fi
     if [ "$lab_state" = absent ] || [ "$lab_state" = deleted ]; then
-      jq -nc --arg socket "$default_socket" '{sessions:[{default:true,name:"default",running:true,socket_path:$socket}]}'
+      jq -nc --argjson fleet "$fleet" '{sessions:$fleet}'
     else
       running=false
       [ "$lab_state" = running ] && running=true
-      jq -nc --arg socket "$default_socket" --arg name "$session" --argjson running "$running" \
-        '{sessions:[{default:true,name:"default",running:true,socket_path:$socket},{default:false,name:$name,running:$running,socket_path:("/tmp/" + $name + ".sock")}]}'
+      jq -nc --argjson fleet "$fleet" --arg name "$session" --argjson running "$running" \
+        '{sessions:($fleet + [{default:false,name:$name,running:$running,socket_path:("/tmp/" + $name + ".sock")}])}'
     fi
     ;;
   "server --session")
@@ -82,8 +91,107 @@ run_with_fake() {
     FM_FAKE_HERDR_SERVER_DELAY="${FM_FAKE_HERDR_SERVER_DELAY:-0}" \
     FM_FAKE_HERDR_FAST_POLL="${FM_FAKE_HERDR_FAST_POLL:-}" \
     FM_FAKE_HERDR_DELETE_FAIL="${FM_FAKE_HERDR_DELETE_FAIL:-}" \
+    FM_FAKE_HERDR_FLEET="${FM_FAKE_HERDR_FLEET:-}" \
     FM_HERDR_LAB_STATE_DIR="$TRIPWIRES" \
     "$@"
+}
+
+# An operator fleet whose live work runs in two strictly separate named sessions
+# while the generic "default" session is present but stopped. This is the shape
+# the tripwire has to protect, and the shape that used to refuse outright.
+OPERATOR_FLEET='[
+  {"default":true,"name":"default","running":false,"socket_path":"/home/test/.config/herdr/herdr.sock"},
+  {"default":false,"name":"geris","running":true,"socket_path":"/home/test/.config/herdr/sessions/geris/herdr.sock"},
+  {"default":false,"name":"personal","running":true,"socket_path":"/home/test/.config/herdr/sessions/personal/herdr.sock"}
+]'
+
+test_anchors_to_running_named_sessions_with_a_stopped_default() {
+  local name="fm-lab-operator-fleet-$$" snapshot
+  : > "$FAKE_LOG"
+  FM_FAKE_HERDR_FLEET="$OPERATOR_FLEET" \
+    run_with_fake fm_herdr_lab_provision "$name" \
+    || fail "a lab must provision against running named sessions when default is stopped"
+  snapshot=$(cat "$TRIPWIRES/$name.fleet-state.json")
+  assert_contains "$snapshot" '"name":"geris"' "the tripwire must watch the work session"
+  assert_contains "$snapshot" '"name":"personal"' "the tripwire must watch the personal session"
+  assert_contains "$snapshot" '"name":"default"' "the tripwire must watch the stopped default session too"
+  assert_not_contains "$snapshot" "$name" "the tripwire must exclude the lab session itself"
+  FM_FAKE_HERDR_FLEET="$OPERATOR_FLEET" \
+    run_with_fake fm_herdr_lab_teardown "$name" \
+    || fail "teardown must succeed when no live session changed"
+  assert_absent "$TRIPWIRES/$name.fleet-state.json" "successful teardown left its tripwire behind"
+  pass "fm-herdr-lab: a lab anchors to running named sessions while default is stopped"
+}
+
+test_a_changed_work_session_trips_the_tripwire() {
+  local name="fm-lab-geris-change-$$" status=0 changed
+  : > "$FAKE_LOG"
+  FM_FAKE_HERDR_FLEET="$OPERATOR_FLEET" \
+    run_with_fake fm_herdr_lab_provision "$name" || fail "fixture provision failed"
+  # The work session stops during lab work: the lab must be blamed loudly rather
+  # than tearing down as though nothing happened.
+  changed=$(printf '%s' "$OPERATOR_FLEET" | jq -c '
+    map(if .name == "geris" then .running = false else . end)')
+  FM_FAKE_HERDR_FLEET="$changed" \
+    run_with_fake fm_herdr_lab_teardown "$name" >/dev/null 2>&1 || status=$?
+  expect_code 1 "$status" "a changed work session must fail teardown"
+  assert_present "$TRIPWIRES/$name.fleet-state.json" "a failed tripwire must retain its evidence"
+  FM_FAKE_HERDR_FLEET="$OPERATOR_FLEET" run_with_fake fm_herdr_lab_teardown "$name" >/dev/null 2>&1 || true
+  rm -f "$TRIPWIRES/$name.fleet-state.json"
+  pass "fm-herdr-lab: a changed work session is a hard tripwire failure"
+}
+
+test_a_changed_personal_session_trips_the_tripwire() {
+  local name="fm-lab-personal-change-$$" status=0 changed
+  : > "$FAKE_LOG"
+  FM_FAKE_HERDR_FLEET="$OPERATOR_FLEET" \
+    run_with_fake fm_herdr_lab_provision "$name" || fail "fixture provision failed"
+  changed=$(printf '%s' "$OPERATOR_FLEET" | jq -c '
+    map(if .name == "personal" then .socket_path = "/moved/personal.sock" else . end)')
+  FM_FAKE_HERDR_FLEET="$changed" \
+    run_with_fake fm_herdr_lab_teardown "$name" >/dev/null 2>&1 || status=$?
+  expect_code 1 "$status" "a moved personal session must fail teardown"
+  assert_present "$TRIPWIRES/$name.fleet-state.json" "a failed tripwire must retain its evidence"
+  FM_FAKE_HERDR_FLEET="$OPERATOR_FLEET" run_with_fake fm_herdr_lab_teardown "$name" >/dev/null 2>&1 || true
+  rm -f "$TRIPWIRES/$name.fleet-state.json"
+  pass "fm-herdr-lab: a changed personal session is a hard tripwire failure"
+}
+
+test_a_disappearing_session_trips_the_tripwire() {
+  local name="fm-lab-vanished-$$" status=0 changed
+  : > "$FAKE_LOG"
+  FM_FAKE_HERDR_FLEET="$OPERATOR_FLEET" \
+    run_with_fake fm_herdr_lab_provision "$name" || fail "fixture provision failed"
+  changed=$(printf '%s' "$OPERATOR_FLEET" | jq -c 'map(select(.name != "geris"))')
+  FM_FAKE_HERDR_FLEET="$changed" \
+    run_with_fake fm_herdr_lab_teardown "$name" >/dev/null 2>&1 || status=$?
+  expect_code 1 "$status" "a vanished work session must fail teardown"
+  FM_FAKE_HERDR_FLEET="$OPERATOR_FLEET" run_with_fake fm_herdr_lab_teardown "$name" >/dev/null 2>&1 || true
+  rm -f "$TRIPWIRES/$name.fleet-state.json"
+  pass "fm-herdr-lab: a session that disappears during lab work is a hard tripwire failure"
+}
+
+test_refuses_a_fleet_with_nothing_running() {
+  local name="fm-lab-dead-fleet-$$" status=0 dead
+  : > "$FAKE_LOG"
+  dead=$(printf '%s' "$OPERATOR_FLEET" | jq -c 'map(.running = false)')
+  FM_FAKE_HERDR_FLEET="$dead" \
+    run_with_fake fm_herdr_lab_provision "$name" >/dev/null 2>&1 || status=$?
+  expect_code 1 "$status" "a fleet with nothing running must refuse rather than record a vacuous snapshot"
+  assert_absent "$TRIPWIRES/$name.fleet-state.json" "a refused provision must leave no tripwire"
+  pass "fm-herdr-lab: a fleet with no running session refuses a vacuous tripwire"
+}
+
+test_refuses_an_ambiguous_fleet() {
+  local name="fm-lab-ambiguous-$$" status=0 ambiguous
+  : > "$FAKE_LOG"
+  ambiguous=$(printf '%s' "$OPERATOR_FLEET" | jq -c '
+    map(if .name == "personal" then .default = true else . end)')
+  FM_FAKE_HERDR_FLEET="$ambiguous" \
+    run_with_fake fm_herdr_lab_provision "$name" >/dev/null 2>&1 || status=$?
+  expect_code 1 "$status" "more than one default-flagged session must refuse"
+  assert_absent "$TRIPWIRES/$name.fleet-state.json" "a refused provision must leave no tripwire"
+  pass "fm-herdr-lab: an ambiguous fleet refuses rather than recording it"
 }
 
 test_refuses_unsafe_names() {
@@ -236,6 +344,12 @@ SH
 
 test_refuses_unsafe_names
 test_provision_run_and_guarded_teardown
+test_anchors_to_running_named_sessions_with_a_stopped_default
+test_a_changed_work_session_trips_the_tripwire
+test_a_changed_personal_session_trips_the_tripwire
+test_a_disappearing_session_trips_the_tripwire
+test_refuses_a_fleet_with_nothing_running
+test_refuses_an_ambiguous_fleet
 test_missing_tripwire_blocks_destruction
 test_changed_default_trips_after_teardown
 test_stopped_owned_lab_can_reprovision
