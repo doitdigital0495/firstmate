@@ -1630,51 +1630,6 @@ validate_firstmate_operational_dirs() {
   done
 }
 
-# --- REFUSAL BOUNDARY -------------------------------------------------------
-# Everything above this line is resolution and validation; everything below it
-# can change durable state. On EVERY path - ship, scout, secondmate, relaunch -
-# the refusals a spawn can make must sit ABOVE this boundary, so the messages
-# below it that promise "nothing was created" are literally true.
-#
-# The second-mate path is the one that keeps catching this out, because it
-# mutates a home this process does not own: below here it fast-forwards the
-# child worktree (ff_target), creates $PROJ_ABS/state, copies the parent's local
-# config in (propagate_secondmate_inheritance), seeds the child's identity pin,
-# and then publishes task metadata and an endpoint. Two refusals used to sit
-# behind those: the home session/account pin, now resolved right after the task
-# id, and the Claude release gate, now here. A new pre-flight check belongs
-# above this line; a new mutation belongs below it.
-
-SPAWN_CLAUDE_STORE=
-if [ "$RELAUNCH" -eq 1 ] && [ -n "${RELAUNCH_META:-}" ] && [ -f "$RELAUNCH_META" ]; then
-  SPAWN_CLAUDE_STORE=$(fm_meta_get "$RELAUNCH_META" claude_config_dir) || SPAWN_CLAUDE_STORE=
-fi
-if [ -z "$SPAWN_CLAUDE_STORE" ] && [ "$HARNESS" = claude ]; then
-  # A first launch inherits the HOME's pinned account, never the ambient one, so
-  # a worker can only ever be staffed onto the account its firstmate belongs to.
-  SPAWN_CLAUDE_STORE=$HOME_PIN_STORE
-fi
-
-# Per-credential-store release shaping for Claude workers, checked here for the
-# same reason the delivery agreement above is: this point creates no worktree,
-# no endpoint, and no task metadata, so a withheld launch leaves nothing behind
-# to reconcile. bin/fm-claude-admission.sh owns the whole decision, including
-# which stores this home shapes at all - a store the home does not shape takes
-# no state and returns admitted, which is what keeps an unshaped store's spawns
-# byte-for-byte what they were. A withheld launch is recorded in that script's
-# durable queue and released on its own schedule; it is never cancelled here.
-if [ "$HARNESS" = claude ]; then
-  ADMISSION_ARGS=("$ID")
-  [ -z "$PRIORITY_ARG" ] || ADMISSION_ARGS+=(--priority "$PRIORITY_ARG")
-  ADMISSION_ARGS+=(--reason "$KIND $MODE spawn" --store "$SPAWN_CLAUDE_STORE")
-  if ! ADMISSION_OUT=$("$FM_ROOT/bin/fm-claude-admission.sh" gate "${ADMISSION_ARGS[@]}" 2>&1); then
-    printf '%s\n' "$ADMISSION_OUT" >&2
-    echo "error: $ID was not released onto its Claude credential store; nothing was created and the request is preserved above" >&2
-    exit 1
-  fi
-  printf '%s\n' "$ADMISSION_OUT" >&2
-fi
-
 if [ "$KIND" = secondmate ]; then
   if [ -z "$FIRSTMATE_HOME" ] && [ -f "$STATE/$ID.meta" ]; then
     FIRSTMATE_HOME=$(grep '^home=' "$STATE/$ID.meta" | cut -d= -f2- || true)
@@ -1695,46 +1650,6 @@ if [ "$KIND" = secondmate ]; then
     SECONDMATE_PROJECTS=$SECONDMATE_REGISTRY_MATCH_PROJECTS
   fi
   WT="$PROJ_ABS"
-  # Local-HEAD sync: before launch, fast-forward this secondmate's worktree to the
-  # PRIMARY checkout's current default-branch commit, so a freshly spawned or
-  # recovery-respawned secondmate always runs the primary's version (AGENTS.md
-  # spawn section). Purely local - no fetch: the home is a worktree of this same
-  # repo and already holds the commit. ff-only and guarded; a dirty, diverged, or
-  # wrong-branch home is left untouched and launches as-is. The agent re-reads
-  # AGENTS.md fresh on launch, so no nudge is needed here.
-  if sm_primary_head=$(primary_head_commit "$FM_ROOT"); then
-    sm_ff_out=$(ff_target "$PROJ_ABS" "secondmate $ID" "$sm_primary_head" yes yes 2>&1 || true)
-    case "$sm_ff_out" in
-      *': skipped:'*)
-        sm_ff_line=$(first_line "$sm_ff_out")
-        sm_ff_prefix="secondmate $ID: skipped: "
-        sm_ff_reason=${sm_ff_line#"$sm_ff_prefix"}
-        echo "warning: secondmate $ID sync skipped before launch: $sm_ff_reason" >&2
-        ;;
-    esac
-  else
-    echo "warning: secondmate $ID sync skipped before launch: primary default-branch commit cannot be resolved" >&2
-  fi
-  mkdir -p "$PROJ_ABS/state" || {
-    echo "error: could not create secondmate state directory for $PROJ_ABS" >&2
-    exit 1
-  }
-  if [ "${FM_SKIP_SECONDMATE_INHERIT:-0}" != 1 ]; then
-    CONFIG_INHERIT_LOCK=$(fm_config_inherit_lock_path "$PROJ_ABS") || {
-      echo "error: could not resolve secondmate inheritance lock for $PROJ_ABS" >&2
-      exit 1
-    }
-    if ! fm_lock_acquire_wait "$CONFIG_INHERIT_LOCK"; then
-      echo "error: could not acquire secondmate inheritance lock for $PROJ_ABS" >&2
-      exit 1
-    fi
-    CONFIG_INHERIT_LOCK_HELD=1
-    # Inheritance propagation: push the primary-authoritative live-safe local inheritance
-    # surface into this secondmate home (fm-config-inherit-lib.sh).
-    FM_CONFIG_INHERIT_LIVE=1 \
-      propagate_secondmate_inheritance "$FM_HOME" "$PROJ_ABS" "$CONFIG" "$DATA" \
-      || echo "warning: secondmate $ID inheritance failed for $PROJ_ABS" >&2
-  fi
   if [ -f "$PROJ_ABS/data/charter.md" ]; then
     BRIEF="$PROJ_ABS/data/charter.md"
   else
@@ -1902,6 +1817,109 @@ if [ "$KIND" = ship ]; then
   fi
 fi
 
+# --- PHASE BOUNDARY ---------------------------------------------------------
+# A spawn runs in three phases, on EVERY path - ship, scout, secondmate, and
+# relaunch - and the order is load-bearing in both directions:
+#
+#   1. NON-CONSUMING refusals. Everything above this line: the home's session and
+#      account pin, second-mate home and registry validation, the brief and its
+#      delivery agreement, and the child home's identity comparison below. None
+#      of them spend anything or change anything, so any of them may refuse.
+#   2. The CONSUMING release gate, immediately below. It removes this task from
+#      the durable queue and stamps the store's last release, so it runs only
+#      once nothing else can refuse - otherwise a spawn that never launched burns
+#      one release per FM_CLAUDE_RELEASE_INTERVAL for the whole fleet.
+#   3. Durable mutations, after the gate: the second mate's worktree
+#      fast-forward, its state directory, its inherited config, its identity
+#      pin, then task metadata and the endpoint.
+#
+# Both guarantees depend on that split: a refusal leaves nothing created, and a
+# spent release slot always produced a launch. A new pre-flight check belongs in
+# phase 1, never between 2 and 3; a new mutation belongs in phase 3.
+
+# The child home's identity is COMPARED here and only written in phase 3, so a
+# home already pinned to another session refuses before the gate is consulted.
+if [ "$KIND" = secondmate ]; then
+  SECONDMATE_IDENTITY_OUT=
+  if ! SECONDMATE_IDENTITY_OUT=$("$FM_ROOT/bin/fm-home-identity.sh" verify \
+      "$PROJ_ABS" "$HOME_PIN_SESSION" "$HOME_PIN_STORE" 2>&1); then
+    printf '%s\n' "$SECONDMATE_IDENTITY_OUT" >&2
+    echo "error: $ID was not launched; its home could not be bound to this firstmate's session and account, and nothing was created" >&2
+    exit 1
+  fi
+fi
+
+SPAWN_CLAUDE_STORE=
+if [ "$RELAUNCH" -eq 1 ] && [ -n "${RELAUNCH_META:-}" ] && [ -f "$RELAUNCH_META" ]; then
+  SPAWN_CLAUDE_STORE=$(fm_meta_get "$RELAUNCH_META" claude_config_dir) || SPAWN_CLAUDE_STORE=
+fi
+if [ -z "$SPAWN_CLAUDE_STORE" ] && [ "$HARNESS" = claude ]; then
+  # A first launch inherits the HOME's pinned account, never the ambient one, so
+  # a worker can only ever be staffed onto the account its firstmate belongs to.
+  SPAWN_CLAUDE_STORE=$HOME_PIN_STORE
+fi
+
+# Phase 2. bin/fm-claude-admission.sh owns the whole decision, including which
+# stores this home shapes at all - a store the home does not shape takes no
+# state and returns admitted, which is what keeps an unshaped store's spawns
+# byte-for-byte what they were. A withheld launch is recorded in that script's
+# durable queue and released on its own schedule; it is never cancelled here.
+if [ "$HARNESS" = claude ]; then
+  ADMISSION_ARGS=("$ID")
+  [ -z "$PRIORITY_ARG" ] || ADMISSION_ARGS+=(--priority "$PRIORITY_ARG")
+  ADMISSION_ARGS+=(--reason "$KIND $MODE spawn" --store "$SPAWN_CLAUDE_STORE")
+  if ! ADMISSION_OUT=$("$FM_ROOT/bin/fm-claude-admission.sh" gate "${ADMISSION_ARGS[@]}" 2>&1); then
+    printf '%s\n' "$ADMISSION_OUT" >&2
+    echo "error: $ID was not released onto its Claude credential store; nothing was created and the request is preserved above" >&2
+    exit 1
+  fi
+  printf '%s\n' "$ADMISSION_OUT" >&2
+fi
+
+# Phase 3 begins here.
+if [ "$KIND" = secondmate ]; then
+  # Local-HEAD sync: fast-forward this secondmate's worktree to the PRIMARY
+  # checkout's current default-branch commit, so a freshly spawned or
+  # recovery-respawned secondmate always runs the primary's version (AGENTS.md
+  # spawn section). Purely local - no fetch: the home is a worktree of this same
+  # repo and already holds the commit. ff-only and guarded; a dirty, diverged, or
+  # wrong-branch home is left untouched and launches as-is. The agent re-reads
+  # AGENTS.md fresh on launch, so no nudge is needed here.
+  if sm_primary_head=$(primary_head_commit "$FM_ROOT"); then
+    sm_ff_out=$(ff_target "$PROJ_ABS" "secondmate $ID" "$sm_primary_head" yes yes 2>&1 || true)
+    case "$sm_ff_out" in
+      *': skipped:'*)
+        sm_ff_line=$(first_line "$sm_ff_out")
+        sm_ff_prefix="secondmate $ID: skipped: "
+        sm_ff_reason=${sm_ff_line#"$sm_ff_prefix"}
+        echo "warning: secondmate $ID sync skipped before launch: $sm_ff_reason" >&2
+        ;;
+    esac
+  else
+    echo "warning: secondmate $ID sync skipped before launch: primary default-branch commit cannot be resolved" >&2
+  fi
+  mkdir -p "$PROJ_ABS/state" || {
+    echo "error: could not create secondmate state directory for $PROJ_ABS" >&2
+    exit 1
+  }
+  if [ "${FM_SKIP_SECONDMATE_INHERIT:-0}" != 1 ]; then
+    CONFIG_INHERIT_LOCK=$(fm_config_inherit_lock_path "$PROJ_ABS") || {
+      echo "error: could not resolve secondmate inheritance lock for $PROJ_ABS" >&2
+      exit 1
+    }
+    if ! fm_lock_acquire_wait "$CONFIG_INHERIT_LOCK"; then
+      echo "error: could not acquire secondmate inheritance lock for $PROJ_ABS" >&2
+      exit 1
+    fi
+    CONFIG_INHERIT_LOCK_HELD=1
+    # Inheritance propagation: push the primary-authoritative live-safe local inheritance
+    # surface into this secondmate home (fm-config-inherit-lib.sh).
+    FM_CONFIG_INHERIT_LIVE=1 \
+      propagate_secondmate_inheritance "$FM_HOME" "$PROJ_ABS" "$CONFIG" "$DATA" \
+      || echo "warning: secondmate $ID inheritance failed for $PROJ_ABS" >&2
+  fi
+fi
+
 # THE TASK'S OWN Claude credential binding, resolved once and then used for the
 # release decision, the launch, and the durable record alike.
 #
@@ -1917,14 +1935,14 @@ fi
 # drift onto a work account by inheritance either.
 # A second mate is a firstmate home of its own, so it carries the SAME pin as the
 # parent that created it: its own workers then inherit that identity too, and the
-# whole subtree stays on one account. Seeding is idempotent and never re-pins a
-# home that already carries a different identity.
+# whole subtree stays on one account. The comparison that could refuse already
+# ran in phase 1, so this write only records what that check accepted.
 if [ "$KIND" = secondmate ]; then
   SECONDMATE_IDENTITY_OUT=
   if ! SECONDMATE_IDENTITY_OUT=$("$FM_ROOT/bin/fm-home-identity.sh" seed \
       "$PROJ_ABS" "$HOME_PIN_SESSION" "$HOME_PIN_STORE" 2>&1); then
     printf '%s\n' "$SECONDMATE_IDENTITY_OUT" >&2
-    echo "error: $ID was not launched; its home could not be bound to this firstmate's session and account, and nothing was created" >&2
+    echo "error: $ID was not launched; its home could not be bound to this firstmate's session and account" >&2
     exit 1
   fi
 fi

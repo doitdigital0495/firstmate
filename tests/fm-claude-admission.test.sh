@@ -445,7 +445,7 @@ test_poll_wakes_on_a_malformed_shaped_store_list() {
 }
 
 test_poll_wakes_before_a_store_can_even_be_named() {
-  local case_dir store home out status unshaped
+  local case_dir store home out status unshaped nosha
 
   # An unconfigured home shapes nothing, so a broken environment is not its
   # problem and must never wake firstmate.
@@ -483,7 +483,23 @@ test_poll_wakes_before_a_store_can_even_be_named() {
   expect_code 3 "$status" "the recurring misconfiguration must refuse again"
   assert_contains "$out" "not an absolute path" \
     "a refusal that cleared and recurred must wake firstmate again"
-  pass "a poll that cannot name a store wakes firstmate once per occurrence, and an unconfigured home stays silent"
+
+  # The last pre-store refusal - no sha256 tool to name the store's records by -
+  # dedupes on the same marker, so it too must wake once and then stay quiet.
+  nosha="$case_dir/nosha"
+  mkdir -p "$nosha"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$nosha/shasum"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$nosha/sha256sum"
+  chmod +x "$nosha/shasum" "$nosha/sha256sum"
+  out=$(PATH="$nosha:$PATH" admission_poll "$home" "$store" poll); status=$?
+  expect_code 3 "$status" "a store whose records cannot be named must refuse"
+  assert_contains "$out" "sha256" "the wake line must name the missing tool"
+  out=$(PATH="$nosha:$PATH" admission_poll "$home" "$store" poll); status=$?
+  expect_code 3 "$status" "the repeated tool refusal must still refuse"
+  [ -z "$out" ] || fail "a store-slug refusal must wake firstmate once, not every poll: $out"
+  out=$(PATH="$nosha:$PATH" admission_poll "$home" "$store" poll)
+  [ -z "$out" ] || fail "a store-slug refusal must stay quiet while unchanged: $out"
+  pass "every pre-store refusal wakes firstmate once per occurrence, and an unconfigured home stays silent"
 }
 
 test_queue_removal_matches_the_task_id_literally() {
@@ -798,6 +814,35 @@ test_withheld_secondmate_spawn_leaves_the_child_home_untouched() {
   pass "a withheld secondmate spawn leaves the child home byte-for-byte untouched"
 }
 
+test_a_refusal_after_the_gate_never_spends_the_slot() {
+  local home wt fakebin launchlog proj store out status
+  IFS='|' read -r home wt fakebin launchlog proj <<< "$(spawn_case spawn-slot ship-one ship-two)"
+  store=$(make_store "$TMP_ROOT/spawn-slot/store")
+  add_turn_then_park "$store" parked-1 60 100000
+  printf '%s\n' "$store" > "$home/config/claude-shaped-store"
+
+  # The brief records mode=no-mistakes; this spawn passes a different one, which
+  # is a refusal that lives below the release gate's own position in the file.
+  : > "$launchlog"
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
+    CLAUDE_CONFIG_DIR="$store" HERDR_SESSION=fm-test FM_FAKE_LAUNCH_LOG="$launchlog" \
+    FM_CLAUDE_RELEASE_INTERVAL=600 PATH="$fakebin:$PATH" \
+    "$SPAWN" ship-one "$proj" --mode direct-PR --yolo off 2>&1); status=$?
+  [ "$status" -ne 0 ] || fail "a spawn whose brief disagrees with --mode must refuse"
+  assert_contains "$out" "delivery mismatch" "the refusal must be the delivery mismatch"
+  assert_absent "$home/state/ship-one.meta" "a refused spawn must publish no task record"
+
+  # The store's one release per interval must still be there for real work.
+  out=$(FM_TEST_INTERVAL=600 run_claude_spawn "$home" "$wt" "$fakebin" "$launchlog" \
+    "$store" ship-two "$proj") \
+    || fail "a refused spawn must not have spent the release slot: $out"
+  assert_present "$home/state/ship-two.meta" "the next eligible spawn must be released"
+  pass "a spawn refused before it launches never spends a release slot"
+}
+
 test_spawn_on_unshaped_store_is_unchanged() {
   local home wt fakebin launchlog proj store baseline shaped_elsewhere with_config
   IFS='|' read -r home wt fakebin launchlog proj <<< "$(spawn_case spawn-unshaped ship-one)"
@@ -846,4 +891,5 @@ test_arm_binds_the_check_shim
 test_check_is_non_consuming
 test_spawn_withholds_before_creating_anything
 test_withheld_secondmate_spawn_leaves_the_child_home_untouched
+test_a_refusal_after_the_gate_never_spends_the_slot
 test_spawn_on_unshaped_store_is_unchanged

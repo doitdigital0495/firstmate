@@ -9,6 +9,8 @@
 #   fm-home-identity.sh show         print the pin, or "absent"
 #   fm-home-identity.sh seed <home> <session> <store>
 #                                    write a child home's pin from its parent's identity
+#   fm-home-identity.sh verify <home> <session> <store>
+#                                    seed's refusal without its write
 #   fm-home-identity.sh --help
 #
 # WHY THIS EXISTS. The operator runs one firstmate home per terminal session,
@@ -192,11 +194,13 @@ action_show() {
   fi
 }
 
-# A child home is pinned from its PARENT's identity, not from the environment
-# the provisioning command happens to run in, so a second mate and its own
-# workers stay on the account the firstmate that created them belongs to.
-action_seed() {  # <home> <session> <store>
-  local home=$1 session=$2 store=$3 target
+SEED_TARGET=
+# The argument and conflict half of seeding, with no write of any kind: a caller
+# that must refuse before it is allowed to create anything runs this first.
+# 0 = a matching pin is already recorded, 1 = no pin recorded yet, exit 3 =
+# refused because the child is pinned to another identity.
+seed_compare() {  # <home> <session> <store>
+  local home=$1 session=$2 store=$3
   [ -d "$home" ] || die_usage "seed target '$home' is not a directory"
   case "$session" in
     ''|*[!A-Za-z0-9._-]*) die_usage "seed session '$session' is not a usable session name" ;;
@@ -205,22 +209,40 @@ action_seed() {  # <home> <session> <store>
     default|/*) ;;
     *) die_usage "seed store '$store' must be an absolute path or the literal default" ;;
   esac
-  [ -d "$home/data" ] || (umask 077; mkdir -p "$home/data") \
-    || die_refuse "the child home's record directory could not be created"
-  target="$home/data/home-identity"
-  if [ -e "$target" ]; then
-    PIN=$target
-    read_pin || die_refuse "$target exists but holds no readable identity"
-    { [ "$PIN_SESSION" = "$session" ] && [ "$PIN_STORE" = "$store" ]; } || {
-      printf 'fm-home-identity: refused: %s is already pinned to session %s on %s and will not be re-pinned to %s on %s\n' \
-        "$target" "$PIN_SESSION" "$PIN_STORE" "$session" "$store" >&2
-      exit 3
-    }
+  SEED_TARGET="$home/data/home-identity"
+  [ -e "$SEED_TARGET" ] || return 1
+  PIN=$SEED_TARGET
+  read_pin || die_refuse "$SEED_TARGET exists but holds no readable identity"
+  { [ "$PIN_SESSION" = "$session" ] && [ "$PIN_STORE" = "$store" ]; } || {
+    printf 'fm-home-identity: refused: %s is already pinned to session %s on %s and will not be re-pinned to %s on %s\n' \
+      "$SEED_TARGET" "$PIN_SESSION" "$PIN_STORE" "$session" "$store" >&2
+    exit 3
+  }
+  return 0
+}
+
+# A child home is pinned from its PARENT's identity, not from the environment
+# the provisioning command happens to run in, so a second mate and its own
+# workers stay on the account the firstmate that created them belongs to.
+action_seed() {  # <home> <session> <store>
+  local home=$1 session=$2 store=$3
+  if seed_compare "$home" "$session" "$store"; then
     printf 'identity: session=%s store=%s (already pinned)\n' "$session" "$store"
     return 0
   fi
-  write_pin "$target" "$session" "$store"
+  [ -d "$home/data" ] || (umask 077; mkdir -p "$home/data") \
+    || die_refuse "the child home's record directory could not be created"
+  write_pin "$SEED_TARGET" "$session" "$store"
   printf 'identity: session=%s store=%s (pinned now)\n' "$session" "$store"
+}
+
+action_verify() {  # <home> <session> <store>
+  local home=$1 session=$2 store=$3
+  if seed_compare "$home" "$session" "$store"; then
+    printf 'identity: session=%s store=%s (already pinned)\n' "$session" "$store"
+  else
+    printf 'identity: session=%s store=%s (unpinned, seeding will record it)\n' "$session" "$store"
+  fi
 }
 
 VERB=${1:-}
@@ -236,5 +258,6 @@ case "$VERB" in
   store) [ "$#" -eq 0 ] || die_usage "store takes no arguments"; action_store ;;
   show) [ "$#" -eq 0 ] || die_usage "show takes no arguments"; action_show ;;
   seed) [ "$#" -eq 3 ] || die_usage "seed takes <home> <session> <store>"; action_seed "$@" ;;
+  verify) [ "$#" -eq 3 ] || die_usage "verify takes <home> <session> <store>"; action_verify "$@" ;;
   *) die_usage "unknown verb: $VERB" ;;
 esac

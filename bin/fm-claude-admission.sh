@@ -794,9 +794,11 @@ action_poll() {
   # A home that lists no shaped store has nothing to do here and is never a
   # fault, so it stays silent even when this environment could not name a store
   # at all. Past that point, "cannot tell" is a refusal firstmate must hear.
-  # The home-scoped refusal marker is retired the moment its condition no longer
-  # holds, on every one of these exits: a refusal that clears and later recurs
-  # must wake firstmate again rather than matching a stale stamp forever.
+  # The home-scoped refusal marker dedupes every refusal that fires before a
+  # store is resolved, so it is retired only once ALL of them have been passed -
+  # retiring it earlier would let the next one re-wake firstmate on every cycle.
+  # Reported once per occurrence, silent while unchanged, and woken again when a
+  # cleared condition recurs.
   if [ ! -f "$CONFIG" ] || [ -L "$CONFIG" ]; then
     rm -f -- "$HOME_REFUSAL"
     return 0
@@ -804,11 +806,15 @@ action_poll() {
   store=$(launch_store 2>&1) || poll_refuse "$?" "$store"
   shaped=$(store_is_shaped "$store" 2>&1); shaped_status=$?
   case "$shaped_status" in
-    0|1) rm -f -- "$HOME_REFUSAL" ;;
+    0|1) ;;
     *) poll_refuse "$shaped_status" "$shaped" ;;
   esac
-  [ "$shaped_status" -eq 0 ] || return 0
+  if [ "$shaped_status" -ne 0 ]; then
+    rm -f -- "$HOME_REFUSAL"
+    return 0
+  fi
   slug=$(store_slug "$store" 2>&1) || poll_refuse "$?" "$slug"
+  rm -f -- "$HOME_REFUSAL"
   resolve_store_state "$store"
   [ -d "$STORE_DIR" ] || return 0
   sorted=$(sorted_queue 2>&1) || poll_refuse "$?" "$sorted"
