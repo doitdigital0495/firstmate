@@ -421,6 +421,57 @@ test_poll_wakes_on_unreadable_committed_demand() {
   pass "unreadable committed demand wakes firstmate instead of stalling in silence"
 }
 
+test_a_different_store_problem_wakes_firstmate_again() {
+  local case_dir store home out status dir
+  case_dir="$TMP_ROOT/pollchange"
+  store=$(make_store "$case_dir/store")
+  add_turn_then_park "$store" parked-1 60 100000
+  home=$(make_home "$case_dir/home" "$store")
+
+  FM_TEST_INTERVAL=600 admission "$home" "$store" gate pc2-a >/dev/null \
+    || fail "the first launch must be released"
+  FM_TEST_INTERVAL=600 admission "$home" "$store" gate pc2-head --priority 5 >/dev/null 2>&1 \
+    && fail "the second launch must be withheld"
+  dir=$(store_state_dir "$home")
+
+  # First fault: the committed-demand evidence.
+  printf '{"type":"user"}\nnot json at all\n{"type":"user"}\n' \
+    > "$store/projects/-fixture/torn.jsonl"
+  out=$(FM_TEST_INTERVAL=600 admission_poll "$home" "$store" poll); status=$?
+  expect_code 3 "$status" "the census fault must refuse"
+  assert_contains "$out" "unreadable record" "the first fault must be named"
+  out=$(FM_TEST_INTERVAL=600 admission_poll "$home" "$store" poll); status=$?
+  expect_code 3 "$status" "the repeated census fault must still refuse"
+  [ -z "$out" ] || fail "the same fault must wake firstmate once: $out"
+
+  # A DIFFERENT fault must not inherit the first one's silence.
+  mv "$dir/queue" "$dir/queue.moved"
+  ln -s "$dir/queue.moved" "$dir/queue"
+  out=$(FM_TEST_INTERVAL=600 admission_poll "$home" "$store" poll); status=$?
+  expect_code 3 "$status" "a second, different fault must refuse"
+  assert_contains "$out" "is a symlink" \
+    "a different store fault must wake firstmate again, not inherit the first one's stamp"
+
+  # Both repaired, but the release slot is still closed: the poll withholds
+  # silently and must retire the refusal stamp anyway, so a later recurrence is
+  # announced rather than swallowed.
+  rm -f "$dir/queue"
+  mv "$dir/queue.moved" "$dir/queue"
+  rm -f "$store/projects/-fixture/torn.jsonl"
+  out=$(FM_TEST_INTERVAL=600 admission_poll "$home" "$store" poll) \
+    || fail "a repaired store with a closed slot must poll cleanly"
+  [ -z "$out" ] || fail "a withheld poll must stay silent: $out"
+  assert_grep "pc2-head" "$dir/queue" "the waiting work must still be queued"
+
+  printf '{"type":"user"}\nnot json at all\n{"type":"user"}\n' \
+    > "$store/projects/-fixture/torn.jsonl"
+  out=$(FM_TEST_INTERVAL=600 admission_poll "$home" "$store" poll); status=$?
+  expect_code 3 "$status" "the recurring fault must refuse again"
+  assert_contains "$out" "unreadable record" \
+    "a fault that cleared and recurred must wake firstmate again"
+  pass "each distinct store fault wakes firstmate once, and a cleared one wakes again if it returns"
+}
+
 test_poll_wakes_on_a_malformed_shaped_store_list() {
   local case_dir store home out status
   case_dir="$TMP_ROOT/pollconfig"
@@ -882,6 +933,7 @@ test_queue_removal_matches_the_task_id_literally
 test_unreadable_queue_refuses_everywhere
 test_poll_wakes_on_unreadable_committed_demand
 test_poll_wakes_on_a_malformed_shaped_store_list
+test_a_different_store_problem_wakes_firstmate_again
 test_poll_wakes_before_a_store_can_even_be_named
 test_malformed_evidence_refuses_without_losing_work
 test_withdraw_clears_a_head_block

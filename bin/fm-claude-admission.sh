@@ -762,17 +762,20 @@ action_queue() {
 # does - except before a store is resolved, where there is no record to write
 # and writing one would give an unlisted store state it must never take.
 poll_refuse() {  # <status> <reason>
-  local status=$1 reason=$2 stamp=evidence-refusal record
+  local status=$1 reason=$2 stamp record
   reason=${reason#fm-claude-admission: }
   reason=${reason//$'\n'/ }
   [ -n "$reason" ] || reason="its durable evidence could not be read"
+  # Both records dedupe on the PROBLEM, never on the mere fact of a refusal: a
+  # persistent fault wakes firstmate once, and a different one wakes it again.
+  # The store record also carries release stamps, so an evidence refusal is
+  # prefixed to keep the two kinds apart.
   if [ -n "$STORE_DIR" ]; then
     record=$REPORTED
+    stamp="evidence-refusal:$reason"
   else
     # A refusal that fires before any store could be resolved has no per-store
-    # record to retire the repeat, so it dedupes on this home's own marker
-    # instead, keyed by the problem itself: a persistent misconfiguration wakes
-    # firstmate once, and a different one wakes it again.
+    # record to retire the repeat, so it dedupes on this home's own marker.
     record=$HOME_REFUSAL
     stamp=$reason
   fi
@@ -826,6 +829,13 @@ action_poll() {
   parked=$(census_value "$census" parkedSessions)
   case "$parked" in
     ''|*[!0-9]*) poll_refuse 3 "the committed-demand census for $STORE returned no readable parked-session count" ;;
+  esac
+  # Every piece of this store's evidence read cleanly, so any refusal it was
+  # last reported for is over: retire that stamp whether or not this poll goes
+  # on to release anything, or the next distinct fault would match it and stay
+  # silent. A release stamp is left alone - it dedupes the other kind of line.
+  case "$(cat -- "$REPORTED" 2>/dev/null)" in
+    evidence-refusal:*) rm -f -- "$REPORTED" ;;
   esac
   IFS=$'\t' read -r _ priority head _ <<< "$head_row"
   waiting=$(printf '%s\n' "$sorted" | grep -c '' || true)

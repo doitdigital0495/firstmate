@@ -1833,9 +1833,17 @@ fi
 #      fast-forward, its state directory, its inherited config, its identity
 #      pin, then task metadata and the endpoint.
 #
-# Both guarantees depend on that split: a refusal leaves nothing created, and a
-# spent release slot always produced a launch. A new pre-flight check belongs in
-# phase 1, never between 2 and 3; a new mutation belongs in phase 3.
+# What that split guarantees, precisely: a REFUSAL leaves nothing created, and no
+# refusal ever spends a release slot.
+# What it does not guarantee: an INFRASTRUCTURE failure below the gate - backend
+# or terminal creation, worktree freshening, a lock or directory that cannot be
+# taken - can still spend a slot without producing a launch, because a mutation
+# cannot be proven possible without attempting it.
+# That residual costs one release interval of delay on that shaped store and
+# never any work: the task's own record and brief are untouched, so it is spawned
+# again once the infrastructure is repaired.
+# A new pre-flight check belongs in phase 1, never between 2 and 3; a new
+# mutation belongs in phase 3.
 
 # The child home's identity is COMPARED here and only written in phase 3, so a
 # home already pinned to another session refuses before the gate is consulted.
