@@ -920,12 +920,12 @@ fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; 
 # bin/fm-home-identity.sh owns that pin, pins an unpinned home from this session,
 # and refuses everything else.
 HOME_IDENTITY_OUT=
-if ! HOME_IDENTITY_OUT=$("$FM_ROOT/bin/fm-home-identity.sh" ensure 2>&1); then
+if ! HOME_IDENTITY_OUT=$("$SCRIPT_DIR/fm-home-identity.sh" ensure 2>&1); then
   printf '%s\n' "$HOME_IDENTITY_OUT" >&2
   echo "error: $ID was not launched; this firstmate home does not belong to the current session, and nothing was created" >&2
   exit 1
 fi
-HOME_PIN=$("$FM_ROOT/bin/fm-home-identity.sh" show) || HOME_PIN=
+HOME_PIN=$("$SCRIPT_DIR/fm-home-identity.sh" show) || HOME_PIN=
 HOME_PIN_SESSION=$(printf '%s\n' "$HOME_PIN" | sed -n 's/^herdr_session=//p')
 HOME_PIN_STORE=$(printf '%s\n' "$HOME_PIN" | sed -n 's/^claude_config_dir=//p')
 if [ -z "$HOME_PIN_SESSION" ] || [ -z "$HOME_PIN_STORE" ]; then
@@ -1849,7 +1849,7 @@ fi
 # home already pinned to another session refuses before the gate is consulted.
 if [ "$KIND" = secondmate ]; then
   SECONDMATE_IDENTITY_OUT=
-  if ! SECONDMATE_IDENTITY_OUT=$("$FM_ROOT/bin/fm-home-identity.sh" verify \
+  if ! SECONDMATE_IDENTITY_OUT=$("$SCRIPT_DIR/fm-home-identity.sh" verify \
       "$PROJ_ABS" "$HOME_PIN_SESSION" "$HOME_PIN_STORE" 2>&1); then
     printf '%s\n' "$SECONDMATE_IDENTITY_OUT" >&2
     echo "error: $ID was not launched; its home could not be bound to this firstmate's session and account, and nothing was created" >&2
@@ -1947,7 +1947,7 @@ fi
 # ran in phase 1, so this write only records what that check accepted.
 if [ "$KIND" = secondmate ]; then
   SECONDMATE_IDENTITY_OUT=
-  if ! SECONDMATE_IDENTITY_OUT=$("$FM_ROOT/bin/fm-home-identity.sh" seed \
+  if ! SECONDMATE_IDENTITY_OUT=$("$SCRIPT_DIR/fm-home-identity.sh" seed \
       "$PROJ_ABS" "$HOME_PIN_SESSION" "$HOME_PIN_STORE" 2>&1); then
     printf '%s\n' "$SECONDMATE_IDENTITY_OUT" >&2
     echo "error: $ID was not launched; its home could not be bound to this firstmate's session and account" >&2
