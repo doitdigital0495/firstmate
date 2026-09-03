@@ -48,6 +48,10 @@ A session counts as live committed demand only when its park is the last decisiv
 | Parked demand paces only the store the home lists | `tests/fm-claude-admission.test.sh` |
 | An unshaped store's spawn is byte-for-byte unchanged | `tests/fm-claude-admission.test.sh` |
 | Malformed or unreadable evidence refuses without losing work | `tests/fm-claude-admission.test.sh` |
+| Shaping disarms a horizon after parked demand clears, however many gates arrive inside it | `tests/fm-claude-admission.test.sh` |
+| A corrupted durable queue row refuses instead of releasing the herd | `tests/fm-claude-admission.test.sh` |
+| Withdrawing one task never drops another whose id differs only by a regex metacharacter | `tests/fm-claude-admission.test.sh` |
+| A remote second mate is steered under its home's recorded session and account, and refused under any other | `tests/fm-remote-secondmate-identity.test.sh` |
 | A home refuses the other session in both directions, and survives a restart | `tests/fm-home-identity.test.sh` |
 | A spawn from a foreign session is refused and creates nothing | `tests/fm-home-identity.test.sh` |
 | A worker records and launches on its home's account | `tests/fm-home-identity.test.sh` |
@@ -57,7 +61,7 @@ A session counts as live committed demand only when its park is the last decisiv
 | A change to any live session during lab work is a hard tripwire failure | `tests/fm-herdr-lab.test.sh` |
 | A fleet with nothing running, or with an ambiguous default, refuses | `tests/fm-herdr-lab.test.sh` |
 
-Run them with `bin/fm-test-run.sh tests/fm-claude-admission.test.sh tests/fm-home-identity.test.sh tests/fm-control-relaunch.test.sh`.
+Run them with `bin/fm-test-run.sh tests/fm-claude-admission.test.sh tests/fm-home-identity.test.sh tests/fm-control-relaunch.test.sh tests/fm-remote-secondmate-identity.test.sh`.
 
 ## Live verification
 

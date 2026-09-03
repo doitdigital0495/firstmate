@@ -480,13 +480,14 @@ sorted_queue() {
 }
 
 queue_has() {  # <task-id>
-  local id=$1 row
+  local id=$1 row queue
+  queue=$(read_queue) || exit $?
   while IFS= read -r row; do
     [ -n "$row" ] || continue
     case "$row" in
       *$'\t'"$id"$'\t'*) return 0 ;;
     esac
-  done <<< "$(read_queue)"
+  done <<< "$queue"
   return 1
 }
 
@@ -507,7 +508,7 @@ queue_remove() {  # <task-id>
   local id=$1 queue kept
   queue=$(read_queue)
   [ -n "$queue" ] || return 0
-  kept=$(printf '%s\n' "$queue" | grep -v $'\t'"$id"$'\t' || true)
+  kept=$(printf '%s\n' "$queue" | awk -F'\t' -v id="$id" '$0 != "" && $3 != id')
   if [ -n "$kept" ]; then
     write_record "$QUEUE" "$kept"$'\n'
   else
@@ -521,15 +522,17 @@ DECISION=
 DECISION_MESSAGE=
 DECISION_ARMED=
 DECISION_WAIT=
+DECISION_PARKED=0
 
 # Fills the DECISION_* globals for <task-id> at <priority>. Mutates nothing.
 evaluate() {  # <task-id> <priority>
-  local id=$1 priority=$2 census parked now armed_since last head head_epoch head_row waited
+  local id=$1 priority=$2 census parked now armed_since last head head_epoch head_row sorted waited
   census=$(demand_census "$STORE") || exit $?
   parked=$(census_value "$census" parkedSessions)
   case "$parked" in
     ''|*[!0-9]*) die_evidence "the committed-demand census for $STORE returned no readable parked-session count" ;;
   esac
+  DECISION_PARKED=$parked
   now=$(date +%s)
   armed_since=$(read_epoch_record "$ARMED_SINCE") || exit $?
 
@@ -556,7 +559,8 @@ evaluate() {  # <task-id> <priority>
     return 0
   fi
 
-  head_row=$(sorted_queue | head -n 1) || exit $?
+  sorted=$(sorted_queue) || exit $?
+  head_row=$(printf '%s\n' "$sorted" | head -n 1)
   if [ -n "$head_row" ]; then
     IFS=$'\t' read -r head_epoch _ head _ <<< "$head_row"
     if [ "$head" != "$id" ]; then
@@ -631,11 +635,12 @@ parse_task_args() {  # <verb> <args...>
 }
 
 action_demand() {
-  local store census row session epoch age turns average
+  local store census row session epoch age turns average shaped
   store=$(launch_store) || exit $?
   census=$(demand_census "$store") || exit $?
+  if store_is_shaped "$store"; then shaped=yes; else shaped=no; fi
   printf 'store=%s\n' "$store"
-  printf 'shaped=%s\n' "$(store_is_shaped "$store" && echo yes || echo no)"
+  printf 'shaped=%s\n' "$shaped"
   printf '%s\n' "$census" | grep -v '^session	' || true
   printf 'maxAgeSeconds=%s\n' "$DEMAND_MAX_AGE"
   printf 'turnsAveraged=%s\n' "$DEMAND_TURNS"
@@ -668,7 +673,10 @@ action_gate() {
   queue_enqueue "$TASK_ID" "$PRIORITY" "$REASON"
   evaluate "$TASK_ID" "$PRIORITY"
 
-  if [ "$DECISION_ARMED" = yes ]; then
+  # Only committed parked demand refreshes the record, never the horizon branch
+  # that reads it: shaping must expire DEMAND_HORIZON after the demand clears,
+  # rather than being held armed forever by the gate calls it is pacing.
+  if [ "$DECISION_PARKED" -gt 0 ]; then
     write_record "$ARMED_SINCE" "$(date +%s)"$'\n'
   fi
   if [ "$DECISION" = admit ]; then
@@ -715,7 +723,7 @@ action_withdraw() {
 }
 
 action_queue() {
-  local store census last row epoch priority id reason
+  local store census last row epoch priority id reason sorted
   store=$(launch_store) || exit $?
   printf 'store=%s\n' "$store"
   if ! store_is_shaped "$store"; then
@@ -730,12 +738,13 @@ action_queue() {
   printf 'releaseIntervalSeconds=%s\n' "$RELEASE_INTERVAL"
   last=$(read_epoch_record "$LAST_RELEASE") || exit $?
   printf 'lastReleaseEpoch=%s\n' "${last:-none}"
+  sorted=$(sorted_queue) || exit $?
   printf 'waiting{enqueuedEpoch,priority,taskId,reason}:\n'
   while IFS= read -r row; do
     [ -n "$row" ] || continue
     IFS=$'\t' read -r epoch priority id reason <<< "$row"
     printf '  %s,%s,%s,%s\n' "$epoch" "$priority" "$id" "$reason"
-  done <<< "$(sorted_queue)"
+  done <<< "$sorted"
 }
 
 # The watcher's poll. Silent unless firstmate should act, and never repeats one
@@ -743,15 +752,16 @@ action_queue() {
 # happens. Silent-and-cheap when nothing waits, so the census never runs on the
 # ordinary cycle.
 action_poll() {
-  local store head_row head priority waiting stamp line
+  local store head_row head priority waiting stamp line sorted
   store=$(launch_store 2>/dev/null) || return 0
   store_is_shaped "$store" 2>/dev/null || return 0
   resolve_store_state "$store"
   [ -d "$STORE_DIR" ] || return 0
-  head_row=$(sorted_queue | head -n 1) || return 0
+  sorted=$(sorted_queue) || return 0
+  head_row=$(printf '%s\n' "$sorted" | head -n 1)
   [ -n "$head_row" ] || return 0
   IFS=$'\t' read -r _ priority head _ <<< "$head_row"
-  waiting=$(sorted_queue | grep -c '' || true)
+  waiting=$(printf '%s\n' "$sorted" | grep -c '' || true)
   evaluate "$head" "$priority"
   [ "$DECISION" = admit ] || return 0
   stamp="$head:$(read_epoch_record "$LAST_RELEASE")"

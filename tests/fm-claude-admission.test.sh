@@ -267,6 +267,79 @@ test_shaping_disarms_when_no_demand_remains() {
   pass "shaping is armed by committed demand, not by the store being listed"
 }
 
+test_shaping_expires_a_horizon_after_demand_clears() {
+  local case_dir store home out
+  case_dir="$TMP_ROOT/horizon"
+  store=$(make_store "$case_dir/store")
+  add_turn_then_park "$store" parked-1 60 100000
+  home=$(make_home "$case_dir/home" "$store")
+
+  FM_TEST_INTERVAL=1 FM_TEST_HORIZON=2 admission "$home" "$store" gate hz-a >/dev/null \
+    || fail "the first launch onto a store with parked demand must be released"
+
+  # The committed demand clears, but gate calls keep arriving inside the
+  # horizon: the horizon must still expire from the last PARKED demand, not be
+  # refreshed by the traffic it is pacing.
+  rm -f "$store/projects/-fixture/parked-1.jsonl"
+  sleep 1
+  FM_TEST_INTERVAL=1 FM_TEST_HORIZON=2 admission "$home" "$store" gate hz-b >/dev/null \
+    || fail "a launch inside the horizon must still be released on an open slot"
+  sleep 1
+  FM_TEST_INTERVAL=1 FM_TEST_HORIZON=2 admission "$home" "$store" gate hz-c >/dev/null \
+    || fail "a launch inside the horizon must still be released on an open slot"
+  sleep 2
+  out=$(FM_TEST_INTERVAL=1 FM_TEST_HORIZON=2 admission "$home" "$store" gate hz-d) \
+    || fail "a launch past the horizon must be released"
+  assert_contains "$out" "so this launch is not shaped" \
+    "shaping must disarm a horizon after the committed demand cleared, however many gates arrive inside it"
+  pass "shaping disarms a horizon after parked demand clears, not after the last gate"
+}
+
+test_corrupted_queue_refuses_instead_of_admitting() {
+  local case_dir store home out status dir
+  case_dir="$TMP_ROOT/corruptqueue"
+  store=$(make_store "$case_dir/store")
+  add_turn_then_park "$store" parked-1 60 100000
+  home=$(make_home "$case_dir/home" "$store")
+
+  FM_TEST_INTERVAL=600 admission "$home" "$store" gate cq-a >/dev/null \
+    || fail "the first launch must be released"
+  dir=$(store_state_dir "$home")
+  printf 'not-an-epoch\t50\tcq-x\ttorn row\n' > "$dir/queue"
+
+  sleep 2
+  out=$(FM_TEST_INTERVAL=1 admission "$home" "$store" gate cq-b); status=$?
+  expect_code 3 "$status" "an unreadable durable queue row must refuse rather than admit"
+  assert_contains "$out" "unreadable row" "the refusal must name the queue problem"
+  assert_grep "cq-b" "$dir/queue" \
+    "a refusal on an unreadable queue must still preserve the request"
+  pass "a corrupted durable queue row fails closed instead of releasing the herd"
+}
+
+test_queue_removal_matches_the_task_id_literally() {
+  local case_dir store home out
+  case_dir="$TMP_ROOT/literalid"
+  store=$(make_store "$case_dir/store")
+  add_turn_then_park "$store" parked-1 60 100000
+  home=$(make_home "$case_dir/home" "$store")
+
+  FM_TEST_INTERVAL=600 admission "$home" "$store" gate lit-a >/dev/null \
+    || fail "the first launch must be released"
+  # Two ids that differ only by a regex metacharacter.
+  FM_TEST_INTERVAL=600 admission "$home" "$store" gate a.c --priority 10 >/dev/null 2>&1 \
+    && fail "the second launch must be withheld"
+  FM_TEST_INTERVAL=600 admission "$home" "$store" gate abc --priority 20 >/dev/null 2>&1 \
+    && fail "the third launch must be withheld"
+
+  admission "$home" "$store" withdraw a.c >/dev/null \
+    || fail "withdrawing a queued task must succeed"
+  out=$(admission "$home" "$store" queue)
+  assert_contains "$out" "abc" \
+    "withdrawing 'a.c' must never drop the unrelated 'abc' request"
+  assert_not_contains "$out" ",a.c," "the withdrawn task must be gone"
+  pass "queue removal matches the task id literally, never as a pattern"
+}
+
 test_malformed_evidence_refuses_without_losing_work() {
   local case_dir store home out status dir
   case_dir="$TMP_ROOT/malformed"
@@ -543,6 +616,9 @@ test_withheld_work_is_durable_across_processes
 test_parked_demand_is_scoped_to_the_shaped_store
 test_demand_ignores_resumed_and_stale_sessions
 test_shaping_disarms_when_no_demand_remains
+test_shaping_expires_a_horizon_after_demand_clears
+test_corrupted_queue_refuses_instead_of_admitting
+test_queue_removal_matches_the_task_id_literally
 test_malformed_evidence_refuses_without_losing_work
 test_withdraw_clears_a_head_block
 test_head_block_is_bounded
