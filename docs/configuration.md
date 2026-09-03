@@ -346,7 +346,7 @@ Work is never cancelled, narrowed, or routed to another harness or account, and 
 `bin/fm-claude-admission.sh arm` writes `state/claude-admission.check.sh` and binds its bytes with `fm-check-register.sh`, so the watcher polls it on the normal `FM_CHECK_INTERVAL` cadence and turns its one line into a `check:` wake naming the task to release next.
 The poll is silent when nothing is waiting, and reports one release slot once rather than on every cycle.
 It emits a second kind of line when a shaped store holds waiting work whose evidence cannot be read: that line leads with the concrete problem and ends with `no Claude worker is released ... until that is repaired`, rather than naming a task to release.
-Both are one line, so a reader tells them apart by that ending; the refusal is also reported once per store rather than on every cycle.
+Both are one line, so a reader tells them apart by that ending; the refusal is also reported once per store rather than on every cycle, and a refusal that fires before any store could be named is reported once per home the same way.
 `disarm` removes the shim and its trust binding.
 `bin/fm-claude-admission.sh demand` prints the committed-demand census on its own: the live parked sessions and, for each, that session's measured average billable input tokens per turn.
 `floorInputTokens` is a measured floor - one resumed turn per parked session - not a forecast, and it is read beside `quota-axi`'s point-in-time headroom rather than folded into it (`quota-array-dispatch` owns that judgment).

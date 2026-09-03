@@ -102,6 +102,7 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 CONFIG="$CONFIG_DIR/claude-shaped-store"
 ADMISSION_ROOT="$STATE/claude-admission"
+HOME_REFUSAL="$ADMISSION_ROOT/.home-evidence-refusal"
 CHECK_ID=claude-admission
 CHECK_SHIM="$STATE/$CHECK_ID.check.sh"
 CHECK_TRUST="$STATE/$CHECK_ID.check-trust"
@@ -761,17 +762,28 @@ action_queue() {
 # does - except before a store is resolved, where there is no record to write
 # and writing one would give an unlisted store state it must never take.
 poll_refuse() {  # <status> <reason>
-  local status=$1 reason=$2 stamp=evidence-refusal
+  local status=$1 reason=$2 stamp=evidence-refusal record
   reason=${reason#fm-claude-admission: }
   reason=${reason//$'\n'/ }
   [ -n "$reason" ] || reason="its durable evidence could not be read"
-  if [ -n "$STORE_DIR" ] && [ -f "$REPORTED" ] \
-    && [ "$(cat -- "$REPORTED" 2>/dev/null)" = "$stamp" ]; then
+  if [ -n "$STORE_DIR" ]; then
+    record=$REPORTED
+  else
+    # A refusal that fires before any store could be resolved has no per-store
+    # record to retire the repeat, so it dedupes on this home's own marker
+    # instead, keyed by the problem itself: a persistent misconfiguration wakes
+    # firstmate once, and a different one wakes it again.
+    record=$HOME_REFUSAL
+    stamp=$reason
+  fi
+  if [ -f "$record" ] && [ "$(cat -- "$record" 2>/dev/null)" = "$stamp" ]; then
     exit "$status"
   fi
   fm_cap_line "claude admission: $reason; no Claude worker is released${SLUG:+ onto $SLUG} until that is repaired"
-  if [ -n "$STORE_DIR" ] && [ -d "$STORE_DIR" ]; then
-    write_record "$REPORTED" "$stamp"
+  if [ -n "$STORE_DIR" ]; then
+    [ -d "$STORE_DIR" ] && write_record "$REPORTED" "$stamp"
+  elif (umask 077; mkdir -p "$ADMISSION_ROOT") 2>/dev/null; then
+    printf '%s\n' "$stamp" > "$HOME_REFUSAL" 2>/dev/null || true
   fi
   exit "$status"
 }
@@ -792,6 +804,7 @@ action_poll() {
   esac
   slug=$(store_slug "$store" 2>&1) || poll_refuse "$?" "$slug"
   resolve_store_state "$store"
+  rm -f -- "$HOME_REFUSAL"
   [ -d "$STORE_DIR" ] || return 0
   sorted=$(sorted_queue 2>&1) || poll_refuse "$?" "$sorted"
   head_row=$(printf '%s\n' "$sorted" | head -n 1)

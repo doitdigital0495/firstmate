@@ -910,6 +910,29 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
 fi
 ID=${POS[0]}
 fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; }
+
+# The home's own session/account pin comes first, ahead of every durable
+# mutation this spawn could make - the parent's state directory, a second mate's
+# worktree fast-forward, its state directory, and its inherited config all
+# follow this point. A spawn is a fleet mutation, and a home driven from a
+# session it does not belong to must be refused rather than quietly staffed from
+# the caller's account, with nothing changed on the way out.
+# bin/fm-home-identity.sh owns that pin, pins an unpinned home from this session,
+# and refuses everything else.
+HOME_IDENTITY_OUT=
+if ! HOME_IDENTITY_OUT=$("$FM_ROOT/bin/fm-home-identity.sh" ensure 2>&1); then
+  printf '%s\n' "$HOME_IDENTITY_OUT" >&2
+  echo "error: $ID was not launched; this firstmate home does not belong to the current session, and nothing was created" >&2
+  exit 1
+fi
+HOME_PIN=$("$FM_ROOT/bin/fm-home-identity.sh" show) || HOME_PIN=
+HOME_PIN_SESSION=$(printf '%s\n' "$HOME_PIN" | sed -n 's/^herdr_session=//p')
+HOME_PIN_STORE=$(printf '%s\n' "$HOME_PIN" | sed -n 's/^claude_config_dir=//p')
+if [ -z "$HOME_PIN_SESSION" ] || [ -z "$HOME_PIN_STORE" ]; then
+  echo "error: $ID was not launched; this firstmate home's recorded session and account could not be read, and neither is guessed" >&2
+  exit 1
+fi
+
 if [ "$RELAUNCH" -eq 1 ]; then
   SPAWN_CONTROL_LOCK="$STATE/.control-$ID.lock"
   control_owner=$(cat "$SPAWN_CONTROL_LOCK/pid" 2>/dev/null || true)
@@ -1847,24 +1870,6 @@ fi
 # reuses exactly what the record says - including actively unsetting an inherited
 # CLAUDE_CONFIG_DIR when the record says default, so a personal-bound task cannot
 # drift onto a work account by inheritance either.
-# The home's own session/account pin comes first: a spawn is a fleet mutation,
-# and a home driven from a session it does not belong to must be refused rather
-# than quietly staffed from the caller's account. bin/fm-home-identity.sh owns
-# that pin, pins an unpinned home from this session, and refuses everything else.
-HOME_IDENTITY_OUT=
-if ! HOME_IDENTITY_OUT=$("$FM_ROOT/bin/fm-home-identity.sh" ensure 2>&1); then
-  printf '%s\n' "$HOME_IDENTITY_OUT" >&2
-  echo "error: $ID was not launched; this firstmate home does not belong to the current session, and nothing was created" >&2
-  exit 1
-fi
-HOME_PIN=$("$FM_ROOT/bin/fm-home-identity.sh" show) || HOME_PIN=
-HOME_PIN_SESSION=$(printf '%s\n' "$HOME_PIN" | sed -n 's/^herdr_session=//p')
-HOME_PIN_STORE=$(printf '%s\n' "$HOME_PIN" | sed -n 's/^claude_config_dir=//p')
-if [ -z "$HOME_PIN_SESSION" ] || [ -z "$HOME_PIN_STORE" ]; then
-  echo "error: $ID was not launched; this firstmate home's recorded session and account could not be read, and neither is guessed" >&2
-  exit 1
-fi
-
 SPAWN_CLAUDE_STORE=
 if [ "$RELAUNCH" -eq 1 ] && [ -n "${RELAUNCH_META:-}" ] && [ -f "$RELAUNCH_META" ]; then
   SPAWN_CLAUDE_STORE=$(fm_meta_get "$RELAUNCH_META" claude_config_dir) || SPAWN_CLAUDE_STORE=

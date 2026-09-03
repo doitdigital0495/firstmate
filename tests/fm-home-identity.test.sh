@@ -176,6 +176,45 @@ test_spawn_refuses_a_foreign_session_and_creates_nothing() {
   pass "a spawn from a session the home does not belong to is refused and creates nothing"
 }
 
+test_a_secondmate_spawn_from_a_foreign_session_changes_nothing() {
+  local home proj wt fakebin launchlog child out status before after
+  IFS='|' read -r home proj wt fakebin launchlog <<< "$(gate_case spawn-sm-foreign sm-a)"
+
+  # A seeded second-mate home of its own: the spawn's secondmate path would
+  # fast-forward this checkout, create its state directory, and copy the
+  # parent's local config into it before ever reaching the identity guard.
+  child="$TMP_ROOT/spawn-sm-foreign/child"
+  fm_git_worktree "$TMP_ROOT/spawn-sm-foreign/child-origin" "$child" sm-child
+  mkdir -p "$child/bin" "$child/data" "$child/config" "$child/projects"
+  printf 'sm-a\n' > "$child/.fm-secondmate-home"
+  printf '# child home\n' > "$child/AGENTS.md"
+
+  identity "$home" geris "$GERIS_STORE" ensure >/dev/null \
+    || fail "pinning the parent home must succeed"
+  printf '/some/work/store\n' > "$home/config/claude-shaped-store"
+
+  before=$(cd "$child" && { git rev-parse HEAD; find . -path ./.git -prune -o -print | sort; })
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
+    HERDR_SESSION=default CLAUDE_CONFIG_DIR='' \
+    FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
+    "$SPAWN" sm-a "$child" --secondmate 2>&1); status=$?
+  [ "$status" -ne 0 ] || fail "a secondmate spawn from a foreign session must be refused"
+  assert_contains "$out" "does not belong to the current session" \
+    "the refusal must name the session mismatch"
+  after=$(cd "$child" && { git rev-parse HEAD; find . -path ./.git -prune -o -print | sort; })
+  [ "$before" = "$after" ] \
+    || fail "a refused secondmate spawn changed the child home:"$'\n'"--- before ---"$'\n'"$before"$'\n'"--- after ---"$'\n'"$after"
+  assert_absent "$child/state" "a refused secondmate spawn must create no child state directory"
+  assert_absent "$child/config/claude-shaped-store" \
+    "a refused secondmate spawn must copy no parent config into the child home"
+  assert_absent "$child/data/home-identity" \
+    "a refused secondmate spawn must not pin the child home"
+  pass "a secondmate spawn from a foreign session refuses before touching the child home"
+}
+
 test_a_worker_records_the_account_its_home_is_pinned_to() {
   local home proj wt fakebin launchlog launch
   IFS='|' read -r home proj wt fakebin launchlog <<< "$(gate_case relaunch-binding task-w)"
@@ -271,6 +310,7 @@ test_an_unreadable_pin_is_never_replaced
 test_a_home_pins_itself_on_first_use
 test_a_phantom_home_is_never_pinned
 test_spawn_refuses_a_foreign_session_and_creates_nothing
+test_a_secondmate_spawn_from_a_foreign_session_changes_nothing
 test_a_worker_records_the_account_its_home_is_pinned_to
 test_a_personal_worker_is_never_handed_a_work_account
 test_send_refuses_a_foreign_session

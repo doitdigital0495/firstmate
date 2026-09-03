@@ -434,9 +434,14 @@ test_poll_wakes_on_a_malformed_shaped_store_list() {
     "the wake line must name the configuration problem"
   assert_no_grep "claude admission:" "$ADMISSION_STDERR" \
     "the wake line must reach stdout, not the stderr the watcher discards"
-  assert_absent "$home/state/claude-admission" \
-    "a poll that cannot tell whether a store is shaped must still write no state"
-  pass "a malformed shaped-store list wakes firstmate and takes no state"
+  [ -z "$(store_state_dir "$home")" ] \
+    || fail "a poll that cannot tell whether a store is shaped must give no store any state"
+
+  # The same misconfiguration must not re-wake firstmate on every cycle.
+  out=$(admission_poll "$home" "$store" poll); status=$?
+  expect_code 3 "$status" "a repeated refusal must still refuse"
+  [ -z "$out" ] || fail "a persistent misconfiguration must wake firstmate once, not every poll: $out"
+  pass "a malformed shaped-store list wakes firstmate once and gives no store state"
 }
 
 test_poll_wakes_before_a_store_can_even_be_named() {
@@ -460,9 +465,13 @@ test_poll_wakes_before_a_store_can_even_be_named() {
     "the wake line must name why no credential store could be identified"
   assert_no_grep "claude admission:" "$ADMISSION_STDERR" \
     "the wake line must reach stdout, not the stderr the watcher discards"
-  assert_absent "$home/state/claude-admission" \
-    "a poll that cannot name a store must still write no state"
-  pass "a poll that cannot name a store wakes firstmate, and an unconfigured home stays silent"
+  [ -z "$(store_state_dir "$home")" ] \
+    || fail "a poll that cannot name a store must give no store any state"
+
+  out=$(admission_poll "$home" "relative/path" poll); status=$?
+  expect_code 3 "$status" "a repeated pre-store refusal must still refuse"
+  [ -z "$out" ] || fail "a pre-store refusal must wake firstmate once, not every poll: $out"
+  pass "a poll that cannot name a store wakes firstmate once, and an unconfigured home stays silent"
 }
 
 test_queue_removal_matches_the_task_id_literally() {
