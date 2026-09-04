@@ -96,6 +96,36 @@ remote_endpoint_require() {
   remote_endpoint_load "$1" || die "$REMOTE_ENDPOINT_ERROR"
 }
 
+# The Herdr session and Claude account this home was created under, read from
+# the durable pin fm-spawn seeded into it (bin/fm-home-identity.sh). Every path
+# that drives the child home runs under that RECORDED identity, exactly as
+# cmd_launch does, because the caller here is a job worker or SSH entrypoint
+# whose own environment names no session at all. The pin is only ever read: a
+# missing, unreadable, or foreign one refuses rather than falling back to the
+# caller's environment.
+REMOTE_IDENTITY_ENV=()
+remote_identity_env() {
+  local pin session store
+  pin=$(FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
+    "$SCRIPT_DIR/fm-home-identity.sh" show 2>&1) \
+    || die "remote secondmate home identity is unreadable: $pin"
+  [ "$pin" != absent ] \
+    || die "remote secondmate home has no recorded session and account; refusing to steer it rather than adopting this environment's"
+  session=$(printf '%s\n' "$pin" | sed -n 's/^herdr_session=//p')
+  store=$(printf '%s\n' "$pin" | sed -n 's/^claude_config_dir=//p')
+  [ -n "$session" ] && [ -n "$store" ] \
+    || die "remote secondmate home identity names no session and account; refusing to steer it"
+  [ "$session" = "$REMOTE_HERDR_SESSION" ] \
+    || die "remote secondmate home is pinned to Herdr session '$session', expected '$REMOTE_HERDR_SESSION'; refusing access until it is explicitly migrated"
+  # env's options must precede every assignment, so the unset for the personal
+  # "default" store is placed first: a store the pin does not name is actively
+  # removed rather than inherited from this host's login environment.
+  REMOTE_IDENTITY_ENV=(env)
+  [ "$store" != default ] || REMOTE_IDENTITY_ENV+=(-u CLAUDE_CONFIG_DIR)
+  REMOTE_IDENTITY_ENV+=("HERDR_SESSION=$session")
+  [ "$store" = default ] || REMOTE_IDENTITY_ENV+=("CLAUDE_CONFIG_DIR=$store")
+}
+
 state_value() { # <id>; prints recovery-grade state
   local id=$1 meta
   meta=$(meta_path "$id")
@@ -194,7 +224,9 @@ cmd_send() {
   # and ssh all preserve it, so no mapping may happen here: flattening exit 3
   # into a generic failure is exactly the false-negative the parent's remote
   # send path exists to avoid.
-  FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$TARGET_HOME/state" \
+  remote_identity_env
+  "${REMOTE_IDENTITY_ENV[@]}" \
+    FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$TARGET_HOME/state" \
     "$SCRIPT_DIR/fm-send.sh" "$REMOTE_ENDPOINT_TARGET" "$message"
 }
 
@@ -203,7 +235,9 @@ cmd_key() {
   validate_id "$id"
   validate_home "$id"
   remote_endpoint_require "$id"
-  FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$TARGET_HOME/state" \
+  remote_identity_env
+  "${REMOTE_IDENTITY_ENV[@]}" \
+    FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$TARGET_HOME/state" \
     "$SCRIPT_DIR/fm-send.sh" "$REMOTE_ENDPOINT_TARGET" --key "$key"
 }
 

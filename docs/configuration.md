@@ -306,6 +306,68 @@ Malformed JSON, an empty or malformed rule/default array, an unverified harness,
 While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
 
+## Home session and account pin (data/home-identity)
+
+Each firstmate home belongs to exactly one terminal session and one Claude account, and `data/home-identity` records that binding.
+The operator's shell derives `CLAUDE_CONFIG_DIR` from the session a terminal was opened in, so without a durable record a home opened from another session silently adopted that session's account, and every worker, relaunch, recovery, and message it drove billed the wrong subscription.
+`bin/fm-home-identity.sh` is the single owner of the pin, its comparison, and its refusals; its header and `--help` own the verbs.
+
+The pin holds two structural facts and no credential value: `herdr_session` (`$HERDR_SESSION`, or the literal `default` when unset) and `claude_config_dir` (`$CLAUDE_CONFIG_DIR` canonicalized, or the literal `default` when unset).
+Both must match for a home to be used, because a session can be repointed at another store and two sessions can share one.
+The record is local, gitignored, written 0600, and never propagated between homes except by the deliberate seeding below.
+
+A home with no pin yet takes the identity of the first session that uses it, which is its originating one.
+After that the pin is only ever compared, never rewritten.
+A session that does not match is refused by `fm-spawn.sh`, `fm-send.sh`, and `fm-control.sh` alike, so no spawn, steer, relaunch, or recovery can run from the wrong session, and session start reports the same refusal as a `HOME_IDENTITY:` diagnostic so it is visible before the first blocked command.
+There is no migration and no merge: homes and their work are left exactly as they are, and the operator opens each home from the session it belongs to.
+An unreadable or malformed pin refuses everything, including re-pinning - a home whose recorded account cannot be read is never re-derived from whatever session happens to be running, because that is precisely how a home would drift onto the wrong subscription.
+
+A worker inherits its home's account rather than the caller's environment.
+`fm-spawn.sh` records the resolved store in the task's own `state/<id>.meta` as `claude_config_dir=`, and every later relaunch launches on that recorded value: a task started on a work account stays there, and a task started on the personal default store keeps that binding, with any inherited `CLAUDE_CONFIG_DIR` actively unset rather than merely omitted.
+A second mate is a firstmate home of its own and is seeded with its parent's identity when it is launched, so a second mate and its own workers stay on the account the firstmate that created them belongs to.
+
+## Claude release shaping (config/claude-shaped-store)
+
+`config/claude-shaped-store` is an optional local, gitignored file naming the Claude credential stores whose firstmate-launched workers this home paces, one absolute path per line, with `#` comments and blank lines ignored.
+It exists because a Claude subscription window's reset instant is a synchronization edge: every Claude Code session holding the vendor's own "continuing automatically" timer fires on it, and firstmate's own dispatch and relaunch paths read the same edge as free headroom, so a whole backlog can discharge into a fresh window at once.
+`bin/fm-claude-admission.sh` is the single owner of the decision, its durable records, and its exact commands; its header and `--help` own the verbs and mechanics.
+
+A store is identified by the path a launch will actually bill, `${CLAUDE_CONFIG_DIR:-$HOME/.claude}`, which is the same value `fm-spawn.sh` forwards onto a claude pane.
+Nothing here reads, prints, or copies a credential value, and there is no name matching in that identity.
+An absent file means no store is shaped: every Claude launch is released exactly as it was, no state is written, and no lock is taken.
+A line that is not an absolute path is a configuration error that refuses launches until it is fixed, rather than one that is silently skipped.
+
+Shaping is armed only while a listed store carries committed demand - at least one live session parked for automatic continuation - and stays armed for `FM_CLAUDE_DEMAND_HORIZON` after the last time it did, so an ordinary unlimited window is not paced at all.
+While armed, at most one firstmate-launched Claude worker is released onto that store per `FM_CLAUDE_RELEASE_INTERVAL`, highest priority first.
+`fm-spawn.sh --priority` and `fm-control.sh relaunch --priority` take 1 to 99, lower is released first, default 50, and ties break on waiting time, oldest first.
+A withheld launch creates nothing: it is recorded in that store's durable queue under `state/claude-admission/`, survives restarts, and is released on its own schedule.
+Work is never cancelled, narrowed, or routed to another harness or account, and the pacing is never keyed to how full a window is.
+
+`bin/fm-claude-admission.sh arm` writes `state/claude-admission.check.sh` and binds its bytes with `fm-check-register.sh`, so the watcher polls it on the normal `FM_CHECK_INTERVAL` cadence and turns its one line into a `check:` wake naming the task to release next.
+The poll is silent when nothing is waiting, and reports one release slot once rather than on every cycle.
+It emits a second kind of line when a shaped store holds waiting work whose evidence cannot be read: that line leads with the concrete problem and ends with `no Claude worker is released ... until that is repaired`, rather than naming a task to release.
+Both are one line, so a reader tells them apart by that ending.
+A refusal is reported once per distinct PROBLEM rather than once per store or per home, so it stays quiet while unchanged, a second and different fault on the same store wakes firstmate again, and a fault that clears and later recurs is announced again.
+`disarm` removes the shim and its trust binding.
+`bin/fm-claude-admission.sh demand` prints the committed-demand census on its own: the live parked sessions and, for each, that session's measured average billable input tokens per turn.
+`floorInputTokens` is a measured floor - one resumed turn per parked session - not a forecast, and it is read beside `quota-axi`'s point-in-time headroom rather than folded into it (`quota-array-dispatch` owns that judgment).
+
+Known bound: each firstmate home paces the stores it lists independently, so a fleet in which N homes list one store can release up to N workers per interval rather than one.
+Secondmate homes inherit this file from the primary, which is what brings a secondmate's own Claude crewmates under the same pacing at all; the per-home bound above is the price of that.
+
+Environment knobs, all read by `bin/fm-claude-admission.sh`:
+
+| Variable | Default | Range | Meaning |
+| --- | --- | --- | --- |
+| `FM_CLAUDE_RELEASE_INTERVAL` | 420 | 1..3600 | Seconds between releases onto a shaped store while armed |
+| `FM_CLAUDE_DEMAND_HORIZON` | 1800 | 0..86400 | Seconds shaping stays armed after committed demand clears |
+| `FM_CLAUDE_DEMAND_MAX_AGE` | 21600 | 60..604800 | Oldest park still counted as a live parked session |
+| `FM_CLAUDE_DEMAND_TURNS` | 10 | 1..500 | Recent turns averaged per parked session |
+| `FM_CLAUDE_DEMAND_TAIL_BYTES` | 1048576 | 65536..67108864 | Transcript tail read per file |
+| `FM_CLAUDE_HEAD_MAX_WAIT` | 3 x release interval | 0..604800 | Bound on how long the highest-priority waiting task blocks lower-priority work |
+
+See [`docs/examples/claude-shaped-store`](examples/claude-shaped-store) for a starting point to copy into local `config/claude-shaped-store`.
+
 ## Toolchain
 
 On session start the first mate detects what its required toolchain is missing or too old and lists each problem with either an exact install command or manual instructions.
@@ -344,7 +406,7 @@ When a running home advances and its loaded instruction surface (`AGENTS.md`, `b
 If that send fails, bootstrap keeps an idempotent retry marker and emits `NUDGE_SECONDMATES:` with the failure reason.
 The same bootstrap run emits `SECONDMATE_LIVENESS:` only when a registered secondmate is skipped or its relaunch fails; already-live and successfully relaunched secondmates are handled silently.
 For a mid-session inherited local-material edit where tracked-file sync is not needed, run `bin/fm-config-push.sh`.
-It uses the same live secondmate discovery and propagation helper as bootstrap, prints each live home's `crew-dispatch.json`, `crew-harness`, `backlog-backend`, `backend`, `herdr-presentation-spaces`, `startup-memory-budget`, `trace-context`, and `data/captain-shared.md` result as `pushed`, `unchanged`, `skipped`, or `error`, and exits non-zero for real propagation errors or config-reread send failures.
+It uses the same live secondmate discovery and propagation helper as bootstrap, prints each live home's `crew-dispatch.json`, `crew-harness`, `backlog-backend`, `backend`, `claude-shaped-store`, `herdr-presentation-spaces`, `startup-memory-budget`, `trace-context`, and `data/captain-shared.md` result as `pushed`, `unchanged`, `skipped`, or `error`, and exits non-zero for real propagation errors or config-reread send failures.
 When an allowlisted config item changes for an already-running local home, it sends the literal-content reread pointer described in [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md); unchanged allowlisted config sends no pointer unless a previous delivery is pending.
 A changed remote home instead receives one durably recorded marked re-read instruction after the allowlisted bytes have transferred because primary-local generation paths are not meaningful on another host.
 The locked bootstrap inheritance pass uses the same placement-specific behavior; see `secondmate-provisioning` for the single contract owner.
@@ -678,6 +740,7 @@ FMX_FOLLOWUP_MAX_COUNT=3   # local cap on Relay completion follow-ups per linked
 FM_PF_RETRY_BACKOFF_SECS=900   # seconds before the next attempt after a retryable promised-public-reply delivery error
 FM_LOCK_STALE_AFTER=2   # seconds before dead-pid lock records can be reclaimed; mid-acquire locks keep at least 2s grace
 FM_GUARD_GRACE=300      # seconds before guard warnings, arm health checks, and the primary turn-end guard treat a watcher beacon as stale
+# FM_CLAUDE_RELEASE_INTERVAL, FM_CLAUDE_DEMAND_HORIZON, FM_CLAUDE_DEMAND_MAX_AGE, FM_CLAUDE_DEMAND_TURNS, FM_CLAUDE_DEMAND_TAIL_BYTES, and FM_CLAUDE_HEAD_MAX_WAIT pace Claude launches onto a shaped credential store; see "Claude release shaping" for their defaults and ranges
 FM_CLAUDE_AUTOARM_ATTEMPTS=2   # bounded Stop-owned arm attempts per Claude auto-arm cycle; accepted values are 1, 2, or 3
 FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=800   # milliseconds the --claude turn-end guard waits for watcher health, a role-verified Stop auto-arm claim, or a fresh epoch before deciding recovery ownership or failure progression
 FM_CLAUDE_AUTOARM_EPOCH_FRESH=15   # seconds a recorded auto-arm outcome remains eligible for the current event epoch's recovery or failure decision

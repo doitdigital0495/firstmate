@@ -156,7 +156,7 @@ family_for_basename() {
     fm-session-lock-ancestry.test.sh|fm-cursor-primary.test.sh|\
     fm-supervision-events.test.sh|fm-turnend-guard.test.sh|fm-wake-daemon-lifecycle-e2e.test.sh|\
     fm-wake-drain-unread-status.test.sh|\
-    fm-tool-update-check.test.sh|\
+    fm-tool-update-check.test.sh|fm-claude-admission.test.sh|fm-home-identity.test.sh|\
     fm-wake-queue.test.sh|fm-watch-arm.test.sh|fm-watch-checkpoint.test.sh|fm-watch-recovery-loop.test.sh|\
     fm-watch-triage.test.sh|\
     fm-watcher-lock.test.sh|fm-inactive-reconcile.test.sh)
@@ -175,6 +175,7 @@ family_for_basename() {
     fm-remote-doctor.test.sh|fm-remote-job.test.sh|fm-remote-job-orphan-reap.test.sh|\
     fm-remote-reply.test.sh|fm-remote-secondmate-lifecycle-e2e.test.sh|\
     fm-remote-secondmate-trace-context.test.sh|\
+    fm-remote-secondmate-identity.test.sh|\
     fm-secondmate-harness.test.sh|fm-secondmate-lifecycle-e2e.test.sh|\
     fm-secondmate-liveness.test.sh|fm-secondmate-safety.test.sh|fm-secondmate-sync.test.sh|\
     fm-startup-memory-budget.test.sh|fm-stow-cascade.test.sh|\
@@ -402,6 +403,7 @@ tests/fm-busy-adapter-wiring.test.sh 14880
 tests/fm-busy-state.test.sh 714
 tests/fm-calm-pi-extension.test.sh 464
 tests/fm-classify-decision-key.test.sh 928
+tests/fm-claude-admission.test.sh 37243
 tests/fm-claude-stop-autoarm-live-e2e.test.sh 30
 tests/fm-claude-stop-autoarm.test.sh 60633
 tests/fm-cmux-claude-composer-live-e2e.test.sh 20
@@ -418,6 +420,7 @@ tests/fm-fleet-snapshot-view.test.sh 6995
 tests/fm-fleet-sync.test.sh 20194
 tests/fm-gate-refuse.test.sh 4071
 tests/fm-gitignore-config.test.sh 63
+tests/fm-home-identity.test.sh 9000
 tests/fm-gotmp.test.sh 762
 tests/fm-grok-continuity-live-e2e.test.sh 19
 tests/fm-grok-stop-live-e2e.test.sh 21
@@ -452,6 +455,7 @@ tests/fm-remote-job-orphan-reap.test.sh 2903
 tests/fm-remote-job.test.sh 48068
 tests/fm-remote-reply.test.sh 40906
 tests/fm-remote-secondmate-lifecycle-e2e.test.sh 170240
+tests/fm-remote-secondmate-identity.test.sh 5593
 tests/fm-remote-secondmate-parent-binding.test.sh 13064
 tests/fm-remote-secondmate-trace-context.test.sh 39927
 tests/fm-secondmate-harness.test.sh 123471

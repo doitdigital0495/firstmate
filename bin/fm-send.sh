@@ -124,6 +124,17 @@ if [ ! -d "$FM_HOME" ]; then
   echo "error: FM_HOME '$FM_HOME' is not a directory; fm-send cannot resolve this home's state" >&2
   exit 1
 fi
+
+# Fail closed before any fleet action: this home is pinned to the session and
+# Claude account it was started from, and a session that does not match is
+# refused rather than allowed to drive another home's work
+# (bin/fm-home-identity.sh). A home with no pin yet is pinned here from the
+# session using it, which is its originating one; a pin that exists is only ever
+# compared, never rewritten, so no path can move a home between accounts.
+if ! FM_HOME_IDENTITY_OUT=$("$SCRIPT_DIR/fm-home-identity.sh" ensure 2>&1); then
+  printf '%s\n' "$FM_HOME_IDENTITY_OUT" >&2
+  exit 1
+fi
 if [ ! -d "$STATE" ]; then
   echo "error: state dir '$STATE' is missing; fm-send cannot resolve targets for FM_HOME '$FM_HOME'" >&2
   exit 1

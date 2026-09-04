@@ -171,6 +171,9 @@ run_control() {  # <case-dir> <args...>
     FM_FAKE_TRACE_PREPARE="${FM_FAKE_TRACE_PREPARE:-}" \
     FM_FAKE_META_WRITER_READY="${FM_FAKE_META_WRITER_READY:-}" \
     FM_FAKE_TRACE_EXPORTED="${FM_FAKE_TRACE_EXPORTED:-}" \
+    CLAUDE_CONFIG_DIR="${FM_TEST_CLAUDE_CONFIG_DIR:-}" \
+    HERDR_SESSION="${FM_TEST_HERDR_SESSION:-default}" \
+    FM_CLAUDE_RELEASE_INTERVAL="${FM_TEST_RELEASE_INTERVAL:-600}" \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -857,6 +860,97 @@ test_missing_worktree_refuses_before_stopping_anything() {
   pass "fm-control relaunch: an unaccountable local copy refuses before the agent is touched"
 }
 
+test_relaunch_keeps_the_task_recorded_claude_account() {
+  local dir store ambient
+  dir=$(new_case acctbind rl41)
+  add_ship_task "$dir" rl41 claude
+  # The task started on a work account, and this session genuinely carries a
+  # DIFFERENT account: the home is pinned to the ambient one, so the home gate
+  # passes and the only thing that can keep the work store on the relaunch
+  # command is the task's own recorded binding winning.
+  mkdir -p "$dir/work-store" "$dir/ambient-store"
+  store=$(cd "$dir/work-store" && pwd -P)
+  ambient=$(cd "$dir/ambient-store" && pwd -P)
+  printf 'claude_config_dir=%s\n' "$store" >> "$dir/home/state/rl41.meta"
+  mkdir -p "$dir/home/data"
+  printf 'fm-home-identity-v1\nherdr_session=default\nclaude_config_dir=%s\n' "$ambient" \
+    > "$dir/home/data/home-identity"
+
+  FM_TEST_CLAUDE_CONFIG_DIR="$ambient" run_control "$dir" rl41 relaunch --note "x" >/dev/null 2>&1
+  assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$store'" \
+    "a relaunch must launch on the task's own recorded account, not this session's"
+  assert_not_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$ambient'" \
+    "a relaunch must never forward the account sitting in the environment"
+  assert_contains "$(cat "$dir/home/state/rl41.meta")" "claude_config_dir=$store" \
+    "a relaunch must carry the recorded account forward unchanged"
+  pass "fm-control relaunch: a task keeps the Claude account it started on"
+}
+
+test_relaunch_keeps_a_personal_task_off_a_work_account() {
+  local dir store
+  dir=$(new_case acctpersonal rl42)
+  add_ship_task "$dir" rl42 claude
+  # The task started on the personal default store, and a work account really is
+  # sitting in the environment: the home is pinned to that same work store so the
+  # home gate passes, leaving the task's recorded default binding as the only
+  # thing that can keep the work account off the relaunch command.
+  mkdir -p "$dir/work-store"
+  store=$(cd "$dir/work-store" && pwd -P)
+  printf 'claude_config_dir=default\n' >> "$dir/home/state/rl42.meta"
+  mkdir -p "$dir/home/data"
+  printf 'fm-home-identity-v1\nherdr_session=default\nclaude_config_dir=%s\n' "$store" \
+    > "$dir/home/data/home-identity"
+
+  FM_TEST_CLAUDE_CONFIG_DIR="$store" run_control "$dir" rl42 relaunch --note "x" >/dev/null 2>&1
+  assert_not_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR=" \
+    "a personal task must never gain a work account on relaunch"
+  assert_contains "$(cat "$dir/fake/literal")" "-u CLAUDE_CONFIG_DIR" \
+    "a personal task must keep unsetting an inherited work account on relaunch"
+  pass "fm-control relaunch: a personal task cannot be moved onto a work account"
+}
+
+test_release_shaping_refuses_before_stopping_anything() {
+  local dir out rc store
+  dir=$(new_case shaped rl40)
+  add_ship_task "$dir" rl40 claude
+  # A shaped Claude credential store whose release slot is already spent: the
+  # relaunch must refuse while the running agent is still untouched, because
+  # fm-spawn's own consuming decision runs only after the old agent is gone.
+  store="$dir/store"
+  mkdir -p "$store/projects/-fixture"
+  FM_T_STORE="$store" python3 - <<'CASEPY'
+import datetime, json, os, time
+
+store = os.environ["FM_T_STORE"]
+park = datetime.datetime.utcfromtimestamp(time.time() - 60).isoformat() + "Z"
+with open(os.path.join(store, "projects", "-fixture", "parked.jsonl"), "w") as fh:
+    fh.write(json.dumps({
+        "type": "assistant", "sessionId": "parked",
+        "message": {"id": "m1", "model": "claude-opus-5",
+                    "usage": {"input_tokens": 1000, "cache_creation_input_tokens": 0,
+                              "cache_read_input_tokens": 0}},
+    }) + "\n")
+    fh.write(json.dumps({
+        "type": "system", "subtype": "informational", "level": "notice",
+        "sessionId": "parked", "timestamp": park,
+        "content": "Usage limit reached · continuing automatically at 8:20pm · esc or type to cancel",
+    }) + "\n")
+CASEPY
+  mkdir -p "$dir/home/config"
+  printf '%s\n' "$store" > "$dir/home/config/claude-shaped-store"
+  FM_HOME="$dir/home" CLAUDE_CONFIG_DIR="$store" \
+    "$ROOT/bin/fm-claude-admission.sh" gate other-task >/dev/null 2>&1 \
+    || fail "the fixture's first release should be admitted"
+
+  out=$(FM_TEST_CLAUDE_CONFIG_DIR="$store" run_control "$dir" rl40 relaunch --note "x"); rc=$?
+  expect_code 1 "$rc" "a relaunch that is not released yet should refuse"
+  assert_contains "$out" "not released onto its Claude credential store yet" \
+    "the refusal should name the release shaping"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "a refused relaunch must not stop the agent"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused relaunch must send nothing"
+  pass "fm-control relaunch: an unreleased Claude launch refuses before the agent is touched"
+}
+
 test_missing_instructions_refuse_before_stopping_anything() {
   local dir out rc
   dir=$(new_case nobrief rl11)
@@ -1338,6 +1432,9 @@ test_muse_session_binding_is_retired_on_a_harness_switch
 test_cursor_session_binding_is_retired_on_a_harness_switch
 test_missing_worktree_refuses_before_stopping_anything
 test_missing_instructions_refuse_before_stopping_anything
+test_release_shaping_refuses_before_stopping_anything
+test_relaunch_keeps_the_task_recorded_claude_account
+test_relaunch_keeps_a_personal_task_off_a_work_account
 test_checkpoint_refusal_leaves_the_record_byte_identical
 test_checkpoint_refuses_uninspectable_head_and_status
 test_launch_failure_keeps_the_prior_record_and_reports_it
