@@ -1373,12 +1373,28 @@ test_secondmate_spawn_requires_seeded_matching_home() {
 exit 0
 SH
   chmod +x "$fakeroot/bin/fm-guard.sh"
+  # fm-spawn resolves its own helpers from FM_ROOT, and the home-identity guard
+  # runs before any spawn path validation, so a stand-in repo root needs that
+  # script too.
+  cat > "$fakeroot/bin/fm-home-identity.sh" <<SH
+#!/usr/bin/env bash
+exec "$ROOT/bin/fm-home-identity.sh" "\$@"
+SH
+  chmod +x "$fakeroot/bin/fm-home-identity.sh"
   mkdir -p "$ancestor_active_home/data" "$ancestor_active_home/state" "$active_ancestor/data" "$root_ancestor/data" "$root_inside/bin"
   cat > "$root_inside/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0
 SH
   chmod +x "$root_inside/bin/fm-guard.sh"
+  # fm-spawn resolves its own helpers from FM_ROOT, and the home-identity guard
+  # runs before any spawn path validation, so a stand-in repo root needs that
+  # script too.
+  cat > "$root_inside/bin/fm-home-identity.sh" <<SH
+#!/usr/bin/env bash
+exec "$ROOT/bin/fm-home-identity.sh" "\$@"
+SH
+  chmod +x "$root_inside/bin/fm-home-identity.sh"
   fakebin=$(make_fake_tmux "$TMP_ROOT/spawn-validate-fake")
   log="$TMP_ROOT/spawn-validate-fake/tmux.log"
   err="$TMP_ROOT/spawn-validate.err"

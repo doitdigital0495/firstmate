@@ -21,8 +21,11 @@
 # delete is available only through teardown.
 # Both paths perform a fresh refuse-default check immediately before each
 # destructive call.
-# Provision records the running default session as a fleet-state tripwire and
-# teardown requires that record to be identical afterward.
+# Provision records every session except the lab's own as a fleet-state tripwire
+# and teardown requires that record to be identical afterward, so no live session
+# is disturbed. It anchors to whichever sessions are running rather than to a
+# session named "default", and refuses when none is running or when more than one
+# claims the default flag.
 set -u
 
 fm_herdr_lab_error() {
@@ -58,23 +61,50 @@ fm_herdr_lab_session_list() { # <session>
   fm_herdr_lab_raw "$1" session list --json
 }
 
+# The tripwire snapshots EVERY session in the fleet except the lab's own, so
+# teardown proves the lab disturbed none of them.
+#
+# It used to record only the row flagged default, and to require that row to be
+# named "default" and to be running. That was both too narrow and too strict on a
+# real operator fleet: a host whose live work runs in named sessions (a work one
+# and a personal one, kept strictly separate) leaves "default" present but
+# stopped, so the lab refused to provision at all - while the sessions actually
+# worth protecting were never in the snapshot and a passing tripwire proved
+# nothing about them. Watching the whole fleet is strictly stronger: it protects
+# every live session by name, socket, and running state, and it no longer cares
+# which of them happens to carry the default flag.
+#
+# The lab session itself is excluded because it legitimately changes: it is
+# absent when the tripwire is recorded and present-but-stopped when an existing
+# lab is re-provisioned, and neither is a disturbance of the fleet.
+#
+# Two conditions still refuse rather than record, because a snapshot taken under
+# either proves nothing:
+#   - no session is running, so "unchanged" is vacuously true;
+#   - more than one session claims the default flag, so the fleet is ambiguous.
 fm_herdr_lab_fleet_state() { # <session>
-  local name=$1 sessions snapshot
+  local name=$1 sessions fleet snapshot
   sessions=$(fm_herdr_lab_session_list "$name" 2>/dev/null) || {
     fm_herdr_lab_error "cannot read Herdr sessions for the fleet-state tripwire"
     return 1
   }
-  snapshot=$(printf '%s' "$sessions" | jq -c '
-    [.sessions[]? | select(.default == true)]
-    | if length == 1 and .[0].name == "default" and .[0].running == true
-      then .[0] | {name, default, running, socket_path}
-      else empty
-      end
+  fleet=$(printf '%s' "$sessions" | jq -Sc --arg lab "$name" '
+    [.sessions[]? | select(.name != $lab) | {name, default, running, socket_path}]
+    | sort_by(.name)
   ' 2>/dev/null)
-  [ -n "$snapshot" ] || {
-    fm_herdr_lab_error "fleet-state tripwire requires exactly one running default session"
+  [ -n "$fleet" ] || {
+    fm_herdr_lab_error "cannot read Herdr sessions for the fleet-state tripwire"
     return 1
   }
+  if [ "$(printf '%s' "$fleet" | jq -r '[.[] | select(.default == true)] | length')" -gt 1 ]; then
+    fm_herdr_lab_error "fleet-state tripwire refuses an ambiguous fleet: more than one session is flagged default"
+    return 1
+  fi
+  if [ "$(printf '%s' "$fleet" | jq -r '[.[] | select(.running == true)] | length')" -eq 0 ]; then
+    fm_herdr_lab_error "fleet-state tripwire requires at least one running session to anchor to; with none running the snapshot would prove nothing"
+    return 1
+  fi
+  snapshot=$fleet
   printf '%s\n' "$snapshot"
 }
 
@@ -227,7 +257,7 @@ fm_herdr_lab_check_tripwire() { # <session>
   before=$(cat "$tripwire")
   after=$(fm_herdr_lab_fleet_state "$name") || return 1
   [ "$before" = "$after" ] || {
-    fm_herdr_lab_error "FLEET-STATE TRIPWIRE FAILED: default session changed during lab work"
+    fm_herdr_lab_error "FLEET-STATE TRIPWIRE FAILED: a session outside the lab changed during lab work"
     fm_herdr_lab_error "before: $before"
     fm_herdr_lab_error "after:  $after"
     return 1

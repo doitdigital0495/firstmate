@@ -5,7 +5,7 @@
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
-#                                         [--effort <level>]
+#                                         [--effort <level>] [--priority <1-99>]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -45,7 +45,11 @@
 #              --note is required for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
-#              standing charter is never rewritten.
+#              standing charter is never rewritten. --priority sets this task's
+#              release order on a shaped Claude credential store (lower goes
+#              first); bin/fm-claude-admission.sh owns that decision and is
+#              consulted before the running agent is touched, so a launch that
+#              is not released yet refuses with nothing changed.
 #              Records a durable checkpoint and that note, exits the old agent,
 #              then delegates the launch to its single owner,
 #              bin/fm-spawn.sh --relaunch. A failure before publication keeps
@@ -117,10 +121,22 @@ if [ -z "${FM_HOME+x}" ] || [ -z "${FM_HOME:-}" ]; then
   echo "error: FM_HOME is not set; fm-control refuses to resolve a task without an explicit firstmate home" >&2
   exit 1
 fi
+
 [ -d "$FM_HOME" ] || {
   echo "error: FM_HOME '$FM_HOME' is not a directory" >&2
   exit 1
 }
+
+# Fail closed before any fleet action: this home is pinned to the session and
+# Claude account it was started from, and a session that does not match is
+# refused rather than allowed to drive another home's work
+# (bin/fm-home-identity.sh). A home with no pin yet is pinned here from the
+# session using it, which is its originating one; a pin that exists is only ever
+# compared, never rewritten, so no path can move a home between accounts.
+if ! FM_HOME_IDENTITY_OUT=$("$SCRIPT_DIR/fm-home-identity.sh" ensure 2>&1); then
+  printf '%s\n' "$FM_HOME_IDENTITY_OUT" >&2
+  exit 1
+fi
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 [ -d "$STATE" ] || {
@@ -205,6 +221,8 @@ MODEL_SET=0
 EFFORT_SET=0
 NOTE=
 NOTE_SET=0
+PRIORITY=
+PRIORITY_SET=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -215,6 +233,7 @@ for control_arg in "$@"; do
       harness) NEW_HARNESS=$control_arg; HARNESS_SET=1 ;;
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
+      priority) PRIORITY=$control_arg; PRIORITY_SET=1 ;;
       note) NOTE=$control_arg; NOTE_SET=1 ;;
       note_file)
         [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
@@ -232,6 +251,8 @@ for control_arg in "$@"; do
     --model=*) NEW_MODEL=${control_arg#--model=}; MODEL_SET=1 ;;
     --effort) control_want_value=effort ;;
     --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
+    --priority) control_want_value=priority ;;
+    --priority=*) PRIORITY=${control_arg#--priority=}; PRIORITY_SET=1 ;;
     --note) control_want_value=note ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
@@ -250,7 +271,14 @@ fi
 
 if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    || die "--harness, --model, --effort, and --note apply to 'relaunch' only"
+    && [ "$PRIORITY_SET" = 0 ] \
+    || die "--harness, --model, --effort, --priority, and --note apply to 'relaunch' only"
+fi
+if [ "$PRIORITY_SET" = 1 ]; then
+  case "$PRIORITY" in
+    ''|*[!0-9]*) die "--priority must be a whole number from 1 to 99" ;;
+  esac
+  { [ "$PRIORITY" -ge 1 ] && [ "$PRIORITY" -le 99 ]; } || die "--priority must be a whole number from 1 to 99"
 fi
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
@@ -810,8 +838,8 @@ record_note() {
 }
 
 do_relaunch() {
-  local exit_result state note_line
-  local -a spawn_args
+  local exit_result state note_line admission_out admission_store
+  local -a spawn_args admission_args
 
   require_state_verified_backend relaunch
   resolve_relaunch_profile
@@ -839,6 +867,24 @@ do_relaunch() {
   else
     note_line="note=none"
   fi
+  # Release shaping is consulted BEFORE anything is stopped. fm-spawn.sh runs the
+  # consuming decision at the end of this sequence, but by then the old agent is
+  # already gone, so a withheld launch there would leave the task with no worker
+  # for the length of a release interval. This preview mutates nothing and takes
+  # no slot; it only refuses early, while the running agent is still untouched.
+  if [ "$TARGET_HARNESS" = claude ]; then
+    admission_args=("$ID")
+    [ "$PRIORITY_SET" = 0 ] || admission_args+=(--priority "$PRIORITY")
+    # The task's OWN recorded credential binding, never this session's ambient
+    # one: the release decision must be about the account the task will actually
+    # relaunch onto (bin/fm-spawn.sh owns that binding).
+    admission_store=$(fm_meta_get "$META" claude_config_dir) || admission_store=
+    [ -z "$admission_store" ] || admission_args+=(--store "$admission_store")
+    if ! admission_out=$("$SCRIPT_DIR/fm-claude-admission.sh" check "${admission_args[@]}" 2>&1); then
+      printf '%s\n' "$admission_out" >&2
+      die "relaunch of $ID is not released onto its Claude credential store yet; the running agent was left untouched and nothing changed"
+    fi
+  fi
   safe_checkpoint
   cp -p "$META" "$META_PRIOR" || die "could not preserve task $ID's durable record before relaunching"
   RELAUNCH_ACTIVE=1
@@ -858,6 +904,7 @@ do_relaunch() {
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
+  [ "$PRIORITY_SET" = 0 ] || spawn_args+=(--priority "$PRIORITY")
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1

@@ -1,0 +1,14 @@
+# config/claude-shaped-store - Claude credential stores this home paces at a
+# limit-reset edge. One absolute path per line; '#' comments and blank lines are
+# ignored. An absent file means no store is shaped and every Claude launch is
+# released unchanged.
+#
+# The path is the store a launch actually bills, which is what
+# CLAUDE_CONFIG_DIR selects for that pane (the default store is ~/.claude).
+# Copy this file to config/claude-shaped-store and list only the stores you
+# want paced - typically a shared work subscription, not your personal one.
+#
+# See docs/configuration.md "Claude release shaping" for the full contract and
+# bin/fm-claude-admission.sh --help for the commands.
+
+/home/example/.claude-work

@@ -115,6 +115,53 @@ remote_endpoint_require() {
   remote_endpoint_load "$1" || die "$REMOTE_ENDPOINT_ERROR"
 }
 
+# The Herdr session and Claude account this home was created under, read from
+# the durable pin fm-spawn seeded into it (bin/fm-home-identity.sh). Every path
+# that drives the child home runs under that RECORDED identity, exactly as
+# cmd_launch does, because the caller here is a job worker or SSH entrypoint
+# whose own environment names no session at all. The pin is only ever read: a
+# missing, unreadable, or foreign one refuses rather than falling back to the
+# caller's environment.
+REMOTE_IDENTITY_ENV=()
+REMOTE_IDENTITY_SESSION=
+REMOTE_IDENTITY_STORE=
+remote_identity_env() {
+  local pin session store
+  pin=$(FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
+    "$SCRIPT_DIR/fm-home-identity.sh" show 2>&1) \
+    || die "remote secondmate home identity is unreadable: $pin"
+  [ "$pin" != absent ] \
+    || die "remote secondmate home has no recorded session and account; refusing to steer it rather than adopting this environment's"
+  session=$(printf '%s\n' "$pin" | sed -n 's/^herdr_session=//p')
+  store=$(printf '%s\n' "$pin" | sed -n 's/^claude_config_dir=//p')
+  [ -n "$session" ] && [ -n "$store" ] \
+    || die "remote secondmate home identity names no session and account; refusing to steer it"
+  [ "$session" = "$REMOTE_HERDR_SESSION" ] \
+    || die "remote secondmate home is pinned to Herdr session '$session', expected '$REMOTE_HERDR_SESSION'; refusing access until it is explicitly migrated"
+  # env's options must precede every assignment, so the unset for the personal
+  # "default" store is placed first: a store the pin does not name is actively
+  # removed rather than inherited from this host's login environment.
+  REMOTE_IDENTITY_ENV=(env)
+  [ "$store" != default ] || REMOTE_IDENTITY_ENV+=(-u CLAUDE_CONFIG_DIR)
+  REMOTE_IDENTITY_ENV+=("HERDR_SESSION=$session")
+  [ "$store" = default ] || REMOTE_IDENTITY_ENV+=("CLAUDE_CONFIG_DIR=$store")
+  REMOTE_IDENTITY_SESSION=$session
+  REMOTE_IDENTITY_STORE=$store
+}
+
+# remote_identity_apply: the same recorded identity for a caller that reaches the
+# backend through a SHELL FUNCTION rather than an external command, which `env`
+# cannot prefix. Run it inside a subshell so the exports never outlive that call.
+# remote_identity_env must have succeeded first.
+remote_identity_apply() {
+  export HERDR_SESSION="$REMOTE_IDENTITY_SESSION"
+  if [ "$REMOTE_IDENTITY_STORE" = default ]; then
+    unset CLAUDE_CONFIG_DIR
+  else
+    export CLAUDE_CONFIG_DIR="$REMOTE_IDENTITY_STORE"
+  fi
+}
+
 state_value() { # <id>; prints recovery-grade state
   local id=$1 meta
   meta=$(meta_path "$id")
@@ -258,6 +305,10 @@ cmd_send() {
   validate_id "$id"
   [ -z "$delivery_mode" ] || [ "$delivery_mode" = fire-and-forget ] || die "invalid send delivery mode"
   validate_home "$id"
+  # Before the lock and before anything is written: a home whose recorded session
+  # and account cannot be read, or names another session, is refused rather than
+  # steered under this caller's environment.
+  remote_identity_env
   meta=$(meta_path "$id")
   meta_lock=$(fm_meta_lock_path "$meta") || die "remote secondmate metadata lock path is invalid"
   fm_task_inbox_lock_acquire "$meta_lock" \
@@ -288,7 +339,11 @@ cmd_send() {
       return 0
       ;;
   esac
-  fm_task_inbox_ring "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" "$rec" "fm-$id" || ring_rc=$?
+  # The doorbell reaches the backend, so it runs under the home's recorded
+  # session and account, exactly as cmd_key's fm-send does. It is a shell
+  # function, so the identity is exported inside a subshell rather than prefixed.
+  ( remote_identity_apply
+    fm_task_inbox_ring "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" "$rec" "fm-$id" ) || ring_rc=$?
   case "$ring_rc" in
     1) printf 'notice: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at %s\n' "$rec" >&2 ;;
     2) printf 'notice: doorbell did not reach %s; the steer is durably recorded at %s\n' "$REMOTE_ENDPOINT_TARGET" "$rec" >&2 ;;
@@ -301,7 +356,9 @@ cmd_key() {
   validate_id "$id"
   validate_home "$id"
   remote_endpoint_require "$id"
-  FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$TARGET_HOME/state" \
+  remote_identity_env
+  "${REMOTE_IDENTITY_ENV[@]}" \
+    FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$TARGET_HOME/state" \
     "$SCRIPT_DIR/fm-send.sh" "$REMOTE_ENDPOINT_TARGET" --key "$key"
 }
 
