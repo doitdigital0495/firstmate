@@ -1,0 +1,10 @@
+== busy-state record right after launch ==
+v1 gen=g1788977866.588332.3 seq=1 state=busy source=fm-spawn event=launch-brief ts=1788977866
+
+== running the UserPromptSubmit hook claude was handed ==
+busy-state: v1 gen=g1788977866.588332.3 seq=2 state=busy source=claude-hook event=user-prompt-submit ts=1788977868
+turn-ended marker present: no
+
+== running the Stop hook claude was handed ==
+busy-state: v1 gen=g1788977866.588332.3 seq=3 state=idle source=claude-hook event=stop ts=1788977868
+turn-ended marker present: yes
