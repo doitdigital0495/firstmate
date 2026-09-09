@@ -3866,8 +3866,15 @@ fi
 case "$HARNESS" in
   claude*)
     if [ "$RAW_LAUNCH" -eq 0 ]; then
+      # Built in a plain variable rather than inline in ${VAR:+...}: an
+      # unescaped "{" inside that expansion closes it at the first "}", which
+      # silently emitted a stray brace and invalid JSON.
+      claude_hooks_json=
+      if [ -n "$CLAUDE_HOOK_ENTRIES" ]; then
+        claude_hooks_json=",\"hooks\":{$CLAUDE_HOOK_ENTRIES}"
+      fi
       printf '{"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false}%s}\n' \
-        "${CLAUDE_HOOK_ENTRIES:+,\"hooks\":{$CLAUDE_HOOK_ENTRIES}}" \
+        "$claude_hooks_json" \
         > "$STATE_REAL/$ID.claude-settings.json"
     fi
     ;;
