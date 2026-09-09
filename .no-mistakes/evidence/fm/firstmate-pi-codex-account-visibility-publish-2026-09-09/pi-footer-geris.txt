@@ -1,0 +1,31 @@
+[Skills]
+  1password, adhd, ads-creative-development, ads-performance-analytics, afk, after-action-report, agent-skills-guide, ahoy, analytics-strategy, ask-user-authority, bearings, beta-program-management,
+bootstrap-diagnostics, brand-identity, brand-style-guide, brand-voice, captain-hold-lifecycle, cold-outreach, competitor-experience-audit, content-and-copy, content-distribution, content-repurposing,
+content-strategy, conversion-first-design, convex-create-component, convex-migration-helper, convex-patterns, convex-performance-audit, convex-quickstart, convex-setup-auth, copywriting,
+cro-optimization, decision-hold-lifecycle, deep-site-audit, diagnostic-reasoning, discovery-research-synthesis, editorial-qa, email-deliverability, email-sequences, experiment-design,
+feature-launch-playbook, find-skills, firstmate-codexapp, firstmate-coding-guidelines, firstmate-orca, five-whys, fmx-respond, form-strategy, funnel-flow-architecture, google-ads-build,
+google-ads-manager, growth-hq, handoff, harness-adapters, journey-mapping, jtbd-framing, landing-page-copy, lavish, lead-magnet-design, linear-deliver, nextjs-15, no-mistakes, okr-design,
+openai-agent-sdk-skill, outrank-competitor, paid-media-strategy, pm-spec-writing, process-event-sources, project-management, quota-array-dispatch, react-bits, remotion-best-practices,
+roadmap-planning, secondmate-provisioning, seo-decisions, ship, stakeholder-communication, stow, structure-agent-docs, stuck-crewmate-recovery, team-onboarding-playbook, treehouse-worktree-cleanup,
+updatefirstmate, user-feedback-aggregation, validate-model-ladder, vendor-evaluation, vision, vps-deploy, web-design-guidelines
+[Extensions]
+  fm-calm.ts, fm-codex-account.ts, fm-primary-pi-watch.ts, fm-primary-turnend-guard.ts, herdr-agent-state.ts, rtk-compact.ts, sys-quota-status.ts
+[Skill conflicts]
+  "no-mistakes" collision:
+    ✓ user ~/.claude/skills/no-mistakes/SKILL.md
+    ✗ ~/.agents/skills/no-mistakes/SKILL.md (skipped)
+ Warning: tmux extended-keys is off. Modified Enter keys may not work. Add `set -g extended-keys on` to ~/.tmux.conf and restart tmux.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 0.85.1 is available. Run pi update
+ Changelog: https://pi.dev/changelog
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ cl personal                   5h ●○○○○○○○  10%  (4h 29m)                │ 7d ●●○○○○○○  20%  (14.6%/d) (Mon 19:59)
+ cl geris                      5h ●●○○○○○○  26%  (4h 29m)                │ 7d ●○○○○○○○  17%  (13.6%/d) (Tue 10:59)
+ cx <redacted-account-email>  5h --                                     │ 7d ●○○○○○○○  12%  (15.1%/d) (Tue 04:07)
+ cx <redacted-account-email>        5h ●●●○○○○○  39%  (4h 38m)                │ 7d ●○○○○○○○  11%  (14.7%/d) (Tue 09:55)  │ CPU 31% RAM 12.8/23.5G
+~/.no-mistakes/worktrees/cf62ac6bfd91/01M22CXN69KHH8ECW387N9AHVF (detached)
+$0.000 (sub) 0.0%/272k (auto)                                                                                                                                                           gpt-5.5 • medium
+codex@.pi-geris
