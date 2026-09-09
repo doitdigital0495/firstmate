@@ -255,6 +255,9 @@ all fm-claude-settings-live-e2e tests passed
 
 Both hooks still fired, the project's own `Stop` hook still fired, its settings file was byte-identical afterwards, and the run raised no complaint about the settings source.
 
+That fold risk is held deterministically by `tests/fm-spawn-claude-settings.test.sh`, which parses the generated file for a crewmate launch (policy keys plus the owned hooks) and for a secondmate launch (policy keys, no `hooks` key).
+It exists because a stray brace once made the file invalid JSON, which Claude rejects wholesale and which therefore takes firstmate's owned busy and turn-end hooks down with the policy keys.
+
 This replaces the pre-2026-08-20 behavior, where the spawn wrote `<worktree>/.claude/settings.local.json` wholesale.
 On a project that tracks that path, the spawn destroyed its committed contents for the life of the task and left the tracked file permanently modified, which then blocked `bin/fm-teardown.sh` and re-escalated the finished task on every watcher pass.
 `bin/fm-teardown.sh` removes a leftover pre-fix file only when it is untracked AND carries firstmate's own `fm-busy-event.sh` command, so a tracked or project-authored file is never touched.
