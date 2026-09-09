@@ -214,8 +214,14 @@ run_two_level() {
   smlog="$base/sm-launch.log"
   smfake=$(make_spawn_fakebin "$base/sm-fake")
   : > "$smlog"
+  # Same throwaway HOME and empty CLAUDE_CONFIG_DIR the worker spawn below uses.
+  # The secondmate home is pinned to the account of the session that first spawns
+  # into it (bin/fm-home-identity.sh), so an ambient CLAUDE_CONFIG_DIR here would
+  # pin a store the hermetic worker spawn cannot match, and that spawn would be
+  # refused for reasons unrelated to trace context.
+  mkdir -p "$prim/user-home"
   env FM_TRACE_CONTEXT="$penv" \
-    FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$prim" \
+    FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$prim" HOME="$prim/user-home" CLAUDE_CONFIG_DIR='' \
     FM_STATE_OVERRIDE="$prim/state" FM_DATA_OVERRIDE="$prim/data" \
     FM_PROJECTS_OVERRIDE="$prim/projects" FM_CONFIG_OVERRIDE="$prim/config" \
     FM_SPAWN_NO_GUARD=1 CLAUDECODE=1 TMUX="fake,1,0" \
