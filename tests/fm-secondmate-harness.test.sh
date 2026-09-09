@@ -769,9 +769,18 @@ test_spawn_secondmate_harness_model_token() {
   [ "$(meta_field "$meta" model)" = opus ] || fail "model-token: meta model not opus (got '$(meta_field "$meta" model)')"
   [ "$(meta_field "$meta" effort)" = default ] || fail "model-token: meta effort not default (got '$(meta_field "$meta" effort)')"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}' --model 'opus'" \
+  assert_contains "$launch" "claude --dangerously-skip-permissions --settings '$(cd "$w/home/state" && pwd -P)/sm.claude-settings.json' --model 'opus'" \
     "model-token: launch did not carry --model opus"
   assert_not_contains "$launch" "--effort" "model-token: launch must not carry an --effort flag"
+  # A secondmate arms no busy contract, so its settings source carries the
+  # per-launch policy keys and nothing else - and still lives in state/, never in
+  # the home, so nothing of the project's is written or clobbered.
+  assert_grep '"feedbackDrafts":"off"' "$w/home/state/sm.claude-settings.json" \
+    "model-token: a secondmate's settings source dropped the feedback-draft policy"
+  assert_grep '"attribution":{"commit":"","pr":"","sessionUrl":false}' "$w/home/state/sm.claude-settings.json" \
+    "model-token: a secondmate's settings source dropped the attribution policy"
+  ! grep -Fq '"hooks"' "$w/home/state/sm.claude-settings.json" \
+    || fail "model-token: a secondmate armed busy hooks it has no contract for"
   pass "C3 spawn: config/secondmate-harness's model token threads --model into the launch and meta"
 }
 
@@ -791,7 +800,7 @@ test_spawn_secondmate_harness_model_and_effort_tokens() {
   [ "$(meta_field "$meta" model)" = opus ] || fail "model-effort-tokens: meta model not opus"
   [ "$(meta_field "$meta" effort)" = high ] || fail "model-effort-tokens: meta effort not high (got '$(meta_field "$meta" effort)')"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}' --model 'opus' --effort 'high'" \
+  assert_contains "$launch" "claude --dangerously-skip-permissions --settings '$(cd "$w/home/state" && pwd -P)/sm.claude-settings.json' --model 'opus' --effort 'high'" \
     "model-effort-tokens: launch did not carry both --model opus and --effort high"
   pass "C4 spawn: config/secondmate-harness's model+effort tokens thread into the launch and meta"
 }

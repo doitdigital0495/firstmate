@@ -822,7 +822,7 @@ test_claude_forwards_firstmate_config_dir_when_set() {
   status=$?
   expect_code 0 "$status" "claude spawn with CLAUDE_CONFIG_DIR set should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "CLAUDE_CONFIG_DIR='$CASE_DIR/claude-work' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}'" \
+  assert_contains "$launch" "CLAUDE_CONFIG_DIR='$CASE_DIR/claude-work' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '$(cd "$HOME_DIR/state" && pwd -P)/$id.claude-settings.json'" \
     "claude launch did not forward firstmate's CLAUDE_CONFIG_DIR to the crewmate pane"
   pass "claude forwards firstmate's CLAUDE_CONFIG_DIR so the crewmate uses the same credential store"
 }
@@ -866,12 +866,19 @@ test_non_claude_harness_ignores_config_dir() {
 # spawned worker's settings sources are not guaranteed to load. Every claude
 # launch must therefore carry the policy itself, or a spawned worker writes
 # Co-Authored-By and Claude-Session trailers into commits and PR bodies.
+# The policy rides the settings FILE the launch names rather than an inline
+# argument, because claude takes one settings source and the busy hooks need the
+# same one. Follow that pointer instead of pinning the carrier: the property is
+# that the launched worker reads the policy, not where it was spelled.
 assert_attribution_policy() {  # <launch-command> <what>
-  local launch=$1 what=$2
-  assert_contains "$launch" '"attribution":' "$what launch carries no attribution policy"
-  assert_contains "$launch" '"commit":""' "$what launch does not silence the commit trailer"
-  assert_contains "$launch" '"pr":""' "$what launch does not silence the PR-body attribution"
-  assert_contains "$launch" '"sessionUrl":false' "$what launch does not silence the session URL"
+  local launch=$1 what=$2 settings
+  settings=$(printf '%s\n' "$launch" | sed -n "s/.*--settings '\([^']*\)'.*/\1/p")
+  [ -n "$settings" ] || fail "$what launch names no --settings source to carry the policy"
+  [ -f "$settings" ] || fail "$what launch points at a settings source that does not exist: $settings"
+  assert_grep '"attribution":' "$settings" "$what settings source carries no attribution policy"
+  assert_grep '"commit":""' "$settings" "$what settings source does not silence the commit trailer"
+  assert_grep '"pr":""' "$settings" "$what settings source does not silence the PR-body attribution"
+  assert_grep '"sessionUrl":false' "$settings" "$what settings source does not silence the session URL"
 }
 
 test_claude_crewmate_launch_carries_the_attribution_policy() {
