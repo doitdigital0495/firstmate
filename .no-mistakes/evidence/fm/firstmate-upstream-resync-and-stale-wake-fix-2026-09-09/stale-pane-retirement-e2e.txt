@@ -1,0 +1,31 @@
+=== firstmate: stale wake for a retired pane ===
+
+$ # two panes went stale; the watcher queued a wake for each
+  seq=1788969359 kind=stale endpoint=test:fm-gone  stale: test:fm-gone (no reply for 30m)
+  seq=1788969359 kind=stale endpoint=test:fm-live  stale: test:fm-live (no reply for 30m)
+
+$ # pane test:fm-gone is torn down: cleanup removes its task record
+$ rm state/gone.meta
+
+$ bin/fm-wake-drain.sh          # supervision turn 1
+wake drain: retired 1 stale queue row(s) whose endpoint no task record names any more:
+wake drain:   1788969359	1	stale	test:fm-gone	stale: test:fm-gone (no reply for 30m)
+1788969359	2	stale	test:fm-live	stale: test:fm-live (no reply for 30m)
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 1004878.1788969359.qcABwR
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  After draining queued wakes, watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+
+$ bin/fm-wake-drain.sh          # supervision turn 2 (no acknowledgement in between)
+1788969359	2	stale	test:fm-live	stale: test:fm-live (no reply for 30m)
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 1004878.1788969359.qcABwR
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+
+$ cat state/.wake-queue         # only the live pane row remains
+  seq=1788969359 kind=stale endpoint=test:fm-live  stale: test:fm-live (no reply for 30m)

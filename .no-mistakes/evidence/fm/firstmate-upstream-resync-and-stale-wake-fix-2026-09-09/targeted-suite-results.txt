@@ -1,0 +1,20 @@
+# targeted suite results (fork-only work + resync-touched suites)
+
+tests/fm-wake-queue.test.sh              PASS (includes new test_stale_row_for_a_retired_window_is_retired_not_represented)
+  same suite with bin/fm-wake-drain.sh reverted to 14f30a5^:
+  not ok - a stale row for a retired endpoint survived the drain and will be re-presented forever
+
+tests/fm-task-delivery.test.sh           PASS
+tests/fm-startup-memory-budget.test.sh   PASS
+tests/fm-claude-admission.test.sh        PASS
+tests/fm-home-identity.test.sh           PASS
+tests/fm-remote-secondmate-identity.test.sh PASS
+tests/fm-spawn-dispatch-profile.test.sh  PASS
+tests/fm-backend-orca.test.sh            PASS
+tests/fm-claude-settings-live-e2e.test.sh PASS
+
+host-config-only failures (pass with GIT_TEMPLATE_DIR=/dev/null):
+tests/fm-update.test.sh                  FAIL bare / PASS with GIT_TEMPLATE_DIR=/dev/null
+tests/fm-secondmate-harness.test.sh       FAIL bare / PASS with GIT_TEMPLATE_DIR=/dev/null
+tests/fm-busy-adapter-wiring.test.sh      FAIL bare / PASS with GIT_TEMPLATE_DIR=/dev/null
+cause: host git init.templatedir=~/.git-template installs pre-commit (check-agents-e2e) and pre-receive (no-mistakes gate) into every fixture repo
