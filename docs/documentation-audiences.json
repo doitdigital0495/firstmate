@@ -103,6 +103,10 @@
       "target": "docs/verification/runtime-backends.md"
     },
     {
+      "source": "docs/pi-account-indicator.md",
+      "target": "docs/verification/pi-account-indicator.md"
+    },
+    {
       "source": "docs/trace-context.md",
       "target": "docs/verification/trace-context.md"
     }
@@ -369,6 +373,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/pi-account-indicator.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/pi-supervision-branch.md",
       "audience": "maintainer-architecture"
     },
@@ -450,6 +458,10 @@
     },
     {
       "path": "docs/verification/muse.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/pi-account-indicator.md",
       "audience": "maintainer-verification"
     },
     {
