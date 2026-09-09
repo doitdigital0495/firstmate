@@ -58,6 +58,11 @@ Keep the parent reachable as `upstream`.
 Pull the parent's work in deliberately with `git fetch upstream` and a merge of `upstream/main`, and note that once you have merged your own PRs your fork's `main` has diverged from the parent and can no longer be fast-forwarded from it.
 `gh` still reaches the parent explicitly with `gh -R kunchenguid/firstmate ...`.
 
+Take the parent as a real merge, never as a squash of its tree.
+A squash records no ancestry with the parent, so the merge base never advances and the next ingestion replays conflicts across every file the squash touched, against content that is already textually identical on both sides.
+Once that has happened, the way out is a merge commit that records the ancestry while resetting the tree to `upstream/main` exactly, followed by one commit per fork change re-applied on top and verified against the parent's current code.
+That shape keeps `origin/main` an ancestor, so the PR still merges cleanly, and it makes each preserved fork behavior reviewable on its own instead of buried in a conflict resolution.
+
 ## Repo conventions
 
 - This repo is a template for running a firstmate orchestrator agent.
