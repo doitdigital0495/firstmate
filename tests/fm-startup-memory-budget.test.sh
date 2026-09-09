@@ -83,7 +83,15 @@ new_bootstrap_world() {
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$root/bin/placeholder.sh"
   chmod +x "$root/bin/placeholder.sh"
   git -C "$root" add -A
-  git -C "$root" -c user.name=fmtest -c user.email=fmtest@example.invalid commit -qm initial
+  # A host whose git config sets init.templatedir copies that template's hooks
+  # into every repository `git init` creates, including these throwaway fixtures.
+  # A fixture's minimal AGENTS.md is not a real instruction file, so such a hook
+  # can reject the commit, and the propagation world below then never gets the
+  # worktree its assertions need - failing for a reason that has nothing to do
+  # with the budget. Fixture commits therefore run with no hooks, so this suite
+  # reads the same on a configured workstation as it does in CI.
+  git -C "$root" -c core.hooksPath=/dev/null \
+    -c user.name=fmtest -c user.email=fmtest@example.invalid commit -qm initial
   printf '%s|%s\n' "$root" "$home"
 }
 
@@ -241,7 +249,8 @@ new_propagation_world() {
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$root/bin/placeholder.sh"
   chmod +x "$root/bin/placeholder.sh"
   git -C "$root" add -A
-  git -C "$root" -c user.name=fmtest -c user.email=fmtest@example.invalid commit -qm initial
+  git -C "$root" -c core.hooksPath=/dev/null \
+    -c user.name=fmtest -c user.email=fmtest@example.invalid commit -qm initial
   head=$(git -C "$root" rev-parse HEAD)
   git -C "$root" worktree add -q --detach "$sm" "$head"
   printf '%s\n' sm > "$sm/.fm-secondmate-home"
