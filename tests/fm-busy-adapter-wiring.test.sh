@@ -312,7 +312,7 @@ JSON
   tracked="$WT_DIR/.claude/settings.local.json"
 
   launch_log="$CASE_DIR/launch.log"
-  out=$(FM_FAKE_TMUX_LOG="$launch_log" run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
+  out=$(FM_FAKE_LAUNCH_LOG="$launch_log" run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
   expect_code 0 $? "claude spawn should succeed: $out"
   state="$HOME_DIR/state"
 

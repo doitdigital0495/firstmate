@@ -11,9 +11,9 @@
 # the RECORDED identity rather than the caller's - otherwise the pin check in
 # bin/fm-send.sh resolves "default" and refuses every steer.
 #
-# Both cases drive the real control script and the real bin/fm-send.sh against
-# the repo's stateful herdr CLI fixture, so "the steer landed" is asserted from
-# the pane the fake host actually received, never from source text.
+# Both cases drive the real control script against the repo's stateful herdr CLI
+# fixture, so "the steer landed" is asserted from what the fake host actually
+# received and from the durable record it produced, never from source text.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -88,6 +88,28 @@ control_with_foreign_env() {
     "$CONTROL" "$@" 2>&1
 }
 
+# A routed steer is delivered as a durable record in the remote home's steering
+# inbox plus a best-effort doorbell, never by typing its payload into the pane
+# (docs/remote-secondmates.md). So the message is proved in the record.
+#
+# The doorbell is deliberately NOT asserted here. This fixture models a pane
+# with no agent running in it, which is the state the ring declines to type
+# into, and the send still succeeds because the record is what delivery means.
+# The identity property this suite owns is proved either way: the send reached
+# the recording stage without the pin check refusing it, and the notice below
+# shows it reached the ring under the home's recorded endpoint rather than
+# failing earlier. The `key` leg still asserts the recorded pane directly, and
+# the doorbell's own delivery is owned by the steering-inbox suites.
+assert_steer_delivered() {  # <message> <what>
+  local message=$1 what=$2 out=${3:-}
+  grep -Rqs -- "$message" "$TARGET_HOME/state/parent-route/$ID.inbox" \
+    || fail "$what: the steer was not written into the remote home's steering inbox"
+  [ -z "$out" ] || case $out in
+    *"$PANE"*) ;;
+    *) fail "$what: the send never reached the recorded endpoint: $out" ;;
+  esac
+}
+
 test_recorded_identity_is_propagated() {
   local out status
 
@@ -105,8 +127,8 @@ test_recorded_identity_is_propagated() {
   assert_not_contains "$out" "fm-home-identity" \
     "a send under the home's own recorded identity must not be refused by the pin check"
   expect_code 0 "$status" "the send must be confirmed against the recorded remote pane"
-  assert_grep "report the build result" "$HERDR_LOG" \
-    "the message must reach the recorded pane"
+  assert_steer_delivered 'report the build result' \
+    "the send must record the steer against the recorded pane" "$out"
   pass "remote send and key carry the home's recorded session and account"
 }
 
@@ -121,8 +143,8 @@ test_a_recorded_store_beats_the_caller_environment() {
   assert_not_contains "$out" "fm-home-identity" \
     "the recorded store must satisfy the pin check, not the caller's"
   expect_code 0 "$status" "a store-bound remote second mate must still be steerable"
-  assert_grep "keep the recorded account" "$HERDR_LOG" \
-    "the steer must land on the recorded pane"
+  assert_steer_delivered 'keep the recorded account' \
+    "the steer must record under the recorded account" "$out"
   assert_grep "claude_config_dir=$WORK_STORE" "$TARGET_HOME/data/home-identity" \
     "the pin must never be rewritten to the caller's account"
 
@@ -134,8 +156,8 @@ test_a_recorded_store_beats_the_caller_environment() {
   assert_not_contains "$out" "fm-home-identity" \
     "a default-bound home must not inherit the caller's account"
   expect_code 0 "$status" "a default-bound remote second mate must still be steerable"
-  assert_grep "do not inherit the foreign account" "$HERDR_LOG" \
-    "the steer must land on the recorded pane"
+  assert_steer_delivered 'do not inherit the foreign account' \
+    "the steer must record without the caller's account" "$out"
   assert_grep "claude_config_dir=default" "$TARGET_HOME/data/home-identity" \
     "the default binding must survive a caller that exports another account"
   pass "the recorded account wins over the caller's, in both the store-bound and default cases"
