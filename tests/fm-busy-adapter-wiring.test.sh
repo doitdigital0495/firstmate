@@ -9,38 +9,13 @@
 # with no live harness session.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-busy-lib.sh"
 
-SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-busy-adapter-wiring)
-
-make_spawn_fakebin() {
-  local dir=$1 fakebin
-  fakebin=$(fm_fakebin "$dir")
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-case "$*" in
-  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
-esac
-case "${1:-}" in
-  display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows) exit 0 ;;
-  send-keys)
-    [ -z "${FM_FAKE_TMUX_LOG:-}" ] || printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
-    exit 0 ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse pi opencode claude codex
-  printf '%s\n' "$fakebin"
-}
 
 make_spawn_case() {  # <name> <harness> <id>
   local name=$1 harness=$2 id=$3 case_dir home proj wt fakebin
@@ -48,13 +23,10 @@ make_spawn_case() {  # <name> <harness> <id>
   home="$case_dir/home"
   proj="$case_dir/project"
   wt="$case_dir/wt"
-  fakebin=$(make_spawn_fakebin "$case_dir/fake")
-  mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config"
-  printf '%s\n' "$harness" > "$home/config/crew-harness"
+  fakebin=$(make_spawn_fakebin "$case_dir/fake" pi opencode claude codex gemini)
+  fm_test_spawn_home "$home" "$harness"
   fm_git_worktree "$proj" "$wt" "wt-$name"
-  touch "$home/state/.last-watcher-beat"
-  mkdir -p "$home/data/$id"
-  printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
+  fm_test_spawn_brief "$home" "$id"
   printf '%s\n' "$case_dir|$home|$proj|$wt|$fakebin"
 }
 
@@ -64,13 +36,8 @@ run_spawn() {  # <home> <wt> <fakebin> <spawn-args...>
   # fixed valid one.
   local home=$1 wt=$2 fakebin=$3
   shift 3
-  set -- "$@" --mode no-mistakes --yolo off
-  FM_ROOT_OVERRIDE='' FM_HOME="$home" \
-    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
-    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
-    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
-    GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
-    "$SPAWN" "$@" 2>&1
+  GROK_HOME="$home/grok-home" \
+    fm_test_run_spawn "$home" "$wt" "$fakebin" "$@" --mode no-mistakes --yolo off
 }
 
 read_case_record() {
@@ -92,7 +59,7 @@ drive_pi_ext() {
 import { pathToFileURL } from "node:url";
 const mod = await import(pathToFileURL(process.env.EXT_PATH).href);
 const handlers = {};
-mod.default({ on: (name, fn) => { handlers[name] = fn; } });
+mod.default({ on: (name, fn) => { handlers[name] = fn; }, events: { on: (name, fn) => { handlers[name] = fn; } } });
 const ctx = { isIdle: () => process.env.MODE !== "settle-continuing" };
 switch (process.env.MODE) {
   case "agent-start": await handlers["agent_start"]({}, ctx); break;
@@ -103,9 +70,10 @@ switch (process.env.MODE) {
     await handlers["agent_start"]({}, ctx);
     break;
   case "turn-end": await handlers["turn_end"]({}, ctx); break;
+  case "progress": await handlers["codex-native:progress"]({ type: "commandExecution", phase: "completed" }); break;
   default: throw new Error("unknown mode " + process.env.MODE);
 }
-if (process.env.MODE === "turn-end") {
+if (["turn-end", "progress"].includes(process.env.MODE)) {
   await new Promise((resolve) => setTimeout(resolve, 200));
 }
 EOF
@@ -125,6 +93,11 @@ test_pi_extension_semantic_lifecycle() {
   [ "$out" = "busy fm-spawn" ] || fail "seed after spawn must be 'busy fm-spawn', got '$out'"
 
   rm -f "$state/$id.turn-ended"
+  out=$(drive_pi_ext "$ext" progress) || fail "native progress drive failed: $out"
+  [ -f "$state/$id.progress" ] || fail "native progress did not write its separate marker"
+  [ ! -e "$state/$id.turn-ended" ] || fail "native progress fabricated a completed turn"
+  out=$(classify pi "$id" "$state")
+  [ "$out" = "busy fm-spawn" ] || fail "native progress changed semantic state: $out"
   out=$(drive_pi_ext "$ext" turn-end) || fail "turn_end drive failed: $out"
   [ -f "$state/$id.turn-ended" ] || fail "turn_end no longer touches the notification marker"
   out=$(classify pi "$id" "$state")
@@ -177,6 +150,8 @@ test_pi_extension_stale_incarnation_rejected() {
   out=$(drive_pi_ext "$ext" settle-idle) || fail "stale settle drive failed: $out"
   out=$(classify pi "$id" "$state")
   [ "$out" = "busy fm-spawn" ] || fail "a stale extension event must not change state, got '$out'"
+  out=$(drive_pi_ext "$ext" progress) || fail "stale progress drive failed: $out"
+  [ ! -e "$state/$id.progress" ] || fail "stale native progress refreshed the new incarnation"
   pass "pi extension events from a superseded incarnation are rejected as stale"
 }
 
@@ -266,7 +241,7 @@ test_claude_hooks_semantic_lifecycle() {
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
   expect_code 0 $? "claude spawn should succeed: $out"
   state="$HOME_DIR/state"
-  settings="$state/$id.claude-settings.json"
+  settings="$WT_DIR/.claude/settings.local.json"
   assert_present "$settings" "claude spawn did not write hook settings"
   jq -e . "$settings" >/dev/null || fail "claude hook settings are not valid JSON"
   for ev in UserPromptSubmit Stop StopFailure SessionEnd; do
@@ -304,86 +279,13 @@ test_claude_hooks_stale_incarnation_harmless() {
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
   expect_code 0 $? "claude spawn should succeed: $out"
   state="$HOME_DIR/state"
-  settings="$state/$id.claude-settings.json"
+  settings="$WT_DIR/.claude/settings.local.json"
   "$ROOT/bin/fm-busy-event.sh" arm "$state" "$id" >/dev/null
   run_claude_hook "$settings" UserPromptSubmit \
     || fail "a stale-gen hook must still exit 0 so Claude's lifecycle is never broken"
   out=$(classify claude "$id" "$state")
   [ "$out" = "busy fm-spawn" ] || fail "a stale-gen hook event must not change state, got '$out'"
   pass "claude hook events from a superseded incarnation are rejected without breaking the hook"
-}
-
-# Regression (observed 2026-08-20 on a real project): the claude branch used to
-# write <worktree>/.claude/settings.local.json WHOLESALE. On a project that tracks
-# that file, the spawn destroyed its committed contents for the life of the task
-# and left the tracked file permanently modified, which then blocked teardown and
-# produced an endless stale-wake loop. firstmate now writes no file into the
-# worktree at all: the hooks ride claude's own --settings flag from state/.
-test_claude_spawn_never_touches_the_projects_settings() {
-  local rec id=busy-cl-3 out state settings tracked before after launch_log
-  rec=$(make_spawn_case claude-project-settings claude "$id")
-  read_case_record "$rec"
-
-  # A project that TRACKS .claude/settings.local.json with real content, landed on
-  # the default branch so the spawn's base refresh brings it into the worktree.
-  mkdir -p "$PROJ_DIR/.claude"
-  cat > "$PROJ_DIR/.claude/settings.local.json" <<'JSON'
-{"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"1"},"permissions":{"allow":["Bash(npm test)"]},"enabledPlugins":{"context7":true}}
-JSON
-  git -C "$PROJ_DIR" add -f .claude/settings.local.json
-  git -C "$PROJ_DIR" -c user.email=t@t -c user.name=t commit -q -m "project settings"
-  git -C "$PROJ_DIR" push -q origin HEAD
-  before=$(cat "$PROJ_DIR/.claude/settings.local.json")
-  tracked="$WT_DIR/.claude/settings.local.json"
-
-  launch_log="$CASE_DIR/launch.log"
-  out=$(FM_FAKE_TMUX_LOG="$launch_log" run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
-  expect_code 0 $? "claude spawn should succeed: $out"
-  state="$HOME_DIR/state"
-
-  assert_present "$tracked" "the project's tracked settings must be present in the worktree"
-  after=$(cat "$tracked")
-  [ "$after" = "$before" ] \
-    || fail "the project's tracked settings must survive the spawn byte for byte, got: $after"
-  [ -z "$(git -C "$WT_DIR" status --porcelain)" ] \
-    || fail "the spawn must leave the worktree clean, got: $(git -C "$WT_DIR" status --porcelain)"
-  [ ! -e "$WT_DIR/.claude/settings.json" ] \
-    || fail "the spawn must not write any other claude settings file into the worktree"
-
-  # The hooks are armed all the same, from a firstmate-owned file outside the worktree.
-  settings="$state/$id.claude-settings.json"
-  assert_present "$settings" "claude spawn did not write its own hook settings into state/"
-  assert_grep "--settings '$(cd "$state" && pwd -P)/$id.claude-settings.json'" "$launch_log" \
-    "the launch command must load the hooks through claude's own --settings flag"
-  assert_no_grep "$WT_DIR/.claude" "$launch_log" \
-    "the launch command must not reference any claude settings inside the worktree"
-  rm -f "$state/$id.turn-ended"
-  run_claude_hook "$settings" Stop || fail "Stop hook command failed"
-  [ -f "$state/$id.turn-ended" ] || fail "the out-of-worktree hook no longer touches the marker"
-  out=$(classify claude "$id" "$state")
-  [ "$out" = "idle claude-hook" ] || fail "Stop must classify 'idle claude-hook', got '$out'"
-  pass "a claude spawn arms its hooks without writing anything into the project worktree"
-}
-
-# A raw launch command is the operator's verbatim string, so nothing can
-# guarantee it carries the --settings flag that loads claude's hooks. Arming
-# there seeds a busy record nothing can ever clear, which is strictly worse than
-# unknown because supervision never re-examines a busy task.
-test_claude_raw_launch_arms_no_unclearable_busy() {
-  local rec id=busy-cl-4 out state
-  rec=$(make_spawn_case claude-raw-launch claude "$id")
-  read_case_record "$rec"
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR" 'claude --dangerously-skip-permissions')
-  expect_code 0 $? "raw-launch claude spawn should succeed: $out"
-  state="$HOME_DIR/state"
-  assert_absent "$state/$id.claude-settings.json" \
-    "a raw launch command cannot be guaranteed to load a settings file, so none must be written"
-  assert_absent "$state/$id.busy-gen" \
-    "a raw launch command must not arm a busy generation nothing can clear"
-  out=$(classify claude "$id" "$state")
-  [ "$out" = "unknown missing" ] \
-    || fail "raw-launch claude must classify unknown, never a permanently stuck busy, got '$out'"
-  pass "a raw-launch claude spawn declines the busy contract and classifies unknown"
 }
 
 test_codex_unverified_until_a_semantic_source_exists() {
@@ -401,6 +303,108 @@ test_codex_unverified_until_a_semantic_source_exists() {
   out=$(fm_busy_classify tmux fake:w codex "$id" "$state" '• Working (6s • esc to interrupt)')
   [ "$out" = "unknown codex-unverified" ] || fail "codex must not fall back to footer text, got '$out'"
   pass "codex classifies unknown until a semantic source is verified, never idle or footer-matched"
+}
+
+# Gemini's hooks are PROJECT hooks in the worktree's own .gemini/settings.json,
+# and gemini's hook contract requires each command to print a JSON object on
+# stdout and nothing else, so these drive the real command and check both the
+# classification and that stdout stays parseable JSON.
+run_gemini_hook() {  # <settings.json> <hook-event>
+  local cmd
+  cmd=$(jq -r ".hooks[\"$2\"][0].hooks[0].command" "$1")
+  [ -n "$cmd" ] && [ "$cmd" != null ] || fail "no $2 hook command in $1"
+  sh -c "$cmd"
+}
+
+test_gemini_hooks_semantic_lifecycle() {
+  local rec id=busy-gm-1 out state settings
+  rec=$(make_spawn_case gemini-lifecycle gemini "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
+  expect_code 0 $? "gemini spawn should succeed: $out"
+  state="$HOME_DIR/state"
+  settings="$state/$id.gemini-settings.json"
+  assert_present "$settings" "gemini spawn did not write hook settings"
+  jq -e . "$settings" >/dev/null || fail "gemini hook settings are not valid JSON"
+  for ev in BeforeAgent AfterAgent SessionEnd; do
+    jq -e ".hooks[\"$ev\"]" "$settings" >/dev/null || fail "gemini hook settings lack $ev"
+  done
+  # The worktree's own .gemini/settings.json is the PROJECT's committed file;
+  # firstmate must never write it, or a project's configuration is clobbered.
+  assert_absent "$WT_DIR/.gemini/settings.json" \
+    "gemini spawn must not write the project's own .gemini/settings.json"
+
+  out=$(classify gemini "$id" "$state")
+  [ "$out" = "busy fm-spawn" ] || fail "seed after spawn must be 'busy fm-spawn', got '$out'"
+
+  rm -f "$state/$id.turn-ended"
+  out=$(run_gemini_hook "$settings" AfterAgent) || fail "AfterAgent hook command failed"
+  printf '%s' "$out" | jq -e . >/dev/null \
+    || fail "AfterAgent must print only a JSON object on stdout, got '$out'"
+  [ -f "$state/$id.turn-ended" ] || fail "AfterAgent no longer touches the notification marker"
+  out=$(classify gemini "$id" "$state")
+  [ "$out" = "idle gemini-hook" ] || fail "AfterAgent must classify 'idle gemini-hook', got '$out'"
+
+  out=$(run_gemini_hook "$settings" BeforeAgent) || fail "BeforeAgent hook command failed"
+  printf '%s' "$out" | jq -e . >/dev/null \
+    || fail "BeforeAgent must print only a JSON object on stdout, got '$out'"
+  out=$(classify gemini "$id" "$state")
+  [ "$out" = "busy gemini-hook" ] || fail "BeforeAgent must classify 'busy gemini-hook', got '$out'"
+
+  # SessionEnd fires TWICE for one /quit on gemini-cli 0.58.0, so the second
+  # delivery must be a harmless no-op rather than a state change or a failure.
+  run_gemini_hook "$settings" SessionEnd >/dev/null || fail "SessionEnd hook command failed"
+  out=$(classify gemini "$id" "$state")
+  [ "$out" = "idle gemini-hook" ] || fail "SessionEnd must classify idle, got '$out'"
+  run_gemini_hook "$settings" SessionEnd >/dev/null || fail "a repeated SessionEnd must still exit 0"
+  out=$(classify gemini "$id" "$state")
+  [ "$out" = "idle gemini-hook" ] || fail "a repeated SessionEnd must stay idle, got '$out'"
+  pass "gemini hooks open on BeforeAgent and close on AfterAgent and a repeated SessionEnd"
+}
+
+test_gemini_hooks_stale_incarnation_harmless() {
+  local rec id=busy-gm-2 out state settings
+  rec=$(make_spawn_case gemini-stale gemini "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
+  expect_code 0 $? "gemini spawn should succeed: $out"
+  state="$HOME_DIR/state"
+  settings="$state/$id.gemini-settings.json"
+  "$ROOT/bin/fm-busy-event.sh" arm "$state" "$id" >/dev/null
+  run_gemini_hook "$settings" BeforeAgent >/dev/null \
+    || fail "a stale-gen hook must still exit 0 so gemini's lifecycle is never broken"
+  out=$(classify gemini "$id" "$state")
+  [ "$out" = "busy fm-spawn" ] || fail "a stale-gen hook event must not change state, got '$out'"
+  pass "gemini hook events from a superseded incarnation are rejected without breaking the hook"
+}
+
+test_raw_gemini_launch_has_no_semantic_wiring() {
+  local rec id=busy-gm-raw out state
+  rec=$(make_spawn_case gemini-raw gemini "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR" 'gemini --debug')
+  expect_code 0 $? "raw gemini spawn should succeed: $out"
+  state="$HOME_DIR/state"
+  assert_absent "$state/$id.busy-gen" "raw gemini launch must not arm a busy generation"
+  assert_absent "$state/$id.gemini-settings.json" "raw gemini launch must not write hook settings"
+  out=$(classify gemini "$id" "$state")
+  [ "$out" = "unknown missing" ] || fail "raw gemini launch must classify unknown, got '$out'"
+  pass "raw gemini launch remains unwired and classifies unknown"
+}
+
+test_gemini_is_refused_as_a_secondmate() {
+  local rec id=busy-gm-3 out
+  rec=$(make_spawn_case gemini-secondmate gemini "$id")
+  read_case_record "$rec"
+  # A secondmate spawn carries no delivery contract, so this one deliberately
+  # bypasses run_spawn's ship-only --mode/--yolo arguments.
+  out=$(GROK_HOME="$HOME_DIR/grok-home" \
+    fm_test_run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" --secondmate "$id" gemini) && {
+    fail "a gemini secondmate must be refused, it has no primary supervision protocol: $out"
+  }
+  assert_contains "$out" 'crewmate/scout adapter only' \
+    "refusing a gemini secondmate must name the crewmate/scout boundary: $out"
+  pass "gemini is refused as a secondmate because it has no primary supervision protocol"
 }
 
 test_kimi_and_grok_install_no_unverified_wiring() {
@@ -425,8 +429,10 @@ test_kimi_and_grok_install_no_unverified_wiring
 test_opencode_plugin_semantic_lifecycle
 test_claude_hooks_semantic_lifecycle
 test_claude_hooks_stale_incarnation_harmless
-test_claude_spawn_never_touches_the_projects_settings
-test_claude_raw_launch_arms_no_unclearable_busy
+test_gemini_hooks_semantic_lifecycle
+test_gemini_hooks_stale_incarnation_harmless
+test_raw_gemini_launch_has_no_semantic_wiring
+test_gemini_is_refused_as_a_secondmate
 test_codex_unverified_until_a_semantic_source_exists
 
 echo "all fm-busy-adapter-wiring tests passed"

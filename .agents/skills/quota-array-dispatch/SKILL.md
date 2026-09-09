@@ -3,10 +3,8 @@ name: quota-array-dispatch
 description: >-
   Agent-only decision procedure for resolving a matched crew-dispatch profile
   array from quota-axi's default TOON, ranking by spendPriority after three
-  orthogonal gates, and for discounting a shaped Claude credential store's
-  headroom by its committed parked demand.
-  Load when a dispatch rule or default resolves to more than one profile candidate,
-  and before treating a store listed in config/claude-shaped-store as having headroom.
+  orthogonal gates.
+  Load when a dispatch rule or default resolves to more than one profile candidate.
 user-invocable: false
 metadata:
   internal: true
@@ -20,6 +18,21 @@ This skill is the single owner of the completion-aware profile-array selection p
 `quota-axi` remains data-only: it publishes `spendPriority` as a comparable scalar and never recommends, selects, ranks, or infers a route.
 Do not add a daemon, opaque composite score, routing wrapper, hard-coded model-specific policy, or producer-side route recommendation.
 Deterministic shell owns only schema, configuration, and version validation plus concrete spawn safeguards; every model-to-provider, provider-to-credential, and quota-applicability relation is yours to establish transparently and to show your evidence for.
+
+## Worker-side quota helper
+
+The canonical shell helper for a worker that has already performed its model-selection reasoning and now needs to pick the first viable candidate is `bin/fm-quota-choose.sh`.
+Pass it the intake's already-captured default TOON or permitted JSON fallback through stdin or `--snapshot`; it never takes another quota snapshot, so it selects from the same quota state as the intake.
+Pass each candidate as `harness:model`, with earlier candidates preferred.
+The helper maps each harness to its primary provider family and applies the provider-wide scopes plus the exact model or product scopes for the model.
+An `exhausted_now` runway vetoes the candidate.
+The helper selects a candidate only when its applicable quota has a known `effectivePercentRemaining` greater than zero.
+This is an optional narrow helper with a known limitation: it maps each harness to one primary provider family only, so a candidate whose established provider differs from that primary family is checked against the wrong quota row.
+omp has no primary family, so the helper keys an `omp:` candidate on its model prefix, mapping only `openai-codex/` and `claude-bridge/` and refusing every other prefix; the helper's header owns that mapping.
+Authoritative multi-provider routing - including provider discovery from the harness catalog and quota matching by that explicit provider - stays owned by this skill's intake procedure above and AGENTS.md section 4, not by the helper.
+Use it only when the brief already fixed the candidate order and every candidate's provider is the harness's primary family.
+It does not replace the reasoning-class, runway-feasibility, or authentication gates above.
+Firstmate can optionally arm `bin/fm-procevent-quota.sh` for a recurring mid-task check that wakes when the tracked provider drops below its configured threshold or its runway becomes `exhausted_now`.
 
 ## Read the default TOON
 
@@ -39,22 +52,6 @@ Below-floor is rare: bootstrap enforces `FM_QUOTA_AXI_MIN` and normally reports 
 Read `quota-axi auth --json` only when a candidate's credential surface is in question.
 
 For each candidate, preserve explicit `harness`, `model`, and `provider`; `harness-adapters` owns identity, and model/provider never infer harness.
-
-## Committed demand on a shaped Claude credential store
-
-`quota-axi` reports point-in-time headroom, and at a subscription window's reset instant that reading is at its most misleading: every Claude Code session holding the vendor's own auto-continue timer for that edge is one second from firing, and none of them has spent anything yet.
-A home can declare which Claude credential stores carry that hazard in `config/claude-shaped-store`.
-When a `harness=claude` candidate's store is listed there, read `bin/fm-claude-admission.sh demand` once alongside the intake TOON and discount that candidate's headroom and ranking by what it reports.
-
-Keep the two readings distinct and both visible in the rationale.
-`quota-axi`'s `effectivePercentRemaining` and `spendPriority` stay exactly what the producer published; the census is a separate subtrahend you apply in the open, never folded back into the published scalar and never used to rewrite it.
-`parkedSessions` is the count of live parked sessions, and `floorInputTokens` is their measured floor: one resumed turn each, at each session's own observed average billable input tokens per turn.
-It is a floor, not a forecast - a resumed session runs a burst of turns, not one - so treat a candidate whose remaining window is close to that floor as already committed rather than free, and say so.
-
-This applies only to a store the home actually lists.
-An unlisted store, including the default personal one, has no census to read and no discount to apply, and a Claude candidate on it is ranked from `quota-axi` alone exactly as before.
-The census is evidence, never a route: it can lower a shaped candidate's standing, and it never selects, blocks a candidate on its own, or authorizes pausing authorized work.
-An unreadable census is disclosed uncertainty for the ranking, the same as any other unmeasurable fact, and the script's own refusal is what stops a launch.
 
 ## Three gates, then spendPriority
 

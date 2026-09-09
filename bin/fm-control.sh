@@ -5,7 +5,7 @@
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
-#                                         [--effort <level>] [--priority <1-99>]
+#                                         [--effort <level>]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -34,20 +34,18 @@
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME endpoint and SAME worktree, on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
-#              of this verb. With no explicit axis, a secondmate re-resolves its
-#              durable config/secondmate-harness pin (harness plus its optional
-#              model and effort tokens) exactly as any other respawn does, while
-#              a ship or scout keeps the exact adapter already recorded for it.
+#              of this verb. An explicit `default` model or effort clears that
+#              axis for the replacement. With no explicit axis, a secondmate
+#              re-resolves its durable config/secondmate-harness pin (harness
+#              plus its optional model and effort tokens) exactly as any other
+#              respawn does, while a ship or scout keeps the exact adapter
+#              already recorded for it.
 #              A prefixed raw-command basename cannot reconstruct its launch
 #              command, so relaunch requires an explicit --harness for it.
 #              --note is required for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
-#              standing charter is never rewritten. --priority sets this task's
-#              release order on a shaped Claude credential store (lower goes
-#              first); bin/fm-claude-admission.sh owns that decision and is
-#              consulted before the running agent is touched, so a launch that
-#              is not released yet refuses with nothing changed.
+#              standing charter is never rewritten.
 #              Records a durable checkpoint and that note, exits the old agent,
 #              then delegates the launch to its single owner,
 #              bin/fm-spawn.sh --relaunch. A failure before publication keeps
@@ -67,12 +65,10 @@
 #
 # Targeting is EXACT: only a bare task id with a state/<id>.meta record in
 # THIS home is accepted, and the record must pass the shared endpoint-identity
-# validation (bin/fm-backend.sh's fm_backend_resolve_task_endpoint). A legacy
+# validation (bin/fm-backend.sh's fm_backend_validate_task_endpoint). A legacy
 # fm-<id> label, an explicit session:window endpoint, and a bare window name
 # are all refused - a lifecycle command delivered to the wrong endpoint is far
-# worse than a loud refusal. A record predating the endpoint_task_id binding is
-# not refused outright: its identity is re-derived from the live endpoint's own
-# fm-<id> label and recorded, and only an unprovable one is refused.
+# worse than a loud refusal.
 #
 # A remotely placed secondmate is refused by name: its agent runs on another
 # host, so no postcondition this plane verifies could be read for it here.
@@ -119,22 +115,10 @@ if [ -z "${FM_HOME+x}" ] || [ -z "${FM_HOME:-}" ]; then
   echo "error: FM_HOME is not set; fm-control refuses to resolve a task without an explicit firstmate home" >&2
   exit 1
 fi
-
 [ -d "$FM_HOME" ] || {
   echo "error: FM_HOME '$FM_HOME' is not a directory" >&2
   exit 1
 }
-
-# Fail closed before any fleet action: this home is pinned to the session and
-# Claude account it was started from, and a session that does not match is
-# refused rather than allowed to drive another home's work
-# (bin/fm-home-identity.sh). A home with no pin yet is pinned here from the
-# session using it, which is its originating one; a pin that exists is only ever
-# compared, never rewritten, so no path can move a home between accounts.
-if ! FM_HOME_IDENTITY_OUT=$("$SCRIPT_DIR/fm-home-identity.sh" ensure 2>&1); then
-  printf '%s\n' "$FM_HOME_IDENTITY_OUT" >&2
-  exit 1
-fi
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 [ -d "$STATE" ] || {
@@ -166,8 +150,6 @@ die() {  # <message>
 
 CONTROL_LOCK=
 CONTROL_LOCK_HELD=0
-CONTROL_META_LOCK=
-CONTROL_META_LOCK_HELD=0
 RELAUNCH_ACTIVE=0
 RELAUNCH_PHASE=start
 
@@ -177,13 +159,12 @@ control_cleanup() {
      && declare -F relaunch_rollback >/dev/null 2>&1; then
     relaunch_rollback || true
   fi
-  if [ "$CONTROL_META_LOCK_HELD" = 1 ]; then
-    CONTROL_META_LOCK_HELD=0
-    fm_lock_release "$CONTROL_META_LOCK" || true
-  fi
   if [ "$CONTROL_LOCK_HELD" = 1 ]; then
     CONTROL_LOCK_HELD=0
     fm_lock_release "$CONTROL_LOCK" || true
+  fi
+  if declare -F fm_lease_guard_release >/dev/null 2>&1; then
+    fm_lease_guard_release || true
   fi
   return "$status"
 }
@@ -216,68 +197,59 @@ MODEL_SET=0
 EFFORT_SET=0
 NOTE=
 NOTE_SET=0
-PRIORITY=
-PRIORITY_SET=0
-want_value=
-for a in "$@"; do
-  if [ -n "$want_value" ]; then
-    case "$a" in
-      --*) die "--$want_value requires a value" ;;
+control_want_value=
+for control_arg in "$@"; do
+  if [ -n "$control_want_value" ]; then
+    case "$control_arg" in
+      --*) die "--$control_want_value requires a value" ;;
     esac
-    case "$want_value" in
-      harness) NEW_HARNESS=$a; HARNESS_SET=1 ;;
-      model) NEW_MODEL=$a; MODEL_SET=1 ;;
-      effort) NEW_EFFORT=$a; EFFORT_SET=1 ;;
-      priority) PRIORITY=$a; PRIORITY_SET=1 ;;
-      note) NOTE=$a; NOTE_SET=1 ;;
-      note-file)
-        [ -f "$a" ] || die "--note-file '$a' is not a readable file"
-        NOTE=$(cat "$a")
+    case "$control_want_value" in
+      harness) NEW_HARNESS=$control_arg; HARNESS_SET=1 ;;
+      model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
+      effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
+      note) NOTE=$control_arg; NOTE_SET=1 ;;
+      note_file)
+        [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
+        NOTE=$(cat "$control_arg")
         NOTE_SET=1
         ;;
     esac
-    want_value=
+    control_want_value=
     continue
   fi
-  case "$a" in
-    --harness) want_value=harness ;;
-    --harness=*) NEW_HARNESS=${a#--harness=}; HARNESS_SET=1 ;;
-    --model) want_value=model ;;
-    --model=*) NEW_MODEL=${a#--model=}; MODEL_SET=1 ;;
-    --effort) want_value=effort ;;
-    --effort=*) NEW_EFFORT=${a#--effort=}; EFFORT_SET=1 ;;
-    --priority) want_value=priority ;;
-    --priority=*) PRIORITY=${a#--priority=}; PRIORITY_SET=1 ;;
-    --note) want_value=note ;;
-    --note=*) NOTE=${a#--note=}; NOTE_SET=1 ;;
-    --note-file) want_value=note-file ;;
+  case "$control_arg" in
+    --harness) control_want_value=harness ;;
+    --harness=*) NEW_HARNESS=${control_arg#--harness=}; HARNESS_SET=1 ;;
+    --model) control_want_value=model ;;
+    --model=*) NEW_MODEL=${control_arg#--model=}; MODEL_SET=1 ;;
+    --effort) control_want_value=effort ;;
+    --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
+    --note) control_want_value=note ;;
+    --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
+    --note-file) control_want_value=note_file ;;
     --note-file=*)
-      [ -f "${a#--note-file=}" ] || die "--note-file '${a#--note-file=}' is not a readable file"
-      NOTE=$(cat "${a#--note-file=}")
+      [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"
+      NOTE=$(cat "${control_arg#--note-file=}")
       NOTE_SET=1
       ;;
-    *) die "unexpected argument '$a'" ;;
+    *) die "unexpected argument '$control_arg'" ;;
   esac
 done
-[ -z "$want_value" ] || die "--$want_value requires a value"
+if [ -n "$control_want_value" ]; then
+  [ "$control_want_value" = note_file ] && die "--note-file requires a value"
+  die "--$control_want_value requires a value"
+fi
 
 if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    && [ "$PRIORITY_SET" = 0 ] \
-    || die "--harness, --model, --effort, --priority, and --note apply to 'relaunch' only"
-fi
-if [ "$PRIORITY_SET" = 1 ]; then
-  case "$PRIORITY" in
-    ''|*[!0-9]*) die "--priority must be a whole number from 1 to 99" ;;
-  esac
-  { [ "$PRIORITY" -ge 1 ] && [ "$PRIORITY" -le 99 ]; } || die "--priority must be a whole number from 1 to 99"
+    || die "--harness, --model, --effort, and --note apply to 'relaunch' only"
 fi
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
 case "$NEW_EFFORT" in
-  ''|low|medium|high|xhigh|max) ;;
-  *) die "--effort must be one of low, medium, high, xhigh, max" ;;
+  ''|default|low|medium|high|xhigh|max|ultra) ;;
+  *) die "--effort must be one of default, low, medium, high, xhigh, max, ultra" ;;
 esac
 
 # --- exact task-id resolution ----------------------------------------------
@@ -289,6 +261,12 @@ if ! fm_task_id_creation_valid "$RAW_ID"; then
   die "'$RAW_ID' is not a valid task id"
 fi
 ID=$RAW_ID
+# Supervision lease guard: lifecycle control is overlap territory between the
+# two Pi supervision actors; refuse while the OTHER actor holds this task's
+# live lease (contract: bin/fm-lease-lib.sh; no-op in homes without leases).
+# shellcheck source=bin/fm-lease-lib.sh
+. "$SCRIPT_DIR/fm-lease-lib.sh"
+fm_lease_guard "$ID" "lifecycle control (fm-control)"
 CONTROL_LOCK="$STATE/.control-$ID.lock"
 trap control_cleanup EXIT
 fm_lock_try_acquire "$CONTROL_LOCK" \
@@ -319,22 +297,7 @@ if [ -n "$(fm_meta_get "$META" remote_host)" ]; then
   die "task $ID is a remotely placed secondmate on $(fm_meta_get "$META" remote_host); its agent runs outside this home, so no lifecycle action here could verify that it interrupted, stopped, or came back. Drive its lifecycle on that host, and reconcile it through the secondmate recovery path rather than this plane"
 fi
 
-# fm_backend_resolve_task_endpoint, not the bare offline validator: a record
-# written before endpoint_task_id existed carries no offline proof that its
-# opaque Herdr/Zellij/cmux endpoint is this task's, and refusing it outright
-# left an operator with no supported lifecycle action for a live agent at all -
-# only a hand-rolled kill. The resolver re-derives that binding from the live
-# endpoint's own fm-<id> label and records it, so this and every later call take
-# the ordinary offline path. It still refuses whenever the label cannot be
-# proven, and every other refusal is unchanged.
-CONTROL_META_LOCK=$(fm_meta_lock_path "$META") || exit 1
-fm_lock_acquire_wait "$CONTROL_META_LOCK"
-CONTROL_META_LOCK_HELD=1
-CONTROL_RESOLVE_RC=0
-fm_backend_resolve_task_endpoint "$META" "$ID" || CONTROL_RESOLVE_RC=$?
-fm_lock_release "$CONTROL_META_LOCK"
-CONTROL_META_LOCK_HELD=0
-[ "$CONTROL_RESOLVE_RC" -eq 0 ] || exit 1
+fm_backend_validate_task_endpoint "$META" "$ID" || exit 1
 BACKEND=$FM_BACKEND_VALIDATED_BACKEND
 T=$FM_BACKEND_VALIDATED_TARGET
 LABEL="fm-$ID"
@@ -674,9 +637,9 @@ resolve_relaunch_profile() {
     CONFIG_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
     CONFIG_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort 2>/dev/null || true)
     case "$CONFIG_EFFORT" in
-      ''|low|medium|high|xhigh|max) ;;
+      ''|low|medium|high|xhigh|max|ultra) ;;
       *)
-        echo "warning: config/secondmate-harness effort token '$CONFIG_EFFORT' is not one of low, medium, high, xhigh, max; ignoring" >&2
+        echo "warning: config/secondmate-harness effort token '$CONFIG_EFFORT' is not one of low, medium, high, xhigh, max, ultra; ignoring" >&2
         CONFIG_EFFORT=
         ;;
     esac
@@ -718,6 +681,9 @@ resolve_relaunch_profile() {
     TARGET_EFFORT=$PRIOR_EFFORT
   else
     TARGET_EFFORT=default
+  fi
+  if [ "$TARGET_EFFORT" = ultra ]; then
+    "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
   fi
 }
 
@@ -809,6 +775,10 @@ record_note() {
         echo "This task was relaunched. Continue from here; the local copy and every"
         echo "uncommitted change are exactly as the previous worker left them."
         echo
+        echo "First, check your instruction inbox: list $STATE/$ID.inbox/*.msg, act on"
+        echo "each message in numeric order, then mv each handled file into"
+        echo "$STATE/$ID.inbox/handled/. A steer sent before the relaunch survives there."
+        echo
         printf '%s\n' "$NOTE"
       } >> "$RELAUNCH_BRIEF" \
         || die "could not append the progress note to task $ID's instructions"
@@ -817,8 +787,8 @@ record_note() {
 }
 
 do_relaunch() {
-  local exit_result state note_line admission_out admission_store
-  local -a spawn_args admission_args
+  local exit_result state note_line
+  local -a spawn_args
 
   require_state_verified_backend relaunch
   resolve_relaunch_profile
@@ -846,24 +816,6 @@ do_relaunch() {
   else
     note_line="note=none"
   fi
-  # Release shaping is consulted BEFORE anything is stopped. fm-spawn.sh runs the
-  # consuming decision at the end of this sequence, but by then the old agent is
-  # already gone, so a withheld launch there would leave the task with no worker
-  # for the length of a release interval. This preview mutates nothing and takes
-  # no slot; it only refuses early, while the running agent is still untouched.
-  if [ "$TARGET_HARNESS" = claude ]; then
-    admission_args=("$ID")
-    [ "$PRIORITY_SET" = 0 ] || admission_args+=(--priority "$PRIORITY")
-    # The task's OWN recorded credential binding, never this session's ambient
-    # one: the release decision must be about the account the task will actually
-    # relaunch onto (bin/fm-spawn.sh owns that binding).
-    admission_store=$(fm_meta_get "$META" claude_config_dir) || admission_store=
-    [ -z "$admission_store" ] || admission_args+=(--store "$admission_store")
-    if ! admission_out=$("$SCRIPT_DIR/fm-claude-admission.sh" check "${admission_args[@]}" 2>&1); then
-      printf '%s\n' "$admission_out" >&2
-      die "relaunch of $ID is not released onto its Claude credential store yet; the running agent was left untouched and nothing changed"
-    fi
-  fi
   safe_checkpoint
   cp -p "$META" "$META_PRIOR" || die "could not preserve task $ID's durable record before relaunching"
   RELAUNCH_ACTIVE=1
@@ -883,7 +835,6 @@ do_relaunch() {
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
-  [ "$PRIORITY_SET" = 0 ] || spawn_args+=(--priority "$PRIORITY")
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1

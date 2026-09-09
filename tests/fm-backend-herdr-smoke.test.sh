@@ -67,6 +67,18 @@ esac
 [ -n "$SEEDED_TAB_ID" ] || fail "the first container_ensure in a brand-new isolated session must CREATE the workspace and report its seeded default tab id"
 pass "real herdr: container_ensure starts the isolated session's server, creates the firstmate workspace ($CONTAINER), and reports its seeded default tab id ($SEEDED_TAB_ID)"
 
+# --- client selection: the real status shape the selection reads ------------
+# bin/backends/herdr.sh "client selection" steps around a client the running
+# server refuses by reading .server.running/.server.compatible per session; a
+# fixture can only restate that shape, so prove the installed binary against
+# its own running lab server normalizes to running and compatible with equal
+# protocols.
+CLIENT_STATUS=$(fm_backend_herdr_client_status "$(command -v herdr)" "$SESSION")
+IFS='|' read -r CS_RUNNING CS_COMPATIBLE <<< "$CLIENT_STATUS"
+[ "$CS_RUNNING" = true ] || fail "real herdr: status for the running lab server normalized running=$CS_RUNNING (raw: $CLIENT_STATUS)"
+[ "$CS_COMPATIBLE" = true ] || fail "real herdr: the installed client normalized compatible=$CS_COMPATIBLE against its own server (raw: $CLIENT_STATUS)"
+pass "real herdr: session status normalizes running and compatible"
+
 # A second container_ensure must reuse (ADOPT) the same workspace (idempotent)
 # and report an EMPTY seeded tab id - the created-vs-adopted gate that fixes
 # the 2026-07-02 self-kill incident (docs/herdr-backend.md "Default-tab
@@ -100,26 +112,6 @@ POST_CREATE_COUNT=$(printf '%s' "$POST_CREATE_TABS" | jq -r '.result.tabs? // []
 printf '%s' "$POST_CREATE_TABS" | jq -e --arg t "$SEEDED_TAB_ID" '.result.tabs[] | select(.tab_id == $t)' >/dev/null 2>&1 \
   && fail "the seeded default tab ($SEEDED_TAB_ID) should have been pruned but is still present: $POST_CREATE_TABS"
 pass "real herdr: create_task prunes the freshly-created workspace's seeded default tab, leaving exactly one clean fm-<id> task tab"
-
-# --- endpoint label proof (legacy-record identity re-derivation) --------------
-#
-# fm_backend_endpoint_label_provable's whole value is that it reads a REAL
-# herdr server, so a canned fixture can only ever confirm the shape this test
-# assumes. Prove the chain against the live binary: the recorded pane must sit
-# in the recorded workspace, report the recorded tab as its owner, and that tab
-# must uniquely carry the fm-<id> label. Then break each link in turn.
-WSID=${CONTAINER#*:}
-fm_backend_herdr_tab_matches_label "$SESSION" "$WSID" "$TAB_ID" "$PANE_ID" "$LABEL" \
-  || fail "the live endpoint chain for $LABEL should prove its own label"
-fm_backend_herdr_tab_matches_label "$SESSION" "$WSID" "$TAB_ID" "$PANE_ID" "fm-not-this-task" \
-  && fail "a label the live tab does not carry must not be provable"
-fm_backend_herdr_tab_matches_label "$SESSION" "$WSID" "$TAB_ID" "no-such-pane" "$LABEL" \
-  && fail "a pane absent from the recorded workspace must not be provable"
-fm_backend_herdr_tab_matches_label "$SESSION" "$WSID" "no-such-tab" "$PANE_ID" "$LABEL" \
-  && fail "a pane whose owning tab is not the recorded one must not be provable"
-fm_backend_herdr_tab_matches_label "$SESSION" "no-such-workspace" "$TAB_ID" "$PANE_ID" "$LABEL" \
-  && fail "a workspace that does not exist must not be provable"
-pass "real herdr: the endpoint label proof accepts the exact recorded workspace/pane/tab/label chain and refuses every broken link"
 
 # NOTE: create_task no longer refuses EVERY same-labeled duplicate
 # unconditionally - a same-labeled tab whose pane hosts no registered agent is
@@ -308,7 +300,7 @@ pass "real herdr: current_path reads the pane's live cwd"
 # --- busy_state on a real claude harness (verified in herdr-verification-p2.md) ---
 
 if [ "${FM_HERDR_SMOKE_REAL_CLAUDE:-0}" = 1 ] && command -v claude >/dev/null 2>&1; then
-  fm_backend_herdr_send_literal "$TARGET" "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --print 'say the word HERDRSMOKEOK and nothing else'"
+  fm_backend_herdr_send_literal "$TARGET" "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\"}' --print 'say the word HERDRSMOKEOK and nothing else'"
   sleep 0.2
   fm_backend_herdr_send_key "$TARGET" Enter
   found_working=0

@@ -44,7 +44,7 @@ SH
   cat > "$fakebin/no-mistakes" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' 'no-mistakes version v1.31.2 (fake)'
+  printf '%s\n' 'no-mistakes version v1.46.0 (fake)'
 fi
 SH
   cat > "$fakebin/tasks-axi" <<'SH'
@@ -62,6 +62,7 @@ case "$*" in
   *display-message*'#{pane_current_command}'*) printf '%s\n' codex ;;
   *display-message*'#{pane_id}'*) printf '%s\n' '%1' ;;
   *display-message*'#{cursor_y}'*) printf '%s\n' 0 ;;
+  *list-windows*) printf '%s\n' fm-sm ;;
   *capture-pane*) printf '❯\n' ;;
 esac
 exit 0
@@ -93,7 +94,7 @@ run_bootstrap() {
 }
 
 test_primary_bootstrap_materializes_visible_default() {
-  local rec root home fakebin out second linked linked_config
+  local rec root home fakebin out second
   rec=$(new_bootstrap_world materialize)
   root=${rec%%|*}
   home=${rec#*|}
@@ -110,19 +111,6 @@ test_primary_bootstrap_materializes_visible_default() {
   run_bootstrap "$root" "$home" "$fakebin" >/dev/null
   [ "$(<"$home/config/startup-memory-budget")" = 321 ] \
     || fail "bootstrap replaced a valid captain-selected budget"
-
-  linked="$TMP_ROOT/materialize/linked-home"
-  linked_config="$TMP_ROOT/materialize/linked-config"
-  mkdir -p "$linked/data" "$linked/state" "$linked_config"
-  ln -s "$linked_config" "$linked/config"
-  out=$(run_bootstrap "$root" "$linked" "$fakebin")
-  case "$out" in
-    *STARTUP_MEMORY_BUDGET:*) fail "bootstrap rejected a symlinked config directory: $out" ;;
-  esac
-  [ "$(<"$linked_config/startup-memory-budget")" = 7500 ] \
-    || fail "bootstrap did not materialize the default through a symlinked config directory"
-  [ "$(FM_HOME="$linked" "$BUDGET" read)" = 7500 ] \
-    || fail "read command did not expose the default published through a symlinked config directory"
 
   second="$TMP_ROOT/materialize/secondmate"
   mkdir -p "$second/config" "$second/data" "$second/state"
@@ -171,23 +159,10 @@ test_safe_parser_rejects_ambiguous_and_unsafe_values() {
 
   rm -f "$home/config/startup-memory-budget"
   rm -rf "$home/config"
+  ln -s "$TMP_ROOT/parser-config-target" "$home/config"
   mkdir -p "$TMP_ROOT/parser-config-target"
   printf '88\n' > "$TMP_ROOT/parser-config-target/startup-memory-budget"
-  ln -s "$TMP_ROOT/parser-config-target" "$home/config"
-  [ "$(FM_HOME="$home" "$BUDGET" read)" = 88 ] || fail "a symlinked config directory was not resolved through"
-
-  rm -f "$home/config/startup-memory-budget"
-  ln -s "$outside" "$TMP_ROOT/parser-config-target/startup-memory-budget"
-  expect_rejected_read "$home" 'file is symlinked'
-
-  rm -f "$home/config"
-  ln -s "$TMP_ROOT/parser-config-missing" "$home/config"
-  expect_rejected_read "$home" 'config directory is not a directory'
-
-  rm -f "$home/config"
-  printf '99\n' > "$TMP_ROOT/parser-config-file"
-  ln -s "$TMP_ROOT/parser-config-file" "$home/config"
-  expect_rejected_read "$home" 'config directory is not a directory'
+  expect_rejected_read "$home" 'config directory is symlinked'
   pass "budget parser accepts one exact positive value and rejects malformed or unsafe inputs"
 }
 
@@ -266,6 +241,10 @@ latest_reread_instruction() {
   printf '%s\n' "$latest"
 }
 
+inbox_record_body() {  # <record>
+  bash -c '. "$1"; fm_task_inbox_body "$2"' _ "$ROOT/bin/fm-task-inbox-lib.sh" "$1"
+}
+
 run_config_push() {
   local root=$1 home=$2 fakebin=$3 log=$4
   PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_SEND_SETTLE=0 \
@@ -297,8 +276,12 @@ test_primary_budget_converges_with_exact_reread_and_safe_failures() {
     '-----END config/startup-memory-budget-----')
   [ "$(<"$instruction")" = "$expected" ] \
     || fail "budget reread payload was not the exact destination bytes"
-  assert_contains "$(<"$log")" "CONFIG_REREAD: $instruction" \
-    "budget propagation did not send the pointer to its exact reread generation"
+  assert_contains "$(inbox_record_body "$home/state/sm.inbox/001.msg")" "CONFIG_REREAD: $instruction" \
+    "budget propagation did not enqueue the pointer to its exact reread generation"
+  assert_contains "$(<"$log")" "Firstmate instruction waiting: list " \
+    "budget propagation did not ring the durable inbox doorbell"
+  assert_contains "$(<"$log")" "/state/sm.inbox'/*.msg" \
+    "budget propagation doorbell did not identify the durable inbox"
 
   outside="$world/unsafe-budget"
   printf '555\n' > "$outside"
