@@ -11,6 +11,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 IDENTITY="$ROOT/bin/fm-home-identity.sh"
 SPAWN="$ROOT/bin/fm-spawn.sh"
@@ -139,7 +141,8 @@ gate_case() {
   new_home "$home" >/dev/null
   mkdir -p "$home/data/$id"
   printf 'claude\n' > "$home/config/crew-harness"
-  printf 'Delivery contract: mode=no-mistakes\nbrief for %s\n' "$id" > "$home/data/$id/brief.md"
+  fm_test_spawn_brief "$home" "$id"
+  printf 'Delivery contract: mode=no-mistakes\n' >> "$home/data/$id/brief.md"
   fm_git_worktree "$proj" "$wt" "wt-$name"
   touch "$home/state/.last-watcher-beat"
   printf '%s|%s|%s|%s|%s\n' "$home" "$proj" "$wt" "$fakebin" "$launchlog"

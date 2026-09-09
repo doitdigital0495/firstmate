@@ -11,6 +11,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 ADMISSION="$ROOT/bin/fm-claude-admission.sh"
 SPAWN="$ROOT/bin/fm-spawn.sh"
@@ -782,7 +784,8 @@ spawn_case() {
   touch "$home/state/.last-watcher-beat"
   for id in "$@"; do
     mkdir -p "$home/data/$id"
-    printf 'Delivery contract: mode=no-mistakes\nbrief for %s\n' "$id" > "$home/data/$id/brief.md"
+    fm_test_spawn_brief "$home" "$id"
+    printf 'Delivery contract: mode=no-mistakes\n' >> "$home/data/$id/brief.md"
   done
   printf '%s|%s|%s|%s|%s\n' "$home" "$wt" "$fakebin" "$launchlog" "$proj"
 }
