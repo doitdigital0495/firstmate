@@ -2330,12 +2330,17 @@ DELIVERY_PERMIT_RE='then[[:space:]]+((open|raise|create|file|submit)[^.;]{0,12}(
 # its own variable rather than a pipeline, because a pipeline reports only its
 # last stage's status: a sed that cannot run prints nothing, grep then exits 1 on
 # the empty input, and the failure reads as agreement.
-# Only the task text firstmate fills in is read. The generated Rules and
-# Definition of done carry their own prohibitions ("Never push to the default
-# branch", "Never merge a PR") that bound HOW the mandate is carried out rather
-# than refusing it. A force-push ban and a default-branch qualifier are the same
-# kind of bound, so both are stripped before matching and read the same way in
-# the task text as they do in the generated sections.
+# Only the brief's own "# Task" block is read, and all of it: the awk below stops
+# at the next TOP-level heading, so the block spans "## Captain's intent" and
+# "## Firstmate spec" alike. That is deliberate. The split records who authored
+# an instruction, not whether the worker must follow it, and a prohibition in
+# either subsection contradicts the mandated delivery just as hard.
+# The generated Rules and Definition of done carry their own prohibitions
+# ("Never push to the default branch", "Never merge a PR") that bound HOW the
+# mandate is carried out rather than refusing it, and stay outside the block. A
+# force-push ban and a default-branch qualifier are the same kind of bound, so
+# both are stripped before matching and read the same way inside the task block
+# as they do in the generated sections.
 brief_task_forbids_delivery() {  # <brief-file>
   local task lc bounded permitted line n hits st=0
   task=$(awk '/^# Task[ \t]*$/ { t = 1; next } /^# / { t = 0 } t' "$1") \

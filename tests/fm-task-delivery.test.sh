@@ -159,17 +159,21 @@ EOF
 
 # Scaffold a real ship brief through fm-brief.sh and fill its {TASK} placeholder,
 # so the case runs against the definition of done a worker is actually handed.
-scaffold_brief() {  # <home> <id> <mode> <task-text>
-  local home=$1 id=$2 mode=$3 task=$4 brief tmp
+scaffold_brief() {  # <home> <id> <mode> <task-text> [<firstmate-spec-text>]
+  local home=$1 id=$2 mode=$3 task=$4 spec=${5:-Build it and verify it in the running app.} brief tmp
   brief="$home/data/$id/brief.md"
   rm -rf "$home/data/$id"
   FM_ROOT_OVERRIDE='' FM_HOME="$home" FM_DATA_OVERRIDE="$home/data" FM_STATE_OVERRIDE="$home/state" \
     "$BRIEF_SCAFFOLD" "$id" proj --mode "$mode" >/dev/null \
     || fail "scaffolding a $mode brief for $id failed"
   tmp="$brief.filled"
-  awk -v repl="$task" '$0 == "{TASK}" { print repl; next } { print }' "$brief" > "$tmp"
+  awk -v task="$task" -v spec="$spec" '
+    $0 == "{TASK}" { print task; next }
+    $0 == "{FIRSTMATE_SPEC}" { print spec; next }
+    { print }
+  ' "$brief" > "$tmp"
   mv "$tmp" "$brief"
-  grep -q '{TASK}' "$brief" && fail "$id: the task placeholder was never filled"
+  grep -qE '\{TASK\}|\{FIRSTMATE_SPEC\}' "$brief" && fail "$id: a task subsection placeholder was never filled"
   printf '%s\n' "$brief"
 }
 
@@ -274,6 +278,46 @@ a PR routed at a specific target|direct-PR|Do not open a PR against upstream; op
 a ban scoped to a PR-related file|direct-PR|- Do not create a PR template file.|launch|
 ROWS
   pass "fm-spawn: a push mode refuses a brief whose task text forbids the push or the PR"
+}
+
+# The "# Task" block splits into "## Captain's intent" and "## Firstmate spec",
+# which records who authored an instruction rather than whether the worker must
+# follow it. The worker follows both, so a prohibition in either subsection
+# contradicts a push mode's mandated delivery just as hard, and the classifier
+# reads the whole block. Pin both halves: the same prohibition refuses from the
+# spec, and a spec that carries no prohibition still launches, so the row cannot
+# pass by refusing everything.
+test_delivery_refusal_reads_both_task_subsections() {
+  local rec home proj fakebin out status
+  rec=$(make_home contradiction-subsections)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  printf '#!/bin/sh\necho DELIVERY_CHECKS_CLEARED >&2\nexit 1\n' > "$fakebin/tmux"
+  chmod +x "$fakebin/tmux"
+
+  scaffold_brief "$home" delivery-spec-ban direct-PR \
+    "Add the export button and verify it in the running app." \
+    "- Do NOT push and do NOT open a PR. The captain approves that himself after his own QA." >/dev/null
+  out=$(run_spawn "$home" "$fakebin" delivery-spec-ban "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a prohibition in the Firstmate spec should refuse a push mode"
+  assert_contains "$out" "contradictory brief for delivery-spec-ban" \
+    "the refusal did not name the task whose spec forbids the delivery"
+  assert_contains "$out" "Do NOT push and do NOT open a PR" \
+    "the refusal did not quote the spec line it read as forbidding delivery"
+  assert_absent "$home/state/delivery-spec-ban.meta" "a refused spawn wrote task metadata"
+  assert_not_contains "$out" "DELIVERY_CHECKS_CLEARED" "a refused spawn still reached the backend"
+
+  scaffold_brief "$home" delivery-spec-ok direct-PR \
+    "Add the export button and verify it in the running app." \
+    "- Build it behind the existing feature flag and cover it with a regression." >/dev/null
+  out=$(run_spawn "$home" "$fakebin" delivery-spec-ok "$proj" claude --mode direct-PR --yolo off)
+  assert_not_contains "$out" "contradictory brief" "a spec that forbids nothing was read as a contradiction"
+  assert_contains "$out" "DELIVERY_CHECKS_CLEARED" \
+    "the spawn never reached the backend, so the row proves nothing"
+
+  pass "fm-spawn: the delivery-refusal classifier reads the whole Task block, Captain's intent and Firstmate spec alike"
 }
 
 # A safety classifier must fail closed at every stage. A failure anywhere in the
@@ -997,6 +1041,7 @@ test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
 test_spawn_refuses_a_brief_that_contradicts_its_own_delivery
+test_delivery_refusal_reads_both_task_subsections
 test_spawn_refuses_when_the_delivery_matcher_cannot_run
 test_generated_definitions_of_done_keep_their_stop_points
 test_spawn_notices_a_rigor_downgrade_against_the_registry
