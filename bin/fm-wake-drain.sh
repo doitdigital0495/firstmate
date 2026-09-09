@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Present durable watcher wake records, retire rows no actor could ever consume,
+# Present durable watcher wake records, retire rows no actor could ever consume
+# and stale rows whose endpoint no task record names any more,
 # optionally acknowledge handled records,
 # annotate every unread line for validated signal status keys, surface unread
 # informational status lines, latest captain-facing statuses not covered by a
@@ -113,6 +114,83 @@ retire_unconsumable_rows_locked() {
     fi
   fi
   printf 'wake drain: unusable queue row(s) could not be retired (check that %s is readable and %s is writable); continuing with the rows that remain usable\n' \
+    "$FM_WAKE_QUEUE" "$STATE" >&2
+}
+
+# Retire stale rows naming an endpoint no task metadata records any more. A
+# stale row is keyed by the endpoint address rather than the task id, so cleanup
+# removes the task's metadata and leaves the row behind. The drain then
+# re-presents that row on every later supervision turn until someone
+# acknowledges it by sequence number, while the endpoint it names is gone and can
+# never produce the event that would settle it.
+#
+# Metadata absence is the right authority because it is exactly what
+# recorded_windows() in bin/fm-watch.sh uses to decide which endpoints may
+# GENERATE a stale row: an endpoint no meta records can never be polled,
+# re-armed, acted on, or resolved again. It also needs no runtime-provider call,
+# so the drain stays offline-safe on a hot path that runs every supervision turn,
+# and it covers every fm_wake_append stale call site at once.
+#
+# Main owns the repair and runs it under the queue lock, beside the structural
+# retirement above, so no concurrent append is observed half-written. Unlike the
+# structural one, a row can become unrecorded AFTER a branch grant named it, so
+# rows reserved by a live grant are left alone and retired by a later main drain
+# once the grant releases: main must never delete a row the branch is about to
+# present. A metadata scan that cannot be read retires nothing, because an
+# unreadable state/ must never be read as "no endpoint is recorded". A repair
+# that cannot be written is reported and never fatal, for the same reason the
+# structural one is not.
+retire_retired_window_stale_rows_locked() {
+  local recorded meta retired unrecorded queued kept granted=/dev/null
+  [ -f "$FM_WAKE_QUEUE" ] || return 0
+  if [ -s "$ELIGIBLE_ROWS_FILE" ] && fm_wake_grant_rows_valid "$ELIGIBLE_ROWS_FILE"; then
+    granted=$ELIGIBLE_ROWS_FILE
+  fi
+  recorded=$(mktemp "$STATE/.wake-queue.endpoints.XXXXXX") || return 0
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || continue
+    if [ ! -r "$meta" ] || ! awk -F= '
+        $1 == "window" || $1 == "terminal" { sub(/^[^=]*=/, ""); if ($0 != "") print }
+      ' "$meta" >> "$recorded"; then
+      rm -f -- "$recorded"
+      printf 'wake drain: task records under %s could not be read, so no stale row was retired against them; continuing with every row still queued\n' \
+        "$STATE" >&2
+      return 0
+    fi
+  done
+  if DRAIN_TMP=$(mktemp "$STATE/.wake-queue.endpoint-retire.XXXXXX") \
+    && chmod 0600 "$DRAIN_TMP" \
+    && unrecorded=$(awk -F '\t' -v keep="$DRAIN_TMP" -v recfile="$recorded" -v grantfile="$granted" '
+      BEGIN {
+        while ((getline line < recfile) > 0) if (line != "") rec[line] = 1
+        while ((getline line < grantfile) > 0) { split(line, f, /[ \t]/); if (f[1] != "") held[f[1]] = 1 }
+      }
+      NF >= 5 && $3 == "stale" && !($4 in rec) && !($2 in held) {
+        shown++
+        if (shown <= 20) printf "wake drain:   %s\n", $0
+        next
+      }
+      { print > keep }
+      END { if (shown > 20) printf "wake drain:   ... %d further retired-endpoint row(s) not shown\n", shown - 20 }
+    ' "$FM_WAKE_QUEUE"); then
+    queued=$(awk 'END { print NR }' "$FM_WAKE_QUEUE")
+    kept=$(awk 'END { print NR }' "$DRAIN_TMP")
+    retired=$(( queued - kept ))
+    if [ "$retired" -eq 0 ]; then
+      rm -f -- "$DRAIN_TMP" "$recorded"
+      DRAIN_TMP=
+      return 0
+    fi
+    if _fm_atomic_replace "$DRAIN_TMP" "$FM_WAKE_QUEUE"; then
+      DRAIN_TMP=
+      rm -f -- "$recorded"
+      printf 'wake drain: retired %s stale queue row(s) whose endpoint no task record names any more:\n%s\n' \
+        "$retired" "$unrecorded" >&2
+      return 0
+    fi
+  fi
+  rm -f -- "$recorded"
+  printf 'wake drain: stale queue row(s) for retired endpoints could not be retired (check that %s is readable and %s is writable); continuing with the rows that remain queued\n' \
     "$FM_WAKE_QUEUE" "$STATE" >&2
 }
 
@@ -641,6 +719,7 @@ fi
 DRAIN_LOCK_HELD=true
 reclaim_stale_branch_grant_locked || exit 1
 [ "$ACTOR" != main ] || retire_unconsumable_rows_locked
+[ "$ACTOR" != main ] || retire_retired_window_stale_rows_locked
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1
 
 if [ -n "$ACK_THROUGH" ]; then

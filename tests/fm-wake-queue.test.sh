@@ -184,6 +184,10 @@ test_atomic_double_drain() {
   state="$dir/state"
   out1="$dir/drain-one.out"
   out2="$dir/drain-two.out"
+  # The stale row below names a recorded endpoint, as a watcher-produced one
+  # always does; a row for an endpoint no task record names is retired by the
+  # drain instead of replayed (test_stale_row_for_a_retired_window_...).
+  printf 'window=s:fm-task\nkind=ship\n' > "$state/task.meta"
   append_wake "$state" heartbeat heartbeat heartbeat || fail "heartbeat append failed"
   append_wake "$state" signal task "signal: $state/task.status" || fail "signal append failed"
   append_wake "$state" stale 's:fm-task' 'stale: s:fm-task' || fail "stale append failed"
@@ -667,6 +671,10 @@ exec "$FM_WAKE_ENRICH_REAL_PERL" "$@"
 SH
   chmod +x "$dir/fakebin/perl"
 
+  # The stale row below names a recorded endpoint, as a watcher-produced one
+  # always does; a row for an endpoint no task record names is retired by the
+  # drain instead of presented (test_stale_row_for_a_retired_window_...).
+  printf 'window=test:fm-task\nkind=ship\n' > "$state/task.meta"
   append_wake "$state" signal task.status "signal: $outside" || fail "direct status wake append failed"
   append_wake "$state" signal task.turn-ended "signal: $outside" || fail "coalesced turn-end wake append failed"
   append_wake "$state" signal turn-only.turn-ended "signal: $outside" || fail "bare turn-end wake append failed"
@@ -792,6 +800,10 @@ test_branch_actor_scoped_ack_never_swallows_a_main_owned_row() {
   dir=$(make_case actor-scope)
   state="$dir/state"
 
+  # The stale row below names a recorded endpoint, as a watcher-produced one
+  # always does; a row for an endpoint no task record names is retired by a main
+  # drain instead of held (test_stale_row_for_a_retired_window_...).
+  printf 'window=fm-window\nkind=ship\n' > "$state/task-a.meta"
   append_wake "$state" check "some-poll.check.sh" "check: some-poll.check.sh: merged" \
     || fail "main-only append failed"
   append_wake "$state" signal "task-a.status" "signal: task-a" || fail "signal append failed"
@@ -893,7 +905,10 @@ test_main_is_never_told_to_drain_rows_only_the_branch_owns() {
   local dir state out err sequence generation
   dir=$(make_case main-not-told-to-drain-branch-rows)
   state="$dir/state"
-  printf 'window=test:fm-x\nkind=ship\n' > "$state/x.meta"
+  # The stale row below names this recorded endpoint, as a watcher-produced one
+  # always does; a row for an endpoint no task record names is retired by a main
+  # drain (test_stale_row_for_a_retired_window_...).
+  printf 'window=fleet:w2:p3\nkind=ship\n' > "$state/x.meta"
 
   append_wake "$state" stale "fleet:w2:p3" "stale: fleet:w2:p3 (paused, awaiting external)" \
     || fail "stale append failed"
@@ -953,7 +968,10 @@ test_uncountable_queue_still_raises_the_pending_alarm() {
   state="$dir/state"
   awkbin="$dir/awkbin"
   mkdir -p "$awkbin"
-  printf 'window=test:fm-x\nkind=ship\n' > "$state/x.meta"
+  # The stale row below names this recorded endpoint, as a watcher-produced one
+  # always does; a row for an endpoint no task record names is retired by a main
+  # drain (test_stale_row_for_a_retired_window_...).
+  printf 'window=fleet:w2:p3\nkind=ship\n' > "$state/x.meta"
 
   # An awk that still runs its END rule after failing to open its input: it
   # prints a 0 count and exits non-zero. Every other invocation is the real awk.
@@ -1040,6 +1058,57 @@ test_unconsumable_rows_are_retired_instead_of_wedging_the_queue() {
   ! grep -Fq 'queued wakes pending' "$dir/guard-after.err" || fail "guard kept warning about an empty queue"
 
   pass "structurally unusable rows are retired by main alone, leaving every remaining row presentable and acknowledgeable"
+}
+
+# A stale row is keyed by the endpoint address rather than the task id, so
+# cleanup removes the task record and leaves the row queued for an endpoint that
+# can never produce the event that would settle it. Left alone the drain
+# re-presents it on every supervision turn until it is acknowledged by sequence
+# number, which is the "notifications for a pane that no longer exists" defect.
+# Fixture-only: the guard reads task records, never the runtime provider.
+test_stale_row_for_a_retired_window_is_retired_not_represented() {
+  local dir state out err out2 err2
+  dir=$(make_case retired-window-stale-retirement)
+  state="$dir/state"
+  printf 'window=test:fm-live\nkind=ship\n' > "$state/live.meta"
+  printf 'window=test:fm-gone\nkind=ship\n' > "$state/gone.meta"
+
+  append_wake "$state" stale "test:fm-gone" "stale: test:fm-gone" || fail "retired-endpoint stale append failed"
+  append_wake "$state" stale "test:fm-live" "stale: test:fm-live" || fail "live-endpoint stale append failed"
+  # Cleanup's observable effect on the endpoint that went away.
+  rm -f "$state/gone.meta"
+
+  out="$dir/main.out"
+  err="$dir/main.err"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" 2> "$err" || fail "main drain failed: $(cat "$err")"
+
+  # 1. Gone without any --ack-through.
+  ! grep -Fq 'test:fm-gone' "$state/.wake-queue" \
+    || fail "a stale row for a retired endpoint survived the drain and will be re-presented forever"
+  ! grep -Fq 'test:fm-gone' "$out" \
+    || fail "a stale row for a retired endpoint was presented as an actionable wake"
+
+  # 2. Announced once, in bounded form, so the evidence survives.
+  grep -Fq 'retired 1 stale queue row(s) whose endpoint no task record names any more' "$err" \
+    || fail "the drain retired the row without announcing it: $(cat "$err")"
+  grep -Fq "$(printf '\tstale\ttest:fm-gone\tstale: test:fm-gone')" "$err" \
+    || fail "the retired row's content was discarded instead of reported"
+
+  # 4. A row whose endpoint IS still recorded survives untouched and is presented.
+  grep -Fq "$(printf '\tstale\ttest:fm-live\t')" "$state/.wake-queue" \
+    || fail "the drain retired a stale row whose endpoint a task record still names"
+  grep -Fq 'test:fm-live' "$out" || fail "the live-endpoint stale row was not presented"
+
+  # 3. A second drain says nothing about the retired row - the property that
+  # kills "re-presented forever" - while the live row is still presented.
+  out2="$dir/main2.out"
+  err2="$dir/main2.err"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out2" 2> "$err2" || fail "second drain failed: $(cat "$err2")"
+  ! grep -Fq 'test:fm-gone' "$out2" || fail "the retired row was presented again on a later drain"
+  ! grep -Fq 'test:fm-gone' "$err2" || fail "the retirement was announced a second time"
+  grep -Fq 'test:fm-live' "$out2" || fail "the live-endpoint stale row stopped being presented"
+
+  pass "a stale row whose endpoint no task record names is retired and announced once, while a recorded endpoint's row survives"
 }
 
 test_branch_grant_refuses_rows_already_claimed_by_main() {
@@ -1937,6 +2006,7 @@ test_main_drain_excludes_rows_already_granted_to_branch
 test_main_is_never_told_to_drain_rows_only_the_branch_owns
 test_uncountable_queue_still_raises_the_pending_alarm
 test_unconsumable_rows_are_retired_instead_of_wedging_the_queue
+test_stale_row_for_a_retired_window_is_retired_not_represented
 test_branch_grant_refuses_rows_already_claimed_by_main
 test_actor_filter_precedes_same_key_deduplication
 test_main_reclaims_a_grant_whose_branch_owner_exited
