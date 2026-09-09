@@ -99,12 +99,15 @@ SH
 }
 
 # A seeded remote secondmate home the real host-local leg validates and writes
-# into (identity marker, Firstmate-checkout shape, parent-route endpoint meta).
+# into (identity marker, Firstmate-checkout shape, the recorded home identity
+# every steering leg runs under, parent-route endpoint meta).
 make_remote_secondmate_home() {  # <name> -> echoes remote home dir
   local rh="$TMP_ROOT/$1-rhome"
-  mkdir -p "$rh/state/parent-route" "$rh/bin"
+  mkdir -p "$rh/state/parent-route" "$rh/bin" "$rh/data"
   printf '%s\n' "$1" > "$rh/.fm-secondmate-home"
   printf '# remote secondmate home fixture\n' > "$rh/AGENTS.md"
+  printf 'fm-home-identity-v1\nherdr_session=fm-remote\nclaude_config_dir=default\n' \
+    > "$rh/data/home-identity"
   cat > "$rh/state/parent-route/$1.meta" <<META
 window=fm-remote:p1
 worktree=-

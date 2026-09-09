@@ -149,13 +149,16 @@ setup_home() {  # <name> -> echoes a fresh home dir with an empty state/
 }
 
 # A seeded remote secondmate home the executed host-local leg validates and
-# writes into: identity marker, Firstmate-checkout shape, and a parent-route
-# endpoint record on Herdr in the dedicated fm-remote session.
+# writes into: identity marker, Firstmate-checkout shape, the recorded home
+# identity every steering leg runs under (bin/fm-home-identity.sh), and a
+# parent-route endpoint record on Herdr in the dedicated fm-remote session.
 setup_remote_secondmate_home() {  # <name> -> echoes remote home dir
   local rh="$TMP_ROOT/$1-rhome"
-  mkdir -p "$rh/state/parent-route" "$rh/bin"
+  mkdir -p "$rh/state/parent-route" "$rh/bin" "$rh/data"
   printf 'rsm\n' > "$rh/.fm-secondmate-home"
   printf '# remote secondmate home fixture\n' > "$rh/AGENTS.md"
+  printf 'fm-home-identity-v1\nherdr_session=fm-remote\nclaude_config_dir=default\n' \
+    > "$rh/data/home-identity"
   fm_write_meta "$rh/state/parent-route/rsm.meta" \
     "window=fm-remote:p1" \
     "worktree=-" \

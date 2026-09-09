@@ -938,6 +938,10 @@ add_remote_home() {
   git -C "$w/$id" checkout -q --detach "$commit"
   mkdir -p "$w/$id/state" "$w/$id/data" "$w/$id/config" "$w/$id/projects"
   printf '%s\n' "$id" > "$w/$id/.fm-secondmate-home"
+  # The charter every secondmate home carries: a spawn refuses a home with no
+  # brief before it reaches its launch phase, so a home without one could only
+  # ever prove a spawn's refusal path.
+  printf 'charter for %s\n' "$id" > "$w/$id/data/charter.md"
 }
 
 # make_remote_leg_ssh_stub <w>: a fake ssh that decodes fm-on.sh's payload and

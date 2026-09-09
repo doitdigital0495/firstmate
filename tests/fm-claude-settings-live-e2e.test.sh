@@ -14,15 +14,11 @@
 # writes rather than hooks alone.
 set -u
 
-if [ "${FM_CLAUDE_SETTINGS_LIVE_E2E:-0}" != 1 ]; then
-  echo "skip: set FM_CLAUDE_SETTINGS_LIVE_E2E=1 to run the live claude --settings guard"
-  exit 0
-fi
-
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-command -v claude >/dev/null 2>&1 || fail "claude not found; this guard requires the installed binary"
+fm_live_gate opt-in FM_CLAUDE_SETTINGS_LIVE_E2E claude git
+
 CLAUDE_VERSION=$(claude --version 2>/dev/null | head -1)
 [ -n "$CLAUDE_VERSION" ] || fail "installed claude did not answer --version"
 
