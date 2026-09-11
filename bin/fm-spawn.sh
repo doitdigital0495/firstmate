@@ -1186,11 +1186,13 @@ if ! HOME_IDENTITY_OUT=$("$SCRIPT_DIR/fm-home-identity.sh" ensure 2>&1); then
   # A backlog data directory the read-only preflight below already refuses -
   # one resolving outside this home, for example - is also why no pin could be
   # written there, so name that reason rather than blaming the session.
-  BACKLOG_GATE_STATUS=0
-  fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND" || BACKLOG_GATE_STATUS=$?
-  if [ "$BACKLOG_GATE_STATUS" -eq 2 ]; then
-    echo "error: task $ID cannot be dispatched because its backlog data directory is inaccessible: $DATA ($FM_BACKLOG_TRANSITION_ERROR)" >&2
-    exit 1
+  if [ "$RELAUNCH" -ne 1 ] && [ "$("$SCRIPT_DIR/fm-home-identity.sh" show 2>/dev/null)" = absent ]; then
+    BACKLOG_GATE_STATUS=0
+    fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND" || BACKLOG_GATE_STATUS=$?
+    if [ "$BACKLOG_GATE_STATUS" -eq 2 ]; then
+      echo "error: task $ID cannot be dispatched because its backlog data directory is inaccessible: $DATA ($FM_BACKLOG_TRANSITION_ERROR)" >&2
+      exit 1
+    fi
   fi
   echo "error: $ID was not launched; this firstmate home does not belong to the current session, and nothing was created" >&2
   exit 1
