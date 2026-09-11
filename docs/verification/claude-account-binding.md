@@ -59,6 +59,7 @@ A session counts as live committed demand only when its park is the last decisiv
 | A remote second mate's recorded account beats a caller that exports another one, store-bound or default | `tests/fm-remote-secondmate-identity.test.sh` |
 | A home refuses the other session in both directions, and survives a restart | `tests/fm-home-identity.test.sh` |
 | A spawn from a foreign session is refused and creates nothing | `tests/fm-home-identity.test.sh` |
+| A foreign-session spawn refusal is reported as the session mismatch even when the backlog preflight also refuses | `tests/fm-home-identity.test.sh` |
 | A second-mate spawn from a foreign session refuses before touching the child home's worktree, state, or config | `tests/fm-home-identity.test.sh` |
 | A withheld second-mate spawn leaves the child home byte-for-byte untouched and keeps the request queued | `tests/fm-claude-admission.test.sh` |
 | A spawn refused for any other reason never spends the store's release slot | `tests/fm-claude-admission.test.sh` |

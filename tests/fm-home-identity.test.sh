@@ -179,6 +179,27 @@ test_spawn_refuses_a_foreign_session_and_creates_nothing() {
   pass "a spawn from a session the home does not belong to is refused and creates nothing"
 }
 
+test_a_foreign_session_refusal_is_not_blamed_on_a_refusing_backlog() {
+  local home proj wt fakebin launchlog out status
+  IFS='|' read -r home proj wt fakebin launchlog <<< "$(gate_case spawn-foreign-backlog task-h)"
+
+  identity "$home" geris "$GERIS_STORE" ensure >/dev/null \
+    || fail "pinning the home must succeed"
+  mkdir -p "$TMP_ROOT/spawn-foreign-backlog/outside"
+  printf 'backend = "markdown"\n' > "$TMP_ROOT/spawn-foreign-backlog/outside/tasks.toml"
+  ln -s "$TMP_ROOT/spawn-foreign-backlog/outside/tasks.toml" "$home/.tasks.toml"
+  printf '# Backlog\n' > "$home/data/backlog.md"
+
+  out=$(run_spawn_as "$home" "$proj" "$wt" "$fakebin" "$launchlog" default "" task-h); status=$?
+  [ "$status" -ne 0 ] || fail "a spawn from a foreign session must be refused"
+  assert_contains "$out" "does not belong to the current session" \
+    "a refusing backlog preflight must not hide the session mismatch"
+  assert_not_contains "$out" "backlog data directory is inaccessible" \
+    "a session mismatch must not be blamed on the backlog data directory"
+  assert_absent "$home/state/task-h.meta" "a refused spawn must create no task record"
+  pass "a foreign session refusal wins over an unrelated backlog preflight refusal"
+}
+
 test_a_secondmate_spawn_from_a_foreign_session_changes_nothing() {
   local home proj wt fakebin launchlog child out status before after
   IFS='|' read -r home proj wt fakebin launchlog <<< "$(gate_case spawn-sm-foreign sm-a)"
@@ -313,6 +334,7 @@ test_an_unreadable_pin_is_never_replaced
 test_a_home_pins_itself_on_first_use
 test_a_phantom_home_is_never_pinned
 test_spawn_refuses_a_foreign_session_and_creates_nothing
+test_a_foreign_session_refusal_is_not_blamed_on_a_refusing_backlog
 test_a_secondmate_spawn_from_a_foreign_session_changes_nothing
 test_a_worker_records_the_account_its_home_is_pinned_to
 test_a_personal_worker_is_never_handed_a_work_account
