@@ -1,0 +1,30 @@
+ok - a firstmate home refuses the other session in both directions
+ok - the session and account pin survives a restart
+ok - an unreadable identity is refused, never replaced from the environment
+ok - an unpinned home takes the identity of the session that first uses it
+ok - an FM_HOME that is not an existing home is refused and never pinned
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 198ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a spawn from a session the home does not belong to is refused and creates nothing
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 157ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a foreign session refusal wins over an unrelated backlog preflight refusal
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 153ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~15 bytes (15 bytes) in 155ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a secondmate spawn from a foreign session refuses before touching the child home
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 152ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a worker records and launches on the account its home is pinned to
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 165ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a personal worker records the default account and is never handed a work one
+ok - a message driven from a foreign session is refused
+EXIT=0

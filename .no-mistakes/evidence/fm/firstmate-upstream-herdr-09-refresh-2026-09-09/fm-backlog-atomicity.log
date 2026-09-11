@@ -1,0 +1,418 @@
+ok - backend resolution preserves unreadable configuration errors for every caller
+ok - backend resolution preserves environment, project, user, and default precedence
+ok - backlog readers and mutations refuse unresolved backends without touching either backlog
+ok - captain hold refuses backend errors and preserves relocated addressing for valid configuration
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 268ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch publishes the record and moves the backlog item In flight in one run
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 154ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch omits the markdown file when probing a Beads backlog
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 183ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+ok - a leftover markdown symlink does not brick a Beads home's dispatch
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 197ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+ok - completion applies and closes a Beads backlog without any markdown file
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 131ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch refuses to supersede a pending authoritative close
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 152ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch refuses held rows before creating resources
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 146ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch refuses dependency-blocked rows before creating resources
+[90m11:59AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m11:59AM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 147ms[0m
+[90m11:59AM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch refuses held In-flight rows before relaunch
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 151ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch reads backlog rows from the backlog addressing root
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 162ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery uses the parent of a trailing-slash data record
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 160ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - completion targets nested relative data from the caller directory
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 141ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - an immediate-child absolute data path keeps one paired backlog
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 189ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - bare relative data addresses one backlog through dispatch and completion
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 162ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 144ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch refuses symlinked backlogs without crossing homes
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 141ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 151ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - automatic homes refuse lifecycle mutation without compatible tasks-axi
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 158ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch refuses an unresolvable backlog data directory
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 150ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - completion refuses before mutation when backlog data is unresolvable
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 140ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch refuses, before creating anything, when the home has no item for the id
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 148ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch distinguishes backlog read failures from missing items
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 143ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch refuses a closed item instead of silently reopening it
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 155ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch cannot commit without a verified task-record publication
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 164ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - a failed backlog transition fails the dispatch loudly and leaves no record
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 188ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch reports when failed-transition rollback cannot remove its record
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 174ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch verifies both task and busy records during rollback
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 177ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch commits neither record nor backlog state before launch delivery succeeds
+[90m12:00PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:00PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 163ms[0m
+[90m12:00PM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:01PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:01PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 188ms[0m
+[90m12:01PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch retries interrupted transitions before honoring termination
+[90m12:01PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:01PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 168ms[0m
+[90m12:01PM[0m [32mINF[0m [1mno leaks found[0m
+ok - a signal-deferred spawn verifies its preserved state and repairs a row that did not move
+[90m12:01PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:01PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 246ms[0m
+[90m12:01PM[0m [32mINF[0m [1mno leaks found[0m
+ok - a signal-deferred spawn reports attempted preservation as attempted when it cannot be verified
+[90m12:01PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:01PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 232ms[0m
+[90m12:01PM[0m [32mINF[0m [1mno leaks found[0m
+ok - a signal-deferred spawn bounds its verification so an unresponsive tasks-axi cannot hold the meta lock forever
+[90m12:01PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:01PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 180ms[0m
+[90m12:01PM[0m [32mINF[0m [1mno leaks found[0m
+ok - fm_tasks_axi bounds the call through its perl watchdog when no timeout binary exists
+[90m12:01PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:01PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 167ms[0m
+[90m12:01PM[0m [32mINF[0m [1mno leaks found[0m
+ok - fm_tasks_axi's perl watchdog passes the child status and output through unchanged
+[90m12:01PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:01PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 169ms[0m
+[90m12:01PM[0m [32mINF[0m [1mno leaks found[0m
+ok - fm_tasks_axi fails closed rather than running unbounded when no bounding mechanism exists
+[90m12:01PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:01PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 169ms[0m
+[90m12:01PM[0m [32mINF[0m [1mno leaks found[0m
+ok - fm_tasks_axi's GNU timeout kills a child that ignores SIGTERM after one further bound
+[90m12:01PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:01PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 218ms[0m
+[90m12:01PM[0m [32mINF[0m [1mno leaks found[0m
+ok - Kimi readiness interruptions fail before backlog commit
+[90m12:01PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:01PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 249ms[0m
+[90m12:01PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch does not resurrect a row closed after preflight
+[90m12:01PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:01PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 216ms[0m
+[90m12:01PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch fails when its backlog row vanishes after preflight
+[90m12:01PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:01PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 214ms[0m
+[90m12:01PM[0m [32mINF[0m [1mno leaks found[0m
+ok - completion closes a local-only ship, with its landing note, before reporting success
+[90m12:01PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:01PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 185ms[0m
+[90m12:01PM[0m [32mINF[0m [1mno leaks found[0m
+ok - completion closes a scout item against its report
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 145ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - completion leaves legacy records open when no incarnation can be recorded
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 167ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - completion refuses ambiguous task incarnations
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 178ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - completion records relocated scout reports relative to the backlog root
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 176ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - space-containing scout report paths round-trip through recovery
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 168ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - control-byte data paths fail closed before paired transitions
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 168ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - unreplayable data paths are refused before destructive cleanup
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 219ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - completion preserves recovery state when task-record removal fails
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 163ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - completion refuses to report success while its item is still open, and records what it owes
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 270ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - restart recovers closes recorded before destructive cleanup
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 165ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - completion refuses directory-symlink close targets
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 182ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - completion reports failure until its durable close marker is removed
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 151ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - session start retries a close whose marker could not be removed
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 126ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - session start reports owned backlog rows it cannot read
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 138ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - Orca cleanup recovery is excluded from backlog lifecycle transitions
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 129ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - session start marks an item In flight when this home already owns a worker for it
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 145ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - session start rejects internal worker-record symlinks
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 151ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - session start rejects symlinked worker records
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 141ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - session start finishes a close an interrupted cleanup recorded but never landed
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 160ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery backfills recorded links onto already Done items
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 174ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - session start preserves a pending close across a transient backlog read failure
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 194ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery preserves incomplete-cleanup evidence across a failed replay
+[90m12:02PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:02PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 184ms[0m
+[90m12:02PM[0m [32mINF[0m [1mno leaks found[0m
+ok - session start finishes a close for the matching meta incarnation
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 169ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery preserves closes for ambiguous task incarnations
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 169ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery preserves both records when meta removal fails
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 170ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery preserves closes beside symlinked metadata
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 170ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery binds close-marker identity to its locked filename
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 148ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 150ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery rejects close markers targeting another home's data
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 132ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery validates an unterminated final marker field
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 146ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery rejects lexical traversal before resolving marker data
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 148ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery rejects marker control bytes before parsing
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 146ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery rejects malformed PR URL values
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 151ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - a retained pending close is never started by reconciliation
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 132ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery rejects close-marker arguments outside its protocol
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 171ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - recovery reports and rejects dangling symlink close markers
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 155ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - session start drops a close recorded for an older meta incarnation
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 143ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - session start rejects an unversioned close marker
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 150ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 158ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - bootstrap rechecks worker-record containment after locking
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 149ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 157ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 169ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - lifecycle files reject ancestor symlinks outside home roots
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 166ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - same-home state overrides remain supported
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 174ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 193ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - bootstrap refuses symlinked state before reconciliation
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 167ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - bootstrap stops when backlog data disappears before reconciliation
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 170ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 178ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 240ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - bootstrap preserves secondmate, manual, and absent-backlog exemptions
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 227ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - session start leaves a captain-held item where the captain put it
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 228ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - no-backlog teardown refuses symlinked records before resource actions
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 217ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - teardown rechecks record parents after locking
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 329ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - teardown refuses symlinked state before resource actions
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 183ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - a home with no backlog remains exempt from lifecycle transitions
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 153ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - spawn refuses a special-file tasks-axi config instead of blocking on it
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 147ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - spawn refuses an unsafe tasks-axi config before any exemption is derived from it
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 152ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - spawn refuses a data directory symlinked outside the home
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 160ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - a configured adapter refuses a data directory outside the home
+[90m12:03PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:03PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 172ms[0m
+[90m12:03PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatch and completion transition structurally with evidence
+[90m12:04PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:04PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 146ms[0m
+[90m12:04PM[0m [32mINF[0m [1mno leaks found[0m
+[90m12:04PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:04PM[0m [32mINF[0m [1mscanned ~9 bytes (9 bytes) in 150ms[0m
+[90m12:04PM[0m [32mINF[0m [1mno leaks found[0m
+ok - refused teardown leaves the backlog item in flight
+[90m12:04PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:04PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 202ms[0m
+[90m12:04PM[0m [32mINF[0m [1mno leaks found[0m
+ok - environment-selected adapters bypass the legacy markdown file override
+[90m12:04PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:04PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 164ms[0m
+[90m12:04PM[0m [32mINF[0m [1mno leaks found[0m
+ok - a manual-backlog home dispatches and completes without a hard failure
+[90m12:04PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:04PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 169ms[0m
+[90m12:04PM[0m [32mINF[0m [1mno leaks found[0m
+ok - a secondmate home keeps its own books paired through dispatch and completion
+[90m12:04PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m12:04PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 157ms[0m
+[90m12:04PM[0m [32mINF[0m [1mno leaks found[0m
+ok - dispatching a persistent secondmate needs no backlog item
+EXIT=0
