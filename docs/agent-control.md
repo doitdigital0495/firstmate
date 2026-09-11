@@ -105,7 +105,8 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 - When the replacement would launch onto a shaped Claude credential store, the release decision is previewed **before** the old agent is stopped, so a relaunch that has no release slot yet refuses with the task queued and its agent still running rather than leaving it with no worker.
   `relaunch --priority <1-99>` sets that release order, lower first; see [Claude release shaping](configuration.md#claude-release-shaping-configclaude-shaped-store).
   The replacement always launches on the account recorded for the task, never the caller's environment.
-- `fm-spawn --relaunch` independently refuses unless the recorded endpoint is positively agent-free and its shell is sitting in the recorded worktree, so a replacement can never join a live agent or start outside the copy holding the work.
+- `fm-spawn --relaunch` independently refuses unless the recorded endpoint is positively agent-free, so a replacement can never join a live agent.
+  It also requires the shell to be in the recorded worktree: tmux refuses immediately when it is not, while Herdr sends one `cd` to the recorded path and refuses unless a subsequent path read confirms the move.
 
 ## Capability matrix
 
