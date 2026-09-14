@@ -44,25 +44,31 @@ cat > "$LAB/fm-settings.json" <<JSON
           "Stop":[{"hooks":[{"type":"command","command":"touch '$LAB/fm-stop'"}]}]}}
 JSON
 
-( cd "$WORKSPACE" && claude --dangerously-skip-permissions \
-    --settings "$LAB/fm-settings.json" -p "reply with the single word ok" ) \
-  > "$LAB/out" 2> "$LAB/err" < /dev/null \
-  || fail "claude $CLAUDE_VERSION refused the --settings launch: $(cat "$LAB/err")"
+# Both permission flags config/claude-permission-mode can select ride the same
+# settings file, so each must still load it.
+for perm in --dangerously-skip-permissions '--permission-mode auto'; do
+  rm -f "$LAB/fm-submit" "$LAB/fm-stop" "$LAB/project-stop"
+  # shellcheck disable=SC2086 # $perm is one flag or a flag and its value
+  ( cd "$WORKSPACE" && claude $perm \
+      --settings "$LAB/fm-settings.json" -p "reply with the single word ok" ) \
+    > "$LAB/out" 2> "$LAB/err" < /dev/null \
+    || fail "claude $CLAUDE_VERSION refused the $perm --settings launch: $(cat "$LAB/err")"
 
-[ -e "$LAB/fm-submit" ] \
-  || fail "claude $CLAUDE_VERSION did not fire the UserPromptSubmit hook supplied through --settings"
-[ -e "$LAB/fm-stop" ] \
-  || fail "claude $CLAUDE_VERSION did not fire the Stop hook supplied through --settings"
-[ -e "$LAB/project-stop" ] \
-  || fail "claude $CLAUDE_VERSION let --settings REPLACE the project's own hooks instead of merging them"
-[ "$(cat "$WORKSPACE/.claude/settings.local.json")" = "$PROJECT_BEFORE" ] \
-  || fail "claude $CLAUDE_VERSION rewrote the project's settings file during the run"
-# The hooks above fired from a file that also carries the per-launch policy keys,
-# which is the whole point of folding them into one source. A settings file claude
-# could not read would take the hooks down with it, so any parse or validation
-# complaint about the settings source is a failure even when the run exits 0.
-! grep -Eiq 'settings.*(invalid|could not|failed to (parse|read)|unrecognized)' "$LAB/err" \
-  || fail "claude $CLAUDE_VERSION complained about the settings source carrying the policy keys: $(cat "$LAB/err")"
+  [ -e "$LAB/fm-submit" ] \
+    || fail "claude $CLAUDE_VERSION ($perm) did not fire the UserPromptSubmit hook supplied through --settings"
+  [ -e "$LAB/fm-stop" ] \
+    || fail "claude $CLAUDE_VERSION ($perm) did not fire the Stop hook supplied through --settings"
+  [ -e "$LAB/project-stop" ] \
+    || fail "claude $CLAUDE_VERSION ($perm) let --settings REPLACE the project's own hooks instead of merging them"
+  [ "$(cat "$WORKSPACE/.claude/settings.local.json")" = "$PROJECT_BEFORE" ] \
+    || fail "claude $CLAUDE_VERSION ($perm) rewrote the project's settings file during the run"
+  # The hooks above fired from a file that also carries the per-launch policy keys,
+  # which is the whole point of folding them into one source. A settings file claude
+  # could not read would take the hooks down with it, so any parse or validation
+  # complaint about the settings source is a failure even when the run exits 0.
+  ! grep -Eiq 'settings.*(invalid|could not|failed to (parse|read)|unrecognized)' "$LAB/err" \
+    || fail "claude $CLAUDE_VERSION ($perm) complained about the settings source carrying the policy keys: $(cat "$LAB/err")"
 
-pass "claude $CLAUDE_VERSION loads --settings from outside the workspace, merges its hooks with the project's own, and accepts the policy keys in the same file"
+  pass "claude $CLAUDE_VERSION ($perm) loads --settings from outside the workspace, merges its hooks with the project's own, and accepts the policy keys in the same file"
+done
 echo "all fm-claude-settings-live-e2e tests passed"

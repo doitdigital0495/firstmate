@@ -57,34 +57,23 @@ Each shard is still strictly serial in itself, and separate runners mean no two 
 `.github/workflows/ci.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the required suite unrun.
 
 Assignment is longest-processing-time bin packing over per-script duration hints embedded in `bin/fm-test-run.sh`.
-The 161 current hints include the slowest measurements retained from the `fm-test-timing-portable-serial-*` artifacts of the three green CI runs on 2026-09-01, [33558082172](https://github.com/kunchenguid/firstmate/actions/runs/33558082172), [33523597838](https://github.com/kunchenguid/firstmate/actions/runs/33523597838), and [33463326167](https://github.com/kunchenguid/firstmate/actions/runs/33463326167), plus the 5121 ms native-Windows focused runner measurement for `tests/fm-pi-windows-shell-invocation.test.sh` from 2026-09-06T21:02Z, refreshed on 2026-09-09 against the per-script `FM_TEST_END` durations of the fork runs [34375312475](https://github.com/doitdigital0495/firstmate/actions/runs/34375312475) and [34378585040](https://github.com/doitdigital0495/firstmate/actions/runs/34378585040) after the upstream re-sync.
-The 2026-09-09 upstream merge folded upstream's own retained maxima in under the same slowest-wins rule, so a script measured higher on an upstream runner than on a fork runner now carries that higher weight.
-Those per-script maxima total 5554958 ms of conservative balance weight.
-Taking the slowest of several CI runs rather than a single run keeps the balance honest on a slow runner: individual scripts varied by up to 20% between the 2026-09-01 runs, and the re-synced lane's slowest script, `tests/fm-watch-triage.test.sh`, came in at 591588 ms against its previous 262626 ms hint.
-A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default; the current 163-script lane has two, `tests/fm-mail.test.sh` and `tests/fm-mail-check.test.sh`, which upstream also left unmeasured when it added them.
+The embedded hints include the slowest measurements retained from the `fm-test-timing-portable-serial-*` artifacts of three green CI runs on 2026-09-01, [33558082172](https://github.com/kunchenguid/firstmate/actions/runs/33558082172), [33523597838](https://github.com/kunchenguid/firstmate/actions/runs/33523597838), and [33463326167](https://github.com/kunchenguid/firstmate/actions/runs/33463326167), the completed-script measurements from [run 34342484144](https://github.com/kunchenguid/firstmate/actions/runs/34342484144), plus the 5121 ms native-Windows focused runner measurement for `tests/fm-pi-windows-shell-invocation.test.sh` from 2026-09-06T21:02Z.
+This fork also folds in the per-script `FM_TEST_END` durations of its own runs [34375312475](https://github.com/doitdigital0495/firstmate/actions/runs/34375312475) and [34378585040](https://github.com/doitdigital0495/firstmate/actions/runs/34378585040) under the same slowest-wins rule, so a script measured higher on either runner pool carries the higher weight.
+Taking the slowest of several CI runs rather than a single run keeps the balance honest on a slow runner: individual scripts varied by up to 20% between the 2026-09-01 runs, and on the fork runners `tests/fm-watch-triage.test.sh` came in at 591588 ms against its previous 262626 ms hint.
+A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default.
 Hints only affect balance: the coverage guard keeps the partition complete and disjoint whatever they say, so a stale hint costs a slower shard rather than lost coverage.
 Balance is still worth keeping current, because enough unmeasured scripts let one shard carry more than twice another shard's real work and reach the job cap while another runner sits idle.
 That is not hypothetical: by 2026-09-01 the lane had grown from 116 to 139 scripts and from ~42 to ~63 minutes, 17 scripts were still unmeasured, and several hints were low by 2-5x, so shard 3 of 4 ran 17-20 minutes against its 20-minute cap while shard 1 ran 11.5 minutes and run [33574154856](https://github.com/kunchenguid/firstmate/actions/runs/33574154856) timed out seconds after a passing test.
 `bin/fm-test-run.sh --check-coverage` now reports the unmeasured share as `serial_unhinted=` and refuses past `PORTABLE_SERIAL_MAX_UNHINTED_PERCENT`, so hint drift fails the coverage guard instead of silently pushing one shard into its job cap.
 Refresh the hints whenever the serial lane gains scripts, rather than waiting for that bound to trip.
 
-| Lane | Script count | Estimated duration |
-|---|---:|---:|
-| `portable-serial-1of6` | 24 | 934826 ms (~15.58 min) |
-| `portable-serial-2of6` | 28 | 934824 ms (~15.58 min) |
-| `portable-serial-3of6` | 28 | 934825 ms (~15.58 min) |
-| `portable-serial-4of6` | 27 | 934825 ms (~15.58 min) |
-| `portable-serial-5of6` | 28 | 934825 ms (~15.58 min) |
-| `portable-serial-6of6` | 28 | 934833 ms (~15.58 min) |
-| imbalance | | 9 ms |
-
-The current table is generated from the runner's retained maxima plus its default for the two unhinted mail scripts.
-The lane went from five shards to six on 2026-09-09: the upstream re-sync grew its measured work from ~63 min to ~88.7 min, which put shard 1 of 5 over the 20-minute job cap on two consecutive runs, both times while `tests/fm-watch-triage.test.sh` alone spent 9.9 min of that shard.
-Folding in upstream's own maxima and its mail plane on the same day took the lane to ~93.5 min of assignment weight across those six shards.
+`bin/fm-test-run.sh` owns the per-shard packing, so its `--check-coverage` output is the current account of lane size, shard composition, and balance rather than a copied table.
+This fork runs six shards rather than upstream's five: its 2026-09-09 upstream re-sync grew the measured lane from ~63 min to ~88.7 min, which put shard 1 of 5 over the then 20-minute job cap on two consecutive runs, both times while `tests/fm-watch-triage.test.sh` alone spent 9.9 min of that shard.
+Run 34342484144 observed a shard reach about 20 minutes of passing work, so the 30-minute job cap keeps meaningful hang-tripwire margin for job setup and runner-speed spread.
 
 The single longest script, `tests/fm-watch-triage.test.sh` at 591588 ms, is the floor for any shard count.
 
-Refresh the CI-derived hints by downloading the per-shard timing artifacts from several green CI runs, replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the slowest measured `duration_ms` per `path`, and updating the table above:
+Refresh the CI-derived hints by downloading the per-shard timing artifacts from several green CI runs and replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the slowest measured `duration_ms` per `path`:
 
 ```sh
 for run in <run-id> <run-id> <run-id>; do

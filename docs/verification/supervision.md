@@ -230,7 +230,7 @@ In this 2026-07-28 Codex 0.145.0 semantic-busy probe, Firstmate-written lifecycl
 Codex also exposes no `StopFailure` hook, so an API-error turn end would need separate coverage even after hook discovery works.
 The app-server protocol schema does define the required lifecycle (`turn/started`, plus a `turn/completed` status of `completed`, `interrupted`, `failed`, or `inProgress`), so the gate is a reachability problem rather than a protocol gap.
 
-### Claude settings load from outside the workspace, refreshed 2026-09-09
+### Claude settings load from outside the workspace, refreshed 2026-09-14
 
 `state/<id>.claude-settings.json` is the single `--settings` source every Claude launch is handed, so `fm-spawn` writes nothing into the project worktree.
 It carries the per-launch policy keys (`feedbackDrafts`, `attribution`) for every kind, and the per-task busy hooks for a kind that arms the busy contract.
@@ -254,6 +254,17 @@ all fm-claude-settings-live-e2e tests passed
 ```
 
 Both hooks still fired, the project's own `Stop` hook still fired, its settings file was byte-identical afterwards, and the run raised no complaint about the settings source.
+
+Refreshed on 2026-09-14 against Claude Code 2.1.270 once `config/claude-permission-mode` could replace the bypass flag with `--permission-mode auto`, so the guard now runs the same file under both permission flags.
+
+```sh
+FM_CLAUDE_SETTINGS_LIVE_E2E=1 tests/fm-claude-settings-live-e2e.test.sh
+ok - claude 2.1.270 (Claude Code) (--dangerously-skip-permissions) loads --settings from outside the workspace, merges its hooks with the project's own, and accepts the policy keys in the same file
+ok - claude 2.1.270 (Claude Code) (--permission-mode auto) loads --settings from outside the workspace, merges its hooks with the project's own, and accepts the policy keys in the same file
+all fm-claude-settings-live-e2e tests passed
+```
+
+Under either flag, both owned hooks and the project's own `Stop` hook fired, and the project's settings file stayed byte-identical.
 
 That fold risk is held deterministically by `tests/fm-spawn-claude-settings.test.sh`, which parses the generated file for a crewmate launch (policy keys plus the owned hooks) and for a secondmate launch (policy keys, no `hooks` key).
 It exists because a stray brace once made the file invalid JSON, which Claude rejects wholesale and which therefore takes firstmate's owned busy and turn-end hooks down with the policy keys.
