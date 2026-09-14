@@ -1128,11 +1128,17 @@ trap spawn_abort_cleanup EXIT
 # One bounded lock per live Herdr session/socket, shared across all homes.
 # <session> is required so secondmate and primary spawns serialize against the
 # same session without writing any other home's state directory.
+# Pass "wait" as the second argument to block until the lock is free.
 spawn_herdr_presentation_order_lock_acquire() {
   local session=${1:-} attempt lock_path
   [ -n "$session" ] || session=$(fm_backend_herdr_session)
   lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session") || return 1
   HERDR_PRESENTATION_ORDER_LOCK="$lock_path"
+  if [ "${2:-}" = wait ]; then
+    fm_lock_acquire_wait "$HERDR_PRESENTATION_ORDER_LOCK" || return 1
+    HERDR_PRESENTATION_ORDER_LOCK_HELD=1
+    return 0
+  fi
   attempt=0
   while [ "$attempt" -lt 50 ]; do
     if fm_lock_try_acquire "$HERDR_PRESENTATION_ORDER_LOCK"; then
@@ -3126,7 +3132,10 @@ case "$BACKEND" in
           echo "error: herdr presentation recovery could not ensure its exact named session" >&2
           exit 1
         }
-        spawn_herdr_presentation_order_lock_acquire "$HERDR_SES" || {
+        # Recovery has no flat fallback, so it serializes behind a concurrent
+        # holder (which keeps the lock through its whole launch) instead of
+        # giving up after the create path's bounded wait.
+        spawn_herdr_presentation_order_lock_acquire "$HERDR_SES" wait || {
           echo "error: herdr presentation recovery could not acquire its session lock; refusing a concurrent resume" >&2
           exit 1
         }
