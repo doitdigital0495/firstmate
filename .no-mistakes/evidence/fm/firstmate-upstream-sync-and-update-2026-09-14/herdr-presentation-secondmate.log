@@ -1,0 +1,96 @@
+FM_TEST_BEGIN 2026-09-14T15:29:38Z tests/fm-backend-herdr-presentation-e2e.test.sh family=real-herdr-gated expected_gate_skip=herdr
+ok - real Herdr lab: an opted-out spawn retains the Stage 1 Herdr command sequence with zero ordering calls
+ok - real Herdr lab: a home that configured nothing is projected by default on herdr 0.8.0
+ok - real Herdr lab: every projected create, task-tab create, seeded prune, and move preserves active workspace and tab
+ok - real Herdr lab: persisted-focused seeded prune proceeds when no live client is attached
+ok - real Herdr lab: bounded lock contention warns and falls back flat without projection or focus drift
+ok - real Herdr lab: concurrent primary workers form one stable contiguous block without active workspace/tab drift
+ok - real Herdr lab: forced workspace.move failure leaves a successful worker in default order with a warning and no cleanup
+ok - real Herdr lab: concurrent post-create abort cleanup stays serialized with exact focus restoration
+ok - real Herdr lab: Treehouse commands and metadata shape are byte-identical except for endpoint IDs and spawn incarnation
+ok - real Herdr lab: exact task-pane close removes the projected workspace with no unrestored wrong-focus interval
+ok - real Herdr lab: concurrent projected cleanup is serialized and leaves active workspace/tab unchanged
+ok - real Herdr lab: three repeated concurrent create/order/cleanup waves have zero active workspace or tab drift
+ok - real Herdr lab: the primary presentation setting inherits into real secondmate homes
+ok - real Herdr lab: primary and two secondmate homes each own a top-level contiguous child block
+ok - real Herdr lab: concurrent primary/A/B spawns preserve parent order and exact focus
+ok - real Herdr lab: session lock contention from a secondmate home falls back flat with no journal
+ok - real Herdr lab: Hi Bit and Wheelhouse-style same-identity restarts reclaim one nested space with exact focus and idempotence
+ok - real Herdr lab: secondmate restart binding and reclaim stay isolated to the exact child home and parent
+not ok - concurrent secondmate recovery failed: warning: /tmp/fm-herdr-presentation.QLScJW/home-2ndmate-bravo/data/resume-wave-bravo/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: herdr presentation recovery could not acquire its session lock; refusing a concurrent resume
+FM_TEST_END 2026-09-14T15:40:15Z tests/fm-backend-herdr-presentation-e2e.test.sh exit=1 duration_ms=636801 gate_skip=false
+FM_TEST_BEGIN 2026-09-14T15:40:15Z tests/fm-herdr-session-cleanup.test.sh family=backend-dispatch expected_gate_skip=none
+ok - process proof reads Linux Herdr argv arrays and rejects malformed executable identities
+ok - exact stale projection closes one exact pane under task then presentation locks
+ok - successful cleanup is idempotent on repeat
+ok - malformed title preserves the candidate
+ok - missing token preserves the candidate
+ok - malformed journal preserves the candidate
+ok - duplicate token preserves the candidate
+ok - duplicate title token preserves the candidate
+ok - zero journal match preserves the candidate
+ok - multiple journal matches preserves the candidate
+ok - cross-home journal preserves the candidate
+ok - v2 workspace binding mismatch preserves the candidate
+ok - v2 tab binding mismatch preserves the candidate
+ok - v2 pane binding mismatch preserves the candidate
+ok - v2 cleanup requires and accepts the exact journal endpoint binding
+ok - current task metadata preserves the candidate
+ok - registered agent preserves the candidate
+ok - unknown agent preserves the candidate
+ok - multiple tabs preserves the candidate
+ok - multiple panes preserves the candidate
+ok - non-idle shell preserves the candidate
+ok - child process or shell job preserves the candidate
+ok - unreadable snapshot preserves the candidate
+ok - unreadable topology check preserves the candidate
+ok - revalidation race preserves the candidate
+ok - active target preserves the candidate
+ok - focus refusal preserves the candidate
+ok - standalone bootstrap cannot run lock-owned stale projection cleanup
+ok - session start runs cleanup only after acquiring its home lock
+all fm-herdr-session-cleanup tests passed
+FM_TEST_END 2026-09-14T15:40:30Z tests/fm-herdr-session-cleanup.test.sh exit=0 duration_ms=14576 gate_skip=false
+FM_TEST_BEGIN 2026-09-14T15:40:30Z tests/fm-secondmate-sync.test.sh family=secondmate expected_gate_skip=none
+ok - T1 updated: a behind home fast-forwards to the primary's local HEAD
+ok - T2 current: an already-current home is a no-op and reports no instruction change
+ok - T3 dirty: an uncommitted home is skipped, its edit preserved
+ok - scratchpad2/ does not mark a secondmate home dirty for the sync guard
+ok - T4 diverged: a home that is not an ancestor of the primary's HEAD is skipped
+ok - T5 in-flight: a home on a feature branch is skipped, its work preserved
+ok - T6 no fetch: the local-HEAD sync never invokes git fetch
+ok - T7 sweep nudges on a real instruction change only, but still fast-forwards
+ok - T8 bootstrap sweeps live homes and sends exactly one marked nudge for the instruction change
+ok - T8a bootstrap nudge send respects FM_STATE_OVERRIDE
+ok - T8f bootstrap nudge retry rejects malformed marker ids
+ok - T8c failed bootstrap nudge is surfaced and recorded for retry
+ok - T8d bootstrap nudge retry is idempotent after success
+ok - T8e bootstrap nudge retry refuses a changed home instead of guessing
+ok - T8b a stale herdr endpoint cannot lose a durably enqueued nudge, and fm-<id> resolves through post-respawn metadata
+ok - T9 bootstrap surfaces a skipped dirty live secondmate home
+ok - T10 spawn fast-forwards a secondmate worktree to the primary's local HEAD before launch
+ok - T11 spawn warns when pre-launch sync is skipped
+ok - T12 gitignored marker: a freshly seeded home reads clean to fleet-sync and the ff sweep
+ok - T13 gitignored marker: an existing marker-only-dirty home converges, then reads clean
+ok - T14 marker tolerance does not mask a genuinely dirty home
+ok - R1 a remote home ahead of the host's Firstmate copy still advances to the primary's commit
+ok - R1b a remote sync names exactly which instruction paths its advance changed
+ok - R2 a missing target is imported from the host's Firstmate copy without moving it
+ok - R3 a target neither side holds is imported from the home's own origin
+ok - R4 an already-present target advances the home with no fetch available
+ok - R5 a target neither the host copy nor the origin holds skips with an actionable reason
+ok - R6 dirty, diverged, and feature-branch remote homes skip and are left untouched
+ok - R7 a sync with no target still follows the host's own refreshed Firstmate copy
+ok - R8 session start converges a remote home on the primary's default-branch commit
+ok - R10 a host too old for a parent-targeted sync is reported with the command that fixes it
+ok - R9 a remote launch leaves the home on the parent's commit while an ordinary spawn follows its own checkout
+# all fm-secondmate-sync tests passed
+FM_TEST_END 2026-09-14T15:41:09Z tests/fm-secondmate-sync.test.sh exit=0 duration_ms=39582 gate_skip=false
+FM_TEST_SUMMARY total=3 failed=1 skipped_gate=0 duration_ms=691109
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=1 duration_ms=14576 failed=0
+FM_TEST_SUMMARY_FAMILY family=real-herdr-gated count=1 duration_ms=636801 failed=1
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=39582 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-backend-herdr-presentation-e2e.test.sh duration_ms=636801
+FM_TEST_SLOWEST rank=2 script=tests/fm-secondmate-sync.test.sh duration_ms=39582
+FM_TEST_SLOWEST rank=3 script=tests/fm-herdr-session-cleanup.test.sh duration_ms=14576
