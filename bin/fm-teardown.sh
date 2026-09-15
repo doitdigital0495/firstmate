@@ -106,6 +106,17 @@
 # Why Treehouse's own state cannot answer this for crewmate slots, and why the
 # claim file sits on top of it, is owned by bin/fm-wake-lib.sh's slot-owner
 # claim comment.
+# One collision shape retires instead of refusing, because otherwise neither
+# record can ever leave: this task's record is a superseded older launch. That
+# needs every colliding record to be a strictly newer launch by spawn_gen epoch,
+# the slot's claim to be absent or to name one of those newer tasks, and this
+# task's recorded endpoint to read dead or missing. Teardown then retires only
+# this task's own record exactly as for a claim naming another task, except that
+# the slot's contents are still inspected: that proof comes from records rather
+# than the slot's own claim, so uncommitted or unlanded work there keeps refusing.
+# A tie or unreadable launch, a claim naming this task or an unrelated one, or a
+# live, ambiguous, or unverifiable endpoint keeps the refusal; the newer record
+# and every descendant slot of a forced secondmate teardown never qualify.
 # The recorded endpoint's exact task identity and the record's spawn incarnation
 # are validated separately
 # before cleanup. Its current working directory is only incidental process
@@ -2238,9 +2249,13 @@ collect_local_firstmate_states() {
   done
 }
 
-require_exclusive_worktree_slot_record() {
-  local record_meta=$1 record_id=$2 record_state=$3 worktree=$4
-  local slot state_dir other other_id field other_path other_slot
+# Pass allow-superseded=1 only for this teardown's own record: it then returns
+# TEARDOWN_SLOT_REASSIGNED_RC instead of refusing when
+# teardown_slot_record_superseded proves the record the stale older one.
+require_exclusive_worktree_slot_record() {  # <meta> <id> <state> <worktree> [allow-superseded]
+  local record_meta=$1 record_id=$2 record_state=$3 worktree=$4 allow_superseded=${5:-0}
+  local slot state_dir other other_id field other_path other_slot first_id='' first_field=''
+  local -a colliding=()
   slot=$(canonical_existing_dir "$worktree") || return 0
   collect_local_firstmate_states "$record_state" || return 1
   for state_dir in "${TREEHOUSE_OWNER_STATES[@]}"; do
@@ -2253,19 +2268,96 @@ require_exclusive_worktree_slot_record() {
         [ -n "$other_path" ] || continue
         other_slot=$(canonical_existing_dir "$other_path") || continue
         [ "$other_slot" = "$slot" ] || continue
-        echo "REFUSED: task $record_id's recorded worktree $slot is also task $other_id's recorded $field." >&2
-        echo "Returning that pool slot would kill $other_id's processes and reset its copy, so nothing was changed - not even with --force." >&2
-        echo "Reconcile whichever record is wrong (bin/fm-crew-state.sh $record_id; bin/fm-crew-state.sh $other_id), then re-run teardown." >&2
-        return 1
+        [ -n "$first_id" ] || { first_id=$other_id; first_field=$field; }
+        colliding+=("$other")
+        break
       done
     done
   done
+  [ -n "$first_id" ] || return 0
+  TEARDOWN_SLOT_SUPERSEDED_WHY=
+  if [ "$allow_superseded" = 1 ] \
+     && teardown_slot_record_superseded "$record_meta" "$record_id" "$slot" "${colliding[@]}"; then
+    return "$TEARDOWN_SLOT_REASSIGNED_RC"
+  fi
+  echo "REFUSED: task $record_id's recorded worktree $slot is also task $first_id's recorded $first_field." >&2
+  echo "Returning that pool slot would kill $first_id's processes and reset its copy, so nothing was changed - not even with --force." >&2
+  [ -z "$TEARDOWN_SLOT_SUPERSEDED_WHY" ] || printf '%s\n' "$TEARDOWN_SLOT_SUPERSEDED_WHY" >&2
+  echo "Reconcile whichever record is wrong (bin/fm-crew-state.sh $record_id; bin/fm-crew-state.sh $first_id), then re-run teardown; an older launch whose endpoint is dead or missing retires without touching the slot." >&2
+  return 1
 }
 
+# The launch epoch of a record's single published spawn_gen (s<epoch>.<pid>.<n>,
+# bin/fm-spawn.sh), or failure for a missing, duplicated, legacy, or malformed one.
+teardown_record_launch_epoch() {  # <meta>
+  local gen
+  [ "$(LC_ALL=C awk -F= '$1 == "spawn_gen" { n++ } END { print n + 0 }' "$1" 2>/dev/null)" = 1 ] || return 1
+  gen=$(fm_meta_get "$1" spawn_gen)
+  case "$gen" in s[0-9]*.*) ;; *) return 1 ;; esac
+  gen=${gen#s}
+  gen=${gen%%.*}
+  case "$gen" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$gen"
+}
+
+# Is this teardown's record the stale older half of a duplicated slot record
+# (see the script header)? Every colliding record must be a strictly newer
+# launch, the slot's claim must be absent or name one of them, and this
+# record's own endpoint must read dead or missing. Cheap offline evidence is
+# read first so an unproven collision never reaches the runtime. Sets
+# TEARDOWN_SLOT_SUPERSEDED_BY to the newest colliding task on success, and
+# TEARDOWN_SLOT_SUPERSEDED_WHY when only the endpoint stood in the way.
+teardown_slot_record_superseded() {  # <meta> <id> <slot> <colliding-meta>...
+  local record_meta=$1 record_id=$2 slot=$3 record_epoch other other_epoch
+  local newest_epoch=0 newest_id='' claim_named=0 endpoint
+  shift 3
+  record_epoch=$(teardown_record_launch_epoch "$record_meta") || return 1
+  for other in "$@"; do
+    other_epoch=$(teardown_record_launch_epoch "$other") || return 1
+    [ "$other_epoch" -gt "$record_epoch" ] || return 1
+    if [ "$other_epoch" -gt "$newest_epoch" ]; then
+      newest_epoch=$other_epoch
+      newest_id=$(basename "$other" .meta)
+    fi
+  done
+  fm_treehouse_slot_owner_state "$slot" "$record_id"
+  case "$FM_TREEHOUSE_SLOT_OWNER" in
+    absent) ;;
+    other)
+      for other in "$@"; do
+        [ "$(basename "$other" .meta)" != "$FM_TREEHOUSE_SLOT_OWNER_ID" ] || claim_named=1
+      done
+      [ "$claim_named" = 1 ] || return 1
+      ;;
+    *) return 1 ;;
+  esac
+  endpoint=$(fm_backend_agent_state "$BACKEND" "$T")
+  case "$endpoint" in
+    dead|missing) ;;
+    *)
+      TEARDOWN_SLOT_SUPERSEDED_WHY="Task $record_id is an older launch than $newest_id, but its recorded endpoint reads '$endpoint', not dead or missing; stop it with bin/fm-control.sh $record_id exit, then re-run teardown."
+      return 1
+      ;;
+  esac
+  TEARDOWN_SLOT_SUPERSEDED_BY=$newest_id
+}
+
+TEARDOWN_SLOT_SUPERSEDED=0
 require_exclusive_task_worktree_slot() {
-  local slot
+  local slot rc=0
   slot=$(teardown_live_slot_path) || return 0
-  require_exclusive_worktree_slot_record "$META" "$ID" "$STATE" "$slot"
+  require_exclusive_worktree_slot_record "$META" "$ID" "$STATE" "$slot" 1 || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    "$TEARDOWN_SLOT_REASSIGNED_RC")
+      echo "warning: task $ID's recorded worktree $slot was taken by newer task $TEARDOWN_SLOT_SUPERSEDED_BY and $ID's endpoint is gone, so only $ID's own record is retired; the slot's processes, copy, and claim are left untouched, and its contents are still inspected for uncommitted or unlanded work first." >&2
+      TEARDOWN_SLOT_SUPERSEDED=1
+      TEARDOWN_SLOT_REASSIGNED=1
+      TEARDOWN_SLOT_REASSIGNED_TO=$TEARDOWN_SLOT_SUPERSEDED_BY
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 # Positive slot ownership, read from the claim the task that took the slot wrote
@@ -3221,7 +3313,8 @@ remove_secondmate_registry_entry() {
 }
 
 require_exclusive_task_worktree_slot || exit 1
-require_owned_task_worktree_slot || exit 1
+# A superseded record already read the slot's claim as part of that proof.
+[ "$TEARDOWN_SLOT_SUPERSEDED" = 1 ] || require_owned_task_worktree_slot || exit 1
 
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1
 
@@ -3329,12 +3422,19 @@ if [ "$BACKEND" = orca ] && [ "$KIND" != scout ] && [ "$KIND" != secondmate ] &&
   ORCA_PATH_MATCH_VERIFIED=1
 fi
 
-if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
+# A superseded record's slot is not its own to touch, but it is still inspected:
+# that proof is inferred from records rather than the slot's claim, so dirty or
+# unlanded contents keep refusing exactly as for an owned slot.
+if { teardown_owns_worktree || [ "$TEARDOWN_SLOT_SUPERSEDED" = 1 ]; } \
+   && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
   if validate_worktree_teardown_safety; then
     :
   else
     safety_rc=$?
-    if [ "$safety_rc" -eq "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED" ]; then
+    if [ "$safety_rc" -eq "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED" ] && ! teardown_owns_worktree; then
+      echo "REFUSED: a git lock blocks inspecting $WT, which task $TEARDOWN_SLOT_SUPERSEDED_BY now holds, so it is not $ID's to clear; nothing was changed - re-run teardown once it is released." >&2
+      exit 1
+    elif [ "$safety_rc" -eq "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED" ]; then
       cleanup_stale_lock_for_safety_check "$WT" || exit 1
       validate_worktree_teardown_safety || exit 1
     else
