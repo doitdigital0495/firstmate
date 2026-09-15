@@ -1,0 +1,170 @@
+== S0 baseline (pre-fix /tmp/fm-base-tree): same staging deadlocks in both orders ==
+  staged: slot=/tmp/fm-live-superseded.cAk6ay/baseline/pool/.treehouse/project-42699a/1/project (reused by both tasks)
+  PASS: pre-fix: older-task refused
+  PASS: refusal reason: 'not even with --force'
+  PASS: pre-fix: newer-task --force refused
+  PASS: refusal reason: 'not even with --force'
+    | REFUSED: task newer-task's recorded worktree /tmp/fm-live-superseded.cAk6ay/baseline/pool/.treehouse/project-42699a/1/project is also task older-task's recorded worktree.
+    | Returning that pool slot would kill older-task's processes and reset its copy, so nothing was changed - not even with --force.
+== S1+S2 incident order: older retires, then newer tears down and returns slot (unclaimed) ==
+  staged: slot=/tmp/fm-live-superseded.cAk6ay/incident-unclaimed/pool/.treehouse/project-9236b0/1/project (reused by both tasks)
+  PASS: older-task teardown exit 0
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | ●  WATCHER DOWN - SUPERVISION IS OFF
+    | ●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    | ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    | ●  This is a supervision warning only; the guarded operation WILL still run.
+    | ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | warning: task older-task's recorded worktree /tmp/fm-live-superseded.cAk6ay/incident-unclaimed/pool/.treehouse/project-9236b0/1/project was taken by newer task newer-task and older-task's endpoint is gone, so only older-task's own record is retired; the slot's processes, copy, and claim are left untouched, and its contents are still inspected for uncommitted or unlanded work first.
+    | teardown older-task complete (window firstmate:fm-older-task; pool slot /tmp/fm-live-superseded.cAk6ay/incident-unclaimed/pool/.treehouse/project-9236b0/1/project left to task newer-task, which it was reassigned to)
+    | Backlog: older-task just finished (this home keeps no markdown backlog at /tmp/fm-live-superseded.cAk6ay/incident-unclaimed/home/data/backlog.md). Update /tmp/fm-live-superseded.cAk6ay/incident-unclaimed/home/data/backlog.md - move older-task to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+  PASS: older record retired
+  PASS: newer record kept
+  PASS: newer worker window alive
+  PASS: slot checkout present
+  treehouse status after older retire:
+    | 1     in-use       /tmp/fm-live-superseded.cAk6ay/incident-unclaimed/pool/.treehouse/project-9236b0/1/project
+    |                    bash (2845593)
+  treehouse status before newer teardown:
+    | 1     available    /tmp/fm-live-superseded.cAk6ay/incident-unclaimed/pool/.treehouse/project-9236b0/1/project
+  PASS: newer-task teardown exit 0 (no deadlock)
+    | WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+    | 🌳 Worktree returned to pool.
+    | teardown newer-task complete (window firstmate:fm-newer-task, worktree /tmp/fm-live-superseded.cAk6ay/incident-unclaimed/pool/.treehouse/project-9236b0/1/project)
+    | Backlog: newer-task just finished (this home keeps no markdown backlog at /tmp/fm-live-superseded.cAk6ay/incident-unclaimed/home/data/backlog.md). Update /tmp/fm-live-superseded.cAk6ay/incident-unclaimed/home/data/backlog.md - move newer-task to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+  PASS: newer record removed
+  treehouse status after newer teardown:
+    | 1     available    /tmp/fm-live-superseded.cAk6ay/incident-unclaimed/pool/.treehouse/project-9236b0/1/project
+== S1b claim names newer task: older retires ==
+  staged: slot=/tmp/fm-live-superseded.cAk6ay/claimed-by-newer/pool/.treehouse/project-a621aa/1/project (reused by both tasks)
+  PASS: older-task teardown exit 0
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | ●  WATCHER DOWN - SUPERVISION IS OFF
+    | ●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    | ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    | ●  This is a supervision warning only; the guarded operation WILL still run.
+    | ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | warning: task older-task's recorded worktree /tmp/fm-live-superseded.cAk6ay/claimed-by-newer/pool/.treehouse/project-a621aa/1/project was taken by newer task newer-task and older-task's endpoint is gone, so only older-task's own record is retired; the slot's processes, copy, and claim are left untouched, and its contents are still inspected for uncommitted or unlanded work first.
+    | teardown older-task complete (window firstmate:fm-older-task; pool slot /tmp/fm-live-superseded.cAk6ay/claimed-by-newer/pool/.treehouse/project-a621aa/1/project left to task newer-task, which it was reassigned to)
+    | Backlog: older-task just finished (this home keeps no markdown backlog at /tmp/fm-live-superseded.cAk6ay/claimed-by-newer/home/data/backlog.md). Update /tmp/fm-live-superseded.cAk6ay/claimed-by-newer/home/data/backlog.md - move older-task to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+  PASS: older record retired
+  PASS: newer worker window alive
+  PASS: newer's claim left untouched
+== S3 adversarial: tear down newer (current owner) first ==
+  staged: slot=/tmp/fm-live-superseded.cAk6ay/current-owner/pool/.treehouse/project-e446ed/1/project (reused by both tasks)
+  PASS: newer-task refused
+  PASS: refusal reason: 'not even with --force'
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | ●  WATCHER DOWN - SUPERVISION IS OFF
+    | ●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    | ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    | ●  This is a supervision warning only; the guarded operation WILL still run.
+    | ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | REFUSED: task newer-task's recorded worktree /tmp/fm-live-superseded.cAk6ay/current-owner/pool/.treehouse/project-e446ed/1/project is also task older-task's recorded worktree.
+    | Returning that pool slot would kill older-task's processes and reset its copy, so nothing was changed - not even with --force.
+    | Reconcile whichever record is wrong (bin/fm-crew-state.sh newer-task; bin/fm-crew-state.sh older-task), then re-run teardown; an older launch whose endpoint is dead or missing retires without touching the slot.
+  PASS: both records kept
+  PASS: slot checkout present
+  PASS: slot process alive
+== S4a adversarial: older endpoint live (claude running) ==
+  staged: slot=/tmp/fm-live-superseded.cAk6ay/live-endpoint/pool/.treehouse/project-2bbc54/1/project (reused by both tasks)
+  PASS: older-task refused
+  PASS: refusal reason: 'bin/fm-control.sh older-task exit'
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | ●  WATCHER DOWN - SUPERVISION IS OFF
+    | ●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    | ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    | ●  This is a supervision warning only; the guarded operation WILL still run.
+    | ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | REFUSED: task older-task's recorded worktree /tmp/fm-live-superseded.cAk6ay/live-endpoint/pool/.treehouse/project-2bbc54/1/project is also task newer-task's recorded worktree.
+    | Returning that pool slot would kill newer-task's processes and reset its copy, so nothing was changed - not even with --force.
+    | Task older-task is an older launch than newer-task, but its recorded endpoint reads 'ambiguous', not dead or missing; stop it with bin/fm-control.sh older-task exit, then re-run teardown.
+    | Reconcile whichever record is wrong (bin/fm-crew-state.sh older-task; bin/fm-crew-state.sh newer-task), then re-run teardown; an older launch whose endpoint is dead or missing retires without touching the slot.
+  PASS: live-endpoint: older record kept
+  PASS: live-endpoint: newer record kept
+  PASS: live-endpoint: newer worker window alive
+  PASS: live-endpoint: slot checkout present
+  PASS: older live agent not killed
+== S4b adversarial: spawn_gen epoch tie ==
+  staged: slot=/tmp/fm-live-superseded.cAk6ay/epoch-tie/pool/.treehouse/project-0e828d/1/project (reused by both tasks)
+  PASS: older-task refused
+  PASS: refusal reason: 'not even with --force'
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | ●  WATCHER DOWN - SUPERVISION IS OFF
+    | ●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    | ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    | ●  This is a supervision warning only; the guarded operation WILL still run.
+    | ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | REFUSED: task older-task's recorded worktree /tmp/fm-live-superseded.cAk6ay/epoch-tie/pool/.treehouse/project-0e828d/1/project is also task newer-task's recorded worktree.
+    | Returning that pool slot would kill newer-task's processes and reset its copy, so nothing was changed - not even with --force.
+    | Reconcile whichever record is wrong (bin/fm-crew-state.sh older-task; bin/fm-crew-state.sh newer-task), then re-run teardown; an older launch whose endpoint is dead or missing retires without touching the slot.
+  PASS: epoch-tie: older record kept
+  PASS: epoch-tie: newer record kept
+  PASS: epoch-tie: newer worker window alive
+  PASS: epoch-tie: slot checkout present
+== S4c adversarial: slot claim names older task ==
+  staged: slot=/tmp/fm-live-superseded.cAk6ay/claim-older/pool/.treehouse/project-6c5536/1/project (reused by both tasks)
+  PASS: older-task refused
+  PASS: refusal reason: 'not even with --force'
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | ●  WATCHER DOWN - SUPERVISION IS OFF
+    | ●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    | ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    | ●  This is a supervision warning only; the guarded operation WILL still run.
+    | ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | REFUSED: task older-task's recorded worktree /tmp/fm-live-superseded.cAk6ay/claim-older/pool/.treehouse/project-6c5536/1/project is also task newer-task's recorded worktree.
+    | Returning that pool slot would kill newer-task's processes and reset its copy, so nothing was changed - not even with --force.
+    | Reconcile whichever record is wrong (bin/fm-crew-state.sh older-task; bin/fm-crew-state.sh newer-task), then re-run teardown; an older launch whose endpoint is dead or missing retires without touching the slot.
+  PASS: claim-older: older record kept
+  PASS: claim-older: newer record kept
+  PASS: claim-older: newer worker window alive
+  PASS: claim-older: slot checkout present
+== S5a adversarial: uncommitted work in slot ==
+  staged: slot=/tmp/fm-live-superseded.cAk6ay/uncommitted/pool/.treehouse/project-5e85a3/1/project (reused by both tasks)
+  PASS: older-task refused
+  PASS: refusal reason: 'taken by newer task newer-task'
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | ●  WATCHER DOWN - SUPERVISION IS OFF
+    | ●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    | ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    | ●  This is a supervision warning only; the guarded operation WILL still run.
+    | ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | warning: task older-task's recorded worktree /tmp/fm-live-superseded.cAk6ay/uncommitted/pool/.treehouse/project-5e85a3/1/project was taken by newer task newer-task and older-task's endpoint is gone, so only older-task's own record is retired; the slot's processes, copy, and claim are left untouched, and its contents are still inspected for uncommitted or unlanded work first.
+    | REFUSED: local-only worktree /tmp/fm-live-superseded.cAk6ay/uncommitted/pool/.treehouse/project-5e85a3/1/project has work not yet merged into master and not on any remote.
+    | uncommitted changes present
+    | Merge the branch into local master first (bin/fm-merge-local.sh after the captain approves), or push to a fork/remote, or get the captain's explicit OK to discard, then --force.
+  PASS: uncommitted: older record kept
+  PASS: uncommitted: newer record kept
+  PASS: uncommitted: newer worker window alive
+  PASS: uncommitted: slot checkout present
+  PASS: uncommitted file preserved
+== S5b adversarial: unlanded commit in slot ==
+  staged: slot=/tmp/fm-live-superseded.cAk6ay/unlanded/pool/.treehouse/project-eb735e/1/project (reused by both tasks)
+  PASS: older-task refused
+  PASS: refusal reason: 'taken by newer task newer-task'
+  PASS: refusal reason: 'has work not yet merged'
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | ●  WATCHER DOWN - SUPERVISION IS OFF
+    | ●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    | ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    | ●  This is a supervision warning only; the guarded operation WILL still run.
+    | ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    | ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    | warning: task older-task's recorded worktree /tmp/fm-live-superseded.cAk6ay/unlanded/pool/.treehouse/project-eb735e/1/project was taken by newer task newer-task and older-task's endpoint is gone, so only older-task's own record is retired; the slot's processes, copy, and claim are left untouched, and its contents are still inspected for uncommitted or unlanded work first.
+    | REFUSED: local-only worktree /tmp/fm-live-superseded.cAk6ay/unlanded/pool/.treehouse/project-eb735e/1/project has work not yet merged into master and not on any remote.
+    | commits not yet on master:
+    | 31053bd unlanded
+    | Merge the branch into local master first (bin/fm-merge-local.sh after the captain approves), or push to a fork/remote, or get the captain's explicit OK to discard, then --force.
+  PASS: unlanded: older record kept
+  PASS: unlanded: newer record kept
+  PASS: unlanded: newer worker window alive
+  PASS: unlanded: slot checkout present
+  PASS: unlanded commit preserved
+== RESULT: 0 failure(s); case dirs under /tmp/fm-live-superseded.cAk6ay ==

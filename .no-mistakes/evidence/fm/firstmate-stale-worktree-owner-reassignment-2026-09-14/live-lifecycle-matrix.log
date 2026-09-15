@@ -1,0 +1,16 @@
+LIVE PASS - repair-missing: older record retired; newer agent window, record, checkout survive; slot not returned
+warning: task older-task's recorded worktree /tmp/fm-live-matrix.bucaGB/repair-missing/pool/1/project was taken by newer task newer-task and older-task's endpoint is gone, so only older-task's own record is retired; the slot's processes, copy, and claim are left untouched, and its contents are still inspected for uncommitted or unlanded work first.
+LIVE PASS - repair-missing: newer task then tears down and returns slot (no deadlock)
+LIVE PASS - repair-dead: older record retired; newer agent window, record, checkout survive; slot not returned
+warning: task older-task's recorded worktree /tmp/fm-live-matrix.bucaGB/repair-dead/pool/1/project was taken by newer task newer-task and older-task's endpoint is gone, so only older-task's own record is retired; the slot's processes, copy, and claim are left untouched, and its contents are still inspected for uncommitted or unlanded work first.
+LIVE PASS - repair-dead: newer task then tears down and returns slot (no deadlock)
+LIVE PASS - repair-dead-claimed-by-newer: older record retired; newer agent window, record, checkout survive; slot not returned
+warning: task older-task's recorded worktree /tmp/fm-live-matrix.bucaGB/repair-dead-claimed-by-newer/pool/1/project was taken by newer task newer-task and older-task's endpoint is gone, so only older-task's own record is retired; the slot's processes, copy, and claim are left untouched, and its contents are still inspected for uncommitted or unlanded work first.
+LIVE PASS - repair-dead-claimed-by-newer: newer task then tears down and returns slot (no deadlock)
+LIVE PASS - refuse-current-owner: refused, both records/windows/checkout intact (not even with --force)
+LIVE PASS - refuse-live-endpoint: refused, both records/windows/checkout intact (bin/fm-control.sh older-task exit)
+LIVE PASS - refuse-spawn-gen-tie: refused, both records/windows/checkout intact (not even with --force)
+LIVE PASS - refuse-claim-names-older: refused, both records/windows/checkout intact (not even with --force)
+LIVE PASS - refuse-uncommitted: refused, both records/windows/checkout intact (has work not yet merged)
+LIVE PASS - refuse-unlanded: refused, both records/windows/checkout intact (has work not yet merged)
+FAILS=0
