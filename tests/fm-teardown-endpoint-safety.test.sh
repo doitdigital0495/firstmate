@@ -972,6 +972,138 @@ test_own_and_absent_slot_claims_still_tear_down() {
   pass "fm-teardown: a task's own slot claim, and an unclaimed slot, both still tear down"
 }
 
+# The duplicate-record deadlock (observed 2026-09-14): a finished ship task's
+# worker exited, the pool handed its slot to a newer scout, and both records
+# still name that slot. Each teardown refused on the other record, --force could
+# not lift it, and no supported path was left. Teardown now retires only the
+# OLDER record - never the slot - and only on evidence: every other record naming
+# the slot is a strictly newer launch, no claim contradicts that, the older
+# record's own endpoint is confirmed dead or missing, and the slot still passes
+# the ordinary dirty and landed-work inspection.
+stage_superseded_slot() {  # <case> -> prints the case dir
+  local dir
+  dir=$(make_case "$1")
+  mark_case_as_treehouse_pool "$dir"
+  rm -f "$dir/worktree/sentinel"
+  # The older record's endpoint answers from $dir/pane-command: absent means its
+  # window is gone, `claude` a live agent, `bash` an exited one.
+  cat > "$dir/fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+printf 'tmux' >> "${FM_RUNTIME_LOG:?}"
+printf ' <%s>' "$@" >> "${FM_RUNTIME_LOG:?}"
+printf '\n' >> "${FM_RUNTIME_LOG:?}"
+command=$(cat "${FM_RUNTIME_LOG%/*}/pane-command" 2>/dev/null) || exit 0
+case "$1:$*" in
+  list-windows:*) printf 'fm-older-task\n' ;;
+  display-message:*pane_current_command*) printf '%s\n' "$command" ;;
+esac
+exit 0
+SH
+  chmod +x "$dir/fakebin/tmux"
+  fm_write_meta "$dir/home/state/older-task.meta" \
+    "window=firstmate:fm-older-task" "endpoint_task_id=older-task" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=ship" \
+    "mode=local-only" "yolo=off" "spawn_gen=s1789119828.100.1"
+  fm_write_meta "$dir/home/state/newer-task.meta" \
+    "window=firstmate:fm-newer-task" "endpoint_task_id=newer-task" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout" \
+    "spawn_gen=s1789387687.200.2"
+  printf '%s\n' "$dir"
+}
+
+run_teardown_unforced() {  # <case> <id>
+  FM_HOME="$1/home" FM_ROOT_OVERRIDE="$ROOT" \
+  FM_RUNTIME_LOG="$1/runtime.log" PATH="$1/fakebin:$PATH" \
+    "$TEARDOWN" "$2" > "$1/stdout" 2> "$1/stderr"
+}
+
+test_superseded_duplicate_slot_record_retires_only_the_older_record() {
+  local dir case_name worker rc id
+
+  # Every unsafe shape refuses with both records, the newer worker, and the slot
+  # exactly as found.
+  for case_name in current-owner live-endpoint ambiguous-launch conflicting-claim uncommitted unlanded; do
+    dir=$(stage_superseded_slot "slot-superseded-$case_name")
+    id=older-task
+    case "$case_name" in
+      current-owner) id=newer-task ;;
+      live-endpoint) printf 'claude\n' > "$dir/pane-command" ;;
+      ambiguous-launch)
+        sed 's/^spawn_gen=.*/spawn_gen=s1789119828.300.3/' "$dir/home/state/newer-task.meta" > "$dir/meta.tmp"
+        mv "$dir/meta.tmp" "$dir/home/state/newer-task.meta"
+        ;;
+      conflicting-claim) claim_pool_slot "$dir" older-task ;;
+      uncommitted) printf 'newer work\n' > "$dir/worktree/uncommitted.txt" ;;
+      unlanded)
+        git -C "$dir/worktree" -c user.name=test -c user.email=test@example.invalid \
+          commit --allow-empty -qm unlanded
+        ;;
+    esac
+    ( cd "$dir/worktree" && exec sleep 30 ) &
+    worker=$!
+    set +e
+    run_teardown_unforced "$dir" "$id"
+    rc=$?
+    set -e
+    [ "$rc" -ne 0 ] || fail "$case_name: teardown retired a record the evidence does not prove superseded"
+    kill -0 "$worker" 2>/dev/null || fail "$case_name: teardown killed the worker in the shared slot"
+    assert_present "$dir/home/state/older-task.meta" "$case_name: the older record was removed"
+    assert_present "$dir/home/state/newer-task.meta" "$case_name: the newer record was removed"
+    assert_present "$dir/pool/1/project/.git" "$case_name: the shared slot's checkout was removed"
+    ! grep -Eq 'kill-window|treehouse <return>' "$dir/runtime.log" \
+      || fail "$case_name: teardown stopped an endpoint or returned the slot: $(cat "$dir/runtime.log")"
+    kill "$worker" 2>/dev/null || true
+    wait "$worker" 2>/dev/null || true
+    case "$case_name" in
+      current-owner|ambiguous-launch|conflicting-claim)
+        assert_contains "$(cat "$dir/stderr")" "not even with --force" \
+          "$case_name: the refusal should be the slot-collision refusal" ;;
+      live-endpoint)
+        assert_contains "$(cat "$dir/stderr")" "bin/fm-control.sh older-task exit" \
+          "live-endpoint: the refusal should name how to stop the older worker" ;;
+      uncommitted|unlanded)
+        # Proven superseded first, so only the retained slot inspection refused.
+        assert_contains "$(cat "$dir/stderr")" "taken by newer task newer-task" \
+          "$case_name: the older record should have been proven superseded"
+        assert_contains "$(cat "$dir/stderr")" "has work not yet merged" \
+          "$case_name: the refusal should be the slot's own landed-work inspection" ;;
+    esac
+  done
+
+  # The safe repair, with no claim (the incident) and with a claim naming the
+  # newer task: the older record goes, the slot and its worker stay, and the
+  # newer task then tears down and returns the slot normally.
+  for case_name in unclaimed claimed-by-newer; do
+    dir=$(stage_superseded_slot "slot-superseded-repair-$case_name")
+    printf 'bash\n' > "$dir/pane-command"
+    [ "$case_name" = unclaimed ] || claim_pool_slot "$dir" newer-task
+    ( cd "$dir/worktree" && exec sleep 30 ) &
+    worker=$!
+    run_teardown_unforced "$dir" older-task \
+      || fail "$case_name: the superseded older record did not retire: $(cat "$dir/stderr")"
+    kill -0 "$worker" 2>/dev/null || fail "$case_name: retiring the older record killed the newer worker"
+    assert_absent "$dir/home/state/older-task.meta" "$case_name: the older record was not removed"
+    assert_present "$dir/home/state/newer-task.meta" "$case_name: the newer record was removed"
+    assert_present "$dir/pool/1/project/.git" "$case_name: the newer task's checkout was removed"
+    grep -Fq "tmux <kill-window> <-t> <=firstmate:=fm-older-task>" "$dir/runtime.log" \
+      || fail "$case_name: the older record's own endpoint was not stopped: $(cat "$dir/runtime.log")"
+    ! grep -Eq 'kill-window.*fm-newer-task|treehouse <return>' "$dir/runtime.log" \
+      || fail "$case_name: retiring the older record touched the newer task: $(cat "$dir/runtime.log")"
+    assert_contains "$(cat "$dir/stderr")" "newer-task" \
+      "$case_name: the warning should name the newer task that holds the slot"
+    kill "$worker" 2>/dev/null || true
+    wait "$worker" 2>/dev/null || true
+
+    run_case "$dir" newer-task > "$dir/stdout" 2> "$dir/stderr" \
+      || fail "$case_name: the newer task still deadlocks after the older record retired: $(cat "$dir/stderr")"
+    assert_absent "$dir/home/state/newer-task.meta" "$case_name: the newer record was not removed"
+    grep -Fq "treehouse <return>" "$dir/runtime.log" \
+      || fail "$case_name: the newer task did not return its slot: $(cat "$dir/runtime.log")"
+  done
+
+  pass "fm-teardown: a superseded duplicate slot record retires alone on evidence, and every unsafe shape still refuses"
+}
+
 test_invalid_endpoint_records_refuse_before_mutation
 test_control_lock_contention_refuses_before_mutation
 test_non_pool_teardown_ignores_task_set_lock
@@ -986,6 +1118,7 @@ test_cross_home_pool_slot_collision_refuses
 test_sole_slot_record_still_tears_down
 test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot
 test_own_and_absent_slot_claims_still_tear_down
+test_superseded_duplicate_slot_record_retires_only_the_older_record
 test_recorded_endpoint_that_changed_directory_still_tears_down
 test_project_lock_anchors_at_the_local_root_across_home_layouts
 test_remote_seeded_home_returns_its_uncontested_slot
