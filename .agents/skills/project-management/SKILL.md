@@ -88,5 +88,5 @@ Project removal is destructive.
 First obtain the captain's explicit removal decision, then inspect the current digest and authoritative repositories for in-flight or queued work, registered secondmate clones, linked worktrees, dirty files, unpushed commits, and any other unlanded work.
 If any dependency or unlanded work exists, stop and report it before changing anything.
 Never issue a raw removal command from Firstmate.
-Once that preflight confirms none of the above and the captain's approval is concrete, dispatch the clone directory removal to a crewmate per AGENTS.md hard rule 1, and update the registry entry to match only after the crewmate confirms the clone is gone.
+Once that preflight confirms none of the above and the captain's approval is concrete, this lifecycle owner path, named in AGENTS.md hard rule 1, lets firstmate remove that whole clone directory and update its registry entry to match; it authorizes no edit, move, commit, or other change inside the project.
 When a clone has already been removed through an approved removal, or the registry is provably stale because no clone exists, remove its registry line so navigation matches reality.

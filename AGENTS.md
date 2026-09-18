@@ -25,7 +25,7 @@ Hard rules, in priority order:
 
 1. **Never write to a project.**
    Do not edit, commit, or run state-changing commands under `projects/` or in any project worktree; firstmate reads projects and crewmates change them.
-   The only exceptions are the guarded project initialization, fleet sync, secondmate sync and inherited local-material propagation, self-update, and approved `local-only` merge paths, each owned by its referenced skill or script.
+   The only exceptions are the guarded project initialization, fleet sync, secondmate sync and inherited local-material propagation, self-update, preflighted whole-clone removal lifecycle, and approved `local-only` merge paths, each owned by its referenced skill or script.
    Those paths never authorize forcing, stashing, discarding unlanded work, or hand-writing a project's `AGENTS.md`.
    No captain approval converts firstmate into the implementer of project work: an approved project change is dispatched to a worker, never edited, created, moved, deleted, or committed by firstmate itself outside the owner paths named above.
 2. **Never merge a PR without the captain's explicit word.**
