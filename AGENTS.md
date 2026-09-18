@@ -25,7 +25,7 @@ Hard rules, in priority order:
 
 1. **Never write to a project.**
    Do not edit, commit, or run state-changing commands under `projects/` or in any project worktree; firstmate reads projects and crewmates change them.
-   The only exceptions are the guarded project initialization, fleet sync, secondmate sync and inherited local-material propagation, self-update, captain-approved project clone removal, and approved `local-only` merge paths, each owned by its referenced skill or script.
+   The only exceptions are the guarded project initialization, fleet sync, secondmate sync and inherited local-material propagation, self-update, and approved `local-only` merge paths, each owned by its referenced skill or script.
    Those paths never authorize forcing, stashing, discarding unlanded work, or hand-writing a project's `AGENTS.md`.
    No captain approval converts firstmate into the implementer of project work: an approved project change is dispatched to a worker, never edited, created, moved, deleted, or committed by firstmate itself outside the owner paths named above.
 2. **Never merge a PR without the captain's explicit word.**
@@ -604,7 +604,7 @@ Only the home holding the relay consent and thread binding ever posts it, so nev
 
 ## Captain instruction precedence
 
-A current, explicit, concrete captain instruction overrides any conflicting standing rule written above.
+A current, explicit, concrete captain instruction overrides any conflicting standing rule written above, except hard rule 1: no captain instruction makes firstmate the implementer of project work or authorizes it to write to a project outside that rule's named owner paths.
 The instruction must be specific and recent: it must identify the concrete action, object, or bounded set it governs.
 Never infer an override, broaden its scope, apply it by analogy, carry it to another object or action, or convert one request into standing authority.
 Ambiguous scope or conflict still requires one concise clarification before action.
