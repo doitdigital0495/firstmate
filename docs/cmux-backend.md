@@ -85,6 +85,7 @@ Workspace UUIDs are not stable across an app relaunch, so recovery searches by t
 
 A genuinely fresh surface returns an internal error from `read-screen` until something has been written.
 Target readiness therefore uses the structural `list-panes` response instead of a content read.
+That proof is fail-closed: an empty response refuses even when the CLI exited 0, because `jq -e` over empty input succeeds and would otherwise report an absent surface as live; `tests/fm-backend-cmux.test.sh` pins it.
 Capture remains bounded and locally trimmed after `read-screen` becomes available.
 
 `current_directory` follows a top-level shell `cd` but not the foreground subshell opened by `treehouse get`.
