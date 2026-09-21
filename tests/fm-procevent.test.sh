@@ -2942,11 +2942,18 @@ ORPHAN_DESCENDANT=$(cat "$TMP_ROOT/orphan-dead.descendant")
 
 # The reproduction condition itself: the listener is already an orphan in the
 # kernel's sense before anything is asserted about reaping it.
+# Its launching process was a child of this test shell, so "reparented" means
+# no ancestor of the listener is this shell any more - true both under PID 1
+# and under a session supervisor that is a child subreaper.
 orphan_ppid=$(ps -o ppid= -p "$ORPHAN_PID" 2>/dev/null | tr -d '[:space:]')
-orphan_parent_ppid=$(ps -o ppid= -p "$orphan_ppid" 2>/dev/null | tr -d '[:space:]')
-# A session supervisor may be a child subreaper of PID 1 and adopt the listener.
-[ "$orphan_ppid" = 1 ] || [ "$orphan_parent_ppid" = 1 ] \
-  || fail "the listener under test was not reparented away from its session (ppid $orphan_ppid)"
+[ -n "$orphan_ppid" ] || fail "the listener under test was not running before the orphan case asserted anything"
+orphan_walk=$orphan_ppid
+while [ -n "$orphan_walk" ] && [ "$orphan_walk" != 0 ] && [ "$orphan_walk" != 1 ]; do
+  if [ "$orphan_walk" = "$$" ]; then
+    fail "the listener under test was not reparented away from its session (ppid $orphan_ppid)"
+  fi
+  orphan_walk=$(ps -o ppid= -p "$orphan_walk" 2>/dev/null | tr -d '[:space:]')
+done
 kill -0 -"$ORPHAN_PID" 2>/dev/null \
   || fail "the listener's process group was not running"
 kill -0 "$ORPHAN_DESCENDANT" 2>/dev/null \
