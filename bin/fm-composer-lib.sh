@@ -482,10 +482,10 @@ fm_composer_strip_braille() {
 
 # The bounded row window adapters should capture for a composer read. One
 # shared policy (previously three per-backend variables that had drifted to
-# 20/20/200): the composer is bottom-anchored, but a 45-row Codex pane can
-# leave 20 blank rows below its idle prompt. Capture 40 rows to include that
-# prompt while excluding older scrollback (startup banners, transcript boxes).
-FM_COMPOSER_CAPTURE_LINES=${FM_COMPOSER_CAPTURE_LINES:-40}
+# 20/20/200): the composer is bottom-anchored, so a small tail window is
+# sufficient and keeps stale scrollback (startup banners, old transcript
+# boxes) from ever competing with the live composer.
+FM_COMPOSER_CAPTURE_LINES=${FM_COMPOSER_CAPTURE_LINES:-20}
 
 # Pi allows a multi-line composer between its horizontal separators. Bound the
 # structural candidate so two unrelated transcript rules with an arbitrarily
