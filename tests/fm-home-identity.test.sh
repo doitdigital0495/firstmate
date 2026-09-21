@@ -161,6 +161,15 @@ run_spawn_as() {  # <home> <proj> <wt> <fakebin> <launchlog> <session> <store> <
     "$SPAWN" "$@" "$proj" --mode no-mistakes --yolo off 2>&1
 }
 
+captured_launch() { # <launchlog>
+  local source
+  source=$(<"$1")
+  source=${source#". '"}
+  source=${source%"'"}
+  [ -f "$source" ] || fail 'the worker launch file was not staged'
+  printf '%s\n' "$(<"$source")"
+}
+
 test_spawn_refuses_a_foreign_session_and_creates_nothing() {
   local home proj wt fakebin launchlog out status
   IFS='|' read -r home proj wt fakebin launchlog <<< "$(gate_case spawn-foreign task-g)"
@@ -247,7 +256,7 @@ test_a_worker_records_the_account_its_home_is_pinned_to() {
     || fail "the first spawn must succeed"
   assert_grep "claude_config_dir=$GERIS_STORE" "$home/state/task-w.meta" \
     "a first launch must record the account its home is pinned to"
-  launch=$(cat "$launchlog")
+  launch=$(captured_launch "$launchlog")
   assert_contains "$launch" "CLAUDE_CONFIG_DIR='$GERIS_STORE'" \
     "the worker must launch on its home's account"
   assert_not_contains "$launch" "-u CLAUDE_CONFIG_DIR" \
@@ -264,7 +273,7 @@ test_a_personal_worker_is_never_handed_a_work_account() {
     || fail "the personal spawn must succeed"
   assert_grep "claude_config_dir=default" "$home/state/task-p.meta" \
     "a personal launch must record the default-store binding"
-  launch=$(cat "$launchlog")
+  launch=$(captured_launch "$launchlog")
   assert_contains "$launch" "-u CLAUDE_CONFIG_DIR" \
     "a personal worker must actively unset any inherited work account"
   assert_not_contains "$launch" "CLAUDE_CONFIG_DIR=" \

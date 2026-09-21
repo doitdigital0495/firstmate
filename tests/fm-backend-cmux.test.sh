@@ -939,6 +939,16 @@ test_send_text_submit_send_failed_when_target_absent() {
   pass "fm_backend_cmux_send_text_submit: reports 'send-failed' when the target workspace/surface is absent"
 }
 
+test_send_text_submit_send_failed_when_list_panes_is_empty() {
+  local dir fb out
+  dir="$TMP_ROOT/submit-empty-list-panes"; mkdir -p "$dir/responses"
+  fb=$(make_cmux_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_CMUX_LOG="$dir/log" FM_CMUX_RESPONSES="$dir/responses" \
+    bash -c '. "$0/bin/backends/cmux.sh"; fm_backend_cmux_send_text_submit "aaaaaaaa-0000-0000-0000-000000000000:bbbbbbbb-1111-1111-1111-111111111111" "x" 2 0.01 0.01' "$ROOT" )
+  [ "$out" = send-failed ] || fail "send_text_submit should report send-failed when list-panes returns empty output, got '$out'"
+  pass "fm_backend_cmux_send_text_submit: empty successful list-panes output cannot prove a live target"
+}
+
 # --- window_of_workspace: which window holds a workspace, and its count ------
 
 test_window_of_workspace_finds_window_and_count() {
@@ -1156,6 +1166,7 @@ test_send_text_submit_detects_landed_send
 test_send_text_submit_detects_swallowed_enter
 test_send_text_submit_popup_autocomplete_requires_second_enter
 test_send_text_submit_send_failed_when_target_absent
+test_send_text_submit_send_failed_when_list_panes_is_empty
 test_window_of_workspace_finds_window_and_count
 test_window_of_workspace_empty_when_not_found
 test_kill_closes_workspace_directly_when_not_last

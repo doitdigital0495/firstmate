@@ -195,6 +195,29 @@ SH
   chmod +x "$1/lsof"
 }
 
+# Git versions differ on whether this pruned ref rewrite takes packed-refs.lock.
+# Keep the recovery cases deterministic by failing fetch while the planted lock
+# exists, then delegate to the real git after the guard clears it.
+git_persistent_packed_refs_lock() {
+  cat > "$1/git" <<'SH'
+#!/usr/bin/env bash
+real=${REAL_GIT_FOR_TEST:?}
+dir=; is_fetch=0; prev=
+for a in "$@"; do
+  [ "$a" = fetch ] && is_fetch=1
+  [ "$prev" = -C ] && dir=$a
+  prev=$a
+done
+if [ "$is_fetch" = 1 ] && [ -n "$dir" ] && [ -e "$dir/.git/packed-refs.lock" ]; then
+  printf "error: could not delete reference refs/remotes/origin/feature: Unable to create '%s': File exists.\n" \
+    "$dir/.git/packed-refs.lock" >&2
+  exit 1
+fi
+exec "$real" "$@"
+SH
+  chmod +x "$1/git"
+}
+
 # git shim: fail the FIRST `fetch` with the packed-refs.lock signature and drop
 # the lock (simulating the dying ref-rewrite finishing), then delegate every
 # later call - including the retried fetch - to the real git so the sync completes.
@@ -518,6 +541,7 @@ test_orphaned_stale_packed_refs_lock_recovers() {
   fakebin="$home/fb-lockstale"; rm -rf "$fakebin"; mkdir -p "$fakebin"
   clone=$(build_packed_prunable "$home" lockstale)
   plant_packed_refs_lock "$clone"
+  git_persistent_packed_refs_lock "$fakebin"
   lsof_no_holder "$fakebin"           # provably no live holder
   out="$home/out-lockstale"; err="$home/err-lockstale"
 
@@ -547,6 +571,7 @@ test_live_packed_refs_lock_is_never_removed() {
   fakebin="$home/fb-locklive"; rm -rf "$fakebin"; mkdir -p "$fakebin"
   clone=$(build_packed_prunable "$home" locklive)
   plant_packed_refs_lock "$clone"
+  git_persistent_packed_refs_lock "$fakebin"
   lsof_live_holder "$fakebin"         # a live process holds the lock/.git open
   before=$(head_sha "$clone")
   out="$home/out-locklive"; err="$home/err-locklive"
@@ -573,6 +598,7 @@ test_live_git_cwd_in_clone_dir_blocks_removal() {
   fakebin="$home/fb-lockcwd"; rm -rf "$fakebin"; mkdir -p "$fakebin"
   clone=$(build_packed_prunable "$home" lockcwd)
   plant_packed_refs_lock "$clone"
+  git_persistent_packed_refs_lock "$fakebin"
   # Nobody holds the lock file, but a live process holds the clone worktree as its
   # cwd - the narrow race where git closed packed-refs.lock but has not yet exited.
   lsof_holds_only_live_dir "$fakebin"

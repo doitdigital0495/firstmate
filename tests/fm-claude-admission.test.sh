@@ -805,6 +805,15 @@ run_claude_spawn() {  # <home> <wt> <fakebin> <launchlog> <store> <spawn args...
     "$SPAWN" "$@" --mode no-mistakes --yolo off 2>&1
 }
 
+captured_launch() { # <launchlog>
+  local source
+  source=$(<"$1")
+  source=${source#". '"}
+  source=${source%"'"}
+  [ -f "$source" ] || fail 'the Claude launch file was not staged'
+  printf '%s\n' "$(<"$source")"
+}
+
 test_spawn_withholds_before_creating_anything() {
   local home wt fakebin launchlog proj store out status
   IFS='|' read -r home wt fakebin launchlog proj <<< "$(spawn_case spawn-withhold ship-one ship-two)"
@@ -908,7 +917,7 @@ test_spawn_on_unshaped_store_is_unchanged() {
   # No shaped-store list at all: the pre-change behavior.
   run_claude_spawn "$home" "$wt" "$fakebin" "$launchlog" "$store" ship-one "$proj" >/dev/null \
     || fail "a spawn with no shaped-store list must succeed"
-  baseline=$(cat "$launchlog")
+  baseline=$(captured_launch "$launchlog")
   [ -n "$baseline" ] || fail "the baseline spawn must record a launch command"
   rm -f "$home/state/ship-one.meta"
 
@@ -918,7 +927,7 @@ test_spawn_on_unshaped_store_is_unchanged() {
   printf '%s\n' "$shaped_elsewhere" > "$home/config/claude-shaped-store"
   run_claude_spawn "$home" "$wt" "$fakebin" "$launchlog" "$store" ship-one "$proj" >/dev/null \
     || fail "a spawn onto an unlisted store must succeed unchanged"
-  with_config=$(cat "$launchlog")
+  with_config=$(captured_launch "$launchlog")
   [ "$with_config" = "$baseline" ] \
     || fail "an unshaped store's launch command changed:"$'\n'"--- baseline ---"$'\n'"$baseline"$'\n'"--- with config ---"$'\n'"$with_config"
   assert_absent "$home/state/claude-admission" \
