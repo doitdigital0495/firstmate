@@ -437,9 +437,10 @@ fm_backend_cmux_parse_target() {  # <target>
 # (fm_backend_zellij_pane_exists) rather than the design sketch's original
 # read-screen-based suggestion.
 fm_backend_cmux_surface_exists() {  # <workspace_id> <surface_id>
-  local wsid=$1 sfid=$2
-  fm_backend_cmux_cli list-panes --workspace "$wsid" --json --id-format uuids 2>/dev/null \
-    | jq -e --arg s "$sfid" '[.panes[]? | select(.surface_ids // [] | index($s))] | length > 0' >/dev/null 2>&1
+  local wsid=$1 sfid=$2 panes
+  panes=$(fm_backend_cmux_cli list-panes --workspace "$wsid" --json --id-format uuids 2>/dev/null) || return 1
+  [ -n "$panes" ] || return 1
+  printf '%s' "$panes" | jq -e --arg s "$sfid" '[.panes[]? | select(.surface_ids // [] | index($s))] | length > 0' >/dev/null 2>&1
 }
 
 # fm_backend_cmux_target_ready: parse the target and verify it is live via
@@ -551,12 +552,16 @@ fm_backend_cmux_send_text_line() {  # <target> <text> [expected-label]
   return 2
 }
 
-# fm_backend_cmux_capture: bounded plain-text surface capture. No herdr-style
-# small-N empty-result bug was found (finding #3), but "fetch generous, trim
-# locally" is kept anyway: a single read-screen call is still bounded by the
-# surface's actual current viewport height regardless of the requested
-# --lines value, so a caller asking for more than the viewport can see would
-# otherwise silently get less than it asked for with no way to tell why.
+# fm_backend_cmux_capture: bounded plain-text surface capture. `--scrollback`
+# is this adapter's explicit opt-in to history, so the result can include
+# lines that have scrolled out of view - it is not a viewport read, and no
+# viewport-only primitive is offered for cmux (see FM_BACKEND_VISIBLE_CAPTURE in
+# bin/fm-backend.sh). Finding #3's viewport-height cap was observed on
+# read-screen calls; whether a call WITHOUT --scrollback is strictly bounded to
+# the viewport is plausible but has not been live-verified. No herdr-style
+# small-N empty-result bug was found (finding #3); "fetch generous, trim
+# locally" is kept for parity with herdr and so a small caller bound never
+# depends on how read-screen clamps a small --lines value.
 fm_backend_cmux_capture() {  # <target> <lines> [expected-label]
   fm_backend_cmux_target_ready "$1" "${3:-}" || return 1
   local lines=${2:-200} fetch raw out

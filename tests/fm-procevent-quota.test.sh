@@ -168,6 +168,7 @@ for provider in -- codex-; do
 done
 ok "arm rejects noncanonical provider identities"
 
+install -d -m 700 "$LAB/retire-state"
 out=$(FM_HOME="$LAB/retire-home" FM_STATE_OVERRIDE="$LAB/retire-state" \
   "$BIN/fm-procevent-quota.sh" retire --provider codex)
 [ "$out" = "retired: quota-codex" ] || fail "provider retire targeted the wrong source: $out"

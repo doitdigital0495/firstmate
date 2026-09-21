@@ -2943,7 +2943,9 @@ ORPHAN_DESCENDANT=$(cat "$TMP_ROOT/orphan-dead.descendant")
 # The reproduction condition itself: the listener is already an orphan in the
 # kernel's sense before anything is asserted about reaping it.
 orphan_ppid=$(ps -o ppid= -p "$ORPHAN_PID" 2>/dev/null | tr -d '[:space:]')
-[ "$orphan_ppid" = 1 ] \
+orphan_parent_ppid=$(ps -o ppid= -p "$orphan_ppid" 2>/dev/null | tr -d '[:space:]')
+# A session supervisor may be a child subreaper of PID 1 and adopt the listener.
+[ "$orphan_ppid" = 1 ] || [ "$orphan_parent_ppid" = 1 ] \
   || fail "the listener under test was not reparented away from its session (ppid $orphan_ppid)"
 kill -0 -"$ORPHAN_PID" 2>/dev/null \
   || fail "the listener's process group was not running"
