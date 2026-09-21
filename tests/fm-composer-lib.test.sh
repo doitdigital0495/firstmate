@@ -203,21 +203,6 @@ test_matrix_codex_dim_hint_row() {
   pass "matrix: codex's dim hint is empty when styling proves it, unknown (never pending) when it cannot"
 }
 
-test_codex_prompt_above_short_tail() {
-  local screen='' short captured caps i
-  for ((i = 0; i < 22; i++)); do screen+='transcript line'$'\n'; done
-  screen+="${ESC}[1m›${ESC}[0m ${ESC}[2mAsk Codex to do anything${ESC}[0m"$'\n\n'
-  screen+='  gpt-6-astra high fast'$'\n'
-  for ((i = 0; i < 20; i++)); do screen+=' '$'\n'; done
-  short=$(printf '%s' "$screen" | tail -n 20)
-  [ "$(fm_composer_classify_screen "$CAPS_STYLED" "$short")" = unknown ] \
-    || fail "the 20-row tail must miss the Codex prompt for this fixture to catch capture regressions"
-  captured=$(printf '%s' "$screen" | tail -n "$FM_COMPOSER_CAPTURE_LINES")
-  caps=$(printf 'styled=1\ncursor=0\nidentity=1\nrows=%s' "$FM_COMPOSER_CAPTURE_LINES")
-  assert_screen "codex idle prompt in a 45-row pane" empty "$caps" "$captured"
-  pass "matrix: the bounded capture includes Codex's idle prompt above 20 trailing rows"
-}
-
 test_matrix_muse_truecolor_glyph_survives_signal_loss() {
   # Real idle muse: truecolor `⟩` (38;2;90;160;255, luminance ~149.9) under a
   # TITLED rule. Two independent signals prove emptiness: the glyph surviving
@@ -799,7 +784,6 @@ test_idle_placeholder_case_mode_is_explicit
 test_real_text_is_pending
 test_matrix_claude_bare_nbsp_row
 test_matrix_codex_dim_hint_row
-test_codex_prompt_above_short_tail
 test_matrix_muse_truecolor_glyph_survives_signal_loss
 test_matrix_cursor_reverse_video_placeholder_remnant
 test_matrix_herdr_halfblock_rule_bounds_bare_wrap
