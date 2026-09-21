@@ -1,0 +1,2 @@
+live child of this shell (pid 3812734, ppid 3812727, shell 3812727) -> REJECTED_NOT_AN_ORPHAN
+reparented listener (pid 3812896, ppid 279) -> PASSED_PRECONDITION

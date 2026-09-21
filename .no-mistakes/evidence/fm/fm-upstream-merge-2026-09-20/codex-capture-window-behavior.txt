@@ -1,0 +1,4 @@
+FM_COMPOSER_CAPTURE_LINES default = 20
+tall codex pane, prompt outside the 20-row window -> unknown
+codex idle prompt inside the window -> empty
+codex composer holding typed text -> pending
