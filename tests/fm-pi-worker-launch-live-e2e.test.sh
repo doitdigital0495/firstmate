@@ -23,6 +23,14 @@ PI_VERSION=$(pi --version)
 PI_AGENT_DIR=${PI_CODING_AGENT_DIR:-${HOME:?}/.pi/agent}
 HERDR_EXT="$PI_AGENT_DIR/extensions/herdr-agent-state.ts"
 RTK_EXT="$PI_AGENT_DIR/extensions/rtk-compact.ts"
+for ext in "$HERDR_EXT" "$RTK_EXT"; do
+  [ -f "$ext" ] && continue
+  case "${FM_PI_WORKER_LAUNCH_LIVE:-}${FM_LIVE:-}" in
+    *1*) fail "FM_PI_WORKER_LAUNCH_LIVE was requested but $ext is not installed" ;;
+  esac
+  printf 'skip: live: %s absent\n' "$ext"
+  exit 0
+done
 
 cat > "$PROBE" <<'TS'
 import { writeFileSync } from "node:fs";
@@ -68,7 +76,7 @@ TS
   cd "$ROOT" || exit 1
   FM_PI_PROBE_OUT="$FULL" pi --no-extensions -e "$PROBE" \
     --tools read,bash,edit,write --provider fm-probe --model probe --thinking medium \
-    --no-session -p /fm-launch-probe >/dev/null
+    --no-session -p /fm-launch-probe </dev/null >/dev/null
 ) || fail "Pi $PI_VERSION full-context probe failed"
 
 (
@@ -78,7 +86,7 @@ TS
     -e "$HERDR_EXT" -e "$RTK_EXT" -e "$PROBE" \
     --tools read,bash --provider openai-codex --model gpt-5.6-luna --thinking low \
     --append-system-prompt "$(< "$ROOT/.pi/fm-worker-contract.md")" \
-    --no-session -p /fm-launch-probe >/dev/null
+    --no-session -p /fm-launch-probe </dev/null >/dev/null
 ) || fail "Pi $PI_VERSION openai-codex lean probe failed"
 
 (
@@ -88,7 +96,7 @@ TS
     -e "$HERDR_EXT" -e "$RTK_EXT" -e "$PROBE" \
     --tools read,bash,edit,write --provider zai --model glm-5.3 --thinking high \
     --append-system-prompt "$(< "$ROOT/.pi/fm-worker-contract.md")" \
-    --no-session -p /fm-launch-probe >/dev/null
+    --no-session -p /fm-launch-probe </dev/null >/dev/null
 ) || fail "Pi $PI_VERSION zai lean probe failed"
 
 node - "$FULL" "$LEAN" "$ZAI" <<'JS'
@@ -112,9 +120,13 @@ if (!lean.hasContract)
   fail("lean system prompt omitted the worker contract");
 if (full.contexts < 1 || full.skills < 1)
   fail(`control did not load repository resources: contexts=${full.contexts} skills=${full.skills}`);
-const removed = 1 - lean.promptChars / full.promptChars;
-if (removed < 0.95)
-  fail(`lean prompt removed only ${(removed * 100).toFixed(1)}% (${full.promptChars} -> ${lean.promptChars} chars)`);
-console.log(`ok - real Pi removed ${(removed * 100).toFixed(1)}% of startup prompt characters and honored explicit Codex/Z.ai profiles and tools`);
-console.log(`# full_chars=${full.promptChars} lean_chars=${lean.promptChars} estimated_tokens=${Math.ceil(full.promptChars / 4)}->${Math.ceil(lean.promptChars / 4)} contexts=${full.contexts}->${lean.contexts} skills=${full.skills}->${lean.skills}`);
+if (zai.contexts !== 0 || zai.skills !== 0 || !zai.hasContract)
+  fail(`Z.ai ship prompt was not lean: ${JSON.stringify(zai)}`);
+const pct = (probe) => ((1 - probe.promptChars / full.promptChars) * 100).toFixed(1);
+for (const [name, probe] of [["ship", zai], ["scout", lean]])
+  if (probe.promptChars > full.promptChars * 0.05)
+    fail(`${name} prompt removed only ${pct(probe)}% (${full.promptChars} -> ${probe.promptChars} chars)`);
+const tokens = (probe) => Math.ceil(probe.promptChars / 4);
+console.log(`ok - real Pi removed ${pct(zai)}% (ship) and ${pct(lean)}% (scout) of startup prompt characters and honored explicit Codex/Z.ai profiles and tools`);
+console.log(`# full_chars=${full.promptChars} ship_chars=${zai.promptChars} scout_chars=${lean.promptChars} estimated_tokens=${tokens(full)}->${tokens(zai)} (ship) ${tokens(full)}->${tokens(lean)} (scout) contexts=${full.contexts}->0 skills=${full.skills}->0`);
 JS

@@ -181,7 +181,8 @@
 #   never falls back to pi. A Pi ship or scout is a lean task worker: it disables
 #   discovered context files, skills, and extensions; appends .pi/fm-worker-contract.md;
 #   explicitly loads the operator's herdr-agent-state.ts and rtk-compact.ts plus the
-#   task's Firstmate state extension; and limits built-in tools to read,bash for a
+#   task's Firstmate state extension, refusing before provisioning when either
+#   operator extension is missing; and limits built-in tools to read,bash for a
 #   scout or read,bash,edit,write for a ship. Its launch clears PI_PROVIDER, PI_MODEL,
 #   and PI_REASONING_LEVEL before passing explicit CLI values. A zai launch adds only
 #   `opr -f "$FM_ROOT/.env.op" --` ahead of that same Pi command, so ZAI_API_KEY is
@@ -2231,7 +2232,17 @@ fi
 
 PI_PROVIDER=
 PI_MODEL=
-if { [ "$HARNESS" = pi ] || [ "$HARNESS" = pi-signed ]; } && [ "$KIND" != secondmate ]; then
+PI_HERDR_EXT=
+PI_RTK_EXT=
+if { [ "$HARNESS" = pi ] || [ "$HARNESS" = pi-signed ]; } && [ "$KIND" != secondmate ] && [ "$RAW_LAUNCH" -eq 0 ]; then
+  PI_HERDR_EXT="${PI_CODING_AGENT_DIR:-${HOME:-}/.pi/agent}/extensions/herdr-agent-state.ts"
+  PI_RTK_EXT="${PI_CODING_AGENT_DIR:-${HOME:-}/.pi/agent}/extensions/rtk-compact.ts"
+  for pi_ext in "$PI_HERDR_EXT" "$PI_RTK_EXT"; do
+    [ -f "$pi_ext" ] || {
+      echo "error: Pi task workers load the operator extension $pi_ext, which is missing; install it or select a different verified harness" >&2
+      exit 1
+    }
+  done
   [ -n "$MODEL" ] && [ "$MODEL" != default ] || MODEL=openai-codex/gpt-5.6-sol
   case "$MODEL" in
   */*)
@@ -4972,8 +4983,8 @@ fi
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
-sq_piherdrext=$(shell_quote "${PI_CODING_AGENT_DIR:-${HOME:-}/.pi/agent}/extensions/herdr-agent-state.ts")
-sq_pirtkext=$(shell_quote "${PI_CODING_AGENT_DIR:-${HOME:-}/.pi/agent}/extensions/rtk-compact.ts")
+sq_piherdrext=$(shell_quote "$PI_HERDR_EXT")
+sq_pirtkext=$(shell_quote "$PI_RTK_EXT")
 sq_piworkercontract=$(shell_quote "$FM_ROOT/.pi/fm-worker-contract.md")
 sq_piopenv=$(shell_quote "$FM_ROOT/.env.op")
 sq_claudesettings=$(shell_quote "$STATE_REAL/$ID.claude-settings.json")

@@ -327,8 +327,10 @@ fm_test_run_spawn() {
   # so every launch-shape assertion in the suite keeps reading the same command.
   # A test that needs the set case opts in through FM_TEST_CLAUDE_CONFIG_DIR.
   local spawn_home=$home/user-home
-  mkdir -p "$spawn_home"
-  FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$spawn_home" \
+  mkdir -p "$spawn_home/.pi/agent/extensions"
+  : > "$spawn_home/.pi/agent/extensions/herdr-agent-state.ts"
+  : > "$spawn_home/.pi/agent/extensions/rtk-compact.ts"
+  FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$spawn_home" PI_CODING_AGENT_DIR="${FM_TEST_PI_CODING_AGENT_DIR:-}" \
     CLAUDE_CONFIG_DIR="${FM_TEST_CLAUDE_CONFIG_DIR:-}" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \

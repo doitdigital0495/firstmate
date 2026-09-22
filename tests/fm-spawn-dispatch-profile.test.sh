@@ -848,6 +848,40 @@ test_pi_scout_uses_read_only_tool_profile() {
   pass "Pi scouts receive the read-only built-in tool profile"
 }
 
+test_pi_worker_missing_operator_extension_refuses() {
+  local rec id out status
+  id=profile-pi-missing-ext-z8g
+  rec=$(make_spawn_case profile-pi-missing-ext pi "$id")
+  read_case_record "$rec"
+  mkdir -p "$CASE_DIR/empty-pi-agent"
+
+  out=$(FM_TEST_PI_CODING_AGENT_DIR="$CASE_DIR/empty-pi-agent" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "pi worker spawn without operator extensions should refuse"
+  assert_contains "$out" "$CASE_DIR/empty-pi-agent/extensions/herdr-agent-state.ts, which is missing" \
+    "missing-extension refusal did not name the absent file"
+  assert_absent "$HOME_DIR/state/$id.meta" "missing-extension refusal wrote task metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "missing-extension refusal still launched: $(cat "$LAUNCH_LOG")"
+  pass "Pi workers refuse before launch when an operator extension is missing"
+}
+
+test_raw_pi_launch_records_no_invented_profile() {
+  local rec id out status launch
+  id=profile-pi-raw-z8h
+  rec=$(make_spawn_case profile-pi-raw pi "$id")
+  read_case_record "$rec"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "pi --custom-flag")
+  status=$?
+  expect_code 0 "$status" "raw pi launch should succeed: $out"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" pi default default
+  launch=$(cat "$LAUNCH_LOG")
+  assert_not_contains "$launch" "--provider" "raw pi launch gained a worker provider flag"
+  pass "raw Pi launches keep the captain's command and record no invented profile"
+}
+
 test_pi_tui_mode_probe_is_safe_for_old_and_new_pi() {
   local harness version rec id out status launch
   for harness in pi pi-signed; do
@@ -1563,6 +1597,8 @@ test_pi_threads_model_and_max_effort
 test_pi_worker_defaults_are_explicit_and_lean
 test_pi_glm_uses_same_lean_shape_and_supported_reasoning
 test_pi_scout_uses_read_only_tool_profile
+test_pi_worker_missing_operator_extension_refuses
+test_raw_pi_launch_records_no_invented_profile
 test_pi_tui_mode_probe_is_safe_for_old_and_new_pi
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
