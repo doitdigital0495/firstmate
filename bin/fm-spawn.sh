@@ -79,9 +79,15 @@
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
-#   from that harness's launch rather than guessed. Ultra is the explicit
-#   exception: bin/fm-harness.sh validate-native-effort owns its model scope;
-#   supported Pi launches receive --codex-effort ultra, never --thinking ultra.
+#   from that harness's launch rather than guessed. A Pi task worker always launches
+#   with both axes explicit: omitted values resolve to openai-codex/gpt-5.6-sol and
+#   medium, while an explicit zai model defaults to high. Pi task models must carry
+#   their provider prefix. The provider becomes a separate --provider flag and the
+#   model id becomes --model, so Codex and GLM share one launch shape. Pi's installed
+#   GLM-5.3 map accepts only low, high, and max; medium and xhigh refuse instead of
+#   silently clamping. Ultra is the explicit exception: bin/fm-harness.sh
+#   validate-native-effort owns its model scope; supported Pi launches receive
+#   --codex-effort ultra, never --thinking ultra.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -172,7 +178,16 @@
 #   same path. It adds --tui-mode regular only when that help advertises the flag;
 #   a failed or inconclusive probe omits it so older Pi versions remain launchable.
 #   A missing selected executable refuses before endpoint creation, and pi-signed
-#   never falls back to pi.
+#   never falls back to pi. A Pi ship or scout is a lean task worker: it disables
+#   discovered context files, skills, and extensions; appends .pi/fm-worker-contract.md;
+#   explicitly loads the operator's herdr-agent-state.ts and rtk-compact.ts plus the
+#   task's Firstmate state extension, refusing before provisioning when either
+#   operator extension is missing; and limits built-in tools to read,bash for a
+#   scout or read,bash,edit,write for a ship. Its launch clears PI_PROVIDER, PI_MODEL,
+#   and PI_REASONING_LEVEL before passing explicit CLI values. A zai launch adds only
+#   `opr -f "$FM_ROOT/.env.op" --` ahead of that same Pi command, so ZAI_API_KEY is
+#   resolved into the child environment and never copied into launch text. Pi secondmates remain full primary
+#   sessions and do not use this worker-only shape.
 #   For omp (Oh My Pi), fm-spawn resolves the `omp` executable from PATH once and
 #   refuses when it is absent. Every omp launch clears the foreign harness
 #   markers (omp publishes none of its own), sets the Firstmate-owned
@@ -307,7 +322,13 @@
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode
 #     __PIBIN__    quoted concrete Pi-family executable path resolved from PATH
+#     __PIPREFIX__ optional `opr -f __PIOPENV__ -- ` prefix for a zai task worker
+#     __PIOPENV__ absolute tracked ZAI_API_KEY reference map
 #     __PITUIMODE__ optional --tui-mode regular when that executable advertises it
+#     __PIHERDREXT__ absolute operator Pi herdr-agent-state extension path
+#     __PIRTKEXT__ absolute operator Pi rtk-compact extension path
+#     __PITOOLS__ task-class built-in tool allowlist
+#     __PIWORKERCONTRACT__ absolute tracked compact worker contract path
 #     __TURNEND__  absolute path to state/<task-id>.turn-ended (for harnesses whose
 #                  turn-end signal rides the launch command, e.g. codex -c notify=[...])
 #     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi turn-end extension,
@@ -1896,11 +1917,10 @@ launch_template() {
       ;;
     opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}}'\'' opencode __MODELFLAG__--prompt "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     pi|pi-signed)
-      printf '%s' '__PIBIN____PITUIMODE__'
       if [ "$kind" = secondmate ]; then
-        printf '%s' ' __MODELFLAG____EFFORTFLAG__-e __PITURNEND__ -e __PIWATCH__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+        printf '%s' '__PIBIN____PITUIMODE__ __MODELFLAG____EFFORTFLAG__-e __PITURNEND__ -e __PIWATCH__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
       else
-        printf '%s' ' __MODELFLAG____EFFORTFLAG__-e __PIEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+        printf '%s' '__PIPREFIX____PIBIN____PITUIMODE__ --no-context-files --no-skills --no-extensions -e __PIHERDREXT__ -e __PIRTKEXT__ -e __PIEXT__ --tools __PITOOLS__ __MODELFLAG____EFFORTFLAG__--append-system-prompt "$(cat __PIWORKERCONTRACT__)" "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
       fi
       ;;
     # omp (Oh My Pi), a Pi fork. Same one-positional-brief, --model, --thinking,
@@ -2209,6 +2229,63 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
     fi
   fi
 fi
+
+PI_PROVIDER=
+PI_MODEL=
+PI_HERDR_EXT=
+PI_RTK_EXT=
+if { [ "$HARNESS" = pi ] || [ "$HARNESS" = pi-signed ]; } && [ "$KIND" != secondmate ] && [ "$RAW_LAUNCH" -eq 0 ]; then
+  PI_HERDR_EXT="${PI_CODING_AGENT_DIR:-${HOME:-}/.pi/agent}/extensions/herdr-agent-state.ts"
+  PI_RTK_EXT="${PI_CODING_AGENT_DIR:-${HOME:-}/.pi/agent}/extensions/rtk-compact.ts"
+  for pi_ext in "$PI_HERDR_EXT" "$PI_RTK_EXT"; do
+    [ -f "$pi_ext" ] || {
+      echo "error: Pi task workers load the operator extension $pi_ext, which is missing; install it or select a different verified harness" >&2
+      exit 1
+    }
+  done
+  [ -n "$MODEL" ] && [ "$MODEL" != default ] || MODEL=openai-codex/gpt-5.6-sol
+  case "$MODEL" in
+  */*)
+    PI_PROVIDER=${MODEL%%/*}
+    PI_MODEL=${MODEL#*/}
+    ;;
+  *)
+    echo "error: Pi task-worker --model must include its provider as <provider>/<model>; got '$MODEL'" >&2
+    exit 1
+    ;;
+  esac
+  [ -n "$EFFORT" ] && [ "$EFFORT" != default ] || {
+    if [ "$PI_PROVIDER" = zai ]; then EFFORT=high; else EFFORT=medium; fi
+  }
+  case "$PI_PROVIDER" in
+  openai-codex | codex-native) ;;
+  zai)
+    case "$PI_MODEL" in
+    glm-5.3 | glm-5.3-flash) ;;
+    *)
+      echo "error: Pi zai workers support glm-5.3 or glm-5.3-flash; got '$PI_MODEL'" >&2
+      exit 1
+      ;;
+    esac
+    case "$EFFORT" in
+    low | high | max) ;;
+    *)
+      echo "error: Pi's installed $PI_MODEL map supports only low, high, and max; got '$EFFORT'" >&2
+      exit 1
+      ;;
+    esac
+    command -v opr >/dev/null 2>&1 || {
+      echo "error: a Pi zai worker requires opr so ZAI_API_KEY stays behind the secret boundary" >&2
+      exit 1
+    }
+    ;;
+  *)
+    echo "error: Pi task workers support providers openai-codex, codex-native, and zai; got '$PI_PROVIDER'" >&2
+    exit 1
+    ;;
+  esac
+fi
+
 # Ultra is an explicit native capability, never a Pi thinking-level alias.
 # Validate the fully resolved profile before worktree or endpoint provisioning.
 if [ "$EFFORT" = ultra ]; then
@@ -2345,7 +2422,15 @@ model_flag_for_harness() {
   local harness=$1 model=$2
   [ -n "$model" ] && [ "$model" != default ] || return 0
   case "$harness" in
-  claude | codex | opencode | pi | pi-signed | grok | kimi | cursor | gemini | muse | rovo | omp | agy)
+  pi | pi-signed)
+    if [ "$KIND" = secondmate ]; then
+      printf -- '--model %s ' "$(shell_quote "$model")"
+    else
+      printf -- '--provider %s --model %s ' \
+        "$(shell_quote "${model%%/*}")" "$(shell_quote "${model#*/}")"
+    fi
+    ;;
+  claude | codex | opencode | grok | kimi | cursor | gemini | muse | rovo | omp | agy)
     printf -- '--model %s ' "$(shell_quote "$model")"
     ;;
   esac
@@ -4898,6 +4983,10 @@ fi
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
+sq_piherdrext=$(shell_quote "$PI_HERDR_EXT")
+sq_pirtkext=$(shell_quote "$PI_RTK_EXT")
+sq_piworkercontract=$(shell_quote "$FM_ROOT/.pi/fm-worker-contract.md")
+sq_piopenv=$(shell_quote "$FM_ROOT/.env.op")
 sq_claudesettings=$(shell_quote "$STATE_REAL/$ID.claude-settings.json")
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
 sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
@@ -4920,6 +5009,14 @@ fi
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
 LAUNCH=${LAUNCH//__TURNEND__/$sq_turnend}
 LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
+LAUNCH=${LAUNCH//__PIHERDREXT__/$sq_piherdrext}
+LAUNCH=${LAUNCH//__PIRTKEXT__/$sq_pirtkext}
+LAUNCH=${LAUNCH//__PIWORKERCONTRACT__/$sq_piworkercontract}
+if [ "$KIND" = scout ]; then PI_TOOLS=read,bash; else PI_TOOLS=read,bash,edit,write; fi
+LAUNCH=${LAUNCH//__PITOOLS__/$PI_TOOLS}
+if [ "$PI_PROVIDER" = zai ]; then PI_PREFIX='opr -f __PIOPENV__ -- '; else PI_PREFIX=; fi
+LAUNCH=${LAUNCH//__PIPREFIX__/$PI_PREFIX}
+LAUNCH=${LAUNCH//__PIOPENV__/$sq_piopenv}
 LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$sq_claudesettings}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
@@ -4943,7 +5040,14 @@ if [ "$HARNESS" = claude ]; then
   esac
 fi
 case "$HARNESS" in
-  claude|codex|opencode|pi|pi-signed|grok|kimi|gemini|muse|rovo|agy)
+  pi|pi-signed)
+    if [ -n "$PI_PROVIDER" ]; then
+      LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL $LAUNCH"
+    else
+      LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI $LAUNCH"
+    fi
+    ;;
+  claude|codex|opencode|grok|kimi|gemini|muse|rovo|agy)
     LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI$CLAUDE_STORE_UNSET $LAUNCH"
     ;;
 esac

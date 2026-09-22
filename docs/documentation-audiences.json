@@ -265,6 +265,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": ".pi/fm-worker-contract.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": "AGENTS.md",
       "audience": "agent-runtime"
     },

@@ -107,6 +107,33 @@ A single-process harness has no descendant that adds a distinct verdict, which i
 The portable regression pins every half without any harness installed: `tests/fm-harness-precedence.test.sh` asserts that this two-process topology decides at comm strength, that the descent probe reaches a strength the top-of-session probe cannot, that a sibling branch answering a foreign harness contributes no verdict, that a foreign args-only verdict at the deepest vantage leaves the comm-strength identity intact, and that equal-depth ties choose the comm-strength leaf regardless of process ordering.
 The run did not reach `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, or `muse`, which were not installed, and stopped at the same pre-existing liveness failure for `cursor` 3.18.9, whose resolved binary on that machine is the editor rather than `cursor-agent`; those adapters are unverified by this run.
 
+## Pi lean task-worker launch
+
+Verified on 2026-09-22 with Pi 0.86.1 on Linux.
+The token-free live guard uses an extension command in the real Pi process to read Pi's resolved provider, model, thinking level, tools, context files, skills, and final system prompt without starting an agent turn or making a provider request.
+It compares the repository's ordinary startup composition with the tracked worker contract and native lean flags.
+
+```sh
+bin/fm-test-run.sh tests/fm-pi-worker-launch-live-e2e.test.sh
+```
+
+Observed output:
+
+```text
+ok - real Pi removed 97.9% (ship) and 98.4% (scout) of startup prompt characters and honored explicit Codex/Z.ai profiles and tools
+# full_chars=147831 ship_chars=3130 scout_chars=2430 estimated_tokens=36958->783 (ship) 36958->608 (scout) contexts=2->0 skills=80->0
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0
+```
+
+Using Pi's four-characters-per-token estimate, the final measured prompt is about 36,958 tokens before and 783 after for a ship worker, a 97.9% reduction, and 608 after for a scout, a 98.4% reduction.
+The control launches with the ship tool set, so the ship figure compares equal tool text; the scout figure also drops the edit and write tool descriptions.
+The control is smaller than in earlier runs because the operator's installed skill set on this host shrank from 101 to 80 skills.
+The earlier 45,000-token acceptance number came from an agentic-setup measurement whose project handbook was 160,384 bytes; this repository's handbook is 87,616 bytes, so the active acceptance threshold is the repository-independent 95% reduction instead.
+The earlier acceptance probe in this repository measured 40,554 tokens before and 500 after, a 98.8% reduction, before the tracked worker contract existed; the final tracked contract raises the accurate after value to the figures above while remaining well above that threshold.
+The same live run loaded the operator's installed `herdr-agent-state.ts` and `rtk-compact.ts` extensions for both real provider paths, resolved the Z.ai credential through the tracked 1Password reference map, made no provider request, and confirmed an inherited `PI_REASONING_LEVEL=xhigh` could not override the explicit launch values.
+Pi's installed provider map was read directly from version 0.86.1: `openai-codex` lists `gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`; `zai` maps both `glm-5.3` and `glm-5.3-flash` to only `low`, `high`, and `max`.
+The portable launch regression remains `tests/fm-spawn-dispatch-profile.test.sh`; it proves both providers use one worker shape, Z.ai is prefixed by `opr --` without a key in command text, every Pi worker launch carries model and thinking flags, GLM rejects unsupported generic levels, and scout tools exclude edit and write.
+
 ## tmux
 
 Foreground-process behavior was verified on 2026-07-07 with tmux 3.6a on macOS.
