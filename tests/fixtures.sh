@@ -277,6 +277,15 @@ fm_test_spawn_home() {
   fi
 }
 
+# fm_test_pi_operator_extensions <user-home>
+# Stubs the operator-installed Pi extensions a Pi task-worker spawn preflights
+# under <user-home>/.pi/agent, so a throwaway HOME passes that check.
+fm_test_pi_operator_extensions() {
+  mkdir -p "$1/.pi/agent/extensions"
+  : > "$1/.pi/agent/extensions/herdr-agent-state.ts"
+  : > "$1/.pi/agent/extensions/rtk-compact.ts"
+}
+
 # fm_test_spawn_brief <home> <id> [captain-intent]
 fm_test_spawn_brief() {
   local home=$1 id=$2 intent=${3:-brief for $2}
@@ -327,9 +336,7 @@ fm_test_run_spawn() {
   # so every launch-shape assertion in the suite keeps reading the same command.
   # A test that needs the set case opts in through FM_TEST_CLAUDE_CONFIG_DIR.
   local spawn_home=$home/user-home
-  mkdir -p "$spawn_home/.pi/agent/extensions"
-  : > "$spawn_home/.pi/agent/extensions/herdr-agent-state.ts"
-  : > "$spawn_home/.pi/agent/extensions/rtk-compact.ts"
+  fm_test_pi_operator_extensions "$spawn_home"
   FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$spawn_home" PI_CODING_AGENT_DIR="${FM_TEST_PI_CODING_AGENT_DIR:-}" \
     CLAUDE_CONFIG_DIR="${FM_TEST_CLAUDE_CONFIG_DIR:-}" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \

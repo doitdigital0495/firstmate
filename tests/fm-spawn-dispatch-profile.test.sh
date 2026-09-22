@@ -64,6 +64,7 @@ make_spawn_case() {
   launchlog="$case_dir/launch.log"
   fakebin=$(make_spawn_fakebin "$case_dir/fake")
   fm_test_spawn_home "$home" "$harness"
+  fm_test_pi_operator_extensions "$home/user-home"
   fm_git_worktree "$proj" "$wt" "wt-$name"
   for id in "$@"; do
     fm_test_spawn_brief "$home" "$id"
@@ -172,6 +173,7 @@ test_relative_home_overrides_launch_with_absolute_cross_process_paths() {
       FM_STATE_OVERRIDE=home/state FM_DATA_OVERRIDE=home/data \
       FM_PROJECTS_OVERRIDE=home/projects FM_CONFIG_OVERRIDE=home/config \
       FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+      HOME="$HOME_DIR/user-home" PI_CODING_AGENT_DIR='' \
       CLAUDE_CONFIG_DIR='' FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       GROK_HOME=home/grok-home PATH="$FAKEBIN_DIR:$PATH" \
       "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
@@ -201,6 +203,7 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
       FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
       FM_PROJECTS_OVERRIDE=home/projects FM_CONFIG_OVERRIDE=home/config \
       FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+      HOME="$HOME_DIR/user-home" PI_CODING_AGENT_DIR='' \
       CLAUDE_CONFIG_DIR='' FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       GROK_HOME=home/grok-home PATH="$FAKEBIN_DIR:$PATH" \
       "$SPAWN" "$relative_id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
@@ -221,6 +224,7 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
       FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
       FM_PROJECTS_OVERRIDE="$linked_home/projects" FM_CONFIG_OVERRIDE="$linked_home/config" \
       FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+      HOME="$HOME_DIR/user-home" PI_CODING_AGENT_DIR='' \
       CLAUDE_CONFIG_DIR='' FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       GROK_HOME="$linked_home/grok-home" PATH="$FAKEBIN_DIR:$PATH" \
       "$SPAWN" "$absolute_id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
@@ -249,6 +253,7 @@ test_absolute_override_spelling_is_preserved_in_launch_paths() {
       FM_STATE_OVERRIDE="$linked_home/state" FM_DATA_OVERRIDE="$linked_home/data" \
       FM_PROJECTS_OVERRIDE="$linked_home/projects" FM_CONFIG_OVERRIDE="$linked_home/config" \
       FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+      HOME="$HOME_DIR/user-home" PI_CODING_AGENT_DIR='' \
       CLAUDE_CONFIG_DIR='' FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       GROK_HOME="$linked_home/grok-home" PATH="$FAKEBIN_DIR:$PATH" \
       "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
