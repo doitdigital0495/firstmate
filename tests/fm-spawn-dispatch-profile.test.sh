@@ -48,6 +48,7 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/timeout" "$fakebin/cursor-agent"
+  fm_fake_exit0 "$fakebin" opr
   make_spawn_pi_probe "$fakebin" pi
   make_spawn_pi_probe "$fakebin" pi-signed
   printf '%s\n' "$fakebin"
@@ -670,7 +671,7 @@ test_native_pi_ultra_is_explicit_and_model_scoped() {
       expect_code 0 "$?" "native Ultra spawn failed: $out"
       assert_meta_profile "$HOME_DIR/state/$id.meta" "$harness" codex-native/gpt-6-astra ultra
       launch=$(cat "$LAUNCH_LOG")
-      assert_contains "$launch" "--model 'codex-native/gpt-6-astra' --codex-effort 'ultra'" "native Ultra flag missing"
+      assert_contains "$launch" "--provider 'codex-native' --model 'gpt-6-astra' --codex-effort 'ultra'" "native Ultra flag missing"
       assert_not_contains "$launch" "--thinking" "native Ultra was converted into Pi thinking"
       assert_not_contains "$launch" "'max'" "native Ultra was aliased to max"
     done
@@ -726,8 +727,10 @@ test_pi_threads_model_and_max_effort() {
   expect_code 0 "$status" "pi spawn with max effort should succeed"
   assert_meta_profile "$HOME_DIR/state/$id.meta" pi openai-codex/gpt-5.6-sol max
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "FM_PI_HARNESS=pi '$FAKEBIN_DIR/pi' --tui-mode regular --model 'openai-codex/gpt-5.6-sol' --thinking 'max' -e" \
-    "pi launch did not force the regular TUI while threading the requested model and max thinking level"
+  assert_contains "$launch" "FM_PI_HARNESS=pi '$FAKEBIN_DIR/pi' --tui-mode regular --no-context-files --no-skills --no-extensions" \
+    "pi launch did not force the regular TUI and lean resource shape"
+  assert_contains "$launch" "--provider 'openai-codex' --model 'gpt-5.6-sol' --thinking 'max'" \
+    "pi launch did not separate provider and model while threading max thinking"
   assert_not_contains "$launch" "FM_FIRSTMATE_PI_LAUNCH_BRIEF=" \
     "pi launch still exports the removed Calm input-reroute binding"
   assert_contains "$launch" "fm-operational-input.sh' encode launch-brief" \
@@ -748,8 +751,10 @@ test_pi_signed_threads_shared_pi_profile_and_preserves_identity() {
   assert_contains "$out" "spawned $id harness=pi-signed" "pi-signed spawn did not preserve its visible identity"
   assert_meta_profile "$HOME_DIR/state/$id.meta" pi-signed openai-codex/gpt-5.6-sol max
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "FM_PI_HARNESS=pi-signed '$FAKEBIN_DIR/pi-signed' --tui-mode regular --model 'openai-codex/gpt-5.6-sol' --thinking 'max' -e" \
-    "pi-signed launch did not force the regular TUI with Pi's model, thinking, and extension semantics"
+  assert_contains "$launch" "FM_PI_HARNESS=pi-signed '$FAKEBIN_DIR/pi-signed' --tui-mode regular --no-context-files --no-skills --no-extensions" \
+    "pi-signed launch did not force the regular TUI with Pi's lean resource semantics"
+  assert_contains "$launch" "--provider 'openai-codex' --model 'gpt-5.6-sol' --thinking 'max'" \
+    "pi-signed launch did not separate provider and model while threading max thinking"
   assert_contains "$launch" "fm-operational-input.sh' encode launch-brief" \
     "pi-signed launch lost the canonical typed launch-brief envelope"
   assert_present "$HOME_DIR/state/$id.pi-ext.ts" "pi-signed launch did not install Pi's turn-end extension"
@@ -766,6 +771,81 @@ test_pi_signed_threads_shared_pi_profile_and_preserves_identity() {
   assert_contains "$ext" '"--source", "pi-ext"' "pi extension does not attribute its semantic source"
   assert_contains "$ext" 'pi.on("turn_end"' "pi extension lost the turn-end notification touch"
   pass "pi-signed shares Pi launch semantics while preserving its configured and recorded identity"
+}
+
+test_pi_worker_defaults_are_explicit_and_lean() {
+  local rec id out status launch contract
+  id=profile-pi-default-lean-z8c
+  rec=$(make_spawn_case profile-pi-default-lean pi "$id")
+  read_case_record "$rec"
+
+  out=$(PI_PROVIDER=wrong PI_MODEL=wrong PI_REASONING_LEVEL=xhigh \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "pi spawn with omitted profile axes should pin worker defaults"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" pi openai-codex/gpt-5.6-sol medium
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "-u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL" \
+    "pi worker launch did not clear inherited profile variables"
+  assert_contains "$launch" "--no-context-files --no-skills --no-extensions" \
+    "pi worker launch did not disable discovered startup resources"
+  assert_contains "$launch" "/extensions/herdr-agent-state.ts' -e '" \
+    "pi worker launch did not load the Herdr state extension"
+  assert_contains "$launch" "/extensions/rtk-compact.ts' -e '$HOME_DIR/state/$id.pi-ext.ts'" \
+    "pi worker launch did not load RTK before its task extension"
+  assert_contains "$launch" "--tools read,bash,edit,write --provider 'openai-codex' --model 'gpt-5.6-sol' --thinking 'medium'" \
+    "pi ship launch omitted an explicit tool, provider, model, or thinking value"
+  contract=$(cd "$ROOT" && pwd -P)/.pi/fm-worker-contract.md
+  assert_contains "$launch" "--append-system-prompt \"\$(cat '$contract')\"" \
+    "pi worker launch did not append the tracked compact contract"
+  pass "Pi workers pin lean resources, tools, model, thinking, and environment-independent defaults"
+}
+
+test_pi_glm_uses_same_lean_shape_and_supported_reasoning() {
+  local rec id out status launch secret openv
+  id=profile-pi-glm-z8d
+  rec=$(make_spawn_case profile-pi-glm pi "$id")
+  read_case_record "$rec"
+  secret=must-not-enter-launch
+
+  out=$(ZAI_API_KEY="$secret" run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --model zai/glm-5.3-flash --effort high)
+  status=$?
+  expect_code 0 "$status" "pi GLM spawn with supported reasoning should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  openv=$(cd "$ROOT" && pwd -P)/.env.op
+  assert_contains "$launch" "opr -f '$openv' -- '$FAKEBIN_DIR/pi'" "pi GLM launch did not resolve credentials through opr"
+  assert_contains "$launch" "--tools read,bash,edit,write --provider 'zai' --model 'glm-5.3-flash' --thinking 'high'" \
+    "pi GLM launch diverged from the common lean shape"
+  assert_not_contains "$launch" "$secret" "pi GLM launch exposed ZAI_API_KEY in command text"
+
+  id=profile-pi-glm-invalid-z8e
+  fm_test_spawn_brief "$HOME_DIR" "$id"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --model zai/glm-5.3 --effort medium)
+  status=$?
+  expect_code 1 "$status" "pi GLM spawn with unsupported medium reasoning should refuse"
+  assert_contains "$out" "supports only low, high, and max" \
+    "pi GLM refusal did not report the installed model-map levels"
+  assert_absent "$HOME_DIR/state/$id.meta" "invalid GLM reasoning wrote task metadata"
+  pass "Pi GLM workers use opr, hide the key, and enforce the installed reasoning map"
+}
+
+test_pi_scout_uses_read_only_tool_profile() {
+  local rec id out status launch
+  id=profile-pi-scout-tools-z8f
+  rec=$(make_spawn_case profile-pi-scout-tools pi "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --scout --model openai-codex/gpt-5.6-luna --effort low)
+  status=$?
+  expect_code 0 "$status" "pi scout spawn should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--tools read,bash --provider 'openai-codex' --model 'gpt-5.6-luna' --thinking 'low'" \
+    "pi scout did not receive the read-only task-class tool profile"
+  assert_not_contains "$launch" "--tools read,bash,edit" "pi scout retained edit capability"
+  pass "Pi scouts receive the read-only built-in tool profile"
 }
 
 test_pi_tui_mode_probe_is_safe_for_old_and_new_pi() {
@@ -1480,6 +1560,9 @@ test_native_effort_validator_keeps_axes_separate
 test_native_pi_ultra_is_explicit_and_model_scoped
 test_batch_preserves_native_ultra
 test_pi_threads_model_and_max_effort
+test_pi_worker_defaults_are_explicit_and_lean
+test_pi_glm_uses_same_lean_shape_and_supported_reasoning
+test_pi_scout_uses_read_only_tool_profile
 test_pi_tui_mode_probe_is_safe_for_old_and_new_pi
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
