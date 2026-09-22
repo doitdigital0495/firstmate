@@ -5041,10 +5041,10 @@ if [ "$HARNESS" = claude ]; then
 fi
 case "$HARNESS" in
   pi|pi-signed)
-    if [ "$KIND" = secondmate ]; then
-      LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI $LAUNCH"
-    else
+    if [ -n "$PI_PROVIDER" ]; then
       LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL $LAUNCH"
+    else
+      LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI $LAUNCH"
     fi
     ;;
   claude|codex|opencode|grok|kimi|gemini|muse|rovo|agy)

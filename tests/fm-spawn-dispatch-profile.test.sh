@@ -879,6 +879,7 @@ test_raw_pi_launch_records_no_invented_profile() {
   assert_meta_profile "$HOME_DIR/state/$id.meta" pi default default
   launch=$(cat "$LAUNCH_LOG")
   assert_not_contains "$launch" "--provider" "raw pi launch gained a worker provider flag"
+  assert_not_contains "$launch" "-u PI_PROVIDER" "raw pi launch cleared the operator's Pi profile environment"
   pass "raw Pi launches keep the captain's command and record no invented profile"
 }
 
