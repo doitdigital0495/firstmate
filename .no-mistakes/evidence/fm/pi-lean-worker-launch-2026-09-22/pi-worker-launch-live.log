@@ -1,0 +1,3 @@
+ok - real Pi removed 97.9% (ship) and 98.4% (scout) of startup prompt characters and honored explicit Codex/Z.ai profiles and tools
+# full_chars=147831 ship_chars=3130 scout_chars=2430 estimated_tokens=36958->783 (ship) 36958->608 (scout) contexts=2->0 skills=80->0
+EXIT=0

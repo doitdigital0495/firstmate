@@ -1,0 +1,25 @@
+=== glm-medium --mode no-mistakes --yolo off --model zai/glm-5.3 --effort medium
+spawn_exit=1
+error: Pi's installed glm-5.3 map supports only low, high, and max; got 'medium'
+=== glm-xhigh --mode no-mistakes --yolo off --model zai/glm-5.3 --effort xhigh
+spawn_exit=1
+error: Pi's installed glm-5.3 map supports only low, high, and max; got 'xhigh'
+=== bare-model --mode no-mistakes --yolo off --model gpt-5.6-sol
+spawn_exit=1
+error: Pi task-worker --model must include its provider as <provider>/<model>; got 'gpt-5.6-sol'
+=== bad-provider --mode no-mistakes --yolo off --model anthropic/claude-opus-5
+spawn_exit=1
+error: Pi task workers support providers openai-codex, codex-native, and zai; got 'anthropic'
+=== missing-operator-extension
+spawn_exit=1
+error: Pi task workers load the operator extension /tmp/fm-noext-home/.pi/agent/extensions/herdr-agent-state.ts, which is missing; install it or select a different verified harness
+=== raw pi launch
+spawn_exit=1
+error: unknown harness '--'; pass a raw launch command to use an unverified adapter
+=== raw pi launch ('pi --custom-flag')
+FAKEBIN=/tmp/fm-live-launch-capture.Ry0o2U/rawpi/fake/fakebin
+META:
+harness=pi
+model=default
+effort=default
+export COMPACT_ADVISER_DISABLE=1; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI FM_PI_HARNESS=pi pi --custom-flag
