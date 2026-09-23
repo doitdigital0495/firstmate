@@ -330,7 +330,7 @@ Keep the checklist to the captain's asks, not Firstmate build steps; those belon
 
 A `no-mistakes` report tweak the captain will iterate on anyway (visuals, measures, text, portal UI) may ship the fast lane: scaffold and spawn the brief with `--fast-lane` (ship tasks only, `--mode no-mistakes` only), and pass `--fast-lane` to a scout promotion that ships that class.
 The lane is a worker-drive rule, not a no-mistakes option: no-mistakes has no per-run setting that caps review rounds (only `--skip <steps>`, which removes a step entirely), so the brief's definition of done instructs the worker to answer the first review gate with `--action approve`, never `--action fix` there, with scope locked to the request checklist and out-of-scope findings recorded as follow-ups instead of commits.
-In the fast lane only error-severity ask-user findings escalate (Validate, below); warning- and info-severity ask-user findings become done-report follow-ups instead of decision gates.
+In the fast lane an ask-user finding escalates (Validate, below) when it is error-severity or destructive, irreversible, or security-sensitive at any severity; every other warning- or info-severity ask-user finding is a non-gating done-report follow-up the worker never answers or fixes, and firstmate decides it through `ask-user-authority` when filing it.
 Select it per task on risk you can state, never as a default; when unsure, ship the standard lane.
 
 Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
@@ -373,7 +373,7 @@ Delivery mode and `yolo` are orthogonal.
 Never merge a red PR under either setting unless a current explicit captain instruction names the single GitHub check waived through `fm-pr-merge.sh --allow-red`; that attended-only waiver still requires every other check green.
 Destructive, irreversible, and security-sensitive merges still escalate.
 Without a current explicit captain instruction that states the concrete merge, the green default stands, and standing `yolo` cannot authorize a red merge; section 1 owns when such an instruction overrides a Firstmate-written standing rule within its exact scope.
-Load `ask-user-authority` before deciding any ask-user finding; the implementation worker never answers its own finding.
+Load `ask-user-authority` before deciding any ask-user finding; the implementation worker never answers its own finding (a fast-lane worker approving past a non-gating one records it as a follow-up and decides nothing).
 Use `bin/fm-pr-merge.sh` for every task PR merge so merge metadata is recorded and an unproved merge is refused instead of reported as landed, and use `bin/fm-merge-local.sh` for approved local-only landing; never call a lower-level merge command around their guards.
 After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
 
@@ -394,7 +394,7 @@ Custody recovery settles branch ownership, not content: the worker must replace 
 Apart from that single supported abort, do not hand-edit, commit, restart, or start a second validation run while the obsolete run still owns the branch.
 Once ownership is settled, validate exactly once against that final head so no obsolete or intermediate head is ever treated as authoritative.
 
-An ask-user finding returns as `needs-decision`; firstmate loads `ask-user-authority` and either decides or escalates per that skill.
+An ask-user finding returns as `needs-decision` (in the fast lane only the escalating class does; the rest return as done-report follow-ups); firstmate loads `ask-user-authority` and either decides or escalates per that skill.
 Send the same worker one exact decision naming the decision key, step, action, affected finding IDs, instructions where needed, and exact response command, passing `--resolve-key` so the worker's open decision record closes at answer time.
 Require the matching `resolved` event, forbid `--yes`, and require the worker to process every synchronous return until completion or a genuinely new escalation.
 Resume fleet supervision immediately after the decision lands.
