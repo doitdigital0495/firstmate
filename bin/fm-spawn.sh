@@ -186,10 +186,11 @@
 #   scout or read,bash,edit,write for a ship. Its launch clears PI_PROVIDER, PI_MODEL,
 #   and PI_REASONING_LEVEL before passing explicit CLI values. A zai launch adds only
 #   `opr -f "$FM_ROOT/.env.op" --` ahead of that same Pi command, so ZAI_API_KEY is
-#   resolved into the child environment and never copied into launch text, and
-#   brackets that env-prefixed launch with best-effort pane-side Herdr agent
-#   lifecycle reports (working before, idle or blocked after) because the opr
-#   chain runs off the pane's pty where Herdr's own integration cannot see it.
+#   resolved into the child environment and never copied into launch text. Every
+#   Pi task-worker launch, Codex and zai alike, is bracketed with best-effort
+#   pane-side Herdr agent lifecycle reports (working before, idle or blocked
+#   after) because the launch chain can run off the pane's pty where Herdr's own
+#   integration cannot see it.
 #   Pi secondmates remain full primary
 #   sessions and do not use this worker-only shape.
 #   --skill <path> (repeatable) hands a Pi ship or scout exactly the skills its task

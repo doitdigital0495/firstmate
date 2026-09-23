@@ -41,7 +41,7 @@ fm_live_gate default-on FM_PI_ZAI_HERDR_AGENT_REPORT_LIVE_E2E herdr jq treehouse
 
 [ -f "$ROOT/.env.op" ] || { echo 'skip: live: no tracked .env.op reference map'; exit 0; }
 
-HERDR_LAB_HELPER='/home/daan/.firstmate/bin/fm-herdr-lab.sh'
+HERDR_LAB_HELPER=${HERDR_LAB_HELPER:-$ROOT/bin/fm-herdr-lab.sh}
 SESSION=$("$HERDR_LAB_HELPER" name fm-pi-herdr-sidebar-2026-09-23)
 export HERDR_SESSION="$SESSION"
 cleanup_all() {
