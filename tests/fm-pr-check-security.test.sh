@@ -412,6 +412,13 @@ https://gitlab.com/group/sub/deep/project/-/merge_requests/42|gitlab.com|group/s
 https://gitlab.example.co.uk/g/p/-/merge_requests/7|gitlab.example.co.uk|g/p|7
 https://code.internal/team/tools/ci-runner/-/merge_requests/123456|code.internal|team/tools/ci-runner|123456
 EOF
+  fm_pr_url_parse https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801 \
+    || fail "parser rejected canonical Azure DevOps URL"
+  [ "$FM_PR_PROVIDER" = ado ] \
+    && [ "$FM_PR_HOST" = dev.azure.com ] \
+    && [ "$FM_PR_PATH" = Org-1/Insights-Requests/_git/fabric_monorepo ] \
+    && [ "$FM_PR_NUMBER" = 801 ] \
+    || fail "parser returned the wrong Azure DevOps identity"
   fm_pr_url_parse https://github.com/a/b/pull/1 || fail "parser rejected canonical URL"
   [ "$FM_PR_PROVIDER" = github ] || fail "parser did not tag a pull request URL as github"
   [ "$FM_PR_HOST" = github.com ] || fail "parser returned wrong GitHub host"
@@ -428,6 +435,41 @@ EOF
   fm_pr_task_id_valid "$id" || fail "operational validator rejected a path-safe legacy task ID"
   ! fm_task_id_creation_valid "$id" || fail "creation validator accepted an overlong task ID"
   pass "raw-byte parser accepts canonical URLs and rejects the complete adversarial matrix"
+}
+
+test_ado_poll_conflict_and_postmerge_verdicts() {
+  local dir url out
+  dir=$(make_case ado-poll)
+  url=https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801
+  cat > "$dir/fakebin/az" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'repos pr show'*)
+    if [ "${FM_TEST_AZ_STATUS:-completed}" = active ]; then
+      printf 'active\n%s\nrefs/heads/main\nrefs/heads/fm/test\nNone\nNone\n' "${FM_TEST_AZ_MERGE_STATUS:-conflicts}"
+    else
+      printf 'completed\nNone\nrefs/heads/main\nrefs/heads/fm/test\n0123456789abcdef0123456789abcdef01234567\n2020-01-01T00:00:00Z\n'
+    fi
+    ;;
+  *'pipelines runs list'*)
+    printf 'fabric-deploy\tcompleted\tsucceeded\t8513\nreports-deploy\tcompleted\tfailed\t8519\ndbt-dev-build\tcompleted\tsucceeded\t8521\n'
+    ;;
+  *) exit 2 ;;
+esac
+SH
+  chmod +x "$dir/fakebin/az"
+  out=$(FM_TEST_AZ_STATUS=active PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  case "$out" in 'ado conflict: '*needs\ a\ rebase*) ;; *) fail "ADO conflict was not surfaced: $out" ;; esac
+  out=$(FM_ADO_POSTMERGE_GRACE_SECS=0 PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  case "$out" in
+    *fabric-deploy=GREEN*reports-deploy=RED*dbt-dev-build=GREEN*) ;;
+    *) fail "ADO merge pipeline verdicts did not distinguish red from green: $out" ;;
+  esac
+  pass "Azure DevOps polls surface conflicts and per-pipeline post-merge colors"
 }
 
 test_invalid_entrypoints_have_zero_side_effects() {
@@ -2753,6 +2795,7 @@ SH
 }
 
 test_parser_matrix
+test_ado_poll_conflict_and_postmerge_verdicts
 test_gitlab_merge_watch
 test_merged_poll_retires_once
 test_merged_poll_reregistration_after_notification_is_absorbed

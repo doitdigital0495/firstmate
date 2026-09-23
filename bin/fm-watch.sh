@@ -2399,8 +2399,11 @@ while :; do
             triage_log "PR poll for $id changed before its validated check; skipping the stale snapshot"
             continue
           fi
+          # The task's state directory and id travel as data so the Azure
+          # DevOps poll can run its git conflict probe in the task's worktree;
+          # the github and gitlab polls ignore them.
           run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --validated \
-            "$provider" "$url" "$host" "$path" "$number" || exit 1
+            "$provider" "$url" "$host" "$path" "$number" "$STATE" "$id" || exit 1
           out=$FM_CHECK_RESULT
         elif fm_custom_check_snapshot_prepare "$STATE" "$id"; then
           custom_snapshot=$FM_CUSTOM_CHECK_SNAPSHOT
@@ -2434,7 +2437,11 @@ EOF
           fi
         fi
         reason="check: $c: $out"
-        if [ "$is_pr_poll" -eq 1 ] && [ "$out" = merged ]; then
+        # The github and gitlab polls emit exactly "merged"; the Azure
+        # DevOps poll appends its post-merge pipeline verdicts to the same
+        # first word, and fm_pr_poll_merged_output owns what still counts as
+        # the terminal merged result either way.
+        if [ "$is_pr_poll" -eq 1 ] && fm_pr_poll_merged_output "$out"; then
           if ! fm_merge_authority_read "$STATE" "$id" \
               "$provider" "$host" "$path" "$number"; then
             triage_log "no matching persisted merge authority for $id; recording an external merge outcome"
