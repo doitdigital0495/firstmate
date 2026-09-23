@@ -134,7 +134,7 @@ The same live run loaded the operator's installed `herdr-agent-state.ts` and `rt
 Pi's installed provider map was read directly from version 0.86.1: `openai-codex` lists `gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`; `zai` maps both `glm-5.3` and `glm-5.3-flash` to only `low`, `high`, and `max`.
 The portable launch regression remains `tests/fm-spawn-dispatch-profile.test.sh`; it proves both providers use one worker shape, Z.ai is prefixed by `opr --` without a key in command text, every Pi worker launch carries model and thinking flags, GLM rejects unsupported generic levels, and scout tools exclude edit and write.
 
-### 2026-09-23 zai Pi task-worker visibility in Herdr's agents sidebar
+### 2026-09-23 Pi task-worker (GLM and Codex) visibility in Herdr's agents sidebar
 
 Verified on 2026-09-23 with Pi 0.86.1 and Herdr 0.9.1 on Linux, against a real `zai/glm-5.3` task worker spawned by `bin/fm-spawn.sh --backend herdr` on an isolated lab session.
 A zai task worker rides `opr -f .env.op --` so ZAI_API_KEY stays behind the secret boundary; the outer op-broker/sudo/setpriv chain can also detach Pi from its Herdr pane and make its TUI-gated `herdr-agent-state.ts` extension silent.
