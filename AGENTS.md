@@ -330,7 +330,7 @@ Keep the checklist to the captain's asks, not Firstmate build steps; those belon
 
 A `no-mistakes` report tweak the captain will iterate on anyway (visuals, measures, text, portal UI) may ship the fast lane: scaffold and spawn the brief with `--fast-lane` (ship tasks only, `--mode no-mistakes` only), and pass `--fast-lane` to a scout promotion that ships that class.
 The lane is a worker-drive rule, not a no-mistakes option: no-mistakes has no per-run setting that caps review rounds (only `--skip <steps>`, which removes a step entirely), so the brief's definition of done instructs the worker to answer the first review gate with `--action approve`, never `--action fix` there, with scope locked to the request checklist and out-of-scope findings recorded as follow-ups instead of commits.
-Ask-user escalation (Validate, below) is unchanged in the fast lane.
+In the fast lane only error-severity ask-user findings escalate (Validate, below); warning- and info-severity ask-user findings become done-report follow-ups instead of decision gates.
 Select it per task on risk you can state, never as a default; when unsure, ship the standard lane.
 
 Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.

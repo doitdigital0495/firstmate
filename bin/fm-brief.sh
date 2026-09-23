@@ -512,7 +512,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 
 # Rules
 $RULE1
-2. Stay inside this worktree; modify nothing outside it except the status file and the done report \`$DATA/$ID/report.md\` your Definition of done names.
+2. Stay inside this worktree; modify nothing outside it except the status file, the done report \`$DATA/$ID/report.md\`, and any escalation file your Definition of done names.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
 4. Report status by appending one line:
    \`echo "{state} [at=<epoch>]: {one short line}" >> $STATUS_FILE\`

@@ -319,14 +319,15 @@ test_secondmate_ledger_delivery_carries_report_and_failure() {
 # task's delivered PR: without a recorded PR, only a terminal line in the
 # ready-signal shape carries one, and a scout never carries one at all.
 test_pr_field_requires_recorded_pr_or_ready_signal_line() {
-  local id prose_key ready_key stamped_key placeholder_key scout_key
+  local id prose_key ready_key stamped_key placeholder_key scout_key asked_key
   make_world pr-provenance; bind_secondmate local
   write_child "$MATE" prose $'working: context in https://example.test/other/repo/pull/33\ndone: cleanup finished'
   write_child "$MATE" ready 'done: PR https://example.test/owner/repo/pull/44 checks green'
   write_child "$MATE" stamped 'done [at=1788576000]: PR https://example.test/owner/repo/pull/66 checks green'
   write_child "$MATE" placeholder 'done [at=<epoch>]: PR https://example.test/owner/repo/pull/77 checks green'
   write_child "$MATE" lookout 'done: PR https://example.test/owner/repo/pull/55'
-  for id in prose ready stamped placeholder; do
+  write_child "$MATE" asked 'done [at=1788576000]: PR https://example.test/owner/repo/pull/88 checks green; asks 2/2'
+  for id in prose ready stamped placeholder asked; do
     awk '$0 !~ /^pr=/' "$MATE/state/$id.meta" > "$MATE/state/$id.meta.tmp"
     mv "$MATE/state/$id.meta.tmp" "$MATE/state/$id.meta"
   done
@@ -340,6 +341,9 @@ test_pr_field_requires_recorded_pr_or_ready_signal_line() {
   placeholder_key=$(reported_outcome_key "$MATE" placeholder 'done') \
     || fail "unsubstituted-stamp ready receipt key missing"
   scout_key=$(reported_outcome_key "$MATE" lookout 'done') || fail "scout receipt key missing"
+  asked_key=$(reported_outcome_key "$MATE" asked 'done') || fail "asks-tail ready receipt key missing"
+  sed -E 's/ \[at=[0-9]+\]//' "$MAIN/state/mate.status" | grep -Fxq "done [key=$asked_key]: child asked done: PR https://example.test/owner/repo/pull/88 checks green; asks 2/2 pr=https://example.test/owner/repo/pull/88 mode=no-mistakes yolo=off" \
+    || fail "a ready-signal line ending in its asks tally lost its PR: $(cat "$MAIN/state/mate.status")"
   sed -E 's/ \[at=[0-9]+\]//' "$MAIN/state/mate.status" | grep -Fxq "done [key=$prose_key]: child prose done: cleanup finished mode=no-mistakes yolo=off" \
     || fail "a PR mentioned only in prose was claimed as the delivery: $(cat "$MAIN/state/mate.status")"
   sed -E 's/ \[at=[0-9]+\]//' "$MAIN/state/mate.status" | grep -Fxq "done [key=$ready_key]: child ready done: PR https://example.test/owner/repo/pull/44 checks green pr=https://example.test/owner/repo/pull/44 mode=no-mistakes yolo=off" \

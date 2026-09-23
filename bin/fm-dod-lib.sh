@@ -274,7 +274,7 @@ EOF
 fm_request_checklist_contract() {  # <data-dir> <task-id>
   local data=$1 id=$2
   cat <<EOF
-Account for the captain's asks in a done report at \`$data/$id/report.md\` (create the file when you first need it); it is the one file outside the worktree you may write besides the status file.
+Account for the captain's asks in a done report at \`$data/$id/report.md\` (create the file when you first need it); besides the status file and any escalation file this Definition of done names, it is the one file outside the worktree you may write.
 Walk the brief's \`## Request checklist\` items in order in that report: \`[x]\` for each delivered ask together with its proof - a test or command and the output line that proves it, a file:line, or a link - or \`[ ]\` with why it is not done; a brief with no such subsection accounts for each distinct ask under \`## Captain's intent\` the same way.
 End the report with numbered follow-ups: every finding or defect you noticed but did not fix, work deferred, and anything outside the ask, each with a file:line and a one-line description; never fix those in this task - firstmate files them into the backlog from this report, so omitting one silently drops it.
 End every \`done:\` line you append with \`asks <done>/<total>\`, counting checklist items, so a lost ask is visible the moment work first reports done.
@@ -292,7 +292,7 @@ FAST LANE - this task ships exactly one review round, with scope locked to the r
 The first time the run parks at a review gate, respond `no-mistakes axi respond --action approve` and let the run continue: approving accepts every finding as-is, and they remain listed as open items on the PR.
 Never respond `--action fix` at a review gate in this task: each fix round starts another review round, and this lane has exactly one - a fix-worthy finding becomes a numbered follow-up in the done report instead.
 Scope lock: this task's scope is exactly its `## Request checklist`, so a finding outside that scope is never fixed here, only recorded as a follow-up.
-Rule 6 still owns ask-user findings: escalate them exactly as instructed above and never approve past them, and when a finding shows the delivered work breaks a captain's ask (a wrong change, not merely an imperfect one), append `blocked [at=<epoch>]: review finding <id> contradicts ask <n>: {one line}` instead of approving.
+Rule 6 still owns error-severity ask-user findings: escalate those exactly as instructed above and never approve past them. A warning- or info-severity ask-user finding is non-blocking here: never escalate it as a decision gate, record it as a numbered follow-up in the done report, and approve past it. When a finding shows the delivered work breaks a captain's ask (a wrong change, not merely an imperfect one), append `blocked [at=<epoch>]: review finding <id> contradicts ask <n>: {one line}` instead of approving.
 Every other gate - intent, test exceptions, document, lint, CI - follows the standard drive guidance above unchanged.
 EOF
 }
