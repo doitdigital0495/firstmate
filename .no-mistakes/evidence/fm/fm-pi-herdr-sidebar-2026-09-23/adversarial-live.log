@@ -1,0 +1,37 @@
+=== Scenario A: failing zai Pi launch ends blocked ===
+A pane w1:p2 while running: {"agent":"pi","agent_status":"working"}
+A pane w1:p2 after rc=3 exit: {"agent":"pi","agent_status":"blocked"}
+[{"pane_id":"w1:p2","agent":"pi","agent_status":"blocked"}]
+=== Scenario B: interactive real Pi worker goes idle while still open ===
+B launch: 
+B pane w1:p3 start: {"agent":"pi","agent_status":"working"}
+B FAIL: stayed {"agent":"pi","agent_status":"done"}
+B status 3s later: {"agent":"pi","agent_status":"done"}
+B pi still running in pane (process list):
+{"pane":{"agent":"pi","agent_session":{"agent":"pi","kind":"path","source":"herdr:pi","value":"/home/daan/.pi/agent/sessions/--home-daan-.treehouse-project-1c788e-2-project--/2026-09-23T18-07-42-035Z_01a0cf73-b5d3-76be-9580-460c10c6b3e0.jsonl"},"agent_status":"done","cwd":"/tmp/fm-pi-adv.8eBep5/project","focused":false,"foreground_cwd":"/home/daan/.treehouse/project-1c788e/2/project","pane_id":"w1:p3","revision":3,"scroll":{"max_offset_from_bottom":40,"offset_from_bottom":0,"viewport_rows":40},"tab_id":"w1:t3","terminal_id":"term_65c2a5bc480cf3","terminal_title":"π - project","terminal_title_
+--- B pane screen ---
+ specification, not captain intent.
+ The Definition of done's rule that --intent must be self-sufficient still governs the string you pass: resolve any
+ report, decision, or PR the intent below refers to into its substance rather than passing the pointer.
+
+ Captain intent authorized for --intent
+
+ Say hi.
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 0.87.1 is available. Run pi update
+ Changelog: https://pi.dev/changelog
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Error: OpenAI API error (401): {"message":"Incorrect API key provided: sk-fm-te******alid. You can find your API key
+ at
+ https://platform.openai.com/account/api-keys.","type":"invalid_request_error","code":"invalid_api_key","param":null}
+ If this looks like a pi bug, /bug sends a report to the developers.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+~/.treehouse/project-1c788e/2/project (detached)
+0.5%/128k (auto)                                                                                    (openai) gpt-4o-mini
