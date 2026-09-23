@@ -73,9 +73,9 @@ An unlisted store, including the default personal one, has no census to read and
 The census is evidence, never a route: it can lower a shaped candidate's standing, and it never selects, blocks a candidate on its own, or authorizes pausing authorized work.
 An unreadable census is disclosed uncertainty for the ranking, the same as any other unmeasurable fact, and the script's own refusal is what stops a launch.
 
-## Three gates, then spendPriority
+## Gates, unknown pools, spendPriority, then runway
 
-Apply eligibility and reasoning-class fit first, resolve unknown pools, then rank by `spendPriority` and assess runway and the Claude reserve.
+Follow these steps in order: eligibility and reasoning-class fit first, resolve unknown pools, then rank by `spendPriority` and assess runway and the Claude reserve.
 `spendPriority` cannot override a hard-gate failure, and it is never hidden inside a new composite score.
 A runway-only failure on the top-ranked candidate can produce a bounded slice, never a full-task launch.
 
@@ -118,24 +118,7 @@ Keep only candidates that meet the required reasoning class for this task (a sim
 Never use `spendPriority` or remaining quota to silently replace that class.
 When every remaining candidate is tight, dispatch inside the strongest-reasoning class if one of those candidates can proceed, or stop and report that the strongest-class choice cannot proceed rather than downgrading it to spend or conserve quota.
 
-### 3. Runway feasibility and Claude orchestration reserve
-
-Establish an inspectable likely-completion horizon for the work before accepting a full-task launch.
-Read `runway` from every applicable `quota[]` bound: `through_reset` passes the generic feasibility check because the window refills without exhausting; never compare its `resetsAt` with the completion horizon as though reset were an exhaustion deadline.
-`exhausted_now` is zero, and `projected_exhaustion` uses the matching `exhaustion[]` row's `usableRunwaySeconds`.
-Known runway shorter than the full-task horizon fails full-task feasibility even at the highest `spendPriority`; do not launch an unsliced job into a known stall.
-Unknown or unmeasurable runway cannot prove feasibility: resolve it by the bounded warm-up and retry below, then drop that candidate if it is still unknown.
-Do not invent a generic percentage floor, and honor an explicit captain floor for a candidate when one exists.
-
-Firstmate itself spends Claude quota while orchestrating.
-For a Claude worker, estimate Firstmate's Claude orchestration demand through each applicable reset from observed usage and already committed supervision work, then include the proposed worker task or slice on every shared credential store.
-If the worker uses a different store, establish the worker's task-inclusive runway on its store and the orchestration runway on Firstmate's store separately; do not debit one store for another's demand.
-Choose Claude only when the task-inclusive worker runway and Firstmate's orchestration runway still reach their respective resets; `through_reset` on a point-in-time reading alone is not proof that adding the worker preserves this reserve.
-If the estimate cannot be supported by inspectable evidence, do not choose Claude on an assumed free reserve; report the uncertainty.
-This is a demand forecast, not a new percentage floor, and is separate from the parked-session census on stores listed in `config/claude-shaped-store`.
-Never apply the Claude reserve to a non-Claude candidate or subtract it from quota-axi's published scalar.
-
-## Resolve unknown pools before ranking
+### 3. Resolve unknown pools before ranking
 
 After catalog, authentication, and reasoning-class checks, identify every eligible candidate whose applicable pool is unknown in headroom, `spendPriority`, runway, or quota applicability; missing model-specific quota alone is not unknown when a known provider-wide bound applies.
 Do not compare known candidates or pick one until every candidate still in this choice has known applicable quota and runway, or has been dropped by this procedure.
@@ -147,13 +130,38 @@ If an applicable pool is still unknown after that one retry, drop only candidate
 An unavailable warm-up never makes the whole choice wait; if no candidates remain, stop and report that none can be ranked rather than guessing or silently switching reasoning class.
 An absent auth source remains disclosed uncertainty rather than proof of failed login, but never fabricates quota evidence for an unmodeled pool.
 
-## Rank by spendPriority and split runway-limited work
+### 4. Rank by spendPriority
 
 Among catalog-eligible candidates in the required reasoning class with resolved quota evidence, compare the known `spendPriority` values first, then assess their runway feasibility in descending rank order.
 A higher known scalar is better: positive means paid allowance is on track to reach reset unused, `0` is exact utilization, and negative means overdrawn against the reset clock.
 Rank only from comparable known scalars.
 Never treat absent, `unknown`, or unmeasurable `spendPriority` as zero or as healthy; `0` means exact utilization, a different claim from unknown.
 Show the scalar or the literal `unknown` in the rationale; do not hide it in a score.
+
+Do not compare headroom against runway by hand.
+Do not use pace or signed reserve as a later tie-break layer.
+Do not read `aheadWindowIds`, `behindWindowIds`, `onPaceWindowIds`, `limitingWindowIds`, or other window-id lists to reconstruct what `spendPriority` already computed.
+
+Genuine ties: stop and report every tied candidate for captain choice.
+Do not select by array order, harness name, or another arbitrary identity ordering.
+Report duplicate concrete profiles as a configuration error.
+
+### 5. Runway feasibility, Claude orchestration reserve, and split
+
+Establish an inspectable likely-completion horizon for the work before accepting a full-task launch.
+Read `runway` from every applicable `quota[]` bound: `through_reset` passes the generic feasibility check because the window refills without exhausting; never compare its `resetsAt` with the completion horizon as though reset were an exhaustion deadline.
+`exhausted_now` is zero, and `projected_exhaustion` uses the matching `exhaustion[]` row's `usableRunwaySeconds`.
+Known runway shorter than the full-task horizon fails full-task feasibility even at the highest `spendPriority`; do not launch an unsliced job into a known stall.
+Unknown or unmeasurable runway cannot prove feasibility: it must already have been resolved by the bounded warm-up and retry above, or its candidate dropped.
+Do not invent a generic percentage floor, and honor an explicit captain floor for a candidate when one exists.
+
+Firstmate itself spends Claude quota while orchestrating.
+For a Claude worker, estimate Firstmate's Claude orchestration demand through each applicable reset from observed usage and already committed supervision work, then include the proposed worker task or slice on every shared credential store.
+If the worker uses a different store, establish the worker's task-inclusive runway on its store and the orchestration runway on Firstmate's store separately; do not debit one store for another's demand.
+Choose Claude only when the task-inclusive worker runway and Firstmate's orchestration runway still reach their respective resets; `through_reset` on a point-in-time reading alone is not proof that adding the worker preserves this reserve.
+If the estimate cannot be supported by inspectable evidence, do not choose Claude on an assumed free reserve; report the uncertainty.
+This is a demand forecast, not a new percentage floor, and is separate from the parked-session census on stores listed in `config/claude-shaped-store`.
+Never apply the Claude reserve to a non-Claude candidate or subtract it from quota-axi's published scalar.
 
 If the top-ranked candidate fails only full-task runway feasibility, first seek a concrete bounded slice that fits safely within its measured usable runway, with an independently inspectable deliverable and a clear checkpoint before exhaustion.
 Dispatch only that slice to the top candidate and requeue the remaining work as a separate task for a fresh choice; neither promise that candidate the whole job nor silently discard the remainder.
@@ -164,13 +172,7 @@ Do not alter the configured profile array or add a generic floor to manufacture 
 
 If no candidate survives the known-evidence and feasibility checks, report the blocker instead of treating unknown as healthy or choosing arbitrarily.
 
-Do not compare headroom against runway by hand.
-Do not use pace or signed reserve as a later tie-break layer.
-Do not read `aheadWindowIds`, `behindWindowIds`, `onPaceWindowIds`, `limitingWindowIds`, or other window-id lists to reconstruct what `spendPriority` already computed.
-
-Genuine ties: stop and report every tied candidate for captain choice.
-Do not select by array order, harness name, or another arbitrary identity ordering.
-Report duplicate concrete profiles as a configuration error.
+## Account for every candidate
 
 Account for every candidate visibly before selecting or escalating, naming its catalog evidence, provider relation, applicable quota and authentication facts, warm-up and retry outcome or dropped reason, fit and reasoning class, `spendPriority`, runway-versus-horizon result, and any Claude reserve or split decision.
 A blocked credential report must name `harness`, `model`, authentication surface, and concrete failure evidence; never emit a bare `Grok unauthenticated` statement.
