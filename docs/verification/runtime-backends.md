@@ -141,6 +141,7 @@ A zai task worker rides `opr -f .env.op --` so ZAI_API_KEY stays behind the secr
 On the observed zai path, sudoers `Defaults ... use_pty` runs the chain in its own session off the pane's pty, and `op run` pipes stdout/stderr for secret-output masking, so Pi resolves print mode and Herdr's pane process view cannot attribute the worker.
 The result was `herdr agent get <pane>` answering `agent_not_found` while the worker ran.
 Herdr 0.9.1 binds a pane's agent record to `herdr pane report-agent` calls from pane-resident processes, and the reserved `herdr:` source prefix is accepted (`{"type":"ok"}`) but never materializes a record when the reporter is a wrapper rather than the in-pane agent itself, so `bin/fm-spawn.sh` brackets every Pi task-worker launch with pane-side reports under Firstmate's own `firstmate:pi` source: `working` before the launch, `idle` or `blocked` from its exit status afterward.
+While a worker stays open in its TUI, its task extension reports `working` at each agent start and `idle` once Pi settles under the same `firstmate:pi` source, so an idle interactive worker does not stay `working` until exit.
 Reports are best-effort telemetry guarded by HERDR_PANE_ID and never gate the launch; stdout remains piped through op-broker, so secret-output masking is unchanged.
 
 The token-free live guard `tests/fm-pi-zai-herdr-agent-report-live-e2e.test.sh` was run on 2026-09-23 with Herdr 0.9.1 through `bin/fm-test-run.sh tests/fm-pi-zai-herdr-agent-report-live-e2e.test.sh`.

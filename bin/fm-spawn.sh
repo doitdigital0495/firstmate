@@ -4616,11 +4616,23 @@ const busyEvent = (state: string, event: string) =>
       "--gen", "$BUSY_GEN", "--source", "pi-ext", "--event", event,
     ], () => resolve());
   });
+// A Pi task worker's launch is bracketed with firstmate:pi pane reports; these
+// per-run reports keep that Herdr record current while the worker stays open.
+const herdrPane = $PI_TASK_WORKER === 1 ? process.env.HERDR_PANE_ID : undefined;
+const herdrReport = (state: string) =>
+  new Promise<void>((resolve) => {
+    if (!herdrPane) return resolve();
+    execFile("herdr", [
+      "pane", "report-agent", herdrPane, "--source", "firstmate:pi",
+      "--agent", "pi", "--state", state,
+    ], () => resolve());
+  });
 export default function (pi: any) {
-  pi.on("agent_start", () => busyEvent("busy", "agent-start"));
+  pi.on("agent_start", () =>
+    Promise.all([busyEvent("busy", "agent-start"), herdrReport("working")]));
   pi.on("agent_settled", (_event: any, ctx: any) => {
     if (ctx && typeof ctx.isIdle === "function" && !ctx.isIdle()) return;
-    return busyEvent("idle", "agent-settled");
+    return Promise.all([busyEvent("idle", "agent-settled"), herdrReport("idle")]);
   });
   pi.on("turn_end", () => execFile("touch", ["$TURNEND"]));
   // A native harness can make progress inside one Pi turn. This separate
