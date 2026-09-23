@@ -261,8 +261,8 @@ fm_pr_url_parse() {
   FM_PR_NUMBER=${BASH_REMATCH[3]}
 }
 
-# Split a stored ado path back into its organization, project, and repository
-# using the same rules as the URL parse, so a caller rebuilding
+# Validate a stored ado path's organization, project, and repository using the
+# same rules as the URL parse and export the organization, so a caller rebuilding
 # https://dev.azure.com/<organization> from a sidecar revalidates the stored
 # bytes instead of trusting them.
 fm_pr_ado_path_parts() {
@@ -270,8 +270,6 @@ fm_pr_ado_path_parts() {
   local LC_ALL=C
   local -a parts
   FM_PR_ADO_ORG=
-  FM_PR_ADO_PROJECT=
-  FM_PR_ADO_REPO=
   IFS=/ read -ra parts <<< "$path"
   [ "${#parts[@]}" -eq 4 ] || return 1
   [ "${parts[2]}" = _git ] || return 1
@@ -282,9 +280,9 @@ fm_pr_ado_path_parts() {
   fm_pr_ado_segment_valid "$project" project || return 1
   fm_pr_ado_segment_valid "$repo" repo || return 1
   [ "$path" = "$org/$project/_git/$repo" ] || return 1
+  # Consumed by bin/fm-pr-check.sh, which addresses the organization URL.
+  # shellcheck disable=SC2034
   FM_PR_ADO_ORG=$org
-  FM_PR_ADO_PROJECT=$project
-  FM_PR_ADO_REPO=$repo
 }
 
 # Single owner of what merge-poll output is a terminal merged result: exactly

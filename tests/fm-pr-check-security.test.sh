@@ -2372,6 +2372,7 @@ test_merged_outcome_row_carries_poll_detail() {
   detail="azure-devops $url merge commit 01234567: fabric-deploy=GREEN (succeeded, run 8513)"
   dir=$(make_case merged-outcome-detail)
   state="$dir/home/state"
+  # shellcheck source=/dev/null
   ( . "$ROOT/bin/fm-merge-outcome-lib.sh"
     fm_merge_outcome_report "$dir/home" "$state" task-a "$url" poll external "$detail" ) \
     || fail "merge outcome with poll detail was not recorded"
