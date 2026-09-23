@@ -202,6 +202,7 @@ It asserts that the script accepts no harness, model, or provider input, never c
 `tests/fm-quota-array-dispatch-live-e2e.test.sh` drives the public Pi skill-loading interface against fake schema-5 snapshots served as quota-axi's default TOON, with a controlled warm-up changing the next snapshot.
 It covers TOON-first `spendPriority` ranking, unknown-pool warm-up and one retry, candidate-local drop when no warm-up exists, required reasoning class, bounded splitting and requeueing on a runway-only failure, unsplittable fallback, and the Claude orchestration reserve.
 The skill's primary path is that default TOON; `--json` is the documented defensive fallback, and this section records the producer `--json` shape that fallback consumes.
+Prompts state only task facts and leave every verdict as an open placeholder, and the call log must start with default TOON while optional `--json` calls are ignored and TOON re-reads and warm-ups must match exactly.
 
 Verified 2026-09-23 with Pi 0.86.1 using `FM_QUOTA_ARRAY_DISPATCH_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-quota-array-dispatch-live-e2e.test.sh`.
 The live skill-loaded behavior test returned the following case outcomes (fake quota and warm-up only; no actual Z.ai window was opened):
@@ -214,5 +215,5 @@ ok - required strongest reasoning class is not downgraded for quota
 ok - unsplittable runway failure falls through to full-task candidate
 ok - runway-limited top candidate gets a bounded slice with remainder requeued
 ok - Claude reserve can veto a full task despite generic runway
-FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=144581
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=190630
 ```

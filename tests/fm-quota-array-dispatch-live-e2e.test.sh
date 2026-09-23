@@ -4,8 +4,8 @@
 # This drives the public Pi skill-loading interface against a fake quota-axi
 # executable rather than parsing instruction source bytes or recreating the
 # selector in test code. The fake serves default TOON from the schema-5 JSON
-# fixture; --json remains available so a TOON-first skill cannot silently
-# fall back without the call log catching it.
+# fixture. The call log must start with that TOON; optional --json fallback
+# calls are ignored, while TOON re-reads and warm-ups must match exactly.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -189,7 +189,9 @@ run_case() {
           "$prompt"
   ) || fail "$label: Pi skill run failed: $out"
   calls=$(cat "$CALLS")
-  [ "$calls" = "$expected_calls" ] || fail "$label: unexpected quota-axi call sequence: $calls"
+  [ "${calls%%$'\n'*}" = TOON ] || fail "$label: first quota-axi call was not default TOON: $calls"
+  [ "$(grep -vx JSON "$CALLS")" = "$expected_calls" ] \
+    || fail "$label: unexpected quota-axi call sequence: $calls"
   printf '%s\n' "$out" | grep -Fxq "$expected" \
     || fail "$label: expected final line $expected, got: $out"
   for required in "$@"; do
@@ -362,9 +364,7 @@ run_case \
   "unknown pool without warm-up drops only its candidate after one retry" \
   "DECISION=CODEX" \
   "TOON
-JSON
-TOON
-JSON" \
+TOON" \
   "Resolve this matched dispatch profile array now. Load quota-array-dispatch and follow it for the quota evidence. Both profiles have comparable required task fit and the same strongest reasoning class. The authoritative catalogs prove Claude/Sonnet and Codex/GPT supported in their stated provider families, and their selected authentication surfaces are usable. The likely task-completion horizon is two hours with established confidence. Return exact lines FACT=claude|status=<ranked|dropped>|warmup=<used|unavailable>|runway=<seconds|through_reset|unknown>|spendPriority=<value|unknown> and FACT=codex|status=<ranked|dropped>|headroom=<n>|spendPriority=<value|unknown>|runway_seconds=<n>|supports_horizon=<yes|no>, then an exact final line DECISION=<CLAUDE|CODEX|STOP>. Do not use other vendor or model commands and do not modify files." \
   "FACT=claude|status=dropped|warmup=unavailable|runway=unknown|spendPriority=unknown" \
   "FACT=codex|status=ranked|headroom=45|spendPriority=-0.404|runway_seconds=222676|supports_horizon=yes"
@@ -411,7 +411,6 @@ run_case \
   "on-demand Z.ai warm-up resolves an unknown pool before ranking" \
   "DECISION=ZAI" \
   "TOON
-JSON
 WARM
 TOON" \
   "Resolve this matched dispatch profile array now. Load quota-array-dispatch and follow it for the quota evidence. The authoritative catalogs prove Pi/zai/glm-5.3 and Codex/GPT supported in their provider families; credentials are usable and both meet the required reasoning class. Completion horizon is two hours with established confidence. Return exact lines FACT=zai|warmups=<n>|spendPriority=<value|unknown>|runway=<seconds|through_reset|unknown> and FACT=codex|spendPriority=<value|unknown>|runway=<seconds|through_reset|unknown> filled from the final quota evidence, then exact final line DECISION=<ZAI|CODEX|STOP>. Do not modify project files." \
