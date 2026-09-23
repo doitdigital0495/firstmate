@@ -12,10 +12,15 @@
 # Every spawn case here stops before any endpoint exists: the delivery checks run
 # ahead of backend creation, and a fake `tmux` that exits non-zero backstops the
 # cases that are meant to get past them, so no window or worktree is ever created.
+# The two cases that must observe a successful spawn's task record (the fast-lane
+# and standard-lane successes) use the shared spawn-world tmux stub from
+# tests/fixtures.sh instead, still inside this suite's throwaway root.
 set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 BRIEF="$ROOT/bin/fm-brief.sh"
@@ -43,12 +48,16 @@ make_home() {  # <name> [<registry-line>...]
   printf '%s\n' "$home|$projects/proj|$fakebin"
 }
 
-write_brief() {  # <home> <id> [<recorded-mode>]
-  local home=$1 id=$2 mode=${3:-}
+write_brief() {  # <home> <id> [<recorded-mode> [<recorded-lane>]]
+  local home=$1 id=$2 mode=${3:-} lane=${4:-}
   mkdir -p "$home/data/$id"
   {
     printf 'You are a crewmate.\n\n# Task\n## Captain'\''s intent\nExercise the delivery contract.\n\n## Firstmate spec\nVerify the selected delivery behavior.\n\n# Definition of done\n'
-    [ -z "$mode" ] || printf 'Delivery contract: mode=%s\n' "$mode"
+    if [ -n "$lane" ]; then
+      printf 'Delivery contract: mode=%s lane=%s\n' "$mode" "$lane"
+    else
+      [ -z "$mode" ] || printf 'Delivery contract: mode=%s\n' "$mode"
+    fi
   } > "$home/data/$id/brief.md"
 }
 
@@ -57,6 +66,7 @@ fill_brief_subsections() {  # <file> <intent> <spec>
   content=$(cat "$file")
   content=${content//'{TASK}'/$intent}
   content=${content//'{FIRSTMATE_SPEC}'/$spec}
+  content=${content//'{ASKS}'/'1. [ ] Keep the original request intact.'}
   printf '%s\n' "$content" > "$file"
 }
 
@@ -167,13 +177,14 @@ scaffold_brief() {  # <home> <id> <mode> <task-text> [<firstmate-spec-text>]
     "$BRIEF_SCAFFOLD" "$id" proj --mode "$mode" >/dev/null \
     || fail "scaffolding a $mode brief for $id failed"
   tmp="$brief.filled"
-  awk -v task="$task" -v spec="$spec" '
+  awk -v task="$task" -v spec="$spec" -v asks='1. [ ] Ship the asked change.' '
     $0 == "{TASK}" { print task; next }
     $0 == "{FIRSTMATE_SPEC}" { print spec; next }
+    $0 == "{ASKS}" { print asks; next }
     { print }
   ' "$brief" > "$tmp"
   mv "$tmp" "$brief"
-  grep -qE '\{TASK\}|\{FIRSTMATE_SPEC\}' "$brief" && fail "$id: a task subsection placeholder was never filled"
+  grep -qE '\{TASK\}|\{FIRSTMATE_SPEC\}|\{ASKS\}' "$brief" && fail "$id: a task subsection placeholder was never filled"
   printf '%s\n' "$brief"
 }
 
@@ -644,6 +655,150 @@ STUB
   pass "fm-promote: a promoted worker receives the same mode-specific delivery contract a briefed one does"
 }
 
+# The fast lane is one delivery contract among the closed set, so the flag is
+# validated against kind and mode exactly like --mode and --yolo, and a valid
+# fast spawn records its lane in the task meta and success line.
+test_fast_lane_flag_is_validated_and_recorded() {
+  local rec home proj fakebin out status id
+  rec=$(make_home fastlane)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+
+  id=fastlane-wrong-mode
+  write_brief "$home" "$id" no-mistakes fast
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off --fast-lane)
+  status=$?
+  [ "$status" -ne 0 ] || fail "--fast-lane with --mode direct-PR should exit non-zero"
+  assert_contains "$out" "--fast-lane requires --mode no-mistakes" "flag refusal did not name the mode constraint"
+  assert_absent "$home/state/$id.meta" "refused fast-lane spawn wrote task metadata"
+
+  id=fastlane-scout
+  write_brief "$home" "$id"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --scout --fast-lane)
+  status=$?
+  [ "$status" -ne 0 ] || fail "--fast-lane on a scout spawn should exit non-zero"
+  assert_contains "$out" "--fast-lane applies only to ship spawns" "flag refusal did not name the ship-only constraint"
+
+  id=fastlane-ok
+  local case_home case_proj case_wt case_bin
+  case_home="$TMP_ROOT/fastlane-ok/home"
+  case_proj="$TMP_ROOT/fastlane-ok/project"
+  case_wt="$TMP_ROOT/fastlane-ok/wt"
+  case_bin=$(make_spawn_fakebin "$TMP_ROOT/fastlane-ok/fake")
+  fm_test_spawn_home "$case_home" claude
+  fm_git_worktree "$case_proj" "$case_wt" wt-fastlane-ok
+  mkdir -p "$case_home/data/$id"
+  printf 'You are a crewmate.\n\n# Task\n## Captain'\''s intent\nExercise the delivery contract.\n\n## Firstmate spec\nVerify the selected delivery behavior.\n\n# Definition of done\nDelivery contract: mode=no-mistakes lane=fast\n' \
+    > "$case_home/data/$id/brief.md"
+  out=$(fm_test_run_spawn "$case_home" "$case_wt" "$case_bin" "$id" "$case_proj" claude --mode no-mistakes --yolo off --fast-lane)
+  status=$?
+  expect_code 0 "$status" "a fast-lane ship spawn should succeed"
+  assert_grep "lane=fast" "$case_home/state/$id.meta" "successful fast-lane spawn did not record lane=fast"
+  assert_contains "$out" "mode=no-mistakes yolo=off lane=fast" "success line did not report the fast lane"
+  assert_present "$case_home/data/$id/launch-brief.md" "fast-lane spawn did not serialize a launch brief"
+
+  id=fastlane-standard
+  write_brief "$home" "$id" no-mistakes
+  case_home="$TMP_ROOT/fastlane-standard/home"
+  case_proj="$TMP_ROOT/fastlane-standard/project"
+  case_wt="$TMP_ROOT/fastlane-standard/wt"
+  case_bin=$(make_spawn_fakebin "$TMP_ROOT/fastlane-standard/fake")
+  fm_test_spawn_home "$case_home" claude
+  fm_git_worktree "$case_proj" "$case_wt" wt-fastlane-standard
+  mkdir -p "$case_home/data/$id"
+  printf 'You are a crewmate.\n\n# Task\n## Captain'\''s intent\nExercise the delivery contract.\n\n## Firstmate spec\nVerify the selected delivery behavior.\n\n# Definition of done\nDelivery contract: mode=no-mistakes\n' \
+    > "$case_home/data/$id/brief.md"
+  out=$(fm_test_run_spawn "$case_home" "$case_wt" "$case_bin" "$id" "$case_proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "a standard ship spawn should still succeed"
+  assert_no_grep "lane=" "$case_home/state/$id.meta" "standard spawn recorded a lane"
+  assert_not_contains "$out" "lane=fast" "standard success line reported a lane"
+  pass "fm-spawn: --fast-lane is ship-and-no-mistakes only and is recorded on success"
+}
+
+# The lane token on the brief's delivery contract line must agree with the
+# spawn's flag in both directions, exactly like the mode token: the worker's
+# drive instructions and the task's recorded rigor must never diverge.
+test_spawn_enforces_brief_lane_agreement() {
+  local rec home proj fakebin out status id
+  rec=$(make_home lane-agreement)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+
+  id=lane_missing_flag
+  write_brief "$home" "$id" no-mistakes fast
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawning a fast brief without the flag should exit non-zero"
+  assert_contains "$out" "the brief says lane=fast but this spawn did not pass --fast-lane" "missing-flag refusal did not name the lane mismatch"
+
+  id=lane_flag_no_brief
+  write_brief "$home" "$id" no-mistakes
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off --fast-lane)
+  status=$?
+  [ "$status" -ne 0 ] || fail "passing the flag on a standard brief should exit non-zero"
+  assert_contains "$out" "this spawn passed --fast-lane but the brief is the standard lane" "standard-brief refusal did not name the lane mismatch"
+
+  id=lane_flag_legacy_brief
+  write_brief "$home" "$id"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off --fast-lane)
+  status=$?
+  [ "$status" -ne 0 ] || fail "passing the flag on a legacy brief without a contract line should exit non-zero"
+  assert_contains "$out" "never received the one-review-round instructions" "legacy-brief refusal did not name the missing lane instructions"
+
+  id=lane_unknown_token
+  mkdir -p "$home/data/$id"
+  printf 'You are a crewmate.\n\n# Task\n## Captain'\''s intent\nExercise the delivery contract.\n\n## Firstmate spec\nVerify the selected delivery behavior.\n\n# Definition of done\nDelivery contract: mode=no-mistakes lane=turbo\n' \
+    > "$home/data/$id/brief.md"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off --fast-lane)
+  status=$?
+  [ "$status" -ne 0 ] || fail "an unknown lane token should exit non-zero"
+  assert_contains "$out" "unknown lane 'turbo'" "unknown-token refusal did not name the invented lane"
+
+  id=lane_fast_nonm_mode
+  mkdir -p "$home/data/$id"
+  printf 'You are a crewmate.\n\n# Task\n## Captain'\''s intent\nExercise the delivery contract.\n\n## Firstmate spec\nVerify the selected delivery behavior.\n\n# Definition of done\nDelivery contract: mode=direct-PR lane=fast\n' \
+    > "$home/data/$id/brief.md"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a fast lane recorded on direct-PR should exit non-zero"
+  assert_contains "$out" "the fast lane is a no-mistakes-only contract" "non-no-mistakes lane refusal did not name the constraint"
+  pass "fm-spawn: the brief's recorded lane and the spawn flag must agree exactly"
+}
+
+# A scout promotion into the fast lane records the lane in the meta and delivers
+# the fast-lane contract to the worker; the flag refuses the non-no-mistakes
+# modes for the same reason the spawn's flag does.
+test_promote_records_the_fast_lane() {
+  local home id meta out status
+  home="$TMP_ROOT/promote-fastlane/home"
+  mkdir -p "$home/state"
+  id=promote-fast-d1
+  meta="$home/state/$id.meta"
+  write_brief "$home" "$id"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
+
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode direct-PR --yolo off --fast-lane 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "promoting with --fast-lane on direct-PR should exit non-zero"
+  assert_contains "$out" "--fast-lane requires --mode no-mistakes" "promote flag refusal did not name the mode constraint"
+  assert_no_grep '^mode=' "$meta" "refused fast-lane promotion still recorded a delivery mode"
+
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode no-mistakes --yolo off --fast-lane 2>&1)
+  status=$?
+  expect_code 0 "$status" "a fast-lane promotion should succeed"
+  assert_grep "lane=fast" "$meta" "fast-lane promotion did not record lane=fast"
+  [ "$(grep -c '^lane=' "$meta")" = 1 ] || fail "promotion left more than one lane= line in the task record"
+  assert_contains "$out" "mode=no-mistakes lane=fast" "promotion success line did not report the fast lane"
+  assert_grep 'mode=no-mistakes lane=fast' "$home/data/$id/brief.md" \
+    "fast-lane promotion did not write the lane token into the brief's contract line"
+  assert_grep "FAST LANE" "$home/data/$id/brief.md" \
+    "fast-lane promotion did not deliver the one-review-round drive rules"
+  pass "fm-promote: --fast-lane records the lane and delivers the one-round contract"
+}
+
 # The registry parser survives for the mechanical consumers only. It accepts the
 # conditional policy, maps it to its most rigorous leg for them, and exposes the
 # raw annotation for the one caller that must tell a policy from a flat mode.
@@ -694,7 +849,7 @@ EOF
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
   status=$?
   [ "$status" -ne 0 ] || fail "spawn of an unfilled ship brief should exit non-zero"
-  assert_contains "$out" "still contains {TASK} or {FIRSTMATE_SPEC}" \
+  assert_contains "$out" "still contains {TASK}, {ASKS}, or {FIRSTMATE_SPEC}" \
     "unfilled ship spawn did not name the leftover placeholders"
   assert_contains "$out" "## Captain's intent" \
     "unfilled ship spawn did not name the intent subsection to fill"
@@ -707,7 +862,7 @@ EOF
     "Fix replacement of \`{TASK}\` in Herdr briefs." \
     "Keep literal \`{FIRSTMATE_SPEC}\` examples intact."
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
-  assert_not_contains "$out" "still contains {TASK} or {FIRSTMATE_SPEC}" \
+  assert_not_contains "$out" "still contains {TASK}" \
     "a filled ship brief mentioning placeholder tokens was refused as unfilled"
   assert_not_contains "$out" "must contain nonempty" \
     "a filled ship brief mentioning placeholder tokens failed content validation"
@@ -733,7 +888,7 @@ EOF
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
   assert_not_contains "$out" "must contain nonempty" \
     "fenced example headings made a filled legacy Task fail validation"
-  assert_not_contains "$out" "still contains {TASK} or {FIRSTMATE_SPEC}" \
+  assert_not_contains "$out" "still contains {TASK}" \
     "fenced example headings made a filled legacy Task look unfilled"
 
   id=delivery-legacy-no-mistakes
@@ -828,7 +983,7 @@ EOF
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --scout)
   status=$?
   [ "$status" -ne 0 ] || fail "spawn of an unfilled scout brief should exit non-zero"
-  assert_contains "$out" "still contains {TASK} or {FIRSTMATE_SPEC}" \
+  assert_contains "$out" "still contains {TASK}, {ASKS}, or {FIRSTMATE_SPEC}" \
     "unfilled scout spawn did not name the leftover placeholders"
   assert_absent "$home/state/$id.meta" "unfilled scout spawn wrote task metadata"
 
@@ -1141,6 +1296,9 @@ test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract
 test_promote_refuses_a_symlinked_task_record
 test_promotion_delivers_the_real_definition_of_done
+test_fast_lane_flag_is_validated_and_recorded
+test_spawn_enforces_brief_lane_agreement
+test_promote_records_the_fast_lane
 test_project_mode_maps_the_conditional_policy
 test_spawn_and_promote_require_filled_task_subsections
 echo "# all fm-task-delivery tests passed"

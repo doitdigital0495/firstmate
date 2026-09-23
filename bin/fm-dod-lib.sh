@@ -5,11 +5,25 @@
 # receives. Both paths must hand the worker the same contract: a promoted
 # no-mistakes worker that never received the ask-user escalation rule or the
 # `--yes` ban is the exact delivery hole this single owner exists to close.
-# fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> prints the block on
-# stdout with no trailing blank line. The caller validates the mode; an unknown
-# mode is refused rather than silently rendered as the pipeline contract.
+# fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> <data-dir> [lane] prints
+# the block on stdout with no trailing blank line. The caller validates the mode;
+# an unknown mode is refused rather than silently rendered as the pipeline contract.
+# The optional lane is `fast` and is refused for any mode but no-mistakes.
 # The block opens with the fixed machine-readable "Delivery contract: mode=<mode>"
-# line that bin/fm-spawn.sh checks a ship brief against.
+# line that bin/fm-spawn.sh checks a ship brief against; a fast-lane block appends
+# ` lane=fast` to that line, and bin/fm-spawn.sh refuses a spawn whose --fast-lane
+# flag disagrees with the brief's recorded lane.
+# The fast lane is a driver-side rule, not a no-mistakes option: no-mistakes has no
+# per-run setting that caps review rounds (only `--skip <steps>`, which removes a
+# step entirely), so the lane works by instructing the worker to respond
+# `--action approve` at the first review gate and never `--action fix` there,
+# because each fix round starts another review round.
+# Every mode's block also carries the request-checklist accounting contract: the
+# done report at data/<task-id>/report.md walks each `## Request checklist` item
+# with proof, lists out-of-scope findings as numbered follow-ups (never commits),
+# and every done line ends with `asks <done>/<total>` so a lost ask is visible at
+# the first done report. bin/fm-brief.sh scaffolds that subsection and its {ASKS}
+# placeholder; the placeholder/content helpers below enforce that it is filled.
 # This file is the one owner of the no-mistakes `--intent` contract: only the
 # brief's `## Captain's intent` subsection plus later captain words, never
 # `## Firstmate spec` and never the worker's own tradeoffs.
@@ -77,12 +91,18 @@ fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id>
 # Return 0 when a Task subsection still consists only of its scaffold
 # placeholder. A missing file and legacy briefs carry no such placeholders.
 fm_brief_task_placeholders_present() {  # <file>
-  local file=$1 intent spec
+  local file=$1 intent spec asks
   [ -f "$file" ] || return 1
   intent=$(fm_brief_task_heading_body "$file" "## Captain's intent")
   spec=$(fm_brief_task_heading_body "$file" "## Firstmate spec")
   [ "$(printf '%s' "$intent" | tr -d '[:space:]')" = '{TASK}' ] && return 0
   [ "$(printf '%s' "$spec" | tr -d '[:space:]')" = '{FIRSTMATE_SPEC}' ] && return 0
+  # The request checklist is optional scaffolding (briefs predating it are
+  # legacy-valid), so its placeholder is checked only when the heading exists.
+  if fm_brief_task_heading_present "$file" "## Request checklist"; then
+    asks=$(fm_brief_task_heading_body "$file" "## Request checklist")
+    [ "$(printf '%s' "$asks" | tr -d '[:space:]')" = '{ASKS}' ] && return 0
+  fi
   return 1
 }
 
@@ -197,8 +217,11 @@ EOF
 
 # Accept the current two-subsection contract only when both bodies have content;
 # briefs predating that contract remain valid when their # Task body has content.
+# A `## Request checklist` subsection, when its heading is present at all, must
+# carry a nonempty body: a checklist heading with nothing under it silently drops
+# the per-ask accounting the definition of done promises.
 fm_brief_task_content_valid() {  # <file>
-  local file=$1 intent spec task has_intent=0 has_spec=0
+  local file=$1 intent spec task asks has_intent=0 has_spec=0
   [ -f "$file" ] && [ -r "$file" ] || return 1
   fm_brief_task_heading_present "$file" "## Captain's intent" && has_intent=1
   fm_brief_task_heading_present "$file" "## Firstmate spec" && has_spec=1
@@ -208,6 +231,10 @@ fm_brief_task_content_valid() {  # <file>
     spec=$(fm_brief_task_heading_body "$file" "## Firstmate spec")
     [ -n "$(printf '%s' "$intent" | tr -d '[:space:]')" ] || return 1
     [ -n "$(printf '%s' "$spec" | tr -d '[:space:]')" ] || return 1
+    if fm_brief_task_heading_present "$file" "## Request checklist"; then
+      asks=$(fm_brief_task_heading_body "$file" "## Request checklist")
+      [ -n "$(printf '%s' "$asks" | tr -d '[:space:]')" ] || return 1
+    fi
     return 0
   fi
   task=$(fm_brief_heading_body "$file" "# Task")
@@ -240,8 +267,54 @@ fm_ask_user_escalation_block() {  # <data-dir> <task-id>
 EOF
 }
 
-fm_dod_block() {  # <mode> <task-id>
-  local mode=$1 id=$2
+# The request-checklist accounting contract, shared by every ship mode's block
+# (and mirrored by the scout scaffold's report rule). The done report is the
+# one extra durable writable file outside the worktree the ship contract
+# authorizes, like the status file and the no-mistakes findings file.
+fm_request_checklist_contract() {  # <data-dir> <task-id>
+  local data=$1 id=$2
+  cat <<EOF
+Account for the captain's asks in a done report at \`$data/$id/report.md\` (create the file when you first need it); it is the one file outside the worktree you may write besides the status file.
+Walk the brief's \`## Request checklist\` items in order in that report: \`[x]\` for each delivered ask together with its proof - a test or command and the output line that proves it, a file:line, or a link - or \`[ ]\` with why it is not done; a brief with no such subsection accounts for each distinct ask under \`## Captain's intent\` the same way.
+End the report with numbered follow-ups: every finding or defect you noticed but did not fix, work deferred, and anything outside the ask, each with a file:line and a one-line description; never fix those in this task - firstmate files them into the backlog from this report, so omitting one silently drops it.
+End every \`done:\` line you append with \`asks <done>/<total>\`, counting checklist items, so a lost ask is visible the moment work first reports done.
+EOF
+}
+
+# The fast-lane addendum, appended to the no-mistakes block only. no-mistakes
+# has no per-run rounds cap; approving at the first review gate is the whole
+# mechanism, so every sentence here exists to keep the worker from starting a
+# second round with `--action fix` or widening scope from findings.
+fm_fast_lane_contract() {  # <task-id>
+  cat <<'EOF'
+
+FAST LANE - this task ships exactly one review round, with scope locked to the request checklist; this addendum supersedes the drive guidance above for review gates only.
+The first time the run parks at a review gate, respond `no-mistakes axi respond --action approve` and let the run continue: approving accepts every finding as-is, and they remain listed as open items on the PR.
+Never respond `--action fix` at a review gate in this task: each fix round starts another review round, and this lane has exactly one - a fix-worthy finding becomes a numbered follow-up in the done report instead.
+Scope lock: this task's scope is exactly its `## Request checklist`, so a finding outside that scope is never fixed here, only recorded as a follow-up.
+Rule 6 still owns ask-user findings: escalate them exactly as instructed above and never approve past them, and when a finding shows the delivered work breaks a captain's ask (a wrong change, not merely an imperfect one), append `blocked [at=<epoch>]: review finding <id> contradicts ask <n>: {one line}` instead of approving.
+Every other gate - intent, test exceptions, document, lint, CI - follows the standard drive guidance above unchanged.
+EOF
+}
+
+fm_dod_block() {  # <mode> <task-id> <data-dir> [lane]
+  local mode=$1 id=$2 data=$3 lane=${4:-}
+  local checklist fast
+  case "$lane" in
+    '') ;;
+    fast)
+      if [ "$mode" != no-mistakes ]; then
+        echo "error: fm_dod_block: the fast lane is a no-mistakes-only contract, not available for '$mode'" >&2
+        return 1
+      fi
+      ;;
+    *)
+      echo "error: fm_dod_block: unknown lane '$lane'" >&2
+      return 1 ;;
+  esac
+  checklist=$(fm_request_checklist_contract "$data" "$id")
+  fast=
+  [ -z "$lane" ] || fast=$(fm_fast_lane_contract "$id")
   case "$mode" in
     direct-PR)
       cat <<EOF
@@ -249,7 +322,8 @@ fm_dod_block() {  # <mode> <task-id>
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
-When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done [at=<epoch>]: PR {url}\` to the status file and stop.
+$checklist
+When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done [at=<epoch>]: PR {url}; asks <done>/<total>\` to the status file and stop.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
       ;;
@@ -260,16 +334,17 @@ Delivery contract: mode=local-only
 This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`fm/$id\`. Do NOT push, do NOT open a PR, do NOT merge.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
-When it is implemented and committed, append \`done [at=<epoch>]: ready in branch fm/$id\` to the status file and stop.
+$checklist
+When it is implemented and committed, append \`done [at=<epoch>]: ready in branch fm/$id; asks <done>/<total>\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
       ;;
     no-mistakes)
       cat <<EOF
 # Definition of done
-Delivery contract: mode=no-mistakes
+Delivery contract: mode=no-mistakes${lane:+ lane=$lane}
 The task is complete only when committed on your branch.
-When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
+When you believe it is complete, append \`done [at=<epoch>]: {summary}; asks <done>/<total>\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 
 You drive no-mistakes by responding to its gates, not by implementing fixes.
@@ -296,9 +371,12 @@ Two firstmate-specific rules layer on top of that guidance:
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - NEVER pass \`--yes\` (or \`-y\`) to \`no-mistakes axi run\` or \`no-mistakes axi respond\`. It is banned fleet-wide.
   It auto-resolves every gate including ask-user findings with no escalation, and answering your own ask-user finding is a hard rule violation.
-
-After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finished.
+$checklist
+After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done [at=<epoch>]: PR {url} checks green; asks <done>/<total>\` and stop. You are finished.
 EOF
+      if [ -n "$fast" ]; then
+        printf '%s\n' "$fast"
+      fi
       ;;
     *)
       echo "error: fm_dod_block: unknown delivery mode '$mode'" >&2

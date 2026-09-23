@@ -324,6 +324,15 @@ An unregistered project or absent registry resolves to `no-mistakes` with yolo o
 When the requested stop point is before the remote, such as a running preview or the captain's own review ahead of any push, resolve `local-only` rather than writing that prohibition into a push mode's `# Task` block, because the spawn refuses a `no-mistakes` or `direct-PR` brief whose task block forbids the delivery its definition of done mandates, in `## Captain's intent` and `## Firstmate spec` alike.
 Record the resulting mode, `yolo` merge posture, and the one-line reason for any deviation in the backlog item note.
 
+Turn each distinct captain ask of the task into one numbered checkbox line under the brief's `## Request checklist` (`{ASKS}` in the scaffold), in the captain's terms; a multi-part ask stays multiple lines, and a genuinely single-ask task still gets its one line.
+That checklist is the loss detector: the worker must account for every item with proof in a done report at `data/<id>/report.md` and end every `done:` line with `asks <done>/<total>`, so a dropped ask is visible the moment work first reports done rather than a day later.
+Keep the checklist to the captain's asks, not Firstmate build steps; those belong in `## Firstmate spec`.
+
+A `no-mistakes` report tweak the captain will iterate on anyway (visuals, measures, text, portal UI) may ship the fast lane: scaffold and spawn the brief with `--fast-lane` (ship tasks only, `--mode no-mistakes` only), and pass `--fast-lane` to a scout promotion that ships that class.
+The lane is a worker-drive rule, not a no-mistakes option: no-mistakes has no per-run setting that caps review rounds (only `--skip <steps>`, which removes a step entirely), so the brief's definition of done instructs the worker to answer the first review gate with `--action approve`, never `--action fix` there, with scope locked to the request checklist and out-of-scope findings recorded as follow-ups instead of commits.
+Ask-user escalation (Validate, below) is unchanged in the fast lane.
+Select it per task on risk you can state, never as a default; when unsure, ship the standard lane.
+
 Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
 Write the task-specific brief under section 11 before spawning.
@@ -376,6 +385,7 @@ Firstmate never invokes `no-mistakes axi respond` for a crew-owned run.
 When the captain adds or changes an ask mid-task, append the captain's words without added speaker labels or direct address to that brief's `## Captain's intent` and relay those words to the worker; Firstmate build constraints stay in `## Firstmate spec` or the steer.
 `bin/fm-dod-lib.sh` owns the worker-side `--intent` contract.
 Once validation starts, prefer routing new requirements to follow-up work rather than expanding the current task, unless a new requirement completely invalidates the work being validated; however, the smallest downstream changes needed to keep already accepted product or engineering behavior correct, add behavioral tests where an executable contract exists, or keep documentation accurate remain within the current task even when they touch files not named at intake, and corrections required to satisfy already accepted intent are not new requirements.
+When a worker's done report lists numbered follow-ups (unfixed findings, deferred or out-of-scope work), file each as a backlog item before teardown; a follow-up that never reaches the backlog is a dropped finding, which is exactly what the done report exists to prevent.
 
 Only a current, explicit captain instruction that completely invalidates the work being validated keeps the task with the same worker instead of routing it to follow-up work or handing it to a replacement.
 That worker cancels the active run through no-mistakes axi's supported abort command and confirms through axi status that the run has stopped before changing any code.
@@ -396,7 +406,8 @@ The worker reports the PR when CI first becomes green rather than waiting for me
 
 ### PR ready, landing, and teardown
 
-For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done [at=<epoch>]: PR <url> checks green` after CI is green, while `direct-PR` reports `done [at=<epoch>]: PR <url>` after opening the PR.
+For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done [at=<epoch>]: PR <url> checks green; asks <done>/<total>` after CI is green, while `direct-PR` reports `done [at=<epoch>]: PR <url>; asks <done>/<total>` after opening the PR.
+The `asks` count comes from the worker's request-checklist accounting in its done report (`data/<id>/report.md`): a count short of the total, or an unticked item, is a stop-and-ask result, not a merge candidate.
 Run `bin/fm-pr-check.sh <id> <PR url>` with the URL copied from that ready signal - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
 Tell the captain the PR's full `https://...` URL copied from the worker's ready line or the task's `pr=` metadata, a concise outcome summary, and the no-mistakes risk level when applicable.
 A captain instruction to merge is explicit authority; `yolo` is the only standing routine merge authority.
@@ -561,6 +572,8 @@ Preserve durable structured identifiers, dependencies, and completion artifact l
 
 `bin/fm-brief.sh` and its help own scaffold syntax, generated variants, status protocol, delivery-mode definitions of done, and exact safety mechanics.
 Use its scaffold as the contract, then fill `## Captain's intent` (`{TASK}`) with the captain's own ask and any boundary the captain stated, plus the context needed to read it, including the substance of any report, decision, or PR the ask refers to; never widen the ask there into a general goal or an enumerated coverage list, because the reviewer treats that subsection as acceptance criteria.
+Fill `## Request checklist` (`{ASKS}`) with one numbered checkbox line per distinct captain ask, in the captain's terms (`1. [ ] <ask>`); keep Firstmate build steps out of it, because the checklist is the ask-by-ask accounting the worker must tick with proof in its done report, and padding it with process steps drowns the captain's asks (section 7 owns why).
+A late captain ask added mid-task extends the checklist by its own numbered line, like a `## Captain's intent` addition.
 Fill `## Firstmate spec` (`{FIRSTMATE_SPEC}`) with only the build instructions that ask requires, naming what stays out of scope when the ask is narrow; a generalization, consistency sweep, or extra hardening the captain did not ask for is follow-up work to note, not scope to add.
 `bin/fm-dod-lib.sh` owns intent authoring without added speaker labels or direct address, its provenance markers, what a no-mistakes worker may pass as `--intent`, and the string's self-sufficiency rule.
 Keep additions task-specific rather than repeating lifecycle instructions, and alter generated sections only when the task genuinely differs from the standard shape.

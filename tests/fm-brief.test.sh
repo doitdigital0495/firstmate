@@ -211,6 +211,11 @@ test_ship_modes_generate_clean_briefs() {
       || fail "$id: brief did not record its machine-readable delivery contract line"
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
     assert_grep "{FIRSTMATE_SPEC}" "$brief" "$id: brief missing the {FIRSTMATE_SPEC} placeholder"
+    assert_grep "## Request checklist" "$brief" "$id: brief missing the Request checklist subsection"
+    assert_grep "{ASKS}" "$brief" "$id: brief missing the {ASKS} checklist placeholder"
+    assert_grep "asks <done>/<total>" "$brief" "$id: brief missing the asks-count done-line rule"
+    assert_grep "report.md" "$brief" "$id: brief missing the done-report contract"
+    assert_no_grep "lane=" "$brief" "$id: a standard-lane brief recorded a lane token"
     assert_grep "## Captain's intent" "$brief" "$id: brief missing Captain's intent subsection"
     assert_grep "## Firstmate spec" "$brief" "$id: brief missing Firstmate spec subsection"
     assert_grep 'never a bare number such as "PR 108"' "$brief" "$id: brief missing the full-PR-URL rule"
@@ -219,6 +224,121 @@ test_ship_modes_generate_clean_briefs() {
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
   done
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
+}
+
+# The fast lane is a ship-only, no-mistakes-only delivery contract, so the flag
+# must refuse everywhere else and its scaffold must carry the one-review-round
+# instructions plus the lane token the spawn later checks for agreement.
+test_fast_lane_scaffold_and_refusals() {
+  local home id brief out status id_mode
+  home="$TMP_ROOT/fast-lane-home"
+  mkdir -p "$home/data"
+  id="brief-fastlane-f1"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --fast-lane >/dev/null 2>&1; status=$?
+  expect_code 0 "$status" "fm-brief.sh --fast-lane scaffold should exit 0"
+  brief="$home/data/$id/brief.md"
+  grep -qx "Delivery contract: mode=no-mistakes lane=fast" "$brief" \
+    || fail "fast-lane brief did not record its lane on the delivery contract line"
+  assert_grep "FAST LANE - this task ships exactly one review round" "$brief" "fast-lane brief missing the one-round rule"
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must match literally
+  assert_grep 'respond `no-mistakes axi respond --action approve`' "$brief" \
+    "fast-lane brief must teach approving the first review gate"
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must match literally
+  assert_grep 'Never respond `--action fix` at a review gate in this task' "$brief" \
+    "fast-lane brief must forbid fix rounds at review gates"
+  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must match literally
+  assert_grep 'scope is exactly its `## Request checklist`' "$brief" \
+    "fast-lane brief missing the scope lock"
+  assert_grep "ask-user findings" "$brief" "fast-lane brief dropped the ask-user escalation carve-out"
+
+  # A standard no-mistakes brief carries none of the lane text.
+  id="brief-standard-f2"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_no_grep "FAST LANE" "$brief" "a standard brief carries fast-lane drive rules"
+  grep -qx "Delivery contract: mode=no-mistakes" "$brief" \
+    || fail "standard brief's delivery contract line grew a lane token"
+
+  # The flag is refused outside its one valid combination.
+  for id_mode in "brief-fast-bad1:--mode direct-PR --fast-lane" "brief-fast-bad2:--mode local-only --fast-lane"; do
+    id=${id_mode%%:*}
+    # shellcheck disable=SC2086  # flags is an intentional word-split arg list
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj ${id_mode#*:} 2>&1); status=$?
+    [ "$status" -ne 0 ] || fail "$id: --fast-lane on a non-no-mistakes ship mode should refuse"
+    assert_contains "$out" "--fast-lane requires --mode no-mistakes" "$id: refusal did not name the mode constraint"
+  done
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-fast-bad3 some-proj --scout --fast-lane 2>&1); status=$?
+  [ "$status" -ne 0 ] || fail "--fast-lane on a scout brief should refuse"
+  assert_contains "$out" "--fast-lane applies only to ship briefs" "scout refusal did not name the ship-only constraint"
+  pass "fm-brief.sh: --fast-lane scaffolds the one-review-round contract and refuses misuse"
+}
+
+# The checklist placeholder and its content rule live in bin/fm-dod-lib.sh, so
+# they are tested against that library directly: an unfilled {ASKS} must read as
+# a leftover placeholder exactly like {TASK}, an empty checklist body must fail
+# content validation, and a brief without the subsection must stay legacy-valid.
+test_request_checklist_placeholder_and_content_rules() {
+  local home id brief
+  home="$TMP_ROOT/checklist-rules-home"
+  mkdir -p "$home/data"
+  id="brief-checklist-c1"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  (
+    # shellcheck source=bin/fm-dod-lib.sh
+    . "$ROOT/bin/fm-dod-lib.sh"
+    fm_brief_task_placeholders_present "$brief" \
+      || fail "an unfilled scaffold was not reported as placeholder-carrying"
+    fill() {
+      awk -v task='Fix the measure.' -v spec='Build and verify it.' -v asks='1. [ ] Fix the measure.' '
+        $0 == "{TASK}" { print task; next }
+        $0 == "{FIRSTMATE_SPEC}" { print spec; next }
+        $0 == "{ASKS}" { print asks; next }
+        { print }
+      ' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+    }
+    fill_partially() {
+      awk -v task='Fix the measure.' -v spec='Build and verify it.' '
+        $0 == "{TASK}" { print task; next }
+        $0 == "{FIRSTMATE_SPEC}" { print spec; next }
+        { print }
+      ' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+    }
+    drop_asks_line() {
+      awk '$0 == "{ASKS}" { next } { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+    }
+    fill "$brief"
+    fm_brief_task_placeholders_present "$brief" \
+      && fail "a fully filled brief still reported a placeholder"
+    fm_brief_task_content_valid "$brief" \
+      || fail "a fully filled brief failed content validation"
+    id="brief-checklist-c2"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    fill_partially "$brief"
+    fm_brief_task_placeholders_present "$brief" \
+      || fail "a brief with {TASK} and {FIRSTMATE_SPEC} filled but {ASKS} left behind was not reported as placeholder-carrying"
+    drop_asks_line "$brief"
+    fm_brief_task_placeholders_present "$brief" \
+      && fail "an empty checklist body was misread as a placeholder"
+    fm_brief_task_content_valid "$brief" \
+      && fail "an empty checklist body passed content validation"
+    :
+  ) || exit 1
+  # A legacy two-subsection brief without the checklist heading stays valid.
+  id="brief-checklist-c3"
+  mkdir -p "$home/data/$id"
+  printf "# Task\n## Captain's intent\nFix it.\n\n## Firstmate spec\nBuild it.\n\n# Definition of done\nDelivery contract: mode=no-mistakes\n" \
+    > "$home/data/$id/brief.md"
+  (
+    # shellcheck source=bin/fm-dod-lib.sh
+    . "$ROOT/bin/fm-dod-lib.sh"
+    fm_brief_task_placeholders_present "$home/data/$id/brief.md" \
+      && fail "a legacy brief without a checklist was reported as placeholder-carrying"
+    fm_brief_task_content_valid "$home/data/$id/brief.md" \
+      || fail "a legacy brief without a checklist failed content validation"
+  ) || exit 1
+  pass "fm-dod-lib: {ASKS} placeholders and empty checklist bodies are refused; briefs without the subsection stay legacy-valid"
 }
 
 # A ship task's delivery mode is firstmate's per-task decision, so a missing or
@@ -978,6 +1098,8 @@ test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_fast_lane_scaffold_and_refusals
+test_request_checklist_placeholder_and_content_rules
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
