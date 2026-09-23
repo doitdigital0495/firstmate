@@ -2252,15 +2252,19 @@ retire_merged_pr_poll() {  # <id>
 }
 
 # The Azure DevOps poll repeats its conflict line on every sweep while the
-# conflict stands; $STATE/<id>.ado-conflict holds the line last delivered so
-# only a new or changed conflict wakes. Any other output clears it.
+# conflict stands; $STATE/<id>.ado-conflict holds the delivered conflict's
+# stable "ado conflict: <url>" key so the same conflict wakes once whatever
+# reason wording accompanies it. Only the poll's positive "ado clear" line
+# ends it, and that line never wakes; silence from a failed lookup keeps it.
 ado_conflict_unreported() {  # <id> <poll-output>
   local marker="$STATE/$1.ado-conflict"
   case "$2" in
+    'ado clear: '*) rm -f "$marker"; return 1 ;;
     'ado conflict: '*) ;;
-    *) rm -f "$marker"; return 0 ;;
+    *) return 0 ;;
   esac
-  [ -f "$marker" ] && [ ! -L "$marker" ] && [ "$(cat "$marker")" = "$2" ] && return 1
+  [ -f "$marker" ] && [ ! -L "$marker" ] \
+    && [ "$(cat "$marker")" = "${2%% needs a rebase*}" ] && return 1
   return 0
 }
 
@@ -2496,7 +2500,7 @@ EOF
           case "$out" in
             'ado conflict: '*)
               rm -f "$STATE/$id.ado-conflict"
-              printf '%s\n' "$out" > "$STATE/$id.ado-conflict" \
+              printf '%s\n' "${out%% needs a rebase*}" > "$STATE/$id.ado-conflict" \
                 || triage_log "could not record the reported conflict for $id; it may wake again"
               ;;
           esac

@@ -454,6 +454,7 @@ case "$*" in
   *'pipelines runs list'*)
     case " $* " in *' --branch refs/heads/main '*) ;; *) exit 3 ;; esac
     [ "${FM_TEST_AZ_RUNS:-}" != fail ] || exit 1
+    [ "${FM_TEST_AZ_RUNS:-}" != none ] || exit 0
     printf 'fabric-deploy\tcompleted\tsucceeded\t8513\nreports-deploy\tcompleted\tfailed\t8519\ndbt-dev-build\tcompleted\tsucceeded\t8521\n'
     [ "${FM_TEST_AZ_RUNS:-}" != pending ] || printf 'prod-deploy\tnotStarted\tNone\t8530\n'
     ;;
@@ -491,6 +492,17 @@ SH
     'merged azure-devops '*'could not be read'*) ;;
     *) fail "unreadable pipeline runs past the cap held back the ADO merge line: $out" ;;
   esac
+  out=$(FM_TEST_AZ_RUNS=none FM_TEST_AZ_CLOSED=None PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  case "$out" in
+    'merged azure-devops '*'no pipeline runs'*'completion time could not be read') ;;
+    *) fail "an unreadable completion time was reported as an elapsed wait: $out" ;;
+  esac
+  out=$(FM_TEST_AZ_STATUS=active FM_TEST_AZ_MERGE_STATUS=succeeded PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  [ "$out" = "ado clear: $url" ] || fail "a clean ADO merge status was not confirmed clear: $out"
   pass "Azure DevOps polls surface conflicts and per-pipeline post-merge colors"
 }
 
@@ -502,7 +514,10 @@ test_ado_conflict_wakes_once_per_conflict() {
   cat > "$dir/fakebin/az" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
-  *'repos pr show'*) printf 'active\n%s\nrefs/heads/main\nrefs/heads/fm/test\nNone\nNone\n' "$(cat "${0%/*}/az-merge-status")" ;;
+  *'repos pr show'*)
+    [ "$(cat "${0%/*}/az-merge-status")" != fail ] || exit 1
+    printf 'active\n%s\nrefs/heads/main\nrefs/heads/fm/test\nNone\nNone\n' "$(cat "${0%/*}/az-merge-status")"
+    ;;
   *) exit 2 ;;
 esac
 SH
@@ -520,10 +535,16 @@ SH
   }
   ado_cycle
   ado_cycle
+  printf 'fail\n' > "$dir/fakebin/az-merge-status"
+  ado_cycle
+  printf 'conflicts\n' > "$dir/fakebin/az-merge-status"
+  ado_cycle
   [ "$(grep -c 'ado conflict: ' "$dir/wakes")" -eq 1 ] \
     || fail "a standing ADO conflict woke more than once: $(cat "$dir/wakes")"
   printf 'succeeded\n' > "$dir/fakebin/az-merge-status"
   ado_cycle
+  ! grep -q 'ado clear: ' "$dir/wakes" \
+    || fail "a cleared ADO conflict woke firstmate: $(cat "$dir/wakes")"
   printf 'conflicts\n' > "$dir/fakebin/az-merge-status"
   ado_cycle
   [ "$(grep -c 'ado conflict: ' "$dir/wakes")" -eq 2 ] \

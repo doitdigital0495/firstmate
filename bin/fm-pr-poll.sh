@@ -27,7 +27,9 @@
 #   itself is never held back indefinitely: once FM_ADO_POSTMERGE_CAP_SECS
 #   (default 7200) have passed since completion, the merged line is emitted
 #   with any unfinished run marked PENDING, or with the runs noted unreadable.
-#   The watcher reports a repeated identical conflict line only once.
+#   The watcher wakes once per standing conflict: an "ado clear" line, printed
+#   only when the forge or the git probe positively confirms a clean merge,
+#   ends the conflict silently, while silence on a failed lookup does not.
 set -u
 LC_ALL=C
 export LC_ALL
@@ -280,6 +282,7 @@ PR_EOF
     if [ "$pr_status" = active ]; then
       conflict=0
       conflict_why=
+      probe_clean=0
       if [ "$merge_status" = conflicts ]; then
         conflict=1
         conflict_why="azure devops reports the source branch conflicts with ${target_ref:-the target branch}"
@@ -311,13 +314,19 @@ PR_EOF
                 git -C "$ado_wt" fetch --quiet origin "$src_branch" "$tgt_branch" 2>/dev/null || true
                 head_sha=$(git -C "$ado_wt" rev-parse --verify --quiet "refs/remotes/origin/$src_branch^{commit}" 2>/dev/null) || head_sha=
                 tip_sha=$(git -C "$ado_wt" rev-parse --verify --quiet "refs/remotes/origin/$tgt_branch^{commit}" 2>/dev/null) || tip_sha=
-                if [ -n "$head_sha" ] && [ -n "$tip_sha" ] && [ "$head_sha" != "$tip_sha" ] \
-                  && ! git -C "$ado_wt" merge-base --is-ancestor "$tip_sha" "$head_sha" 2>/dev/null; then
-                  git -C "$ado_wt" merge-tree --write-tree "$head_sha" "$tip_sha" >/dev/null 2>/dev/null
-                  merge_tree_rc=$?
-                  if [ "$merge_tree_rc" -eq 1 ]; then
-                    conflict=1
-                    conflict_why="git merge-tree reports merging origin/$src_branch into origin/$tgt_branch conflicts"
+                if [ -n "$head_sha" ] && [ -n "$tip_sha" ]; then
+                  if [ "$head_sha" = "$tip_sha" ] \
+                    || git -C "$ado_wt" merge-base --is-ancestor "$tip_sha" "$head_sha" 2>/dev/null; then
+                    probe_clean=1
+                  else
+                    git -C "$ado_wt" merge-tree --write-tree "$head_sha" "$tip_sha" >/dev/null 2>/dev/null
+                    merge_tree_rc=$?
+                    if [ "$merge_tree_rc" -eq 1 ]; then
+                      conflict=1
+                      conflict_why="git merge-tree reports merging origin/$src_branch into origin/$tgt_branch conflicts"
+                    elif [ "$merge_tree_rc" -eq 0 ]; then
+                      probe_clean=1
+                    fi
                   fi
                 fi
                 ;;
@@ -327,6 +336,8 @@ PR_EOF
       fi
       if [ "$conflict" -eq 1 ]; then
         printf 'ado conflict: %s needs a rebase: %s\n' "$url" "$conflict_why"
+      elif [ "$merge_status" = succeeded ] || [ "$probe_clean" -eq 1 ]; then
+        printf 'ado clear: %s\n' "$url"
       fi
       exit 0
     fi
@@ -336,9 +347,8 @@ PR_EOF
     # merge commit; in that case no runs match and the grace message below
     # reports that honestly instead of inventing a verdict.
     # An unreadable completion time counts as long past, so it can only
-    # release the merge line early, never hold it back.
-    closed_epoch=$(ado_iso_epoch "$closed_date" 2>/dev/null) || closed_epoch=0
-    closed_age=$(($(date +%s) - closed_epoch))
+    # release the merge line early, never hold it back, and the line then
+    # says so instead of claiming a wait that never happened.
     run_grace=${FM_ADO_POSTMERGE_GRACE_SECS-900}
     case "$run_grace" in
       ''|*[!0-9]*) run_grace=900 ;;
@@ -348,6 +358,15 @@ PR_EOF
       ''|*[!0-9]*) run_cap=7200 ;;
     esac
     [ "$run_cap" -ge "$run_grace" ] || run_cap=$run_grace
+    if closed_epoch=$(ado_iso_epoch "$closed_date" 2>/dev/null); then
+      grace_note="within ${run_grace}s of completion"
+      cap_note="within ${run_cap}s of completion"
+    else
+      closed_epoch=0
+      grace_note="before any wait, because the completion time could not be read"
+      cap_note=$grace_note
+    fi
+    closed_age=$(($(date +%s) - closed_epoch))
     if [ "${#merge_commit}" -ne 40 ] || case "$merge_commit" in *[!0-9a-f]*) true ;; *) false ;; esac; then
       printf 'merged azure-devops %s: no merge commit was recorded, so no pipeline runs were watched\n' "$url"
       exit 0
@@ -356,8 +375,8 @@ PR_EOF
       ${target_ref:+--branch "$target_ref"} --top 200 --query "[?sourceVersion=='$merge_commit'].[definition.name, status, result, id]" \
       --output tsv 2>/dev/null); then
       if [ "$closed_age" -ge "$run_cap" ]; then
-        printf 'merged azure-devops %s merge commit %s: pipeline runs could not be read within %ss of completion\n' \
-          "$url" "${merge_commit:0:8}" "$run_cap"
+        printf 'merged azure-devops %s merge commit %s: pipeline runs could not be read %s\n' \
+          "$url" "${merge_commit:0:8}" "$cap_note"
       fi
       exit 0
     fi
@@ -401,8 +420,8 @@ RUNS_EOF
       # creates them; stateless ageing on the closed timestamp tells that gap
       # apart from a merge that truly triggered nothing.
       if [ "$closed_age" -ge "$run_grace" ]; then
-        printf 'merged azure-devops %s: no pipeline runs were observed on merge commit %s within %ss of completion\n' \
-          "$url" "${merge_commit:0:8}" "$run_grace"
+        printf 'merged azure-devops %s: no pipeline runs were observed on merge commit %s %s\n' \
+          "$url" "${merge_commit:0:8}" "$grace_note"
       fi
       exit 0
     fi
