@@ -1,0 +1,30 @@
+FACT=claude|headroom=80|spendPriority=-1.1111|runway_seconds=241920
+FACT=codex|headroom=20|spendPriority=-0.8333|runway_seconds=90720
+SELECTED=codex
+ok - higher spendPriority beats more headroom after the three gates
+FACT=claude|status=dropped|warmup=unavailable|runway=unknown|spendPriority=unknown
+FACT=codex|status=ranked|headroom=45|spendPriority=-0.404|runway_seconds=222676|supports_horizon=yes
+DECISION=CODEX
+ok - unknown pool without warm-up drops only its candidate after one retry
+FACT=zai|warmups=1|spendPriority=0.8|runway=through_reset
+FACT=codex|spendPriority=-0.3|runway=through_reset
+DECISION=ZAI
+ok - on-demand Z.ai warm-up resolves an unknown pool before ranking
+FACT=claude|reasoning=meets|headroom=5|spendPriority=-1.8|runway_seconds=15916
+FACT=codex|reasoning=below|headroom=80|spendPriority=-0.3921|runway_seconds=362880
+SELECTED=claude
+ok - required strongest reasoning class is not downgraded for quota
+FACT=claude|spendPriority=-0.8333|runway_seconds=2700|supports_horizon=no
+FACT=codex|spendPriority=-1.8|runway_seconds=15916|supports_horizon=yes
+SELECTED=codex
+ok - unsplittable runway failure falls through to full-task candidate
+FACT=claude|spendPriority=-0.8333|runway_seconds=2700|slice_minutes=20
+FACT=codex|spendPriority=-1.8|runway_seconds=15916|full_task=yes
+REQUEUED=remaining-task
+DECISION=SPLIT_CLAUDE
+ok - runway-limited top candidate gets a bounded slice with remainder requeued
+FACT=claude|task_horizon=7200|runway_seconds=15916|reserve=insufficient
+FACT=codex|runway_seconds=15916|reserve=not_applicable
+SELECTED=codex
+ok - Claude reserve can veto a full task despite generic runway
+# all quota-array-dispatch live behavior tests passed
