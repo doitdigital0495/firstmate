@@ -34,7 +34,7 @@ _FM_MERGE_OUTCOME_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC2034 # Public result consumed by sourcing callers.
 FM_MERGE_OUTCOME_ALREADY_RECORDED=false
 
-# fm_merge_outcome_report <home> <state> <task-id> <pr-url> <origin> [authority]
+# fm_merge_outcome_report <home> <state> <task-id> <pr-url> <origin> [authority] [detail]
 #
 # <origin> says who observed the merge, because that decides whether the
 # existing poll path also needs a local wake:
@@ -46,15 +46,17 @@ FM_MERGE_OUTCOME_ALREADY_RECORDED=false
 # untagged. The merge entrypoint supplies its authority after forge acceptance,
 # while the poll supplies the persisted identity-bound value or external when
 # no matching record proves that this home authorized the merge.
+# Optional single-line <detail> (the Azure DevOps poll's post-merge pipeline
+# verdicts) is appended to both the parent-channel line and the wake row.
 #
 # Returns 0 when the outcome is recorded (or already was), 2 on an invalid
 # request, 3 when this home's own role or parent binding cannot be read well
 # enough to say where the outcome belongs, and 1 on any other failure to
 # record. A caller that has already merged must report a non-zero return rather
 # than treat it as success: the merge landed and the record did not.
-fm_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [authority]
+fm_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [authority] [detail]
   local home=$1 state=$2 id=$3 url=$4 origin=$5
-  local authority=${6-} suffix=
+  local authority=${6-} detail=${7-} suffix=
   local self_rc=0 destination='' line lock status=0
   local provider host path number
   # shellcheck disable=SC2034 # Sourced wake helpers consume these scoped globals.
@@ -65,6 +67,10 @@ fm_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
     yolo|away-grant|external) suffix=" $authority" ;;
     attended|'') ;;
     *) return 2 ;;
+  esac
+  case "$detail" in
+    *$'\n'*|*$'\r'*) return 2 ;;
+    ?*) suffix="$suffix: $detail" ;;
   esac
   fm_pr_task_id_valid "$id" || return 2
   fm_pr_url_parse "$url" || return 2

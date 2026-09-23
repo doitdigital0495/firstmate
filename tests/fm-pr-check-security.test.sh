@@ -452,6 +452,7 @@ case "$*" in
     fi
     ;;
   *'pipelines runs list'*)
+    case " $* " in *' --branch refs/heads/main '*) ;; *) exit 3 ;; esac
     printf 'fabric-deploy\tcompleted\tsucceeded\t8513\nreports-deploy\tcompleted\tfailed\t8519\ndbt-dev-build\tcompleted\tsucceeded\t8521\n'
     ;;
   *) exit 2 ;;
@@ -2286,6 +2287,20 @@ test_merged_poll_row_carries_the_merge_authority() {
   pass "queued merges retain yolo and away-grant after captain return"
 }
 
+test_merged_outcome_row_carries_poll_detail() {
+  local dir state url detail
+  url=https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801
+  detail="azure-devops $url merge commit 01234567: fabric-deploy=GREEN (succeeded, run 8513)"
+  dir=$(make_case merged-outcome-detail)
+  state="$dir/home/state"
+  ( . "$ROOT/bin/fm-merge-outcome-lib.sh"
+    fm_merge_outcome_report "$dir/home" "$state" task-a "$url" poll external "$detail" ) \
+    || fail "merge outcome with poll detail was not recorded"
+  [ "$(merged_ledger_row "$state" task-a)" = "check: merge landed: task-a $url external: $detail" ] \
+    || fail "merge outcome row dropped the poll detail: $(merged_ledger_row "$state" task-a)"
+  pass "durable merge outcome row carries the poll's pipeline verdicts"
+}
+
 test_merged_poll_row_names_no_authority_when_no_record_grants_one() {
   local dir state url
   url=https://github.com/o/r/pull/1
@@ -2796,6 +2811,7 @@ SH
 
 test_parser_matrix
 test_ado_poll_conflict_and_postmerge_verdicts
+test_merged_outcome_row_carries_poll_detail
 test_gitlab_merge_watch
 test_merged_poll_retires_once
 test_merged_poll_reregistration_after_notification_is_absorbed

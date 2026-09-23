@@ -73,10 +73,9 @@ elif [ "$#" -eq 0 ]; then
   meta_task=${0##*/}
   meta_task=${meta_task%.check.sh}
   case "$meta_task" in
-    ''|.*|*[!A-Za-z0-9._-]*|*/*) meta_path= ;;
+    ''|.*|*[!A-Za-z0-9._-]*) ;;
     *)
-      [ "${#meta_task}" -le 64 ] || meta_path=
-      if [ -d "$meta_state" ] && [ ! -L "$meta_state" ]; then
+      if [ "${#meta_task}" -le 64 ] && [ -d "$meta_state" ] && [ ! -L "$meta_state" ]; then
         meta_path="$meta_state/$meta_task.meta"
       fi
       ;;
@@ -310,15 +309,8 @@ PR_EOF
                 tip_sha=$(git -C "$ado_wt" rev-parse --verify --quiet "refs/remotes/origin/$tgt_branch^{commit}" 2>/dev/null) || tip_sha=
                 if [ -n "$head_sha" ] && [ -n "$tip_sha" ] && [ "$head_sha" != "$tip_sha" ] \
                   && ! git -C "$ado_wt" merge-base --is-ancestor "$tip_sha" "$head_sha" 2>/dev/null; then
-                  # Prefer merge-tree --write-tree where available (Git 2.38+).
-                  # Older supported Git releases accept the two-commit form;
-                  # retry that form only when the newer option is rejected.
                   git -C "$ado_wt" merge-tree --write-tree "$head_sha" "$tip_sha" >/dev/null 2>/dev/null
                   merge_tree_rc=$?
-                  if [ "$merge_tree_rc" -eq 129 ]; then
-                    git -C "$ado_wt" merge-tree "$head_sha" "$tip_sha" >/dev/null 2>/dev/null
-                    merge_tree_rc=$?
-                  fi
                   if [ "$merge_tree_rc" -eq 1 ]; then
                     conflict=1
                     conflict_why="git merge-tree reports merging origin/$src_branch into origin/$tgt_branch conflicts"
@@ -344,7 +336,7 @@ PR_EOF
       *[!0-9a-f]*) exit 0 ;;
     esac
     runs_raw=$("$az_bin" pipelines runs list --organization "$org_url" --project "$ado_project" \
-      --top 200 --query "[?sourceVersion=='$merge_commit'].[definition.name, status, result, id]" \
+      ${target_ref:+--branch "$target_ref"} --top 200 --query "[?sourceVersion=='$merge_commit'].[definition.name, status, result, id]" \
       --output tsv 2>/dev/null) || exit 0
     if [ -n "$runs_raw" ]; then
       runs_sorted=$(printf '%s\n' "$runs_raw" | sort -t $'\t' -k 4,4n)
