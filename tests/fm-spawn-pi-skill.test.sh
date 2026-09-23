@@ -120,6 +120,16 @@ test_non_pi_harness_refuses() {
   pass "--skill on a harness without an equivalent refuses and names the harness"
 }
 
+test_secondmate_refuses() {
+  local id=sm-pi-skill-s8 out status
+  make_case secondmate pi "$id"
+  out=$(FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" fm_test_run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" \
+    "$id" "$PROJ_DIR" --secondmate --skill "$CASE_DIR/skills/seo-audit")
+  status=$?
+  assert_refused_before_launch "$out" "$status" "$id" "a --secondmate spawn has no lean worker launch" "--skill on a secondmate"
+  pass "--skill on a --secondmate spawn refuses before any secondmate routing"
+}
+
 test_default_launch_is_unchanged
 test_skills_reach_launch_in_order
 test_scout_takes_skills
@@ -127,5 +137,6 @@ test_missing_path_refuses
 test_directory_without_skill_md_refuses
 test_non_md_file_refuses
 test_non_pi_harness_refuses
+test_secondmate_refuses
 
 echo "# all fm-spawn-pi-skill tests passed"
