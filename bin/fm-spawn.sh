@@ -186,7 +186,11 @@
 #   scout or read,bash,edit,write for a ship. Its launch clears PI_PROVIDER, PI_MODEL,
 #   and PI_REASONING_LEVEL before passing explicit CLI values. A zai launch adds only
 #   `opr -f "$FM_ROOT/.env.op" --` ahead of that same Pi command, so ZAI_API_KEY is
-#   resolved into the child environment and never copied into launch text. Pi secondmates remain full primary
+#   resolved into the child environment and never copied into launch text, and
+#   brackets that env-prefixed launch with best-effort pane-side Herdr agent
+#   lifecycle reports (working before, idle or blocked after) because the opr
+#   chain runs off the pane's pty where Herdr's own integration cannot see it.
+#   Pi secondmates remain full primary
 #   sessions and do not use this worker-only shape.
 #   --skill <path> (repeatable) hands a Pi ship or scout exactly the skills its task
 #   needs: each occurrence adds one `--skill <absolute path>` beside --no-skills, in
@@ -5068,7 +5072,25 @@ LAUNCH=${LAUNCH//__PIRTKEXT__/$sq_pirtkext}
 LAUNCH=${LAUNCH//__PIWORKERCONTRACT__/$sq_piworkercontract}
 if [ "$KIND" = scout ]; then PI_TOOLS=read,bash; else PI_TOOLS=read,bash,edit,write; fi
 LAUNCH=${LAUNCH//__PITOOLS__/$PI_TOOLS}
-if [ "$PI_PROVIDER" = zai ]; then PI_PREFIX='opr -f __PIOPENV__ -- '; else PI_PREFIX=; fi
+# A zai task worker rides `opr` so ZAI_API_KEY is resolved from the vault into
+# the child environment and never copied into launch text. The outer
+# op-broker/sudo/setpriv chain can also detach Pi from its Herdr pane and make
+# its TUI-gated agent-state extension silent. Herdr binds a pane's agent record
+# to reports from pane-resident processes, so bracket every Pi task-worker
+# launch with best-effort pane-side reports: working before the launch, idle or
+# blocked from its exit status afterward. The source id must NOT use the
+# reserved `herdr:` prefix - a wrapper reporting as `herdr:pi` is acknowledged
+# but never materialized (verified live, Herdr 0.9.1). Reports never gate the
+# launch, and the runtime guard makes the wrapper a no-op outside a Herdr pane.
+if [ "$PI_PROVIDER" = zai ]; then
+  PI_PREFIX='opr -f __PIOPENV__ -- '
+else
+  PI_PREFIX=
+fi
+# shellcheck disable=SC2016
+PI_TASK_HERDR_PRE='if [ -n "${HERDR_PANE_ID:-}" ] && command -v herdr >/dev/null 2>&1; then herdr pane report-agent "$HERDR_PANE_ID" --source firstmate:pi --agent pi --state working --message "firstmate pi task worker starting" >/dev/null 2>&1 || true; fi; '
+# shellcheck disable=SC2016
+PI_TASK_HERDR_POST='; __fm_pi_rc=$?; if [ -n "${HERDR_PANE_ID:-}" ] && command -v herdr >/dev/null 2>&1; then if [ "$__fm_pi_rc" -eq 0 ]; then __fm_pi_st=idle; else __fm_pi_st=blocked; fi; herdr pane report-agent "$HERDR_PANE_ID" --source firstmate:pi --agent pi --state "$__fm_pi_st" --message "firstmate pi task worker exited rc=$__fm_pi_rc" >/dev/null 2>&1 || true; fi; unset __fm_pi_rc __fm_pi_st'
 LAUNCH=${LAUNCH//__PIPREFIX__/$PI_PREFIX}
 LAUNCH=${LAUNCH//__PIOPENV__/$sq_piopenv}
 LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$sq_claudesettings}
@@ -5101,6 +5123,12 @@ case "$HARNESS" in
       LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL $LAUNCH"
     else
       LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI $LAUNCH"
+    fi
+    # Pi task workers report from the pane around the complete env-prefixed
+    # launch, including opr for zai. This avoids relying on Pi's TUI extension
+    # when the op-broker chain detaches the worker from the pane.
+    if [ "$PI_TASK_WORKER" -eq 1 ]; then
+      LAUNCH="$PI_TASK_HERDR_PRE$LAUNCH$PI_TASK_HERDR_POST"
     fi
     ;;
   claude|codex|opencode|grok|kimi|gemini|muse|rovo|agy)

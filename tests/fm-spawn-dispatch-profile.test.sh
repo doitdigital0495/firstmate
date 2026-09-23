@@ -800,6 +800,9 @@ test_pi_worker_defaults_are_explicit_and_lean() {
     "pi worker launch did not load RTK before its task extension"
   assert_contains "$launch" "--tools read,bash,edit,write --provider 'openai-codex' --model 'gpt-5.6-sol' --thinking 'medium'" \
     "pi ship launch omitted an explicit tool, provider, model, or thinking value"
+  # shellcheck disable=SC2016
+  assert_contains "$launch" 'pane report-agent "$HERDR_PANE_ID" --source firstmate:pi --agent pi --state working' \
+    "Pi task worker must report its start from the Herdr pane"
   contract=$(cd "$ROOT" && pwd -P)/.pi/fm-worker-contract.md
   assert_contains "$launch" "--append-system-prompt \"\$(cat '$contract')\"" \
     "pi worker launch did not append the tracked compact contract"
@@ -823,6 +826,16 @@ test_pi_glm_uses_same_lean_shape_and_supported_reasoning() {
   assert_contains "$launch" "--tools read,bash,edit,write --provider 'zai' --model 'glm-5.3-flash' --thinking 'high'" \
     "pi GLM launch diverged from the common lean shape"
   assert_not_contains "$launch" "$secret" "pi GLM launch exposed ZAI_API_KEY in command text"
+  # shellcheck disable=SC2016
+  assert_contains "$launch" 'pane report-agent "$HERDR_PANE_ID" --source firstmate:pi --agent pi --state working' \
+    "pi GLM launch did not report its start to Herdr from inside the pane"
+  assert_contains "$launch" "|| true; fi; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL FM_PI_HARNESS=pi opr -f '$openv'" \
+    "pi GLM Herdr start report did not wrap the whole env-prefixed opr launch line"
+  assert_contains "$launch" '__fm_pi_st=idle; else __fm_pi_st=blocked; fi; herdr pane report-agent' \
+    "pi GLM launch did not report idle or blocked from the chain exit status"
+  # shellcheck disable=SC2016
+  assert_contains "$launch" '--message "firstmate pi task worker exited rc=$__fm_pi_rc"' \
+    "pi GLM exit report did not carry the exit status message"
 
   id=profile-pi-glm-invalid-z8e
   fm_test_spawn_brief "$HOME_DIR" "$id"
@@ -850,7 +863,12 @@ test_pi_scout_uses_read_only_tool_profile() {
   assert_contains "$launch" "--tools read,bash --provider 'openai-codex' --model 'gpt-5.6-luna' --thinking 'low'" \
     "pi scout did not receive the read-only task-class tool profile"
   assert_not_contains "$launch" "--tools read,bash,edit" "pi scout retained edit capability"
-  pass "Pi scouts receive the read-only built-in tool profile"
+  # shellcheck disable=SC2016
+  assert_contains "$launch" 'pane report-agent "$HERDR_PANE_ID" --source firstmate:pi --agent pi --state working' \
+    "pi Codex scout omitted pane-side Herdr registration"
+  assert_contains "$launch" '--provider '\''openai-codex'\'' --model '\''gpt-5.6-luna'\''' \
+    "pi Codex scout lost its explicit provider/model profile"
+  pass "Pi scouts receive read-only tools and pane-side Herdr registration"
 }
 
 test_pi_worker_missing_operator_extension_refuses() {

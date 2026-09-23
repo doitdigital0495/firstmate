@@ -134,6 +134,27 @@ The same live run loaded the operator's installed `herdr-agent-state.ts` and `rt
 Pi's installed provider map was read directly from version 0.86.1: `openai-codex` lists `gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`; `zai` maps both `glm-5.3` and `glm-5.3-flash` to only `low`, `high`, and `max`.
 The portable launch regression remains `tests/fm-spawn-dispatch-profile.test.sh`; it proves both providers use one worker shape, Z.ai is prefixed by `opr --` without a key in command text, every Pi worker launch carries model and thinking flags, GLM rejects unsupported generic levels, and scout tools exclude edit and write.
 
+### 2026-09-23 zai Pi task-worker visibility in Herdr's agents sidebar
+
+Verified on 2026-09-23 with Pi 0.86.1 and Herdr 0.9.1 on Linux, against a real `zai/glm-5.3` task worker spawned by `bin/fm-spawn.sh --backend herdr` on an isolated lab session.
+A zai task worker rides `opr -f .env.op --` so ZAI_API_KEY stays behind the secret boundary; the outer op-broker/sudo/setpriv chain can also detach Pi from its Herdr pane and make its TUI-gated `herdr-agent-state.ts` extension silent.
+On the observed zai path, sudoers `Defaults ... use_pty` runs the chain in its own session off the pane's pty, and `op run` pipes stdout/stderr for secret-output masking, so Pi resolves print mode and Herdr's pane process view cannot attribute the worker.
+The result was `herdr agent get <pane>` answering `agent_not_found` while the worker ran.
+Herdr 0.9.1 binds a pane's agent record to `herdr pane report-agent` calls from pane-resident processes, and the reserved `herdr:` source prefix is accepted (`{"type":"ok"}`) but never materializes a record when the reporter is a wrapper rather than the in-pane agent itself, so `bin/fm-spawn.sh` brackets every Pi task-worker launch with pane-side reports under Firstmate's own `firstmate:pi` source: `working` before the launch, `idle` or `blocked` from its exit status afterward.
+Reports are best-effort telemetry guarded by HERDR_PANE_ID and never gate the launch; stdout remains piped through op-broker, so secret-output masking is unchanged.
+
+The token-free live guard `tests/fm-pi-zai-herdr-agent-report-live-e2e.test.sh` was run on 2026-09-23 with Herdr 0.9.1 through `bin/fm-test-run.sh tests/fm-pi-zai-herdr-agent-report-live-e2e.test.sh`.
+It drives the real `bin/fm-spawn.sh` against a real isolated Herdr lab session with sleeping fake Pi executables and asserts both GLM and Codex records appear in `herdr agent list` as `agent=pi` and transition from `working` to `idle`; GLM's opr/vault path is real.
+The exact guard result was:
+
+```text
+# zai Pi worker pane w1:p2 registered working then idle in isolated Herdr lab
+# Codex Pi worker pane w1:p3 registered working then idle in isolated Herdr lab
+ok - real fm-spawn + isolated Herdr lab: GLM and Codex Pi task workers appear in the agents sidebar with real agent_status
+```
+
+The portable launch composition stays pinned in `tests/fm-spawn-dispatch-profile.test.sh`, including pane-side reports around both Codex and GLM launches.
+
 ## tmux
 
 Foreground-process behavior was verified on 2026-07-07 with tmux 3.6a on macOS.
