@@ -2,9 +2,9 @@
 name: quota-array-dispatch
 description: >-
   Agent-only decision procedure for resolving a matched crew-dispatch profile
-  array from quota-axi's default TOON, ranking by spendPriority after three
-  orthogonal gates, and for discounting a shaped Claude credential store's
-  headroom by its committed parked demand.
+  array from quota-axi's default TOON, resolving unknown pools before ranking
+  by spendPriority, splitting runway-limited work, and reserving Claude
+  orchestration capacity alongside shaped-store committed demand.
   Load when a dispatch rule or default resolves to more than one profile candidate,
   and before treating a store listed in config/claude-shaped-store as having headroom.
 user-invocable: false
@@ -29,6 +29,7 @@ Pass each candidate as `harness:model`, with earlier candidates preferred.
 The helper maps each harness to its primary provider family and applies the provider-wide scopes plus the exact model or product scopes for the model.
 An `exhausted_now` runway vetoes the candidate.
 The helper selects a candidate only when its applicable quota has a known `effectivePercentRemaining` greater than zero.
+It does not warm an unknown pool, re-read quota, split a task, or reserve Claude orchestration capacity; do not use its result as an array-selection decision when any of those judgments is outstanding.
 This is an optional narrow helper with a known limitation: it maps each harness to one primary provider family only, so a candidate whose established provider differs from that primary family is checked against the wrong quota row.
 omp has no primary family, so the helper keys an `omp:` candidate on its model prefix, mapping only `openai-codex/` and `claude-bridge/` and refusing every other prefix; the helper's header owns that mapping.
 Authoritative multi-provider routing - including provider discovery from the harness catalog and quota matching by that explicit provider - stays owned by this skill's intake procedure above and AGENTS.md section 4, not by the helper.
@@ -39,7 +40,7 @@ The opt-in `bin/fm-dispatch-resolve.sh` (`docs/configuration.md` "Typed dispatch
 
 ## Read the default TOON
 
-Start each intake by running `quota-axi` once with no `--json`, and reuse that TOON for every candidate.
+Start each intake by running `quota-axi` with no `--json`, and reuse that initial TOON for every candidate until an unknown pool requires the single bounded retry below.
 Post-consolidation quota-axi (the floor owned by `bin/fm-quota-axi-lib.sh`) puts `spendPriority` in the default `quota[]` block beside `effectivePercentRemaining`, `runway`, `confidence`, `limitedBy`, and `resetsAt`.
 Sparse `exhaustion[]` carries finite-runway seconds only for `projected_exhaustion` and `exhausted_now`.
 Sparse `attention[]` names auth, stale, and unmeasurable facts.
@@ -49,7 +50,7 @@ Do not read `--json` on the normal path, and do not reach for `--full` to rebuil
 
 After reading the TOON, fall back to one `quota-axi --json` call only when that TOON is genuinely ambiguous for the decision, or when the installed quota-axi is somehow below the floor so its TOON lacks `spendPriority`.
 Ambiguous means a candidate's `spendPriority` is the literal `unknown` or unmeasurable, a real tie still needs extra evidence, or a candidate's eligibility is unclear from `quota[]` plus `attention[]`.
-The fallback therefore has an explicit TOON-then-JSON call sequence; reuse its JSON result and do not take any further quota snapshots.
+Reuse its JSON result to identify the unknown pools before the bounded warm-up and retry below; do not let the fallback's still-unknown reading settle a choice.
 Below-floor is rare: bootstrap enforces `FM_QUOTA_AXI_MIN` and normally reports `MISSING` before dispatch; if an intake somehow reaches an older build whose TOON lacks `spendPriority`, use the defensive `--json` fallback rather than treating the missing scalar as healthy.
 `--json` is a defensive belt, not a habit; never reach for it because it feels more complete.
 Read `quota-axi auth --json` only when a candidate's credential surface is in question.
@@ -72,11 +73,11 @@ An unlisted store, including the default personal one, has no census to read and
 The census is evidence, never a route: it can lower a shaped candidate's standing, and it never selects, blocks a candidate on its own, or authorizes pausing authorized work.
 An unreadable census is disclosed uncertainty for the ranking, the same as any other unmeasurable fact, and the script's own refusal is what stops a launch.
 
-## Three gates, then spendPriority
+## Gates, unknown pools, spendPriority, then runway
 
-Apply the three cheap orthogonal gates first.
-`spendPriority` ranks only among candidates that pass all three.
-It cannot override a hard-gate failure, and it is never hidden inside a new composite score.
+Follow these steps in order: eligibility and reasoning-class fit first, resolve unknown pools, then rank by `spendPriority` and assess runway and the Claude reserve.
+`spendPriority` cannot override a hard-gate failure, and it is never hidden inside a new composite score.
+A runway-only failure on the top-ranked candidate can produce a bounded slice, never a full-task launch.
 
 ### 1. Eligibility
 
@@ -97,8 +98,8 @@ A Pi-hosted family may authenticate through the vendor's own store with no `pi:`
 
 Uncertainty and ineligibility are different findings:
 
-- No model-level window, no matching auth source, an unmeasurable or `unknown` scope, or a surface quota-axi does not model at all is disclosed uncertainty.
-  Keep the candidate eligible, state the unknown, and prefer known viable evidence when otherwise comparable.
+- No model-level window or no matching auth source is disclosed uncertainty, not proof of a bad credential.
+  A known provider-wide bound can still supply the applicable quota when no model-level window exists; a quota-axi-unmodeled surface or an applicable scope reading `unknown` is a quota-evidence gap to resolve before ranking, not a reason to choose a known competitor early.
 - An expired credential is a short-lived session token the owning vendor renews on next use, not a sign-out.
 - Only concrete contradictory evidence blocks: an authoritative catalog proving the model unsupported, or proof that the credential the candidate actually selects is unusable.
 - Reserve login wording for that proven-unusable case, and name the harness, model, surface, and evidence.
@@ -117,25 +118,24 @@ Keep only candidates that meet the required reasoning class for this task (a sim
 Never use `spendPriority` or remaining quota to silently replace that class.
 When every remaining candidate is tight, dispatch inside the strongest-reasoning class if one of those candidates can proceed, or stop and report that the strongest-class choice cannot proceed rather than downgrading it to spend or conserve quota.
 
-### 3. Runway feasibility floor
+### 3. Resolve unknown pools before ranking
 
-Known runway that will not last until the inspectable likely-completion horizon fails this gate, even when that candidate has the highest `spendPriority`.
-Read `runway` from the `quota[]` row: `through_reset` passes this generic feasibility floor because the window reaches its refill without exhausting; never compare its `resetsAt` with the completion horizon as though reset were an exhaustion deadline.
-`exhausted_now` is zero, and `projected_exhaustion` uses the matching `exhaustion[]` row's `usableRunwaySeconds`.
-A high `spendPriority` on a nearly empty window that will exhaust soon must not route into a mid-task stall.
-Unknown or unmeasurable runway stays eligible with disclosed uncertainty and is never assumed to pass.
-Do not invent a generic percentage floor, and honor an explicit captain floor for a candidate when one exists.
+After catalog, authentication, and reasoning-class checks, identify every eligible candidate whose applicable pool is unknown in headroom, `spendPriority`, runway, or quota applicability; missing model-specific quota alone is not unknown when a known provider-wide bound applies.
+Do not compare known candidates or pick one until every candidate still in this choice has known applicable quota and runway, or has been dropped by this procedure.
+For each distinct unknown pool with a known warm-up, invoke that pool's warm-up once on demand, not on a timer; today the only known warm-up is `zai-window-warm` for Z.ai, which pings glm-5.3-flash once to open its rolling window.
+This is an approved pool warm-up, not a candidate authentication probe or permission to launch another harness's CLI for model discovery; do not substitute an arbitrary vendor command when the helper is absent or fails.
+After attempting the available warm-ups, re-read `quota-axi` once for the choice, including pools without a warm-up, and re-evaluate all candidates against the new snapshot.
+Use default TOON first and the narrow `--json` fallback only if needed to disambiguate that retry; do not loop or repeatedly ping to force a number.
+If an applicable pool is still unknown after that one retry, drop only candidates bounded by that unknown pool from this choice, record the attempted or unavailable warm-up and both readings, and continue with known candidates.
+An unavailable warm-up never makes the whole choice wait; if no candidates remain, stop and report that none can be ranked rather than guessing or silently switching reasoning class.
+An absent auth source remains disclosed uncertainty rather than proof of failed login, but never fabricates quota evidence for an unmodeled pool.
 
-## Rank by spendPriority
+### 4. Rank by spendPriority
 
-Among candidates that pass all three gates, pick the highest known `spendPriority`.
+Among catalog-eligible candidates in the required reasoning class with resolved quota evidence, compare the known `spendPriority` values first, then assess their runway feasibility in descending rank order.
 A higher known scalar is better: positive means paid allowance is on track to reach reset unused, `0` is exact utilization, and negative means overdrawn against the reset clock.
 Rank only from comparable known scalars.
 Never treat absent, `unknown`, or unmeasurable `spendPriority` as zero or as healthy; `0` means exact utilization, a different claim from unknown.
-An unknown `spendPriority` keeps the candidate eligible with disclosed uncertainty.
-Prefer known viable evidence when otherwise comparable.
-After the permitted TOON-to-JSON fallback, escalate to Firstmate instead of routing if no candidate can be ranked or runway uncertainty prevents proving the feasibility floor for any candidate that could be selected.
-Never resolve that terminal uncertainty by treating unknown as healthy or by choosing arbitrarily.
 Show the scalar or the literal `unknown` in the rationale; do not hide it in a score.
 
 Do not compare headroom against runway by hand.
@@ -146,6 +146,34 @@ Genuine ties: stop and report every tied candidate for captain choice.
 Do not select by array order, harness name, or another arbitrary identity ordering.
 Report duplicate concrete profiles as a configuration error.
 
-Account for every candidate visibly before selecting or escalating, naming its catalog evidence, provider relation, applicable quota and authentication facts, remaining uncertainty, fit and reasoning class, `spendPriority`, and runway-versus-horizon result.
+### 5. Runway feasibility, Claude orchestration reserve, and split
+
+Establish an inspectable likely-completion horizon for the work before accepting a full-task launch.
+Read `runway` from every applicable `quota[]` bound: `through_reset` passes the generic feasibility check because the window refills without exhausting; never compare its `resetsAt` with the completion horizon as though reset were an exhaustion deadline.
+`exhausted_now` is zero, and `projected_exhaustion` uses the matching `exhaustion[]` row's `usableRunwaySeconds`.
+Known runway shorter than the full-task horizon fails full-task feasibility even at the highest `spendPriority`; do not launch an unsliced job into a known stall.
+Unknown or unmeasurable runway cannot prove feasibility: it must already have been resolved by the bounded warm-up and retry above, or its candidate dropped.
+Do not invent a generic percentage floor, and honor an explicit captain floor for a candidate when one exists.
+
+Firstmate itself spends Claude quota while orchestrating.
+For a Claude worker, estimate Firstmate's Claude orchestration demand through each applicable reset from observed usage and already committed supervision work, then include the proposed worker task or slice on every shared credential store.
+If the worker uses a different store, establish the worker's task-inclusive runway on its store and the orchestration runway on Firstmate's store separately; do not debit one store for another's demand.
+Choose Claude only when the task-inclusive worker runway and Firstmate's orchestration runway still reach their respective resets; `through_reset` on a point-in-time reading alone is not proof that adding the worker preserves this reserve.
+If the estimate cannot be supported by inspectable evidence, do not choose Claude on an assumed free reserve; report the uncertainty.
+This is a demand forecast, not a new percentage floor, and is separate from the parked-session census on stores listed in `config/claude-shaped-store`.
+Never apply the Claude reserve to a non-Claude candidate or subtract it from quota-axi's published scalar.
+
+If the top-ranked candidate fails only full-task runway feasibility, first seek a concrete bounded slice that fits safely within its measured usable runway, with an independently inspectable deliverable and a clear checkpoint before exhaustion.
+Dispatch only that slice to the top candidate and requeue the remaining work as a separate task for a fresh choice; neither promise that candidate the whole job nor silently discard the remainder.
+For Claude, the slice must also preserve the orchestration reserve through reset; a reserve failure is not a runway-only split opportunity.
+If no meaningful safe slice can be defined, do not dispatch it: consider the next ranked candidate that can complete the whole task, or stop and report when none can proceed.
+A known `exhausted_now` runway offers no slice.
+Do not alter the configured profile array or add a generic floor to manufacture a split.
+
+If no candidate survives the known-evidence and feasibility checks, report the blocker instead of treating unknown as healthy or choosing arbitrarily.
+
+## Account for every candidate
+
+Account for every candidate visibly before selecting or escalating, naming its catalog evidence, provider relation, applicable quota and authentication facts, warm-up and retry outcome or dropped reason, fit and reasoning class, `spendPriority`, runway-versus-horizon result, and any Claude reserve or split decision.
 A blocked credential report must name `harness`, `model`, authentication surface, and concrete failure evidence; never emit a bare `Grok unauthenticated` statement.
 Never conclude with an unexplained "best quota" label.
