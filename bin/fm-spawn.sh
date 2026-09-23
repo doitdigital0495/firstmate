@@ -188,6 +188,13 @@
 #   `opr -f "$FM_ROOT/.env.op" --` ahead of that same Pi command, so ZAI_API_KEY is
 #   resolved into the child environment and never copied into launch text. Pi secondmates remain full primary
 #   sessions and do not use this worker-only shape.
+#   --skill <path> (repeatable) hands a Pi ship or scout exactly the skills its task
+#   needs: each occurrence adds one `--skill <absolute path>` beside --no-skills, in
+#   the order given, and Pi loads explicit paths even with discovery disabled. Each
+#   path must exist and be a directory containing SKILL.md or a .md file, or the
+#   spawn refuses before provisioning and names the offending path. Any other
+#   harness, a raw launch command, or a --secondmate spawn refuses --skill rather
+#   than dropping it. A --relaunch does not remember the skills; pass them again.
 #   For omp (Oh My Pi), fm-spawn resolves the `omp` executable from PATH once and
 #   refuses when it is absent. Every omp launch clears the foreign harness
 #   markers (omp publishes none of its own), sets the Firstmate-owned
@@ -328,6 +335,7 @@
 #     __PIHERDREXT__ absolute operator Pi herdr-agent-state extension path
 #     __PIRTKEXT__ absolute operator Pi rtk-compact extension path
 #     __PITOOLS__ task-class built-in tool allowlist
+#     __PISKILLS__ zero or more ` --skill <path>` words from --skill, empty by default
 #     __PIWORKERCONTRACT__ absolute tracked compact worker contract path
 #     __TURNEND__  absolute path to state/<task-id>.turn-ended (for harnesses whose
 #                  turn-end signal rides the launch command, e.g. codex -c notify=[...])
@@ -603,6 +611,7 @@ YOLO_SET=0
 TRACEPARENT_SET=0
 RELAUNCH=0
 POS=()
+SKILLS=()
 want_value=
 for a in "$@"; do
   if [ -n "$want_value" ]; then
@@ -621,6 +630,7 @@ for a in "$@"; do
       yolo) YOLO=$a; YOLO_SET=1 ;;
       traceparent) TRACEPARENT_ARG=$a; TRACEPARENT_SET=1 ;;
       priority) PRIORITY_ARG=$a ;;
+      skill) SKILLS+=("$a") ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -646,6 +656,8 @@ for a in "$@"; do
     --traceparent=*) TRACEPARENT_ARG=${a#--traceparent=}; TRACEPARENT_SET=1 ;;
     --priority) want_value=priority ;;
     --priority=*) PRIORITY_ARG=${a#--priority=} ;;
+    --skill) want_value=skill ;;
+    --skill=*) SKILLS+=("${a#--skill=}") ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -694,6 +706,10 @@ if [ "$TRACEPARENT_SET" -eq 1 ]; then
     exit 1
   }
 fi
+[ "${#SKILLS[@]}" -eq 0 ] || [ "$KIND" != secondmate ] || {
+  echo "error: --skill applies only to Pi ship and scout workers; a --secondmate spawn has no lean worker launch to carry it" >&2
+  exit 1
+}
 case "$EFFORT" in
 '' | low | medium | high | xhigh | max | ultra) ;;
 *)
@@ -1333,6 +1349,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   # spanning several modes is two invocations rather than a silent mixed dispatch.
   [ "$MODE_SET" -eq 0 ] || shared_args+=(--mode "$MODE")
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
+  for skill in "${SKILLS[@]+"${SKILLS[@]}"}"; do shared_args+=(--skill "$skill"); done
   for pair in "${POS[@]}"; do
     case "$pair" in
     *=*) : ;;
@@ -1920,7 +1937,7 @@ launch_template() {
       if [ "$kind" = secondmate ]; then
         printf '%s' '__PIBIN____PITUIMODE__ __MODELFLAG____EFFORTFLAG__-e __PITURNEND__ -e __PIWATCH__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
       else
-        printf '%s' '__PIPREFIX____PIBIN____PITUIMODE__ --no-context-files --no-skills --no-extensions -e __PIHERDREXT__ -e __PIRTKEXT__ -e __PIEXT__ --tools __PITOOLS__ __MODELFLAG____EFFORTFLAG__--append-system-prompt "$(cat __PIWORKERCONTRACT__)" "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+        printf '%s' '__PIPREFIX____PIBIN____PITUIMODE__ --no-context-files --no-skills__PISKILLS__ --no-extensions -e __PIHERDREXT__ -e __PIRTKEXT__ -e __PIEXT__ --tools __PITOOLS__ __MODELFLAG____EFFORTFLAG__--append-system-prompt "$(cat __PIWORKERCONTRACT__)" "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
       fi
       ;;
     # omp (Oh My Pi), a Pi fork. Same one-positional-brief, --model, --thinking,
@@ -2234,7 +2251,44 @@ PI_PROVIDER=
 PI_MODEL=
 PI_HERDR_EXT=
 PI_RTK_EXT=
+PI_SKILLS=
+PI_TASK_WORKER=0
 if { [ "$HARNESS" = pi ] || [ "$HARNESS" = pi-signed ]; } && [ "$KIND" != secondmate ] && [ "$RAW_LAUNCH" -eq 0 ]; then
+  PI_TASK_WORKER=1
+fi
+# --skill is Pi's own launch input; no other launch shape has a place for it, so
+# it refuses rather than launching a worker without the skills its task needs.
+if [ "${#SKILLS[@]}" -gt 0 ] && [ "$PI_TASK_WORKER" -eq 0 ]; then
+  if [ "$RAW_LAUNCH" -eq 1 ]; then
+    echo "error: --skill cannot be added to a raw launch command; write the harness's own skill flags into that command instead" >&2
+  else
+    echo "error: --skill applies only to Pi ship and scout workers; this $KIND spawn resolved harness '$HARNESS', which has no equivalent launch input" >&2
+  fi
+  exit 1
+fi
+for skill in "${SKILLS[@]+"${SKILLS[@]}"}"; do
+  if [ -d "$skill" ]; then
+    [ -f "$skill/SKILL.md" ] || {
+      echo "error: --skill $skill is a directory without SKILL.md; pass a skill directory or a .md skill file" >&2
+      exit 1
+    }
+  elif [ ! -f "$skill" ]; then
+    echo "error: --skill $skill does not exist; pass a skill directory or a .md skill file" >&2
+    exit 1
+  else
+    case "$skill" in
+    *.md) ;;
+    *)
+      echo "error: --skill $skill is not a .md file; pass a skill directory or a .md skill file" >&2
+      exit 1
+      ;;
+    esac
+  fi
+  # Pi resolves a relative path against the worker's cwd, not this caller's.
+  case "$skill" in /*) ;; *) skill="$PWD/$skill" ;; esac
+  PI_SKILLS="$PI_SKILLS --skill $(shell_quote "$skill")"
+done
+if [ "$PI_TASK_WORKER" -eq 1 ]; then
   PI_HERDR_EXT="${PI_CODING_AGENT_DIR:-${HOME:-}/.pi/agent}/extensions/herdr-agent-state.ts"
   PI_RTK_EXT="${PI_CODING_AGENT_DIR:-${HOME:-}/.pi/agent}/extensions/rtk-compact.ts"
   for pi_ext in "$PI_HERDR_EXT" "$PI_RTK_EXT"; do
@@ -5031,6 +5085,8 @@ omp) LAUNCH=${LAUNCH//__OMPBIN__/"$(shell_quote "$OMP_BIN")"} ;;
 agy) LAUNCH=${LAUNCH//__AGYBIN__/"$(shell_quote "$AGY_BIN")"} ;;
 esac
 LAUNCH=${LAUNCH//__WORKTREE__/$sq_worktree}
+# Last, so no later placeholder pass can rewrite text inside an operator's path.
+LAUNCH=${LAUNCH//__PISKILLS__/"$PI_SKILLS"}
 # A claude launch bound to the recorded "default" store unsets any inherited
 # CLAUDE_CONFIG_DIR in the same env call, rather than adding a second one.
 CLAUDE_STORE_UNSET=
