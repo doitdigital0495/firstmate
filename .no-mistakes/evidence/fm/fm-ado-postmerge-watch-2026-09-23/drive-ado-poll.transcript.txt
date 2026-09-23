@@ -1,0 +1,69 @@
+
+### open PR, forge mergeStatus=queued, branches merge cleanly (git probe)
+poll stdout: ado clear: https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801
+
+### open PR, forge mergeStatus=queued (lagging), target now conflicts (git probe)
+poll stdout: ado conflict: https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801 needs a rebase: git merge-tree reports merging origin/fm-test into origin/main conflicts
+
+### open PR, forge itself reports conflicts
+poll stdout: ado conflict: https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801 needs a rebase: azure devops reports the source branch conflicts with refs/heads/main
+
+### adversarial: az lookup fails during conflict -> must stay silent (no false clear)
+poll stdout: <empty>
+
+### worker rebased/merged target into source (forge still queued) -> git probe confirms clear
+poll stdout: ado clear: https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801
+
+### adversarial: doctored meta (relative worktree) -> probe refused, no claim
+poll stdout: <empty>
+
+### adversarial: worktree origin is a different repo -> probe refused, no claim
+poll stdout: <empty>
+
+### merged PR, runs on merge commit: one success, one failure, one cancel
+poll stdout: merged azure-devops https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801 merge commit 01234567: fabric-deploy=GREEN (succeeded, run 8513); reports-deploy=RED (failed, run 8519); dbt-dev-build=RED (canceled, run 8521)
+
+### merged just now, no runs yet -> wait silently inside grace window
+poll stdout: <empty>
+
+### merged just now, run still in progress -> wait silently
+poll stdout: <empty>
+
+### adversarial: run stuck pending past 7200s cap -> merge still reported
+poll stdout: merged azure-devops https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801 merge commit 01234567: prod-deploy=PENDING (notStarted, run 8530)
+
+### adversarial: runs unreadable past cap -> merge still reported
+poll stdout: merged azure-devops https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801 merge commit 01234567: pipeline runs could not be read within 7200s of completion
+
+### merged long ago, no runs ever -> terminal line
+poll stdout: merged azure-devops https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801: no pipeline runs were observed on merge commit 01234567 within 900s of completion
+
+### abandoned PR -> silent
+poll stdout: <empty>
+
+### every az invocation made (must be read-only show/list only)
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+pipelines runs list --organization https://dev.azure.com/Org-1 --project Insights-Requests --branch refs/heads/main --top 200 --query [?sourceVersion=='0123456789abcdef0123456789abcdef01234567'].[definition.name, status, result, id] --output tsv
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+pipelines runs list --organization https://dev.azure.com/Org-1 --project Insights-Requests --branch refs/heads/main --top 200 --query [?sourceVersion=='0123456789abcdef0123456789abcdef01234567'].[definition.name, status, result, id] --output tsv
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+pipelines runs list --organization https://dev.azure.com/Org-1 --project Insights-Requests --branch refs/heads/main --top 200 --query [?sourceVersion=='0123456789abcdef0123456789abcdef01234567'].[definition.name, status, result, id] --output tsv
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+pipelines runs list --organization https://dev.azure.com/Org-1 --project Insights-Requests --branch refs/heads/main --top 200 --query [?sourceVersion=='0123456789abcdef0123456789abcdef01234567'].[definition.name, status, result, id] --output tsv
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+pipelines runs list --organization https://dev.azure.com/Org-1 --project Insights-Requests --branch refs/heads/main --top 200 --query [?sourceVersion=='0123456789abcdef0123456789abcdef01234567'].[definition.name, status, result, id] --output tsv
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+pipelines runs list --organization https://dev.azure.com/Org-1 --project Insights-Requests --branch refs/heads/main --top 200 --query [?sourceVersion=='0123456789abcdef0123456789abcdef01234567'].[definition.name, status, result, id] --output tsv
+repos pr show --id 801 --organization https://dev.azure.com/Org-1 --query [status, mergeStatus, targetRefName, headRef.sourceRefName, lastMergeCommit.commitId, closedDate] --output tsv
+
+### refs written into task worktree by probe
+refs/remotes/origin/HEAD
+refs/remotes/origin/fm-test
+refs/remotes/origin/main
