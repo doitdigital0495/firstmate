@@ -1,0 +1,10 @@
+warning: <C>/home/data/b-one-s1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode direct-PR - confirm its definition of done matches
+notice: b-one-s1 ships mode=direct-PR while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned b-one-s1 harness=pi kind=ship mode=direct-PR yolo=off window=firstmate:fm-b-one-s1 worktree=<C>/wt
+warning: <C>/home/data/b-two-s2/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode direct-PR - confirm its definition of done matches
+notice: b-two-s2 ships mode=direct-PR while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned b-two-s2 harness=pi kind=ship mode=direct-PR yolo=off window=firstmate:fm-b-two-s2 worktree=<C>/wt
+exit=0
+launches carrying --skill: 2
+--no-skills --skill '<C>/sk/seo' --no-extensions
+--no-skills --skill '<C>/sk/seo' --no-extensions

@@ -1,0 +1,15 @@
+== 1. default launch byte-identity vs base /tmp/tmp.aoPGGHIBiU
+IDENTICAL
+export COMPACT_ADVISER_DISABLE=1; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL FM_PI_HARNESS=pi '<CASE>/fake/fakebin/pi' --no-context-files --no-skills --no-extensions -e '<CASE>/home/user-home/.pi/agent/extensions/herdr-agent-state.ts' -e '<CASE>/home/user-home/.pi/agent/extensions/rtk-compact.ts' -e '<CASE>/home/state/s-base-1.pi-ext.ts' --tools read,bash,edit,write --provider 'openai-codex' --model 'gpt-5.6-sol' --thinking 'medium' --append-system-prompt "$(cat '<ROOT>/.pi/fm-worker-contract.md')" "$('<ROOT>/bin/fm-operational-input.sh' encode launch-brief < '<CASE>/home/data/s-base-1/launch-brief.md')"
+
+== 2. --skill launch built by real fm-spawn
+exit=0
+export COMPACT_ADVISER_DISABLE=1; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL FM_PI_HARNESS=pi '<CASE>/fake/fakebin/pi' --no-context-files --no-skills --skill '/tmp/tmp.pd5Zb4afBm/skills/seo audit' --skill '/tmp/tmp.pd5Zb4afBm/skills/it'\''s & __WORKTREE__.md' --no-extensions -e '<CASE>/home/user-home/.pi/agent/extensions/herdr-agent-state.ts' -e '<CASE>/home/user-home/.pi/agent/extensions/rtk-compact.ts' -e '<CASE>/home/state/s-skill-2.pi-ext.ts' --tools read,bash,edit,write --provider 'openai-codex' --model 'gpt-5.6-sol' --thinking 'medium' --append-system-prompt "$(cat '<ROOT>/.pi/fm-worker-contract.md')" "$('<ROOT>/bin/fm-operational-input.sh' encode launch-brief < '<CASE>/home/data/s-skill-2/launch-brief.md')"
+skill words:  --skill '/tmp/tmp.pd5Zb4afBm/skills/seo audit' --skill '/tmp/tmp.pd5Zb4afBm/skills/it'\''s & __WORKTREE__.md'
+== 3. REAL pi consumes those exact words
+argv: [--skill] [/tmp/tmp.pd5Zb4afBm/skills/seo audit] [--skill] [/tmp/tmp.pd5Zb4afBm/skills/it's & __WORKTREE__.md] 
+{"type":"response","command":"get_commands","success":true,"data":{"commands":[{"name":"llama","description":"Manage llama.cpp router models","source":"extension","sourceInfo":{"path":"<inline:llama.cpp>","source":"inline","scope":"temporary","origin":"top-level"}},{"name":"skill:seo-audit","description":"SEO audit skill (dir with space in path)","source":"skill","sourceInfo":{"path":"<SCRATCH>/skills/seo audit/SKILL.md","source":"local","scope":"temporary","origin":"top-level","baseDir":"<SCRATCH>/skills/seo audit"}},{"name":"skill:schema-markup","description":"Schema md skill with quote and ampersand","source":"skill","sourceInfo":{"path":"<SCRATCH>/skills/it's & __WORKTREE__.md","source":"local","scope":"temporary","origin":"top-level","baseDir":"<SCRATCH>/skills"}}]}}
+
+== 4. REAL pi baseline (lean flags, no --skill)
+{"type":"response","command":"get_commands","success":true,"data":{"commands":[{"name":"llama","description":"Manage llama.cpp router models","source":"extension","sourceInfo":{"path":"<inline:llama.cpp>","source":"inline","scope":"temporary","origin":"top-level"}}]}}
+

@@ -1,0 +1,9 @@
+ok - a Pi worker launch without --skill keeps the exact lean command
+ok - directory and .md skills reach the Pi launch as --skill paths in the order given
+ok - a Pi scout receives its skills too
+ok - a nonexistent skill path refuses before launch
+ok - a directory without SKILL.md refuses before launch
+ok - a skill file that is not .md refuses before launch
+ok - --skill on a harness without an equivalent refuses and names the harness
+ok - --skill on a --secondmate spawn refuses before any secondmate routing
+# all fm-spawn-pi-skill tests passed
