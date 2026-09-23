@@ -1,0 +1,22 @@
+## A: fast-lane brief with {ASKS} left unfilled
+error: no-mistakes gate agent must not drive the fleet (NO_MISTAKES_GATE set)
+exit=3
+ls: cannot access '$RUN/home/state/a-unfilled.meta': No such file or directory
+
+## E: checklist heading with empty body
+error: no-mistakes gate agent must not drive the fleet (NO_MISTAKES_GATE set)
+exit=3
+
+## B: fast-lane brief spawned WITHOUT --fast-lane
+error: no-mistakes gate agent must not drive the fleet (NO_MISTAKES_GATE set)
+exit=3
+ls: cannot access '$RUN/home/state/b-nolane.meta': No such file or directory
+
+## C: standard brief spawned WITH --fast-lane
+error: no-mistakes gate agent must not drive the fleet (NO_MISTAKES_GATE set)
+exit=3
+
+## D: fast-lane brief spawned WITH --fast-lane (backend tmux stubbed to fail)
+error: no-mistakes gate agent must not drive the fleet (NO_MISTAKES_GATE set)
+exit=3
+cat: $RUN/home/state/d-ok.meta: No such file or directory

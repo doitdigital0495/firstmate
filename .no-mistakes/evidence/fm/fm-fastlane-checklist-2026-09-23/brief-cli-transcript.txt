@@ -1,0 +1,15 @@
+$ fm-brief.sh rpt-tweak geris-reports --mode no-mistakes --fast-lane
+scaffolded: $FM_HOME/data/rpt-tweak/brief.md (ship, mode=no-mistakes lane=fast; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})
+exit=0
+$ fm-brief.sh std-task geris-reports --mode no-mistakes
+scaffolded: $FM_HOME/data/std-task/brief.md (ship, mode=no-mistakes; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})
+exit=0
+$ fm-brief.sh bad1 geris-reports --mode direct-PR --fast-lane
+error: --fast-lane requires --mode no-mistakes; the one-review-round lane modifies the no-mistakes review drive, so the other modes have nothing for it to modify
+exit=1
+$ fm-brief.sh bad2 geris-reports --scout --fast-lane
+error: --fast-lane applies only to ship briefs; the one-review-round lane is a delivery contract, and a scout's report or a charter ships no PR through it
+exit=1
+$ fm-brief.sh sc geris-reports --scout
+scaffolded: $FM_HOME/data/sc/brief.md (scout; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})
+exit=0
