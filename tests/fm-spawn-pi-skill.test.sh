@@ -50,7 +50,11 @@ test_default_launch_is_unchanged() {
   expect_code 0 "$status" "pi spawn without --skill should succeed: $out"
   launch=$(cat "$LAUNCH_LOG")
   contract=$(cd "$ROOT" && pwd -P)/.pi/fm-worker-contract.md
-  expected="export COMPACT_ADVISER_DISABLE=1; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL FM_PI_HARNESS=pi '$FAKEBIN_DIR/pi' --no-context-files --no-skills --no-extensions -e '$HOME_DIR/user-home/.pi/agent/extensions/herdr-agent-state.ts' -e '$HOME_DIR/user-home/.pi/agent/extensions/rtk-compact.ts' -e '$HOME_DIR/state/$id.pi-ext.ts' --tools read,bash,edit,write --provider 'openai-codex' --model 'gpt-5.6-sol' --thinking 'medium' --append-system-prompt \"\$(cat '$contract')\" \"\$('$ROOT/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/launch-brief.md')\""
+  # shellcheck disable=SC2016
+  expected='export COMPACT_ADVISER_DISABLE=1; if [ -n "${HERDR_PANE_ID:-}" ] && command -v herdr >/dev/null 2>&1; then herdr pane report-agent "$HERDR_PANE_ID" --source firstmate:pi --agent pi --state working --message "firstmate pi task worker starting" >/dev/null 2>&1 || true; fi; '
+  expected+="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u PI_PROVIDER -u PI_MODEL -u PI_REASONING_LEVEL FM_PI_HARNESS=pi '$FAKEBIN_DIR/pi' --no-context-files --no-skills --no-extensions -e '$HOME_DIR/user-home/.pi/agent/extensions/herdr-agent-state.ts' -e '$HOME_DIR/user-home/.pi/agent/extensions/rtk-compact.ts' -e '$HOME_DIR/state/$id.pi-ext.ts' --tools read,bash,edit,write --provider 'openai-codex' --model 'gpt-5.6-sol' --thinking 'medium' --append-system-prompt \"\$(cat '$contract')\" \"\$('$ROOT/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/launch-brief.md')\""
+  # shellcheck disable=SC2016
+  expected+='; __fm_pi_rc=$?; if [ -n "${HERDR_PANE_ID:-}" ] && command -v herdr >/dev/null 2>&1; then if [ "$__fm_pi_rc" -eq 0 ]; then __fm_pi_st=idle; else __fm_pi_st=blocked; fi; herdr pane report-agent "$HERDR_PANE_ID" --source firstmate:pi --agent pi --state "$__fm_pi_st" --message "firstmate pi task worker exited rc=$__fm_pi_rc" >/dev/null 2>&1 || true; fi; unset __fm_pi_rc __fm_pi_st'
   assert_equals "$expected" "$launch" "pi launch without --skill changed shape"
   assert_not_contains "$launch" "--skill" "pi launch without --skill gained a skill flag"
   pass "a Pi worker launch without --skill keeps the exact lean command"
