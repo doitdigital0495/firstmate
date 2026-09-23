@@ -2251,6 +2251,19 @@ retire_merged_pr_poll() {  # <id>
   fi
 }
 
+# The Azure DevOps poll repeats its conflict line on every sweep while the
+# conflict stands; $STATE/<id>.ado-conflict holds the line last delivered so
+# only a new or changed conflict wakes. Any other output clears it.
+ado_conflict_unreported() {  # <id> <poll-output>
+  local marker="$STATE/$1.ado-conflict"
+  case "$2" in
+    'ado conflict: '*) ;;
+    *) rm -f "$marker"; return 0 ;;
+  esac
+  [ -f "$marker" ] && [ ! -L "$marker" ] && [ "$(cat "$marker")" = "$2" ] && return 1
+  return 0
+}
+
 # A poll armed before a state volume remount can fail capture only because its
 # registration names the old device number; bin/fm-pr-lib.sh
 # fm_pr_poll_registration_rerecord_device owns the proof and the rewrite.
@@ -2405,6 +2418,10 @@ while :; do
           run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --validated \
             "$provider" "$url" "$host" "$path" "$number" "$STATE" "$id" || exit 1
           out=$FM_CHECK_RESULT
+          if [ "$provider" = ado ] && ! ado_conflict_unreported "$id" "$out"; then
+            pr_poll_control_release || exit 1
+            continue
+          fi
         elif fm_custom_check_snapshot_prepare "$STATE" "$id"; then
           custom_snapshot=$FM_CUSTOM_CHECK_SNAPSHOT
           run_check_capture "$custom_snapshot" || exit 1
@@ -2475,6 +2492,15 @@ EOF
         fi
         pr_poll_control_release || exit 1
         fm_wake_append check "$c" "$reason" || exit 1
+        if [ "$is_pr_poll" -eq 1 ] && [ "$provider" = ado ]; then
+          case "$out" in
+            'ado conflict: '*)
+              rm -f "$STATE/$id.ado-conflict"
+              printf '%s\n' "$out" > "$STATE/$id.ado-conflict" \
+                || triage_log "could not record the reported conflict for $id; it may wake again"
+              ;;
+          esac
+        fi
         touch "$STATE/.last-check"
         wake "$reason"
       fi

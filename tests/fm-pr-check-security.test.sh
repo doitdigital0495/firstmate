@@ -448,12 +448,14 @@ case "$*" in
     if [ "${FM_TEST_AZ_STATUS:-completed}" = active ]; then
       printf 'active\n%s\nrefs/heads/main\nrefs/heads/fm/test\nNone\nNone\n' "${FM_TEST_AZ_MERGE_STATUS:-conflicts}"
     else
-      printf 'completed\nNone\nrefs/heads/main\nrefs/heads/fm/test\n0123456789abcdef0123456789abcdef01234567\n2020-01-01T00:00:00Z\n'
+      printf 'completed\nNone\nrefs/heads/main\nrefs/heads/fm/test\n0123456789abcdef0123456789abcdef01234567\n%s\n' "${FM_TEST_AZ_CLOSED:-2020-01-01T00:00:00Z}"
     fi
     ;;
   *'pipelines runs list'*)
     case " $* " in *' --branch refs/heads/main '*) ;; *) exit 3 ;; esac
+    [ "${FM_TEST_AZ_RUNS:-}" != fail ] || exit 1
     printf 'fabric-deploy\tcompleted\tsucceeded\t8513\nreports-deploy\tcompleted\tfailed\t8519\ndbt-dev-build\tcompleted\tsucceeded\t8521\n'
+    [ "${FM_TEST_AZ_RUNS:-}" != pending ] || printf 'prod-deploy\tnotStarted\tNone\t8530\n'
     ;;
   *) exit 2 ;;
 esac
@@ -470,7 +472,63 @@ SH
     *fabric-deploy=GREEN*reports-deploy=RED*dbt-dev-build=GREEN*) ;;
     *) fail "ADO merge pipeline verdicts did not distinguish red from green: $out" ;;
   esac
+  out=$(FM_TEST_AZ_RUNS=pending FM_TEST_AZ_CLOSED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    FM_ADO_POSTMERGE_GRACE_SECS=0 PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  [ -z "$out" ] || fail "ADO merge was reported before a pending run finished or the cap passed: $out"
+  out=$(FM_TEST_AZ_RUNS=pending PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  case "$out" in
+    'merged azure-devops '*reports-deploy=RED*prod-deploy=PENDING*) ;;
+    *) fail "a run still pending past the cap held back the ADO merge line: $out" ;;
+  esac
+  out=$(FM_TEST_AZ_RUNS=fail PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  case "$out" in
+    'merged azure-devops '*'could not be read'*) ;;
+    *) fail "unreadable pipeline runs past the cap held back the ADO merge line: $out" ;;
+  esac
   pass "Azure DevOps polls surface conflicts and per-pipeline post-merge colors"
+}
+
+test_ado_conflict_wakes_once_per_conflict() {
+  local dir state url
+  dir=$(make_case ado-conflict-once)
+  state="$dir/home/state"
+  url=https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801
+  cat > "$dir/fakebin/az" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'repos pr show'*) printf 'active\n%s\nrefs/heads/main\nrefs/heads/fm/test\nNone\nNone\n' "$(cat "${0%/*}/az-merge-status")" ;;
+  *) exit 2 ;;
+esac
+SH
+  chmod +x "$dir/fakebin/az"
+  printf 'conflicts\n' > "$dir/fakebin/az-merge-status"
+  write_poll_meta "$state" task-a "$url"
+  seed_canonical_poll "$dir" task-a "$url"
+  add_stop_custom_check "$dir"
+  ado_cycle() {
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2>&1 || true
+    grep -q 'stop-cycle\|ado conflict: ' "$state/.wake-queue" \
+      || fail "the watcher cycle did not run its checks: $(cat "$dir/watch.out")"
+    cat "$state/.wake-queue" >> "$dir/wakes"
+    rm -f "$state/.wake-queue" "$state/.watcher-down"
+  }
+  ado_cycle
+  ado_cycle
+  [ "$(grep -c 'ado conflict: ' "$dir/wakes")" -eq 1 ] \
+    || fail "a standing ADO conflict woke more than once: $(cat "$dir/wakes")"
+  printf 'succeeded\n' > "$dir/fakebin/az-merge-status"
+  ado_cycle
+  printf 'conflicts\n' > "$dir/fakebin/az-merge-status"
+  ado_cycle
+  [ "$(grep -c 'ado conflict: ' "$dir/wakes")" -eq 2 ] \
+    || fail "a conflict that returned after clearing did not wake again: $(cat "$dir/wakes")"
+  pass "a standing Azure DevOps conflict wakes once until it clears"
 }
 
 test_invalid_entrypoints_have_zero_side_effects() {
@@ -2811,6 +2869,7 @@ SH
 
 test_parser_matrix
 test_ado_poll_conflict_and_postmerge_verdicts
+test_ado_conflict_wakes_once_per_conflict
 test_merged_outcome_row_carries_poll_detail
 test_gitlab_merge_watch
 test_merged_poll_retires_once

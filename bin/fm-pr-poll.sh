@@ -23,7 +23,11 @@
 # - one "merged" line with the per-pipeline verdicts on the merge commit once
 #   every observed run has completed, or once it is clear none will start.
 #   A failed or cancelled run is RED and a succeeded run is GREEN, spelled out
-#   in the line itself so the two can never be confused at a glance.
+#   in the line itself so the two can never be confused at a glance. The merge
+#   itself is never held back indefinitely: once FM_ADO_POSTMERGE_CAP_SECS
+#   (default 7200) have passed since completion, the merged line is emitted
+#   with any unfinished run marked PENDING, or with the runs noted unreadable.
+#   The watcher reports a repeated identical conflict line only once.
 set -u
 LC_ALL=C
 export LC_ALL
@@ -331,13 +335,32 @@ PR_EOF
     # A squash merge can land under a different commit than the PR's recorded
     # merge commit; in that case no runs match and the grace message below
     # reports that honestly instead of inventing a verdict.
-    [ "${#merge_commit}" -eq 40 ] || exit 0
-    case "$merge_commit" in
-      *[!0-9a-f]*) exit 0 ;;
+    # An unreadable completion time counts as long past, so it can only
+    # release the merge line early, never hold it back.
+    closed_epoch=$(ado_iso_epoch "$closed_date" 2>/dev/null) || closed_epoch=0
+    closed_age=$(($(date +%s) - closed_epoch))
+    run_grace=${FM_ADO_POSTMERGE_GRACE_SECS-900}
+    case "$run_grace" in
+      ''|*[!0-9]*) run_grace=900 ;;
     esac
-    runs_raw=$("$az_bin" pipelines runs list --organization "$org_url" --project "$ado_project" \
+    run_cap=${FM_ADO_POSTMERGE_CAP_SECS-7200}
+    case "$run_cap" in
+      ''|*[!0-9]*) run_cap=7200 ;;
+    esac
+    [ "$run_cap" -ge "$run_grace" ] || run_cap=$run_grace
+    if [ "${#merge_commit}" -ne 40 ] || case "$merge_commit" in *[!0-9a-f]*) true ;; *) false ;; esac; then
+      printf 'merged azure-devops %s: no merge commit was recorded, so no pipeline runs were watched\n' "$url"
+      exit 0
+    fi
+    if ! runs_raw=$("$az_bin" pipelines runs list --organization "$org_url" --project "$ado_project" \
       ${target_ref:+--branch "$target_ref"} --top 200 --query "[?sourceVersion=='$merge_commit'].[definition.name, status, result, id]" \
-      --output tsv 2>/dev/null) || exit 0
+      --output tsv 2>/dev/null); then
+      if [ "$closed_age" -ge "$run_cap" ]; then
+        printf 'merged azure-devops %s merge commit %s: pipeline runs could not be read within %ss of completion\n' \
+          "$url" "${merge_commit:0:8}" "$run_cap"
+      fi
+      exit 0
+    fi
     if [ -n "$runs_raw" ]; then
       runs_sorted=$(printf '%s\n' "$runs_raw" | sort -t $'\t' -k 4,4n)
     else
@@ -367,6 +390,7 @@ PR_EOF
           ;;
         *)
           run_pending=$((run_pending + 1))
+          verdicts="$verdicts$run_name=PENDING ($run_status, run $run_id); "
           ;;
       esac
     done << RUNS_EOF
@@ -376,32 +400,20 @@ RUNS_EOF
       # Zero runs right after completion is the normal gap before the forge
       # creates them; stateless ageing on the closed timestamp tells that gap
       # apart from a merge that truly triggered nothing.
-      closed_epoch=$(ado_iso_epoch "$closed_date" 2>/dev/null) || exit 0
-      now_epoch=$(date +%s)
-      run_grace=${FM_ADO_POSTMERGE_GRACE_SECS-900}
-      case "$run_grace" in
-        ''|*[!0-9]*) run_grace=900 ;;
-      esac
-      if [ "$((now_epoch - closed_epoch))" -ge "$run_grace" ]; then
+      if [ "$closed_age" -ge "$run_grace" ]; then
         printf 'merged azure-devops %s: no pipeline runs were observed on merge commit %s within %ss of completion\n' \
           "$url" "${merge_commit:0:8}" "$run_grace"
       fi
       exit 0
     fi
-    if [ "$run_pending" -gt 0 ]; then
+    if [ "$run_pending" -gt 0 ] && [ "$closed_age" -lt "$run_cap" ]; then
       exit 0
     fi
     # Azure DevOps can enqueue separate deploy/build pipelines shortly after
     # PR completion. Keep the registration alive for the same grace window used
     # to distinguish a delayed run from no run at all, then summarize every
     # run observed on the merge commit together in one terminal wake.
-    closed_epoch=$(ado_iso_epoch "$closed_date" 2>/dev/null) || exit 0
-    now_epoch=$(date +%s)
-    run_grace=${FM_ADO_POSTMERGE_GRACE_SECS-900}
-    case "$run_grace" in
-      ''|*[!0-9]*) run_grace=900 ;;
-    esac
-    [ "$((now_epoch - closed_epoch))" -ge "$run_grace" ] || exit 0
+    [ "$closed_age" -ge "$run_grace" ] || exit 0
     verdicts=${verdicts%; }
     printf 'merged azure-devops %s merge commit %s: %s\n' "$url" "${merge_commit:0:8}" "$verdicts"
     ;;
