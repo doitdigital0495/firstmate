@@ -44,8 +44,15 @@ set -u
 record() {
   printf '%s\n' "$1" >> "${QUOTA_AXI_CALLS:?}"
 }
+fixture() {
+  if [ -n "${QUOTA_AXI_WARMED_FIXTURE:-}" ] && [ -e "${ZAI_WARM_FLAG:-/nonexistent}" ]; then
+    printf '%s\n' "$QUOTA_AXI_WARMED_FIXTURE"
+  else
+    printf '%s\n' "${QUOTA_AXI_FIXTURE:?}"
+  fi
+}
 emit_toon() {
-  python3 - "${QUOTA_AXI_FIXTURE:?}" <<'PY'
+  python3 - "$(fixture)" <<'PY'
 import json
 import sys
 
@@ -144,7 +151,7 @@ case "$*" in
     ;;
   --json)
     record JSON
-    cat "${QUOTA_AXI_FIXTURE:?}"
+    cat "$(fixture)"
     ;;
   *)
     printf 'unexpected quota-axi invocation: %s\n' "$*" >&2
@@ -154,6 +161,15 @@ esac
 SH
 chmod +x "$FAKEBIN/quota-axi"
 
+cat > "$FAKEBIN/zai-window-warm" <<'SH'
+#!/usr/bin/env bash
+printf 'WARM\n' >> "${QUOTA_AXI_CALLS:?}"
+: > "${ZAI_WARM_FLAG:?}"
+SH
+chmod +x "$FAKEBIN/zai-window-warm"
+
+WARMED_FIXTURE="$LAB/warmed-quota.json"
+WARM_FLAG="$LAB/zai-warmed"
 write_fixture() {
   cat > "$FIXTURE"
 }
@@ -162,9 +178,11 @@ run_case() {
   local label=$1 expected=$2 expected_calls=$3 prompt=$4 out calls required
   shift 4
   : > "$CALLS"
+  rm -f "$WARM_FLAG"
   out=$(
     cd "$PROJECT" &&
       PATH="$FAKEBIN:$PATH" QUOTA_AXI_CALLS="$CALLS" QUOTA_AXI_FIXTURE="$FIXTURE" \
+      QUOTA_AXI_WARMED_FIXTURE="${WARM_TEST:-}" ZAI_WARM_FLAG="$WARM_FLAG" \
         pi --print --approve --no-session --no-context-files --no-extensions \
           --no-skills --skill .agents/skills --tools bash \
           --model openai-codex/gpt-5.6-sol --thinking high \
@@ -341,13 +359,65 @@ write_fixture <<'JSON'
 }
 JSON
 run_case \
-  "unmeasurable runway stays eligible and is accounted for explicitly" \
+  "unknown pool without warm-up drops only its candidate after one retry" \
   "DECISION=CODEX" \
   "TOON
+JSON
+TOON
 JSON" \
-  "Resolve this matched dispatch profile array now. Load quota-array-dispatch and consult quota-axi's default TOON first. Because Claude spendPriority is the literal unknown, use the permitted quota-axi --json fallback once before deciding. Both profiles have comparable required task fit and the same strongest reasoning class. The authoritative catalogs already prove both models supported in their stated provider families, and their selected authentication surfaces are usable. The likely task-completion horizon is two hours with established confidence. Claude has higher known headroom but explicitly unmeasurable runway and unknown spendPriority, while Codex has lower known headroom, known spendPriority, and established runway that supports completion. Claude remains eligible and its uncertainty must be disclosed. Never read unknown spendPriority as 0. Return exact lines FACT=claude|eligible=yes|headroom=55|runway=unknown|spendPriority=unknown|unmeasurable=weekly and FACT=codex|eligible=yes|headroom=45|spendPriority=-0.404|runway_seconds=222676|supports_horizon=yes, then an exact final line DECISION=CODEX. Do not use other vendor or model commands and do not modify files." \
-  "FACT=claude|eligible=yes|headroom=55|runway=unknown|spendPriority=unknown|unmeasurable=weekly" \
+  "Resolve this matched dispatch profile array now. Load quota-array-dispatch and consult quota-axi's default TOON first, then its permitted --json fallback when ambiguous. Both profiles have comparable required task fit and the same strongest reasoning class. The authoritative catalogs prove both models supported in their stated provider families, and their selected authentication surfaces are usable. The likely task-completion horizon is two hours with established confidence. Claude has headroom 55 but unmeasurable weekly runway and unknown spendPriority, while Codex has known spendPriority and runway supporting completion. No known warm-up exists for Claude's weekly pool: re-read quota once, with the permitted JSON fallback if still ambiguous, then drop only Claude if it remains unknown. Never read unknown spendPriority as 0. Return exact lines FACT=claude|dropped=unknown_after_retry|warmup=unavailable|runway=unknown|spendPriority=unknown and FACT=codex|eligible=yes|headroom=45|spendPriority=-0.404|runway_seconds=222676|supports_horizon=yes, then an exact final line DECISION=CODEX. Do not use other vendor or model commands and do not modify files." \
+  "FACT=claude|dropped=unknown_after_retry|warmup=unavailable|runway=unknown|spendPriority=unknown" \
   "FACT=codex|eligible=yes|headroom=45|spendPriority=-0.404|runway_seconds=222676|supports_horizon=yes"
+
+write_fixture <<'JSON'
+{
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "zai",
+      "windows": [{"id":"five_hour", "resetsAt":"2030-01-01T05:00:00Z"}],
+      "quotaSemantics": {"status":"known", "effectiveAvailability":[{
+        "scope":"all_models", "status":"known", "effectivePercentRemaining":90,
+        "limitingWindowIds":["five_hour"],
+        "selection":{"status":"unknown", "unmeasurableWindowIds":["five_hour"]},
+        "runway":{"status":"unknown", "unmeasurableWindowIds":["five_hour"]}
+      }]}
+    },
+    {
+      "provider": "codex",
+      "quotaSemantics": {"status":"known", "effectiveAvailability":[{
+        "scope":"all_models", "status":"known", "effectivePercentRemaining":50,
+        "selection":{"status":"known", "spendPriority":-0.3},
+        "runway":{"status":"through_reset"}
+      }]}
+    }
+  ]
+}
+JSON
+python3 - "$FIXTURE" "$WARMED_FIXTURE" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    data = json.load(source)
+zai = data["providers"][0]["quotaSemantics"]["effectiveAvailability"][0]
+zai["selection"] = {"status": "known", "spendPriority": 0.8}
+zai["runway"] = {"status": "through_reset"}
+with open(sys.argv[2], "w", encoding="utf-8") as target:
+    json.dump(data, target)
+PY
+WARM_TEST="$WARMED_FIXTURE"
+run_case \
+  "on-demand Z.ai warm-up resolves an unknown pool before ranking" \
+  "DECISION=ZAI" \
+  "TOON
+JSON
+WARM
+TOON" \
+  "Resolve this matched dispatch profile array now. Load quota-array-dispatch. The authoritative catalogs prove Pi/zai/glm-5.3 and Codex/GPT supported in their provider families; credentials are usable and both meet the required reasoning class. Completion horizon is two hours. Start with quota-axi's default TOON; if needed use --json once. Z.ai's five_hour pool reads unknown in spendPriority and runway while Codex has known spendPriority -0.3 and runway through_reset. Use the known zai-window-warm helper once on demand, then re-read default TOON before choosing; the refreshed pool has known spendPriority 0.8 and runway through_reset. Return exact lines FACT=zai|warmups=1|spendPriority=0.8|runway=through_reset and FACT=codex|spendPriority=-0.3|runway=through_reset, then exact final line DECISION=ZAI. Do not modify files other than the warm-up helper's marker." \
+  "FACT=zai|warmups=1|spendPriority=0.8|runway=through_reset" \
+  "FACT=codex|spendPriority=-0.3|runway=through_reset"
+unset WARM_TEST
 
 write_fixture <<'JSON'
 {
@@ -514,11 +584,39 @@ write_fixture <<'JSON'
 }
 JSON
 run_case \
-  "runway versus completion horizon remains a hard gate over spendPriority" \
+  "unsplittable runway failure falls through to full-task candidate" \
   "SELECTED=codex" \
   "TOON" \
-  "Resolve this matched dispatch profile array now. Load quota-array-dispatch and run quota-axi with no flags (default TOON) exactly once. Do not pass --json. Both profiles have comparable required task fit and the same strongest reasoning class. The authoritative catalogs already prove Claude/Sonnet and Codex/GPT models supported in their stated provider families, and their selected authentication surfaces are usable. The likely task-completion horizon is two hours with established confidence. Claude has known spendPriority of -0.8333 and runway of 2700 seconds. Codex has known spendPriority of -1.8 and runway of 15916 seconds. Return exact lines FACT=claude|spendPriority=-0.8333|runway_seconds=2700|supports_horizon=no and FACT=codex|spendPriority=-1.8|runway_seconds=15916|supports_horizon=yes to preserve candidate accounting, then an exact final line SELECTED=<claude|codex>. Do not use other vendor or model commands and do not modify files." \
+  "Resolve this matched dispatch profile array now. Load quota-array-dispatch and run quota-axi with no flags (default TOON) exactly once. Do not pass --json. Both profiles have comparable required task fit and the same strongest reasoning class. The authoritative catalogs already prove Claude/Sonnet and Codex/GPT models supported in their stated provider families, and their selected authentication surfaces are usable. The likely task-completion horizon is two hours with established confidence. Claude has known spendPriority of -0.8333 and runway of 2700 seconds. Codex has known spendPriority of -1.8 and runway of 15916 seconds. The work is an atomic non-sliceable operation with no independently inspectable subtask safe to finish in 2700 seconds. Claude orchestration reserve is independently established through reset; the only full-task failure is Claude's worker runway. Return exact lines FACT=claude|spendPriority=-0.8333|runway_seconds=2700|supports_horizon=no and FACT=codex|spendPriority=-1.8|runway_seconds=15916|supports_horizon=yes to preserve candidate accounting, then an exact final line SELECTED=<claude|codex>. Do not use other vendor or model commands and do not modify files." \
   "FACT=claude|spendPriority=-0.8333|runway_seconds=2700|supports_horizon=no" \
   "FACT=codex|spendPriority=-1.8|runway_seconds=15916|supports_horizon=yes"
+
+run_case \
+  "runway-limited top candidate gets a bounded slice with remainder requeued" \
+  "DECISION=SPLIT_CLAUDE" \
+  "TOON" \
+  "Resolve this matched dispatch profile array now. Load quota-array-dispatch and run quota-axi with no flags (default TOON) exactly once. Do not pass --json. Both candidates have comparable required fit, supported models, usable credentials, and the same required reasoning class. The full-task horizon is two hours. Claude has spendPriority -0.8333 and 2700 seconds runway; Codex has spendPriority -1.8 and 15916 seconds runway. Firstmate's Claude credential store has an independently evidenced orchestration forecast reaching reset even after a 20-minute Claude worker slice. A meaningful first deliverable can be independently verified in 20 minutes, before Claude exhaustion; remaining work must be requeued as a separate task for a fresh choice. Return exact lines FACT=claude|spendPriority=-0.8333|runway_seconds=2700|slice_minutes=20 and FACT=codex|spendPriority=-1.8|runway_seconds=15916|full_task=yes, then exact lines REQUEUED=remaining-task and DECISION=SPLIT_CLAUDE. Do not use other vendor or model commands and do not modify files." \
+  "FACT=claude|spendPriority=-0.8333|runway_seconds=2700|slice_minutes=20" \
+  "FACT=codex|spendPriority=-1.8|runway_seconds=15916|full_task=yes" \
+  "REQUEUED=remaining-task"
+
+python3 - "$FIXTURE" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    data = json.load(source)
+claude = data["providers"][0]["quotaSemantics"]["effectiveAvailability"][0]
+claude["runway"]["usableRunwaySeconds"] = 15916
+with open(sys.argv[1], "w", encoding="utf-8") as target:
+    json.dump(data, target)
+PY
+run_case \
+  "Claude reserve can veto a full task despite generic runway" \
+  "SELECTED=codex" \
+  "TOON" \
+  "Resolve this matched dispatch profile array now. Load quota-array-dispatch and run quota-axi with no flags (default TOON) exactly once. Do not pass --json. Both candidates have supported models, usable credentials, required reasoning class, and two-hour full-task completion horizon. Claude has the higher spendPriority -0.8333 and measured runway 15916 seconds, so generic completion runway passes; Codex has spendPriority -1.8 and runway 15916 seconds. Firstmate shares Claude's store and needs 3 hours of observed forecast orchestration demand until reset; adding this two-hour Claude worker would exceed the available 15916 seconds. No independently inspectable Claude slice exists for this atomic task. Return exact lines FACT=claude|task_horizon=7200|runway_seconds=15916|reserve=insufficient and FACT=codex|runway_seconds=15916|reserve=not_applicable, then exact final line SELECTED=codex. Do not use other vendor or model commands and do not modify files." \
+  "FACT=claude|task_horizon=7200|runway_seconds=15916|reserve=insufficient" \
+  "FACT=codex|runway_seconds=15916|reserve=not_applicable"
 
 echo "# all quota-array-dispatch live behavior tests passed"

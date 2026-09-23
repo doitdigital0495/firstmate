@@ -199,6 +199,20 @@ Re-run the two commands above and update this section and the pinned version tog
 It asserts that the script accepts no harness, model, or provider input, never calls `quota-axi`, exits alike for every probe result because it renders no verdict, invokes only the two fixed non-destructive argv forms with stdin closed, holds a real bound even when the configured bound is zero or malformed, and never echoes raw vendor output.
 `tests/fm-spawn-dispatch-profile.test.sh` owns spawn's deterministic profile and harness refusals.
 `tests/fm-bootstrap.test.sh` owns the quota-axi version-floor diagnostic.
-`tests/fm-quota-array-dispatch-live-e2e.test.sh` drives the public Pi skill-loading interface against one fake schema-5 snapshot per case, served as quota-axi's default TOON.
-It covers TOON-first `spendPriority` ranking among candidates that pass eligibility, reasoning-class, and runway-feasibility gates, explicit accounting for unmeasurable runway, the strongest-reasoning constraint, and the runway feasibility floor over a higher `spendPriority`.
+`tests/fm-quota-array-dispatch-live-e2e.test.sh` drives the public Pi skill-loading interface against fake schema-5 snapshots served as quota-axi's default TOON, with a controlled warm-up changing the next snapshot.
+It covers TOON-first `spendPriority` ranking, unknown-pool warm-up and one retry, candidate-local drop when no warm-up exists, required reasoning class, bounded splitting and requeueing on a runway-only failure, unsplittable fallback, and the Claude orchestration reserve.
 The skill's primary path is that default TOON; `--json` is the documented defensive fallback, and this section records the producer `--json` shape that fallback consumes.
+
+Verified 2026-09-23 with Pi 0.86.1 using `FM_QUOTA_ARRAY_DISPATCH_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-quota-array-dispatch-live-e2e.test.sh`.
+The live skill-loaded behavior test returned the following case outcomes (fake quota and warm-up only; no actual Z.ai window was opened):
+
+```text
+ok - higher spendPriority beats more headroom after the three gates
+ok - unknown pool without warm-up drops only its candidate after one retry
+ok - on-demand Z.ai warm-up resolves an unknown pool before ranking
+ok - required strongest reasoning class is not downgraded for quota
+ok - unsplittable runway failure falls through to full-task candidate
+ok - runway-limited top candidate gets a bounded slice with remainder requeued
+ok - Claude reserve can veto a full task despite generic runway
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=144581
+```
