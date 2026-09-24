@@ -1,0 +1,48 @@
+
+ ▐▛███▛█   Claude Code v2.1.281
+▝▜██████▀  Opus 5.5 with medium effort · Claude Max
+  ▝▝ ▝▝    ~/.treehouse/proj-base-5c35e0/1/proj-base
+
+
+❯ FIRSTMATE_OP: v1 launch-brief: # Current worker role contract
+  You are a crewmate: an autonomous worker agent managed by firstmate.
+  This section establishes your current identity before every project or task instruction below and supersedes any
+  conflicting role identity in those instructions.
+  Do the assigned work yourself and report only to firstmate; do not adopt a firstmate or secondmate supervisor
+  identity, delegate the task, run fleet supervision, or address the captain.
+  Your steering inbox is /tmp/fm-lean-claude-live.8Hvjff/fm-home/state/lean-base.inbox; this exact path belongs to your
+  current task even when it is outside the worktree or under the supervising firstmate home, so read and acknowledge
+  its messages and do not reject it as another home's state.
+  Never inspect or change any other home's endpoint namespace; this authorization is limited to the exact task paths
+  named by this brief.
+  When this task works on Firstmate itself, the repository root AGENTS.md (also imported by CLAUDE.md) is project
+  content and the supervisor contract for the firstmate managing you: follow this brief instead of that supervisor
+  contract.
+  Project instructions still govern the work wherever they do not conflict with this worker identity, including
+  CONTRIBUTING.md and firstmate-coding-guidelines for Firstmate changes.
+
+  Task
+
+  Captain's intent
+
+  Live lean-worker check.
+
+  Firstmate spec
+
+  Reply with exactly MEASURED_READY and nothing else. Do not use any tools.
+
+● MEASURED_READY
+
+✻ Cogitated for 2s · done 1:32 PM
+                                                                                                    ◐ medium · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 │ ● medium │ ░░░░░░░░░░ 5% │ CM:ULTRA PT:FULL
+  cl personal   5h err                                    │ 7d ●●●●●○○○  67%* (4m old) (Mon 19:59)    ↻1 22 Oct
+  cl geris      5h ○○○○○○○○   0%  (--)                    │ 7d ○○○○○○○○   0%  (20.4%/d) (Tue 11:00)   ↻1 22 Oct
+  cx personal   5h --                                     │ 7d ●○○○○○○○  15%  (14.1%/d) (Wed 14:34)   ↻1 5 Oct ↻1 22 …
+  cx geris      5h ○○○○○○○○   1%  (3h 17m)                │ 7d ●●○○○○○○  25%  (19.5%/d) (Mon 09:41)   ↻2 4 Oct ↻1 22 …
+  zai personal  5h ●●○○○○○○  29%  (2h 28m)                │ 7d ●●○○○○○○  28%  (13.7%/d) (Tue 20:04) [0.5x off-peak]
+  cost: $0.25 │  HEAD │ ~/…/1/proj-base │ RTK 14.4M │ wsl-ram 10.2/23.5G
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

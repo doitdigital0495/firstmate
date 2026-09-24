@@ -1,0 +1,51 @@
+treehouse get
+daan@Workstation:/tmp/fm-lean-claude-live.8Hvjff/proj-scout$ treehouse get
+🌳 Setting up worktree...
+🌳 Entered worktree at ~/.treehouse/proj-scout-0abd8d/1/proj-scout. Type 'exit' to return.
+daan@Workstation:~/.treehouse/proj-scout-0abd8d/1/proj-scout$ export GOTMPDIR=/tmp/fm-lean-scout/gotmp
+daan@Workstation:~/.treehouse/proj-scout-0abd8d/1/proj-scout$ export COMPACT_ADVISER_DISABLE=1
+daan@Workstation:~/.treehouse/proj-scout-0abd8d/1/proj-scout$ export FM_TASK_ID=lean-scout
+daan@Workstation:~/.treehouse/proj-scout-0abd8d/1/proj-scout$ . '/tmp/fm-lean-scout+8b407037a04e03fca426c29e2e728a541819
+c87753293fec9f9d5daec40831ec/launch.s1790249570.930472.8779.sh'
+ ▐▛███▛█   Claude Code v2.1.281
+▝▜██████▀  Opus 5.5 with medium effort · Claude Max
+  ▝▝ ▝▝    ~/.treehouse/proj-scout-0abd8d/1/proj-scout
+
+
+❯ FIRSTMATE_OP: v1 launch-brief: # Current worker role contract
+  You are a crewmate: an autonomous worker agent managed by firstmate.
+  This section establishes your current identity before every project or task instruction below and supersedes any
+  conflicting role identity in those instructions.
+  Do the assigned work yourself and report only to firstmate; do not adopt a firstmate or secondmate supervisor
+  identity, delegate the task, run fleet supervision, or address the captain.
+  Your steering inbox is /tmp/fm-lean-claude-live.8Hvjff/fm-home/state/lean-scout.inbox; this exact path belongs to
+  your current task even when it is outside the worktree or under the supervising firstmate home, so read and
+  acknowledge its messages and do not reject it as another home's state.
+  Never inspect or change any other home's endpoint namespace; this authorization is limited to the exact task paths
+  named by this brief.
+  When this task works on Firstmate itself, the repository root AGENTS.md (also imported by CLAUDE.md) is project
+  content and the supervisor contract for the firstmate managing you: follow this brief instead of that supervisor
+  contract.
+  Project instructions still govern the work wherever they do not conflict with this worker identity, including
+  CONTRIBUTING.md and firstmate-coding-guidelines for Firstmate changes.
+
+  Task
+
+  Captain's intent
+
+  Live lean-worker check.
+
+  Firstmate spec
+
+  Do not use any tools. Reply with one line: the task codeword from your requested skill, then the exact
+  comma-separated names of every tool available to you, then the names of any MCP servers you can use (or NONE).
+
+● PELICAN-7342, Bash, EndConversation, Read, NONE
+
+✻ Sautéed for 2s · done 1:32 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+                                                Removed 1 invisible character from the launch prompt before sending it

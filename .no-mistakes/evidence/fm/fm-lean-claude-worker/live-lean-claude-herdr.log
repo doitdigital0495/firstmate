@@ -1,0 +1,40 @@
+[90m1:32PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m1:32PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 79.3ms[0m
+[90m1:32PM[0m [32mINF[0m [1mno leaks found[0m
+[90m1:32PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m1:32PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 78.5ms[0m
+[90m1:32PM[0m [32mINF[0m [1mno leaks found[0m
+[90m1:32PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m1:32PM[0m [32mINF[0m [1mscanned ~10 bytes (10 bytes) in 77.6ms[0m
+[90m1:32PM[0m [32mINF[0m [1mno leaks found[0m
+spawn lean-base rc=0: spawned lean-base harness=claude kind=ship mode=direct-PR yolo=off window=fm-lab-fm-lean-claude-909297-17849:w1:p2 worktree=/home/daan/.treehouse/proj-base-5c35e0/1/proj-base
+spawn lean-ship rc=0: spawned lean-ship harness=claude kind=ship mode=direct-PR yolo=off window=fm-lab-fm-lean-claude-909297-17849:w1:p3 worktree=/home/daan/.treehouse/proj-ship-048a51/1/proj-ship
+spawn lean-scout rc=0: spawned lean-scout harness=claude kind=scout window=fm-lab-fm-lean-claude-909297-17849:w1:p4 worktree=/home/daan/.treehouse/proj-scout-0abd8d/1/proj-scout
+lean-base turn-ended: yes
+--- lean-base launch command (meta/launch record) ---
+harness=claude
+kind=ship
+model=opus
+effort=medium
+lean-ship turn-ended: yes
+--- lean-ship launch command (meta/launch record) ---
+harness=claude
+kind=ship
+model=opus
+effort=medium
+lean-scout turn-ended: yes
+--- lean-scout launch command (meta/launch record) ---
+harness=claude
+kind=scout
+model=opus
+effort=medium
+lean-base final assistant text: 
+lean-ship first-turn usage: input=2 cache_creation=3758 cache_read=4448 total=8208
+lean-ship final assistant text: MEASURED_READY 
+lean-scout first-turn usage: input=2 cache_creation=7530 cache_read=0 total=7532
+lean-scout final assistant text: PELICAN-7342, Bash, EndConversation, Read, NONE 
+teardown rc=0
+# baseline transcript read directly (script's newest-file pick hit a sibling hook transcript):
+lean-base first-turn usage: input=2 cache_creation=31428 cache_read=9777 total=41207
+lean-base final assistant text (pane): MEASURED_READY
+first-turn context: baseline 41207 -> lean ship 8208 (-80.1%), lean scout 7532

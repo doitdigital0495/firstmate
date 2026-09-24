@@ -1,0 +1,5 @@
+ok - claude 2.1.281 (Claude Code) (--dangerously-skip-permissions) loads --settings from outside the workspace, merges its hooks with the project's own, and accepts the policy keys in the same file
+ok - claude 2.1.281 (Claude Code) (--permission-mode auto) loads --settings from outside the workspace, merges its hooks with the project's own, and accepts the policy keys in the same file
+ok - claude 2.1.281 (Claude Code) lean bypass worker runs only Firstmate hooks, not project hooks
+ok - claude 2.1.281 (Claude Code) lean auto worker runs only Firstmate hooks, not project hooks
+all fm-claude-settings-live-e2e tests passed
