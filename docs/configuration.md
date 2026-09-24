@@ -531,7 +531,7 @@ A typical personal-home file is:
 Run `bin/fm-account-routing.sh on|off|status` to change or inspect the switch atomically; a home without an explicit switch refuses the toggle.
 Off excludes named-account candidates at the next intake without touching workers already running, and `fm-spawn.sh --account <id>` refuses an unregistered or disabled seat before any home mutation.
 The selected store is pinned per harness (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, or `CODEX_HOME`), and the task record retains all three paths for a relaunch even after routing is switched off.
-The default launch path is unchanged except that Pi and Codex also retain their original credential-store decision on relaunch.
+Without `--account`, a first Pi or Codex launch records an ambient `PI_CODING_AGENT_DIR` or `CODEX_HOME` and relaunches on it; when none is set, nothing is recorded and the worker keeps inheriting the pane's store as before.
 Quota ranking uses one `quota-axi` snapshot for the default store and one environment-pinned snapshot per distinct named store triple, then compares applicable `spendPriority` across the union without a reserve or quota floor.
 Unmeasurable Team-seat five-hour quota remains disclosed uncertainty, not healthy headroom.
 
