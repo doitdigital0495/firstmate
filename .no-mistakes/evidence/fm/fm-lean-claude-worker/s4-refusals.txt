@@ -1,0 +1,10 @@
+# env for all lab spawns: FM_HOME=$LAB/home FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 TREEHOUSE_ROOT=$LAB/pool FM_GATE_REFUSE_BYPASS=1 (scratch sandbox fleet), LAB=/tmp/fm-lean-lab
+$ bin/fm-spawn.sh lean-codex-mcp $LAB/project --scout --harness codex --backend tmux --mcp-config $LAB/task-mcp.json
+error: --mcp-config, --claude-add-dir and --claude-plugin-dir apply only to Claude ship and scout workers
+exit=1
+$ bin/fm-spawn.sh lean-missing-adddir $LAB/project --scout --harness claude --backend tmux --claude-add-dir $LAB/does-not-exist
+error: --claude-add-dir /tmp/fm-lean-lab/does-not-exist is not a readable directory
+exit=1
+$ ls -A $LAB/home/state; ls -A $LAB/pool; tmux -L fm-lean-claude-lab list-windows -F "#W"
+.last-watcher-beat
+bash

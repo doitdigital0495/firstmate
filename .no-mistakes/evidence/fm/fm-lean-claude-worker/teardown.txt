@@ -1,0 +1,34 @@
+$ fm-captain-hold.sh complete lean-haiku-scout --none && fm-teardown.sh lean-haiku-scout
+complete: lean-haiku-scout captain-call inventory reviewed
+REFUSED: scout task lean-haiku-scout has no report at /tmp/fm-lean-lab/home/data/lean-haiku-scout/report.md.
+The report is the work product. Have the crewmate write it, or use --force after explicit discard approval.
+exit=1
+$ fm-captain-hold.sh complete lean-guard --none && fm-teardown.sh lean-guard
+complete: lean-guard captain-call inventory reviewed
+REFUSED: scout task lean-guard has no report at /tmp/fm-lean-lab/home/data/lean-guard/report.md.
+The report is the work product. Have the crewmate write it, or use --force after explicit discard approval.
+exit=1
+$ fm-teardown.sh lean-ship-default
+teardown: reaping leaked worktree process(es) for lean-ship-default: 2205638 2209240
+teardown: force-killing leaked worktree process(es) for lean-ship-default: 2205638
+🌳 Worktree returned to pool.
+/tmp/fm-lean-lab/project: skipped: no origin remote
+teardown lean-ship-default complete (window lab:fm-lean-ship-default, worktree /tmp/fm-lean-lab/pool/.treehouse/project-4923f8/1/project)
+Backlog: lean-ship-default just finished (this home keeps no markdown backlog at /tmp/fm-lean-lab/home/data/backlog.md). Update /tmp/fm-lean-lab/home/data/backlog.md - move lean-ship-default to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+exit=0
+$ fm-teardown.sh lean-haiku-scout --force  (disposable lab scout, no report)
+teardown: reaping leaked worktree process(es) for lean-haiku-scout: 2214100 2219567 2220677
+teardown: force-killing leaked worktree process(es) for lean-haiku-scout: 2214100
+🌳 Worktree returned to pool.
+teardown lean-haiku-scout complete (window lab:fm-lean-haiku-scout, worktree /tmp/fm-lean-lab/pool/.treehouse/project-4923f8/2/project)
+exit=0
+$ fm-teardown.sh lean-guard --force  (disposable lab scout, no report)
+teardown: reaping leaked worktree process(es) for lean-guard: 2220385 2230731
+teardown: force-killing leaked worktree process(es) for lean-guard: 2220385
+🌳 Worktree returned to pool.
+teardown lean-guard complete (window lab:fm-lean-guard, worktree /tmp/fm-lean-lab/pool/.treehouse/project-4923f8/3/project)
+exit=0
+$ ls $LAB/home/state/*.meta; tmux list-windows
+ls: cannot access '/tmp/fm-lean-lab/home/state/*.meta': No such file or directory
+bash
+0

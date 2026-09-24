@@ -1,0 +1,10 @@
+=== attribution: user deny-secret-reads.sh hook on the same Read input
+{"tool_name":"Read","tool_input":{"file_path":".../3/project/secret.txt"}}
+user-hook-exit=0 (allows; the only deny rule in the merged settings is the project's Read(./secret.txt))
+=== lean-guard session tool results
+"PreToolUse:Bash hook error: [bash /tmp/fm-lean-lab/project/.claude/guard.sh]: BLOCKED_BY_PROJECT_GUARD\n"
+"<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"
+=== first-request usage per worker (numeric fields only)
+slot1: input=2 cache_creation=3526 cache_read=2984 total=6512
+slot2: input=10 cache_creation=5681 cache_read=6267 total=11958
+slot3: input=2 cache_creation=3491 cache_read=2400 total=5893

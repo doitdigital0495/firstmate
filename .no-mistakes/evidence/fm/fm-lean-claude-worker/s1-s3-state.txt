@@ -1,0 +1,66 @@
+=== lean-ship-default
+$ grep -E '^(harness|kind|model|effort)=' $LAB/home/state/lean-ship-default.meta
+harness=claude
+kind=ship
+model=opus
+effort=medium
+$ ls $LAB/home/state/lean-ship-default.turn-ended; cat busy-state
+/tmp/fm-lean-lab/home/state/lean-ship-default.turn-ended
+v1 gen=g1790255686.2207177.23904 seq=3 state=idle source=claude-hook event=stop ts=1790255690
+
+=== lean-haiku-scout
+$ grep -E '^(harness|kind|model|effort)=' $LAB/home/state/lean-haiku-scout.meta
+harness=claude
+kind=scout
+model=haiku
+effort=low
+$ ls $LAB/home/state/lean-haiku-scout.turn-ended; cat busy-state
+/tmp/fm-lean-lab/home/state/lean-haiku-scout.turn-ended
+v1 gen=g1790255696.2216200.1051 seq=5 state=idle source=claude-hook event=stop ts=1790255741
+
+=== lean-guard
+$ grep -E '^(harness|kind|model|effort)=' $LAB/home/state/lean-guard.meta
+harness=claude
+kind=scout
+model=opus
+effort=low
+$ ls $LAB/home/state/lean-guard.turn-ended; cat busy-state
+/tmp/fm-lean-lab/home/state/lean-guard.turn-ended
+v1 gen=g1790255700.2225510.28594 seq=5 state=idle source=claude-hook event=stop ts=1790255743
+
+=== live claude process argv (worker processes under the lab pool)
+--- cwd=/tmp/fm-lean-lab/pool/.treehouse/project-4923f8/1/project
+--dangerously-skip-permissions --settings /tmp/fm-lean-lab/home/state/lean-ship-default.claude-settings.json --setting-sources  --strict-mcp-config --disable-slash-commands --tools Read,Bash,Edit,Write --model opus --effort medium
+--- cwd=/tmp/fm-lean-lab/pool/.treehouse/project-4923f8/2/project
+--dangerously-skip-permissions --settings /tmp/fm-lean-lab/home/state/lean-haiku-scout.claude-settings.json --setting-sources  --strict-mcp-config --disable-slash-commands --tools Read,Bash --mcp-config /tmp/fm-lean-lab/task-mcp.json --model haiku --effort low
+--- cwd=/tmp/fm-lean-lab/pool/.treehouse/project-4923f8/3/project
+--dangerously-skip-permissions --settings /tmp/fm-lean-lab/home/state/lean-guard.claude-settings.json --setting-sources  --strict-mcp-config --disable-slash-commands --tools Read,Bash --model opus --effort low
+=== project Stop hook marker (must be absent)
+ls: cannot access '/tmp/fm-lean-lab/project-stop': No such file or directory
+=== guard hook log
+{"tool_name":"Bash","command":"echo GUARD_PROBE"}
+=== lean-guard carried settings (hooks events + deny rules)
+{
+  "hookEvents": [
+    "PostToolUse",
+    "PreToolUse",
+    "SessionEnd",
+    "Stop",
+    "StopFailure",
+    "UserPromptSubmit"
+  ],
+  "preToolUseCommands": [
+    "bash $HOME/.claude/hooks/deny-secret-reads.sh",
+    "bash $HOME/.claude/hooks/dev-server-guard.sh",
+    "$HOME/.local/bin/rtk hook claude --ultra-compact",
+    "bash $HOME/.claude/hooks/deny-secret-reads.sh",
+    "bash $HOME/.claude/hooks/tool-output-cap.sh",
+    "$HOME/.local/bin/tmux-status claude running",
+    "bash /tmp/fm-lean-lab/project/.claude/guard.sh"
+  ],
+  "deny": [
+    "Read(./secret.txt)"
+  ]
+}
+=== secret leak check across panes
+no pane contains secret content
