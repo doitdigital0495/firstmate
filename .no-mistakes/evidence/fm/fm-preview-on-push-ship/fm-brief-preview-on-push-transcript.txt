@@ -1,0 +1,50 @@
+## S1: preview-on-push no-mistakes ship
+$ FM_HOME=$tmp bin/fm-brief.sh pop-1 some-proj --mode no-mistakes --preview-on-push
+scaffolded: /tmp/tmp.jUnwOyZpIm/data/pop-1/brief.md (ship, mode=no-mistakes; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})
+exit=0
+--- Definition of done section of generated brief:
+# Definition of done
+Delivery contract: mode=no-mistakes
+The task is complete only when committed on your branch.
+PREVIEW-ON-PUSH - this project's CI builds isolated preview environments from every push to your fm/pop-1 branch; no merge is needed for them.
+Push your fm/pop-1 branch as soon as your local checks pass, BEFORE you start no-mistakes, so those previews build immediately; previews never gate validation.
+Never open the PR yourself on this task: no-mistakes's pr step opens it after validation, pushing its fix commits on top of your already-pushed branch.
+While previews build, note the push in your status line (working [at=<epoch>]: pushed fm/pop-1 for previews) and iterate with the captain on the preview links if asked.
+
+When you believe it is complete, append `done [at=<epoch>]: {summary}; asks <done>/<total>` to the status file and stop.
+Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
+
+You drive no-mistakes by responding to its gates, not by implementing fixes.
+Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and `no-mistakes axi run --help` plus the `help` lines in each `axi` response are authoritative and version-matched to the installed binary.
+When starting no-mistakes, pass `--intent` as only this brief's `## Captain's intent` subsection body, not its heading, plus any later words the captain actually said.
+Preserve the actual words without adding speaker labels or direct address; the subsection heading supplies provenance outside the pipeline input.
+For a legacy brief with no such subsection, include only words on lines marked `[captain] `, excluding that metadata prefix; never copy its mixed `# Task` wholesale.
+If it has no provenance-marked captain words, stop and ask firstmate instead of starting no-mistakes.
+Do not include `## Firstmate spec`, later Firstmate build constraints, or your own decisions and tradeoffs.
+The `--intent` string you pass must be self-sufficient: that string plus the codebase must let a reader reconstruct roughly the same specification, without depending on a separate report, a PR, or context that lives only in this conversation.
+When the captain's intent refers to a report, decision, or PR ("do items 1, 2, 3, and 7 of the report"), write the substance of the referenced items into `--intent` in the captain's terms, not only the pointer; that substance is the captain's ask by reference, while Firstmate's build instructions and your own decisions still stay out.
+
+## S2: fast lane + preview-on-push
+exit=0
+88:Delivery contract: mode=no-mistakes lane=fast
+90:PREVIEW-ON-PUSH - this project's CI builds isolated preview environments from every push to your fm/pop-2 branch; no merge is needed for them.
+
+## S3: standard no-mistakes & direct-PR briefs unchanged
+PREVIEW-ON-PUSH count std=0 direct=0
+
+## S4: refusals
+$ fm-brief.sh bad1 p --mode direct-PR --preview-on-push
+error: --preview-on-push requires --mode no-mistakes; direct-PR pushes before anything else already, so only the pipeline mode delays previews
+exit=1 brief_written=no
+$ fm-brief.sh bad2 p --mode local-only --preview-on-push
+error: --preview-on-push requires --mode no-mistakes; direct-PR pushes before anything else already, so only the pipeline mode delays previews
+exit=1 brief_written=no
+$ fm-brief.sh bad3 p --scout --preview-on-push
+error: --preview-on-push applies only to ship briefs; a scout delivers a report and a charter ships no branch to preview
+exit=1 brief_written=no
+$ fm-brief.sh bad4 --secondmate --no-projects --preview-on-push
+error: --preview-on-push applies only to ship briefs; a scout delivers a report and a charter ships no branch to preview
+exit=1 brief_written=no
+
+## S5: spawn-side contract line parse
+88:Delivery contract: mode=no-mistakes
