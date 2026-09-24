@@ -324,6 +324,15 @@ An unregistered project or absent registry resolves to `no-mistakes` with yolo o
 When the requested stop point is before the remote, such as a running preview or the captain's own review ahead of any push, resolve `local-only` rather than writing that prohibition into a push mode's `# Task` block, because the spawn refuses a `no-mistakes` or `direct-PR` brief whose task block forbids the delivery its definition of done mandates, in `## Captain's intent` and `## Firstmate spec` alike.
 Record the resulting mode, `yolo` merge posture, and the one-line reason for any deviation in the backlog item note.
 
+Turn each distinct captain ask of the task into one numbered checkbox line under the brief's `## Request checklist` (`{ASKS}` in the scaffold), in the captain's terms; a multi-part ask stays multiple lines, and a genuinely single-ask task still gets its one line.
+That checklist is the loss detector: the worker must account for every item with proof in a done report at `data/<id>/report.md` and end every `done:` line with `asks <done>/<total>`, so a dropped ask is visible the moment work first reports done rather than a day later.
+Keep the checklist to the captain's asks, not Firstmate build steps; those belong in `## Firstmate spec`.
+
+A `no-mistakes` report tweak the captain will iterate on anyway (visuals, measures, text, portal UI) may ship the fast lane: scaffold and spawn the brief with `--fast-lane` (ship tasks only, `--mode no-mistakes` only), and pass `--fast-lane` to a scout promotion that ships that class.
+The lane is a worker-drive rule, not a no-mistakes option: no-mistakes has no per-run setting that caps review rounds (only `--skip <steps>`, which removes a step entirely), so the brief's definition of done instructs the worker to answer the first review gate with `--action approve`, never `--action fix` there, with scope locked to the request checklist and out-of-scope findings recorded as follow-ups instead of commits.
+In the fast lane an ask-user finding escalates (Validate, below) when it is error-severity or destructive, irreversible, or security-sensitive at any severity; every other warning- or info-severity ask-user finding is a non-gating done-report follow-up the worker never answers or fixes, and firstmate decides it through `ask-user-authority` when filing it.
+Select it per task on risk you can state, never as a default; when unsure, ship the standard lane.
+
 Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
 Write the task-specific brief under section 11 before spawning.
@@ -364,7 +373,7 @@ Delivery mode and `yolo` are orthogonal.
 Never merge a red PR under either setting unless a current explicit captain instruction names the single GitHub check waived through `fm-pr-merge.sh --allow-red`; that attended-only waiver still requires every other check green.
 Destructive, irreversible, and security-sensitive merges still escalate.
 Without a current explicit captain instruction that states the concrete merge, the green default stands, and standing `yolo` cannot authorize a red merge; section 1 owns when such an instruction overrides a Firstmate-written standing rule within its exact scope.
-Load `ask-user-authority` before deciding any ask-user finding; the implementation worker never answers its own finding.
+Load `ask-user-authority` before deciding any ask-user finding; the implementation worker never answers its own finding (a fast-lane worker approving past a non-gating one records it as a follow-up and decides nothing).
 Use `bin/fm-pr-merge.sh` for every task PR merge so merge metadata is recorded and an unproved merge is refused instead of reported as landed, and use `bin/fm-merge-local.sh` for approved local-only landing; never call a lower-level merge command around their guards.
 After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
 
@@ -376,6 +385,7 @@ Firstmate never invokes `no-mistakes axi respond` for a crew-owned run.
 When the captain adds or changes an ask mid-task, append the captain's words without added speaker labels or direct address to that brief's `## Captain's intent` and relay those words to the worker; Firstmate build constraints stay in `## Firstmate spec` or the steer.
 `bin/fm-dod-lib.sh` owns the worker-side `--intent` contract.
 Once validation starts, prefer routing new requirements to follow-up work rather than expanding the current task, unless a new requirement completely invalidates the work being validated; however, the smallest downstream changes needed to keep already accepted product or engineering behavior correct, add behavioral tests where an executable contract exists, or keep documentation accurate remain within the current task even when they touch files not named at intake, and corrections required to satisfy already accepted intent are not new requirements.
+When a worker's done report lists numbered follow-ups (unfixed findings, deferred or out-of-scope work), file each as a backlog item before teardown; a follow-up that never reaches the backlog is a dropped finding, which is exactly what the done report exists to prevent.
 
 Only a current, explicit captain instruction that completely invalidates the work being validated keeps the task with the same worker instead of routing it to follow-up work or handing it to a replacement.
 That worker cancels the active run through no-mistakes axi's supported abort command and confirms through axi status that the run has stopped before changing any code.
@@ -384,7 +394,7 @@ Custody recovery settles branch ownership, not content: the worker must replace 
 Apart from that single supported abort, do not hand-edit, commit, restart, or start a second validation run while the obsolete run still owns the branch.
 Once ownership is settled, validate exactly once against that final head so no obsolete or intermediate head is ever treated as authoritative.
 
-An ask-user finding returns as `needs-decision`; firstmate loads `ask-user-authority` and either decides or escalates per that skill.
+An ask-user finding returns as `needs-decision` (in the fast lane only the escalating class does; the rest return as done-report follow-ups); firstmate loads `ask-user-authority` and either decides or escalates per that skill.
 Send the same worker one exact decision naming the decision key, step, action, affected finding IDs, instructions where needed, and exact response command, passing `--resolve-key` so the worker's open decision record closes at answer time.
 Require the matching `resolved` event, forbid `--yes`, and require the worker to process every synchronous return until completion or a genuinely new escalation.
 Resume fleet supervision immediately after the decision lands.
@@ -396,7 +406,8 @@ The worker reports the PR when CI first becomes green rather than waiting for me
 
 ### PR ready, landing, and teardown
 
-For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done [at=<epoch>]: PR <url> checks green` after CI is green, while `direct-PR` reports `done [at=<epoch>]: PR <url>` after opening the PR.
+For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done [at=<epoch>]: PR <url> checks green; asks <done>/<total>` after CI is green, while `direct-PR` reports `done [at=<epoch>]: PR <url>; asks <done>/<total>` after opening the PR.
+The `asks` count comes from the worker's request-checklist accounting in its done report (`data/<id>/report.md`): a count short of the total, or an unticked item, is a stop-and-ask result, not a merge candidate.
 Run `bin/fm-pr-check.sh <id> <PR url>` with the URL copied from that ready signal - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
 Tell the captain the PR's full `https://...` URL copied from the worker's ready line or the task's `pr=` metadata, a concise outcome summary, and the no-mistakes risk level when applicable.
 A captain instruction to merge is explicit authority; `yolo` is the only standing routine merge authority.
@@ -561,6 +572,8 @@ Preserve durable structured identifiers, dependencies, and completion artifact l
 
 `bin/fm-brief.sh` and its help own scaffold syntax, generated variants, status protocol, delivery-mode definitions of done, and exact safety mechanics.
 Use its scaffold as the contract, then fill `## Captain's intent` (`{TASK}`) with the captain's own ask and any boundary the captain stated, plus the context needed to read it, including the substance of any report, decision, or PR the ask refers to; never widen the ask there into a general goal or an enumerated coverage list, because the reviewer treats that subsection as acceptance criteria.
+Fill `## Request checklist` (`{ASKS}`) with one numbered checkbox line per distinct captain ask, in the captain's terms (`1. [ ] <ask>`); keep Firstmate build steps out of it, because the checklist is the ask-by-ask accounting the worker must tick with proof in its done report, and padding it with process steps drowns the captain's asks (section 7 owns why).
+A late captain ask added mid-task extends the checklist by its own numbered line, like a `## Captain's intent` addition.
 Fill `## Firstmate spec` (`{FIRSTMATE_SPEC}`) with only the build instructions that ask requires, naming what stays out of scope when the ask is narrow; a generalization, consistency sweep, or extra hardening the captain did not ask for is follow-up work to note, not scope to add.
 `bin/fm-dod-lib.sh` owns intent authoring without added speaker labels or direct address, its provenance markers, what a no-mistakes worker may pass as `--intent`, and the string's self-sufficiency rule.
 Keep additions task-specific rather than repeating lifecycle instructions, and alter generated sections only when the task genuinely differs from the standard shape.

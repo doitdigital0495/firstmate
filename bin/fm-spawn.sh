@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--fast-lane] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        [--priority <1-99>] (release order on a shaped Claude credential store; lower goes first, default 50 - bin/fm-claude-admission.sh)
 #        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
@@ -39,6 +39,21 @@
 #   loud one-line deviation notice is printed and the spawn continues.
 #   no-mistakes-prod-only is a registry policy rather than a task mode and is
 #   refused as a flag value.
+#   --fast-lane (ship, --mode no-mistakes only) selects the one-review-round
+#   delivery lane for low-risk report tweaks the captain will iterate on anyway
+#   (AGENTS.md section 7). The lane is a driver rule, not a no-mistakes option:
+#   no-mistakes has no per-run setting that caps review rounds, so the lane works
+#   through the brief's definition of done, which instructs the worker to
+#   approve the first review gate and never `--action fix` there, with scope
+#   locked to the request checklist. The spawn requires the brief's recorded
+#   lane to agree exactly: a brief with " lane=fast" in its delivery contract
+#   line needs the flag, the flag needs such a brief, and a spawn without the
+#   flag is the standard lane. The lane is recorded as lane=fast in the task's
+#   meta and reused verbatim by --relaunch, which refuses the flag rather than
+#   letting a relaunch change delivery rigor. The request checklist itself is
+#   every ship and scout brief's business: the spawn refuses a leftover {ASKS}
+#   placeholder or an empty `## Request checklist` body, exactly like {TASK}
+#   and {FIRSTMATE_SPEC}.
 #   Ship/scout launches always put fm-dod-lib.sh's current worker role scope
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
@@ -432,7 +447,7 @@
 # keeps no data/backlog.md. A configured non-markdown adapter remains
 # active without a markdown file; any active automatic backend without
 # compatible tasks-axi refuses before creating lifecycle state.
-# On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> [mode=<mode> yolo=<on|off>] window=<backend-target> worktree=<path>
+# On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> [mode=<mode> yolo=<on|off> [lane=fast]] window=<backend-target> worktree=<path>
 # A ship task records the explicit mode/yolo it was passed; a secondmate spawn records
 # mode=secondmate, yolo=off, home=, and projects=; a scout records neither, and both the
 # success line and state/<id>.meta omit them.
@@ -613,6 +628,8 @@ EFFORT_SET=0
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
+FAST_LANE=0
+FAST_LANE_SET=0
 TRACEPARENT_SET=0
 RELAUNCH=0
 POS=()
@@ -657,6 +674,7 @@ for a in "$@"; do
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
     --yolo) want_value=yolo ;;
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
+    --fast-lane) FAST_LANE=1; FAST_LANE_SET=1 ;;
     --traceparent) want_value=traceparent ;;
     --traceparent=*) TRACEPARENT_ARG=${a#--traceparent=}; TRACEPARENT_SET=1 ;;
     --priority) want_value=priority ;;
@@ -744,6 +762,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2
     exit 1
   }
+  [ "$FAST_LANE_SET" -eq 0 ] || {
+    echo "error: --relaunch reuses the task's recorded lane; --fast-lane cannot override it" >&2
+    exit 1
+  }
 else
   # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
   # firstmate's per-task decision, so they are required and closed-set validated
@@ -776,6 +798,13 @@ else
       exit 1
       ;;
     esac
+    if [ "$FAST_LANE_SET" -eq 1 ]; then
+      if [ "$MODE" != no-mistakes ]; then
+        echo "error: --fast-lane requires --mode no-mistakes; the one-review-round lane modifies the no-mistakes review drive, so the other modes have nothing for it to modify" >&2
+        exit 1
+      fi
+      FAST_LANE=1
+    fi
   else
     [ "$MODE_SET" -eq 0 ] || {
       echo "error: --mode applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture" >&2
@@ -783,6 +812,10 @@ else
     }
     [ "$YOLO_SET" -eq 0 ] || {
       echo "error: --yolo applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture" >&2
+      exit 1
+    }
+    [ "$FAST_LANE_SET" -eq 0 ] || {
+      echo "error: --fast-lane applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture" >&2
       exit 1
     }
   fi
@@ -1203,6 +1236,7 @@ spawn_abort_cleanup() {
             echo "kind=$KIND"
             [ -z "${MODE:-}" ] || echo "mode=$MODE"
             [ -z "${YOLO:-}" ] || echo "yolo=$YOLO"
+            [ "${FAST_LANE:-0}" -eq 0 ] || echo "lane=fast"
             echo "tasktmp=${TASK_TMP:-}"
             echo "model=${MODEL:-default}"
             echo "effort=${EFFORT:-default}"
@@ -1354,6 +1388,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   # spanning several modes is two invocations rather than a silent mixed dispatch.
   [ "$MODE_SET" -eq 0 ] || shared_args+=(--mode "$MODE")
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
+  [ "$FAST_LANE_SET" -eq 0 ] || shared_args+=(--fast-lane)
   for skill in "${SKILLS[@]+"${SKILLS[@]}"}"; do shared_args+=(--skill "$skill"); done
   for pair in "${POS[@]}"; do
     case "$pair" in
@@ -1699,6 +1734,20 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fi
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
   YOLO=$(fm_meta_get "$RELAUNCH_META" yolo)
+  # A fast-lane task keeps its lane across every relaunch: the brief's recorded
+  # contract line and the task record must keep agreeing without a new flag.
+  case "$(fm_meta_get "$RELAUNCH_META" lane)" in
+    fast) FAST_LANE=1 ;;
+    '') FAST_LANE=0 ;;
+    *)
+      echo "error: task $ID's record carries an unknown lane '$(fm_meta_get "$RELAUNCH_META" lane)'; refusing to relaunch on an unreadable delivery lane" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$FAST_LANE" -eq 1 ] && [ "$MODE" != no-mistakes ]; then
+    echo "error: task $ID's record says lane=fast with mode=${MODE:-none}; the fast lane is a no-mistakes-only contract, so this record is inconsistent - fix the record or re-scaffold" >&2
+    exit 1
+  fi
   RELAUNCH_WT=$(fm_meta_get "$RELAUNCH_META" worktree)
   [ -n "$RELAUNCH_WT" ] && [ -d "$RELAUNCH_WT" ] || {
     echo "error: task $ID's recorded worktree '${RELAUNCH_WT:-none}' is missing; refusing to relaunch without the local copy its work lives in" >&2
@@ -2827,11 +2876,11 @@ fi
 }
 if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   if fm_brief_task_placeholders_present "$BRIEF"; then
-    echo "error: $BRIEF still contains {TASK} or {FIRSTMATE_SPEC}; fill ## Captain's intent and ## Firstmate spec before spawn" >&2
+    echo "error: $BRIEF still contains {TASK}, {ASKS}, or {FIRSTMATE_SPEC}; fill ## Captain's intent, ## Request checklist, and ## Firstmate spec before spawn" >&2
     exit 1
   fi
   if ! fm_brief_task_content_valid "$BRIEF"; then
-    echo "error: $BRIEF must contain nonempty ## Captain's intent and ## Firstmate spec subsections (or a nonempty legacy # Task body) before spawn" >&2
+    echo "error: $BRIEF must contain nonempty ## Captain's intent and ## Firstmate spec subsections (or a nonempty legacy # Task body), and a nonempty ## Request checklist body when that heading exists, before spawn" >&2
     exit 1
   fi
   if ADDRESS_LINE=$(fm_brief_intent_address_line "$BRIEF"); then
@@ -2999,6 +3048,37 @@ if [ "$KIND" = ship ]; then
     echo "warning: $BRIEF records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode $MODE - confirm its definition of done matches" >&2
   elif [ "$BRIEF_MODE" != "$MODE" ]; then
     echo "error: delivery mismatch for $ID: the brief says mode=$BRIEF_MODE but this spawn passed --mode $MODE; correct the flag or re-scaffold the brief so the worker's instructions and the task record agree" >&2
+    exit 1
+  fi
+  # The lane token on the same line carries the same drift risk as the mode: a
+  # fast-lane brief instructs the worker to approve the first review gate, so a
+  # standard-lane spawn of it (or the reverse) would validate a task whose
+  # recorded rigor disagrees with the instructions being followed. Absent means
+  # the standard lane; a legacy brief without the contract line has no lane at
+  # all, so a --fast-lane spawn of one refuses rather than running a lane whose
+  # instructions the worker never received.
+  BRIEF_LANE=$(sed -n 's/^Delivery contract: mode=[^ ]* lane=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
+  case "$BRIEF_LANE" in
+    fast|'') ;;
+    *)
+      echo "error: unknown lane '$BRIEF_LANE' in $BRIEF's delivery contract line; the lane is fast or absent, never invented per brief" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$BRIEF_MODE" != no-mistakes ] && [ -n "$BRIEF_LANE" ]; then
+    echo "error: delivery mismatch for $ID: the brief says lane=$BRIEF_LANE with mode=$BRIEF_MODE, but the fast lane is a no-mistakes-only contract; re-scaffold the brief" >&2
+    exit 1
+  fi
+  if [ "$FAST_LANE" -eq 1 ] && [ "$BRIEF_LANE" != fast ]; then
+    if [ -z "$BRIEF_MODE" ]; then
+      echo "error: delivery mismatch for $ID: this spawn passed --fast-lane but the brief records no delivery contract line, so the worker never received the one-review-round instructions; re-scaffold the brief with --fast-lane" >&2
+    else
+      echo "error: delivery mismatch for $ID: this spawn passed --fast-lane but the brief is the standard lane; correct the flag or re-scaffold the brief with --fast-lane so the worker's instructions and the task record agree" >&2
+    fi
+    exit 1
+  fi
+  if [ "$FAST_LANE" -eq 0 ] && [ "$BRIEF_LANE" = fast ]; then
+    echo "error: delivery mismatch for $ID: the brief says lane=fast but this spawn did not pass --fast-lane; correct the flag or re-scaffold the brief so the worker's instructions and the task record agree" >&2
     exit 1
   fi
   # Brief self-agreement. fm-brief.sh's no-mistakes and direct-PR definitions of
@@ -4903,7 +4983,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen traceparent claude_config_dir backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo lane tasktmp model effort busy_gen spawn_gen traceparent claude_config_dir backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -4918,6 +4998,7 @@ preserve_relaunch_meta() {
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
+  [ "$FAST_LANE" -eq 0 ] || echo "lane=fast"
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
@@ -5484,4 +5565,5 @@ SPAWN_META_LOCK_HELD=0
 
 SPAWN_DELIVERY=
 [ -z "$MODE" ] || SPAWN_DELIVERY=" mode=$MODE yolo=$YOLO"
+[ "$FAST_LANE" -eq 0 ] || SPAWN_DELIVERY="$SPAWN_DELIVERY lane=fast"
 echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT"

@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--fast-lane] [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -47,8 +47,26 @@
 #                the configured merge authority approves, firstmate merges to local main
 # no-mistakes-prod-only is a registry policy, not a task mode; resolve it to one of
 # the three concrete modes at intake before calling this script.
+# Every ship and scout scaffold also carries `## Request checklist` with an
+# `{ASKS}` placeholder Firstmate fills before dispatch: one numbered checkbox line
+# per distinct captain ask, in the captain's terms ("1. [ ] <ask>"). The
+# definition of done makes the worker account for every item with proof in a done
+# report at data/<task-id>/report.md and end every done line with
+# `asks <done>/<total>`, so a lost ask is visible at the first done report; a
+# brief without the subsection (hand-written or pre-checklist) is legacy-valid
+# and accounts for the asks under `## Captain's intent` instead.
+# `--fast-lane` (ship, --mode no-mistakes only) writes the one-review-round
+# delivery lane: the brief's definition of done instructs the worker to approve
+# the first review gate (never `--action fix` there) and lock scope to the
+# checklist, with out-of-scope findings recorded as follow-ups instead of
+# commits. The lane is a driver rule, not a no-mistakes option: no-mistakes has
+# no per-run rounds cap (bin/fm-dod-lib.sh owns that finding), which is exactly
+# why the worker needs the instruction. The recorded line becomes
+# "Delivery contract: mode=no-mistakes lane=fast", and bin/fm-spawn.sh requires
+# the matching --fast-lane flag there.
 # The generated ship brief records the chosen mode as a fixed machine-readable
-# "Delivery contract: mode=<mode>" line. bin/fm-spawn.sh reads that line and refuses
+# "Delivery contract: mode=<mode>" line ("... lane=fast" with --fast-lane).
+# bin/fm-spawn.sh reads that line and refuses
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
 # recorded task metadata cannot drift apart. That spawn also refuses a no-mistakes or
 # direct-PR brief whose filled-in {TASK} text forbids the push or the PR its generated
@@ -133,6 +151,7 @@ HERDR_LAB=0
 NO_PROJECTS=0
 MODE=
 MODE_SET=0
+FAST_LANE=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -154,6 +173,7 @@ for a in "$@"; do
     --no-projects) NO_PROJECTS=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
+    --fast-lane) FAST_LANE=1 ;;
     # yolo never reaches the worker: it is firstmate's merge authority, not a
     # brief input. Refuse it loudly so it is never silently dropped here and then
     # believed to have been recorded.
@@ -180,6 +200,16 @@ if [ "$KIND" = ship ]; then
 elif [ "$MODE_SET" -eq 1 ]; then
   echo "error: --mode applies only to ship briefs; a scout delivers a report and a secondmate charter is not a delivery contract" >&2
   exit 1
+fi
+if [ "$FAST_LANE" -eq 1 ]; then
+  if [ "$KIND" != ship ]; then
+    echo "error: --fast-lane applies only to ship briefs; the one-review-round lane is a delivery contract, and a scout's report or a charter ships no PR through it" >&2
+    exit 1
+  fi
+  if [ "$MODE" != no-mistakes ]; then
+    echo "error: --fast-lane requires --mode no-mistakes; the one-review-round lane modifies the no-mistakes review drive, so the other modes have nothing for it to modify" >&2
+    exit 1
+  fi
 fi
 ID=${POS[0]}
 
@@ -361,6 +391,9 @@ IFS= read -r -d '' TASK_SECTION <<'EOF' || true
 ## Captain's intent
 {TASK}
 
+## Request checklist
+{ASKS}
+
 ## Firstmate spec
 {FIRSTMATE_SPEC}
 EOF
@@ -428,12 +461,14 @@ $INBOX_SECTION
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
+Walk the brief's \`## Request checklist\` items in order in the report: \`[x]\` for each answered ask together with its proof - a command and the output line that proves it, a file:line, or a link - or \`[ ]\` with why it is not answered; a brief with no such subsection accounts for each distinct ask under \`## Captain's intent\` the same way.
+End the report with numbered follow-ups for anything noticed but not investigated or fixed; firstmate files them into the backlog from this report, so omitting one silently drops it.
 $LAVISH_LINE
 Before reporting done, read and follow \`$FM_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
-When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}\` to the status file and stop.
+When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}; asks <done>/<total>\` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
 EOF
-echo "scaffolded: $BRIEF (scout; replace {TASK} and {FIRSTMATE_SPEC})"
+echo "scaffolded: $BRIEF (scout; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})"
 exit 0
 fi
 
@@ -455,7 +490,9 @@ case "$MODE" in
     ;;
 esac
 RULE1=$(fm_ship_rule_one "$MODE" "$ID") || exit 1
-DOD=$(fm_dod_block "$MODE" "$ID") || exit 1
+LANE=
+[ "$FAST_LANE" -eq 0 ] || LANE=fast
+DOD=$(fm_dod_block "$MODE" "$ID" "$DATA" "$LANE") || exit 1
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
@@ -475,7 +512,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 
 # Rules
 $RULE1
-2. Stay inside this worktree; modify nothing outside it.
+2. Stay inside this worktree; modify nothing outside it except the status file, the done report \`$DATA/$ID/report.md\`, and any escalation file your Definition of done names.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
 4. Report status by appending one line:
    \`echo "{state} [at=<epoch>]: {one short line}" >> $STATUS_FILE\`
@@ -524,4 +561,8 @@ Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced 
 
 $DOD
 EOF
-echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK} and {FIRSTMATE_SPEC})"
+if [ "$FAST_LANE" -eq 1 ]; then
+  echo "scaffolded: $BRIEF (ship, mode=$MODE lane=fast; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})"
+else
+  echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})"
+fi
