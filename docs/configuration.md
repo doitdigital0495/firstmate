@@ -387,10 +387,11 @@ The [Claude adapter reference](../.agents/skills/harness-adapters/references/har
 
 ## Lean Claude task workers
 
-Claude ships and scouts load only Firstmate's per-task settings source, which retains turn-end and busy-state hooks while excluding user, project and local settings, plugins, and hooks.
+Claude ships and scouts load only Firstmate's per-task settings source, which retains turn-end and busy-state hooks while excluding user, project and local settings, plugins, and other hooks.
+Tool guards survive: at spawn, Firstmate copies the `PreToolUse` and `PostToolUse` hooks and `permissions.deny` rules from the user settings (in the task's Claude store), the worktree's `.claude/settings.json`, and its `.claude/settings.local.json` into that per-task source, and refuses the spawn when one of those files is not valid JSON.
 They start without MCP servers or discovered slash-command skills; task-specific `--skill` files are appended to the worker contract rather than loaded as slash commands.
-A task may opt in through repeatable `fm-spawn.sh` flags: `--mcp-config <file>` loads only the named servers in the supplied Claude MCP JSON (not ambient MCP configurations), `--skill <path>` loads named skill files, `--context-file <file>` appends trusted task context, `--claude-add-dir <dir>` exposes explicit CLAUDE.md directories, and `--claude-plugin-dir <dir>` loads explicit plugins.
-Pass only trusted Firstmate-owned files as `--context-file` or `--skill`, because their contents join the worker's system prompt; an MCP or plugin can run code with the worker's permissions, so opt in only to trusted configurations.
+A task may opt in through repeatable `fm-spawn.sh` flags: `--mcp-config <file>` loads only the named servers in the supplied Claude MCP JSON (not ambient MCP configurations), `--skill <path>` loads named skill files, `--claude-add-dir <dir>` grants file access to an extra directory (it does not load that directory's CLAUDE.md), and `--claude-plugin-dir <dir>` loads explicit plugins.
+Pass only trusted Firstmate-owned files as `--skill`, because their contents join the worker's system prompt; an MCP or plugin can run code with the worker's permissions, so opt in only to trusted configurations.
 Each flag takes a readable local path (the skill takes a Markdown file or a directory containing SKILL.md); the flags can be repeated and must be passed again on relaunch.
 Other harnesses, raw launches, and Claude secondmates refuse the Claude-only flags; the default remains lean for every Claude model, including Opus, Sonnet and Haiku.
 The `--tools` list limits a scout to Read and Bash and a ship to Read, Bash, Edit and Write.

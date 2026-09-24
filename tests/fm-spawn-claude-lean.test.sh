@@ -80,29 +80,25 @@ pass "opus, sonnet, haiku and configured Claude models share one lean launch sha
 make_case opt-in lean-opt-in-s5
 mkdir -p "$CASE_DIR/extra dir" "$CASE_DIR/plugin dir"
 printf '%s\n' '{"mcpServers":{"task-tool":{"command":"true"}}}' > "$CASE_DIR/mcp config.json"
-printf '%s\n' 'Extra trusted context' > "$CASE_DIR/task context.md"
-out=$(spawn lean-opt-in-s5 "$PROJ_DIR" --scout --mcp-config "$CASE_DIR/mcp config.json" --context-file "$CASE_DIR/task context.md" --claude-add-dir "$CASE_DIR/extra dir" --claude-plugin-dir "$CASE_DIR/plugin dir")
+out=$(spawn lean-opt-in-s5 "$PROJ_DIR" --scout --mcp-config "$CASE_DIR/mcp config.json" --claude-add-dir "$CASE_DIR/extra dir" --claude-plugin-dir "$CASE_DIR/plugin dir")
 expect_code 0 "$?" "Claude explicit capabilities should launch: $out"
 launch=$(cat "$LAUNCH_LOG")
 assert_contains "$launch" "--strict-mcp-config" "explicit MCP configuration must not enable discovered servers"
 assert_contains "$launch" "--mcp-config '$CASE_DIR/mcp config.json'" "named MCP configuration"
-assert_contains "$launch" "--add-dir '$CASE_DIR/extra dir'" "explicit CLAUDE.md directory"
+assert_contains "$launch" "--add-dir '$CASE_DIR/extra dir'" "explicit extra directory"
 assert_contains "$launch" "--plugin-dir '$CASE_DIR/plugin dir'" "explicit plugin directory"
-assert_contains "$launch" "cat '$CASE_DIR/task context.md'" "trusted extra context must be loaded"
 assert_not_contains "$launch" '--mcp-config default' "ambient MCP servers must not load"
-pass "Claude task opts into named MCPs, trusted context and explicit directories without enabling discovery"
+pass "Claude task opts into named MCPs and explicit directories without enabling discovery"
 
 make_case opt-in-batch lean-batch-a
 mkdir -p "$CASE_DIR/extra dir" "$CASE_DIR/plugin dir"
 printf '%s\n' '{"mcpServers":{"task-tool":{"command":"true"}}}' > "$CASE_DIR/mcp config.json"
-printf '%s\n' 'Batch task context' > "$CASE_DIR/task context.md"
 fm_test_spawn_brief "$HOME_DIR" lean-batch-b
-out=$(spawn "lean-batch-a=$PROJ_DIR" "lean-batch-b=$PROJ_DIR" --scout --mcp-config "$CASE_DIR/mcp config.json" --context-file "$CASE_DIR/task context.md" --claude-add-dir "$CASE_DIR/extra dir" --claude-plugin-dir "$CASE_DIR/plugin dir")
+out=$(spawn "lean-batch-a=$PROJ_DIR" "lean-batch-b=$PROJ_DIR" --scout --mcp-config "$CASE_DIR/mcp config.json" --claude-add-dir "$CASE_DIR/extra dir" --claude-plugin-dir "$CASE_DIR/plugin dir")
 expect_code 0 "$?" "Claude batch should forward explicit capabilities: $out"
 launch=$(cat "$LAUNCH_LOG")
 assert_contains "$launch" "--mcp-config '$CASE_DIR/mcp config.json'" "batch must forward MCP configuration"
-assert_contains "$launch" "--add-dir '$CASE_DIR/extra dir'" "batch must forward CLAUDE.md directories"
-assert_contains "$launch" "cat '$CASE_DIR/task context.md'" "batch must forward trusted context"
+assert_contains "$launch" "--add-dir '$CASE_DIR/extra dir'" "batch must forward extra directories"
 assert_contains "$launch" "--plugin-dir '$CASE_DIR/plugin dir'" "batch must forward plugins"
 pass "Claude batch dispatch retains per-task opt-ins"
 
@@ -123,7 +119,7 @@ assert_absent "$HOME_DIR/state/lean-invalid-s3.meta" "invalid skill must not pro
 [ ! -s "$LAUNCH_LOG" ] || fail "invalid skill still launched"
 pass "invalid Claude skill refuses before provisioning"
 
-for flag in mcp-config context-file claude-add-dir claude-plugin-dir; do
+for flag in mcp-config claude-add-dir claude-plugin-dir; do
   make_case "invalid-$flag" "lean-bad-$flag"
   out=$(spawn "lean-bad-$flag" "$PROJ_DIR" --scout --"$flag" "$CASE_DIR/missing" 2>&1)
   expect_code 1 "$?" "missing --$flag must refuse"
@@ -136,5 +132,41 @@ out=$(spawn lean-unsupported-s6 "$PROJ_DIR" --scout --harness codex --mcp-config
 expect_code 1 "$?" "non-Claude worker must refuse Claude capabilities"
 assert_contains "$out" "only to Claude ship and scout workers" "non-Claude capabilities must refuse"
 pass "invalid and unsupported Claude opt-ins refuse before provisioning"
+
+make_case guards lean-guards-s7
+commit_project_claude() {
+  git -C "$PROJ_DIR" add .claude
+  git -C "$PROJ_DIR" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm "$1"
+  git -C "$PROJ_DIR" push -q origin main
+}
+mkdir -p "$HOME_DIR/user-home/.claude" "$PROJ_DIR/.claude"
+printf '%s\n' '{"enabledPlugins":{"x@y":true},"hooks":{"PreToolUse":[{"matcher":"Read","hooks":[{"type":"command","command":"user-guard"}]}],"SessionStart":[{"hooks":[{"type":"command","command":"user-banner"}]}]},"permissions":{"deny":["Read(./.env)"]}}' \
+  > "$HOME_DIR/user-home/.claude/settings.json"
+printf '%s\n' '{"hooks":{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"project-guard"}]}],"Stop":[{"hooks":[{"type":"command","command":"project-stop"}]}]},"permissions":{"deny":["Bash(rm:*)"]}}' \
+  > "$PROJ_DIR/.claude/settings.json"
+commit_project_claude guards
+out=$(spawn lean-guards-s7 "$PROJ_DIR" --scout)
+expect_code 0 "$?" "Claude worker with user and project guards should launch: $out"
+settings="$HOME_DIR/state/lean-guards-s7.claude-settings.json"
+[ "$(jq -c '[.hooks.PreToolUse[].hooks[].command | select(. == "user-guard")]' "$settings")" = '["user-guard"]' ] \
+  || fail "user PreToolUse guard was not carried: $(cat "$settings")"
+[ "$(jq -c '[.hooks.PostToolUse[].hooks[].command | select(. == "project-guard")]' "$settings")" = '["project-guard"]' ] \
+  || fail "project PostToolUse guard was not carried: $(cat "$settings")"
+[ "$(jq -c '.permissions.deny' "$settings")" = '["Read(./.env)","Bash(rm:*)"]' ] \
+  || fail "deny rules were not carried: $(cat "$settings")"
+[ "$(jq -c '[.hooks.SessionStart, .enabledPlugins, (.hooks.Stop // [] | map(.hooks[].command) | index("project-stop"))]' "$settings")" = '[null,null,null]' ] \
+  || fail "non-guard settings leaked into the lean worker: $(cat "$settings")"
+[ "$(jq -r '.feedbackDrafts' "$settings")" = off ] || fail "Firstmate policy keys were lost: $(cat "$settings")"
+pass "Claude worker keeps user and project tool guards and deny rules without other settings"
+
+make_case bad-guards lean-bad-guards-s8
+mkdir -p "$PROJ_DIR/.claude"
+printf '%s\n' '{not json' > "$PROJ_DIR/.claude/settings.json"
+commit_project_claude bad-guards
+out=$(spawn lean-bad-guards-s8 "$PROJ_DIR" --scout 2>&1)
+expect_code 1 "$?" "malformed guard layer must refuse"
+assert_contains "$out" "could not carry Claude guard hooks" "malformed guard layer refusal"
+[ ! -s "$LAUNCH_LOG" ] || fail "malformed guard layer still launched"
+pass "malformed Claude settings layer refuses rather than dropping guards"
 
 echo "all fm-spawn-claude-lean tests passed"

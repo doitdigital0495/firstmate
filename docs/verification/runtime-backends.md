@@ -523,6 +523,8 @@ lean-sonnet.turn-ended exists; busy-state: state=idle source=claude-hook event=s
 
 On the Sonnet arm, the initial turn reported the MCP tool unavailable, then the following turn successfully called it after the server had connected; Claude 2.1.281 starts explicit MCP servers asynchronously, so a task needing an MCP on its very first turn must allow for connection latency.
 A non-interactive CLI control with the same `--settings`, `--setting-sources ''`, `--strict-mcp-config`, `--disable-slash-commands`, `--tools Read,Bash`, `--mcp-config`, `--append-system-prompt`, model, and effort flags called the same tool and replied `MCP_PROVED` on its first turn.
+The `--context-file` flag used on the Sonnet arm was removed after this run; task context now rides a `--skill` Markdown file, which reaches the appended system prompt the same way.
+`--claude-add-dir` and `--claude-plugin-dir` were not exercised live.
 All three real workers were returned through `bin/fm-teardown.sh` after the `fm-captain-hold.sh complete <id> --none` disposable scout inventory; their slots and isolated tmux server were then removed.
 Run `bin/fm-test-run.sh tests/fm-spawn-claude-lean.test.sh` to pin the shared model-independent launch shape and explicit opt-ins in CI; the live model calls above were manual and spent provider tokens.
 
