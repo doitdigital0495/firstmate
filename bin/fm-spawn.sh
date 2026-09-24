@@ -3271,10 +3271,10 @@ if [ "$ACCOUNT_SET" -eq 1 ]; then
   SPAWN_PI_STORE=${SPAWN_ACCOUNT_STORES[1]}
   SPAWN_CODEX_STORE=${SPAWN_ACCOUNT_STORES[2]}
 fi
-if [ "$ACCOUNT_SET" -eq 0 ] && [ "$KIND" != secondmate ]; then
+if [ "$ACCOUNT_SET" -eq 0 ] && [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   case "$HARNESS" in
-    pi|pi-signed) [ -n "$SPAWN_PI_STORE" ] || { if [ "$RELAUNCH" -eq 1 ]; then SPAWN_PI_STORE=default; else SPAWN_PI_STORE=${PI_CODING_AGENT_DIR:-default}; fi; } ;;
-    codex) [ -n "$SPAWN_CODEX_STORE" ] || { if [ "$RELAUNCH" -eq 1 ]; then SPAWN_CODEX_STORE=default; else SPAWN_CODEX_STORE=${CODEX_HOME:-default}; fi; } ;;
+    pi|pi-signed) SPAWN_PI_STORE=${PI_CODING_AGENT_DIR:-} ;;
+    codex) SPAWN_CODEX_STORE=${CODEX_HOME:-} ;;
   esac
 fi
 if [ -z "$SPAWN_CLAUDE_STORE" ] && [ "$HARNESS" = claude ]; then

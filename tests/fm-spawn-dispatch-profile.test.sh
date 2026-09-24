@@ -1638,8 +1638,23 @@ JSON
   pass 'explicit account validates registry and switch before mutation and pins all harness stores'
 }
 
+test_unpinned_codex_launch_keeps_pane_store() {
+  local rec out meta launch id
+  id=codex-unpinned
+  rec=$(make_spawn_case codex-unpinned codex "$id")
+  read_case_record "$rec"
+  meta="$HOME_DIR/state/$id.meta"
+  out=$(unset CODEX_HOME; run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex)
+  expect_code 0 "$?" "unpinned codex launch succeeds: $out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_not_contains "$launch" 'unset CODEX_HOME' 'no ambient store leaves the pane store alone'
+  assert_not_contains "$(cat "$meta")" 'codex_home=' 'no ambient store records no store'
+  pass 'an unpinned Codex task never turns an absent store into an explicit unset'
+}
+
 test_worker_launch_delivers_role_scope
 test_account_registry_and_relaunch_pin
+test_unpinned_codex_launch_keeps_pane_store
 test_no_profile_keeps_claude_profile_defaults
 test_non_cursor_launch_clears_inherited_cursor_markers
 test_relative_home_overrides_launch_with_absolute_cross_process_paths

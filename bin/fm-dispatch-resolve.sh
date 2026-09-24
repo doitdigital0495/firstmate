@@ -294,10 +294,10 @@ while IFS= read -r account; do
   fi
   account_quota=$(mktemp) || emit_error "mktemp failed"
   if ! CODEX_HOME=${stores[2]} PI_CODING_AGENT_DIR=${stores[1]} CLAUDE_CONFIG_DIR=${stores[0]} quota-axi --json > "$account_quota" 2>/dev/null || ! fm_quota_json_valid < "$account_quota"; then
-    rm -f "$account_quota"
-    emit_error "quota-axi --json failed for account $account"
+    ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" '. + {($a): {key: $key, failed: true}}' <<<"$ACCOUNT_QUOTAS")
+  else
+    ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" --slurpfile snapshot "$account_quota" '. + {($a): {key: $key, snapshot: $snapshot[0]}}' <<<"$ACCOUNT_QUOTAS")
   fi
-  ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" --slurpfile snapshot "$account_quota" '. + {($a): {key: $key, snapshot: $snapshot[0]}}' <<<"$ACCOUNT_QUOTAS")
   rm -f "$account_quota"
 done < <(jq -r '[((.rules // [])[] | .use | if type == "array" then .[] else . end), (.default // empty | if type == "array" then .[] else . end) | .account // empty] | unique[]' "$RULES")
 
@@ -335,6 +335,8 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
     (provider_of($c)) as $p |
     if $c.account and $account_quotas[$c.account] == null then
       {profile: $c, eligible: false, reason: "cross-account routing disabled or account not registered"}
+    elif $c.account and $account_quotas[$c.account].failed then
+      {profile: $c, eligible: false, reason: "quota-axi --json failed for account \($c.account)"}
     else account_quota($c) |
     if $p == null then {profile: $c, eligible: false, reason: "no provider family for harness \($c.harness); declare provider on the profile"}
     elif prov($p) == null then {profile: $c, provider: $p, eligible: true, unranked: true, reason: "provider \($p) not in the quota snapshot"}

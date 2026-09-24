@@ -159,6 +159,7 @@ printf '%s\n' "$*" >> "${QUOTA_AXI_CALLS:?}"
 [ "${1:-}" = --json ] || exit 2
 if [ -n "${GERIS_QUOTA_FIXTURE:-}" ] && [ "${CODEX_HOME:-}" = "$HOME/.codex-geris" ]; then
   printf 'geris pinned\n' >> "${QUOTA_AXI_CALLS:?}"
+  [ "${FAKE_GERIS_QUOTA_FAIL:-0}" = 1 ] && exit 1
   cat "$GERIS_QUOTA_FIXTURE"
 else
   cat "${QUOTA_AXI_FIXTURE:?}"
@@ -558,6 +559,11 @@ assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 
 assert_contains "$out" 'candidate: claude:sonnet  account=geris  provider=claude' "account is inspectable"
 assert_equals '2' "$(grep -c '^--json$' "$LOG/quota-axi.calls")" "one snapshot for each seat"
 assert_contains "$(cat "$LOG/quota-axi.calls")" 'geris pinned' "secondary quota call pinned all three stores"
+reset_log
+OPENROUTER_API_KEY=$KEY FAKE_GERIS_QUOTA_FAIL=1 run code out err "$BRIEF"
+assert_not_contains "$out" '  status: error' "a failed Geris probe does not fail the resolution"
+assert_contains "$out" 'account=geris  -> not eligible: quota-axi --json failed for account geris' "failed Geris probe excludes only that seat"
+assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-medium'" "home seat still resolves"
 FM_HOME="$HOME_DIR" "$ROOT/bin/fm-account-routing.sh" off >/dev/null
 reset_log
 OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
