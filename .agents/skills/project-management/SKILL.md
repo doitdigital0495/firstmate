@@ -52,6 +52,8 @@ The optional `+yolo` posture changes merge authority only and does not change th
 Default it off for every project and every posture, and enable it only on the captain's explicit instruction.
 `AGENTS.md` section 7 owns the merge-authority contract.
 
+The optional `preview-on-push` posture marks a project whose CI builds preview environments from fm/* pushes; register it only on the captain's instruction, and `AGENTS.md` section 7 owns what it changes.
+
 ## Add or clone an existing project
 
 Confirm the source URL, local project name, delivery posture, and autonomy posture, stating the resolved default for each rather than asking the captain to invent one.
