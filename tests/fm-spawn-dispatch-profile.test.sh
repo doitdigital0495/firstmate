@@ -1591,7 +1591,70 @@ test_non_claude_harness_ignores_claude_permission_mode() {
   pass "config/claude-permission-mode changes claude launches only"
 }
 
+test_account_registry_and_relaunch_pin() {
+  local rec out status meta launch id
+  id=account-geris
+  rec=$(make_spawn_case account-geris codex "$id")
+  read_case_record "$rec"
+  meta="$HOME_DIR/state/$id.meta"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account personal)
+  status=$?
+  expect_code 1 "$status" "missing registry rejects a named account"
+  assert_not_contains "$out" 'spawned' "missing registry creates no worker"
+  assert_absent "$meta" "missing registry writes no task"
+  printf '%s\n' '{invalid' > "$HOME_DIR/config/accounts.json"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account geris)
+  expect_code 1 "$?" "malformed registry rejects account"
+  assert_absent "$meta" "malformed registry writes no task"
+  cat > "$HOME_DIR/config/accounts.json" <<'JSON'
+{"accounts":{"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris"}}}
+JSON
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account personal)
+  expect_code 1 "$?" "Geris-only registry refuses personal seat"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account geris)
+  expect_code 1 "$?" "Geris home with no switch refuses cross-account flag"
+  FM_HOME="$HOME_DIR" "$ROOT/bin/fm-account-routing.sh" on >/dev/null 2>&1 && fail 'Geris-only home unexpectedly acquired a switch'
+  jq '.crossAccount.enabled = false' "$HOME_DIR/config/accounts.json" > "$HOME_DIR/config/accounts.next"
+  mv "$HOME_DIR/config/accounts.next" "$HOME_DIR/config/accounts.json"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account geris)
+  expect_code 1 "$?" "disabled switch rejects Geris seat"
+  FM_HOME="$HOME_DIR" "$ROOT/bin/fm-account-routing.sh" on >/dev/null
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account geris)
+  expect_code 0 "$?" "enabled account dispatch succeeds: $out"
+  assert_grep 'account=geris' "$meta" 'account id is durable'
+  assert_grep "codex_home=$HOME_DIR/user-home/.codex-geris" "$meta" 'Codex store pinned'
+  assert_grep "pi_agent_dir=$HOME_DIR/user-home/.pi-geris/agent" "$meta" 'Pi store pinned'
+  assert_grep "claude_config_dir=$HOME_DIR/user-home/.claude-geris" "$meta" 'Claude store pinned'
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "export CODEX_HOME='$HOME_DIR/user-home/.codex-geris'" 'Codex launch uses selected seat'
+  fm_test_spawn_brief "$HOME_DIR" account-geris-pi
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" account-geris-pi "$PROJ_DIR" --scout --harness pi --account geris)
+  expect_code 0 "$?" "Pi routes through Geris: $out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "export PI_CODING_AGENT_DIR='$HOME_DIR/user-home/.pi-geris/agent';" 'Pi process inherits the Geris store'
+  bash -n <<< "$launch" || fail 'account-pinned Pi launch is not valid shell syntax'
+  FM_HOME="$HOME_DIR" "$ROOT/bin/fm-account-routing.sh" off >/dev/null
+  assert_grep '"enabled": false' "$HOME_DIR/config/accounts.json" 'off toggle is atomic and durable'
+  pass 'explicit account validates registry and switch before mutation and pins all harness stores'
+}
+
+test_unpinned_codex_launch_keeps_pane_store() {
+  local rec out meta launch id
+  id=codex-unpinned
+  rec=$(make_spawn_case codex-unpinned codex "$id")
+  read_case_record "$rec"
+  meta="$HOME_DIR/state/$id.meta"
+  out=$(unset CODEX_HOME; run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex)
+  expect_code 0 "$?" "unpinned codex launch succeeds: $out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_not_contains "$launch" 'unset CODEX_HOME' 'no ambient store leaves the pane store alone'
+  assert_not_contains "$(cat "$meta")" 'codex_home=' 'no ambient store records no store'
+  pass 'an unpinned Codex task never turns an absent store into an explicit unset'
+}
+
 test_worker_launch_delivers_role_scope
+test_account_registry_and_relaunch_pin
+test_unpinned_codex_launch_keeps_pane_store
 test_no_profile_keeps_claude_profile_defaults
 test_non_cursor_launch_clears_inherited_cursor_markers
 test_relative_home_overrides_launch_with_absolute_cross_process_paths

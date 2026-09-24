@@ -702,6 +702,11 @@ else
   printf '(silent - all good)\n'
 fi
 
+# Optional one-call typed-router health probe on a real startup, never on reemit.
+if [ "$READ_ONLY" -eq 0 ] && [ "$REEMIT" -eq 0 ]; then
+  "$SCRIPT_DIR/fm-dispatch-canary.sh" || printf 'DISPATCH_CANARY: typed routing needs attention\n'
+fi
+
 # --- 3. wake-drain ---------------------------------------------------------
 # The inactive-outcome startup scan runs in the deferred worker launched above,
 # where its potentially slow current-state reads cannot block this digest. It
