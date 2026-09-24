@@ -2403,7 +2403,7 @@ for skill in "${SKILLS[@]+"${SKILLS[@]}"}"; do
     PI_SKILLS="$PI_SKILLS --skill $(shell_quote "$skill")"
   else
     if [ -d "$skill" ]; then skill="$skill/SKILL.md"; fi
-    CLAUDE_SKILLS="$CLAUDE_SKILLS; printf '\n# Requested skill\n'; cat $(shell_quote "$skill")"
+    CLAUDE_SKILLS="$CLAUDE_SKILLS; printf '\n# Requested skill (%s)\n' $(shell_quote "$skill"); cat $(shell_quote "$skill")"
   fi
 done
 if [ "$PI_TASK_WORKER" -eq 1 ]; then

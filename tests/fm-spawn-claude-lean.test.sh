@@ -60,6 +60,7 @@ chmod +x "$FAKEBIN_DIR/claude"
 FM_FAKE_CLAUDE_PROMPT="$CASE_DIR/delivered-prompt" PATH="$FAKEBIN_DIR:$PATH" bash -c "$launch" >/dev/null \
   || fail "Claude scout launch did not execute with a synthetic skill"
 assert_contains "$(cat "$CASE_DIR/delivered-prompt")" "# Scout skill" "skill content did not reach appended system prompt"
+assert_contains "$(cat "$CASE_DIR/delivered-prompt")" "# Requested skill ($CASE_DIR/skills/skill with spaces/SKILL.md)" "skill location did not reach appended system prompt"
 assert_contains "$(cat "$CASE_DIR/delivered-prompt")" "Stay within assigned task" "worker contract did not reach appended system prompt"
 pass "Claude scout gets only read tools, explicit model/effort and requested skill content"
 
