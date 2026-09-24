@@ -500,12 +500,13 @@ The live guard above rechecks that the installed CLI loads Firstmate's explicit 
 
 Verified 2026-09-24 with Claude Code 2.1.281 and tmux 3.2a on this same lean branch using one disposable git project, one isolated tmux server, and three fresh Treehouse slots.
 The named MCP config started a disposable local stdio server exposing `ping`, the skill was a SKILL.md file, and the context was a Markdown file; no ambient MCPs or skill files were passed.
-The spawn commands were run from a shell inside the isolated tmux lab session with `TREEHOUSE_ROOT="$LAB/pool"` and a scratch `FM_HOME`:
+For current-code replay, run the commands below from a shell inside an isolated tmux lab session with `TREEHOUSE_ROOT="$LAB/pool"` and a scratch `FM_HOME`.
+The original Sonnet verification used a context-file option since removed; the replay passes that Markdown file as a second `--skill` so it still reaches the appended system prompt.
 
 ```sh
 FM_HOME="$LAB/home" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 bin/fm-spawn.sh lean-opus "$LAB/project" --scout --harness claude --backend tmux --model opus --effort low
 FM_HOME="$LAB/home" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 bin/fm-spawn.sh lean-haiku "$LAB/project" --scout --harness claude --backend tmux --model haiku --effort low
-FM_HOME="$LAB/home" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 bin/fm-spawn.sh lean-sonnet "$LAB/project" --scout --harness claude --backend tmux --model sonnet --effort low --mcp-config "$LAB/task-mcp.json" --skill "$LAB/skill" --context-file "$LAB/context.md"
+FM_HOME="$LAB/home" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 bin/fm-spawn.sh lean-sonnet "$LAB/project" --scout --harness claude --backend tmux --model sonnet --effort low --mcp-config "$LAB/task-mcp.json" --skill "$LAB/skill" --skill "$LAB/context.md"
 ```
 
 ```text
@@ -523,7 +524,6 @@ lean-sonnet.turn-ended exists; busy-state: state=idle source=claude-hook event=s
 
 On the Sonnet arm, the initial turn reported the MCP tool unavailable, then the following turn successfully called it after the server had connected; Claude 2.1.281 starts explicit MCP servers asynchronously, so a task needing an MCP on its very first turn must allow for connection latency.
 A non-interactive CLI control with the same `--settings`, `--setting-sources ''`, `--strict-mcp-config`, `--disable-slash-commands`, `--tools Read,Bash`, `--mcp-config`, `--append-system-prompt`, model, and effort flags called the same tool and replied `MCP_PROVED` on its first turn.
-The `--context-file` flag used on the Sonnet arm was removed after this run; task context now rides a `--skill` Markdown file, which reaches the appended system prompt the same way.
 `--claude-add-dir` and `--claude-plugin-dir` were not exercised live.
 All three real workers were returned through `bin/fm-teardown.sh` after the `fm-captain-hold.sh complete <id> --none` disposable scout inventory; their slots and isolated tmux server were then removed.
 Run `bin/fm-test-run.sh tests/fm-spawn-claude-lean.test.sh` to pin the shared model-independent launch shape and explicit opt-ins in CI; the live model calls above were manual and spent provider tokens.
