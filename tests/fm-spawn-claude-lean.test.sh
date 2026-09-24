@@ -63,6 +63,49 @@ assert_contains "$(cat "$CASE_DIR/delivered-prompt")" "# Scout skill" "skill con
 assert_contains "$(cat "$CASE_DIR/delivered-prompt")" "Stay within assigned task" "worker contract did not reach appended system prompt"
 pass "Claude scout gets only read tools, explicit model/effort and requested skill content"
 
+for model in opus sonnet haiku; do
+  make_case "model-$model" "lean-model-$model"
+  out=$(spawn "lean-model-$model" "$PROJ_DIR" --scout --model "$model" --effort low)
+  expect_code 0 "$?" "Claude $model scout should launch: $out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--setting-sources '' --strict-mcp-config --disable-slash-commands --tools Read,Bash" "$model must use the lean worker flags"
+  assert_contains "$launch" "--model '$model' --effort 'low'" "$model profile must be explicit"
+done
+make_case model-custom lean-model-custom
+out=$(spawn lean-model-custom "$PROJ_DIR" --scout --model claude-future-model --effort high)
+expect_code 0 "$?" "configured Claude model should use the same launch: $out"
+assert_contains "$(cat "$LAUNCH_LOG")" "--model 'claude-future-model' --effort 'high'" "arbitrary configured model must pass through"
+pass "opus, sonnet, haiku and configured Claude models share one lean launch shape"
+
+make_case opt-in lean-opt-in-s5
+mkdir -p "$CASE_DIR/extra dir" "$CASE_DIR/plugin dir"
+printf '%s\n' '{"mcpServers":{"task-tool":{"command":"true"}}}' > "$CASE_DIR/mcp config.json"
+printf '%s\n' 'Extra trusted context' > "$CASE_DIR/task context.md"
+out=$(spawn lean-opt-in-s5 "$PROJ_DIR" --scout --mcp-config "$CASE_DIR/mcp config.json" --context-file "$CASE_DIR/task context.md" --claude-add-dir "$CASE_DIR/extra dir" --claude-plugin-dir "$CASE_DIR/plugin dir")
+expect_code 0 "$?" "Claude explicit capabilities should launch: $out"
+launch=$(cat "$LAUNCH_LOG")
+assert_contains "$launch" "--strict-mcp-config" "explicit MCP configuration must not enable discovered servers"
+assert_contains "$launch" "--mcp-config '$CASE_DIR/mcp config.json'" "named MCP configuration"
+assert_contains "$launch" "--add-dir '$CASE_DIR/extra dir'" "explicit CLAUDE.md directory"
+assert_contains "$launch" "--plugin-dir '$CASE_DIR/plugin dir'" "explicit plugin directory"
+assert_contains "$launch" "cat '$CASE_DIR/task context.md'" "trusted extra context must be loaded"
+assert_not_contains "$launch" '--mcp-config default' "ambient MCP servers must not load"
+pass "Claude task opts into named MCPs, trusted context and explicit directories without enabling discovery"
+
+make_case opt-in-batch lean-batch-a
+mkdir -p "$CASE_DIR/extra dir" "$CASE_DIR/plugin dir"
+printf '%s\n' '{"mcpServers":{"task-tool":{"command":"true"}}}' > "$CASE_DIR/mcp config.json"
+printf '%s\n' 'Batch task context' > "$CASE_DIR/task context.md"
+fm_test_spawn_brief "$HOME_DIR" lean-batch-b
+out=$(spawn "lean-batch-a=$PROJ_DIR" "lean-batch-b=$PROJ_DIR" --scout --mcp-config "$CASE_DIR/mcp config.json" --context-file "$CASE_DIR/task context.md" --claude-add-dir "$CASE_DIR/extra dir" --claude-plugin-dir "$CASE_DIR/plugin dir")
+expect_code 0 "$?" "Claude batch should forward explicit capabilities: $out"
+launch=$(cat "$LAUNCH_LOG")
+assert_contains "$launch" "--mcp-config '$CASE_DIR/mcp config.json'" "batch must forward MCP configuration"
+assert_contains "$launch" "--add-dir '$CASE_DIR/extra dir'" "batch must forward CLAUDE.md directories"
+assert_contains "$launch" "cat '$CASE_DIR/task context.md'" "batch must forward trusted context"
+assert_contains "$launch" "--plugin-dir '$CASE_DIR/plugin dir'" "batch must forward plugins"
+pass "Claude batch dispatch retains per-task opt-ins"
+
 make_case auto lean-auto-s3
 printf 'auto\n' > "$HOME_DIR/config/claude-permission-mode"
 out=$(spawn lean-auto-s3 "$PROJ_DIR" --mode direct-PR --yolo off)
@@ -79,5 +122,19 @@ assert_contains "$out" "does not exist" "missing skill refusal"
 assert_absent "$HOME_DIR/state/lean-invalid-s3.meta" "invalid skill must not provision"
 [ ! -s "$LAUNCH_LOG" ] || fail "invalid skill still launched"
 pass "invalid Claude skill refuses before provisioning"
+
+for flag in mcp-config context-file claude-add-dir claude-plugin-dir; do
+  make_case "invalid-$flag" "lean-bad-$flag"
+  out=$(spawn "lean-bad-$flag" "$PROJ_DIR" --scout --"$flag" "$CASE_DIR/missing" 2>&1)
+  expect_code 1 "$?" "missing --$flag must refuse"
+  assert_contains "$out" "--$flag" "missing --$flag must name the flag"
+  assert_absent "$HOME_DIR/state/lean-bad-$flag.meta" "invalid $flag must not provision"
+  [ ! -s "$LAUNCH_LOG" ] || fail "invalid $flag still launched"
+done
+make_case unsupported lean-unsupported-s6
+out=$(spawn lean-unsupported-s6 "$PROJ_DIR" --scout --harness codex --mcp-config "$CASE_DIR/missing" 2>&1)
+expect_code 1 "$?" "non-Claude worker must refuse Claude capabilities"
+assert_contains "$out" "only to Claude ship and scout workers" "non-Claude capabilities must refuse"
+pass "invalid and unsupported Claude opt-ins refuse before provisioning"
 
 echo "all fm-spawn-claude-lean tests passed"

@@ -496,6 +496,36 @@ ok - claude 2.1.281 (Claude Code) lean auto worker runs only Firstmate hooks, no
 `fm-teardown.sh` returned both real workers and their slots, and the disposable tmux server and fixture were removed after the measurement.
 The live guard above rechecks that the installed CLI loads Firstmate's explicit hooks but not project hooks under the lean flags; `tests/fm-spawn-claude-lean.test.sh` pins the emitted ship/scout command shape without credentials.
 
+### Claude model families and per-task MCP opt-in
+
+Verified 2026-09-24 with Claude Code 2.1.281 and tmux 3.2a on this same lean branch using one disposable git project, one isolated tmux server, and three fresh Treehouse slots.
+The named MCP config started a disposable local stdio server exposing `ping`, the skill was a SKILL.md file, and the context was a Markdown file; no ambient MCPs or skill files were passed.
+The spawn commands were run from a shell inside the isolated tmux lab session with `TREEHOUSE_ROOT="$LAB/pool"` and a scratch `FM_HOME`:
+
+```sh
+FM_HOME="$LAB/home" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 bin/fm-spawn.sh lean-opus "$LAB/project" --scout --harness claude --backend tmux --model opus --effort low
+FM_HOME="$LAB/home" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 bin/fm-spawn.sh lean-haiku "$LAB/project" --scout --harness claude --backend tmux --model haiku --effort low
+FM_HOME="$LAB/home" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 bin/fm-spawn.sh lean-sonnet "$LAB/project" --scout --harness claude --backend tmux --model sonnet --effort low --mcp-config "$LAB/task-mcp.json" --skill "$LAB/skill" --context-file "$LAB/context.md"
+```
+
+```text
+spawned lean-opus harness=claude kind=scout window=lab:fm-lean-opus worktree=<disposable slot 1>
+● MODEL_READY_opus
+lean-opus.turn-ended exists; busy-state: state=idle source=claude-hook event=stop
+spawned lean-haiku harness=claude kind=scout window=lab:fm-lean-haiku worktree=<disposable slot 2>
+● MODEL_READY_haiku
+lean-haiku.turn-ended exists; busy-state: state=idle source=claude-hook event=stop
+spawned lean-sonnet harness=claude kind=scout window=lab:fm-lean-sonnet worktree=<disposable slot 3>
+● SKILL_PROVED / CONTEXT_PROVED
+● MCP_PROVED (after a follow-up turn called task-only-marker ping)
+lean-sonnet.turn-ended exists; busy-state: state=idle source=claude-hook event=stop
+```
+
+On the Sonnet arm, the initial turn reported the MCP tool unavailable, then the following turn successfully called it after the server had connected; Claude 2.1.281 starts explicit MCP servers asynchronously, so a task needing an MCP on its very first turn must allow for connection latency.
+A non-interactive CLI control with the same `--settings`, `--setting-sources ''`, `--strict-mcp-config`, `--disable-slash-commands`, `--tools Read,Bash`, `--mcp-config`, `--append-system-prompt`, model, and effort flags called the same tool and replied `MCP_PROVED` on its first turn.
+All three real workers were returned through `bin/fm-teardown.sh` after the `fm-captain-hold.sh complete <id> --none` disposable scout inventory; their slots and isolated tmux server were then removed.
+Run `bin/fm-test-run.sh tests/fm-spawn-claude-lean.test.sh` to pin the shared model-independent launch shape and explicit opt-ins in CI; the live model calls above were manual and spent provider tokens.
+
 ## Claude workspace trust
 
 Verified 2026-09-03 on Claude Code 2.1.259.
