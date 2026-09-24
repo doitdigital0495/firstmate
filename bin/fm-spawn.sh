@@ -5388,14 +5388,12 @@ esac
 case "$HARNESS" in
   pi|pi-signed)
     case "$SPAWN_PI_STORE" in
-      default) LAUNCH="unset PI_CODING_AGENT_DIR; $LAUNCH" ;;
       '') : ;;
       *) LAUNCH="export PI_CODING_AGENT_DIR=$(shell_quote "$SPAWN_PI_STORE"); $LAUNCH" ;;
     esac
     ;;
   codex)
     case "$SPAWN_CODEX_STORE" in
-      default) LAUNCH="unset CODEX_HOME; $LAUNCH" ;;
       '') : ;;
       *) LAUNCH="export CODEX_HOME=$(shell_quote "$SPAWN_CODEX_STORE"); $LAUNCH" ;;
     esac
