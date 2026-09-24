@@ -28,8 +28,8 @@ fm_account_stores() {
   ' "$file") || return 1
   [ "$(printf '%s\n' "$values" | wc -l)" -eq 3 ] || return 1
   while IFS= read -r value; do
+    # shellcheck disable=SC2088 # Literal registry prefix, not shell expansion.
     case "$value" in
-      # shellcheck disable=SC2088 # Literal registry prefix, not shell expansion.
       '~/'*) printf '%s/%s\n' "$home" "${value:2}" ;;
       /*) printf '%s\n' "$value" ;;
       *) return 1 ;;

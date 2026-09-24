@@ -12,7 +12,7 @@ unset OPENROUTER_API_KEY TYPESAFE_API_KEY
 fmx_dispatch_route "$or_key" "$ts_key" "$FM_HOME/.env"
 unset or_key ts_key
 [ -n "$TS_KEY" ] || { echo "DISPATCH_CANARY: off ($TS_KEY_NAME absent)" >&2; exit 0; }
-command -v jq >/dev/null && command -v curl >/dev/null || { echo 'DISPATCH_CANARY: FAIL missing jq or curl' >&2; exit 1; }
+{ command -v jq >/dev/null && command -v curl >/dev/null; } || { echo 'DISPATCH_CANARY: FAIL missing jq or curl' >&2; exit 1; }
 response=$(mktemp) || exit 1
 trap 'rm -f "$response"' EXIT
 payload=$(jq -nc --arg model "$TS_MODEL" '{model:$model,state:{probe:"health"},questions:{probe:{type:"choice",instructions:"Choose the only option.",criteria:{ready:"The system is ready."}}}}')
