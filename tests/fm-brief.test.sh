@@ -226,6 +226,33 @@ test_ship_modes_generate_clean_briefs() {
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 
+# Work economy must reach every worker brief regardless of mode or safety gate,
+# without placing execution instructions in a secondmate supervisor charter.
+test_work_economy_in_all_worker_briefs() {
+  local home kind brief
+  home="$TMP_ROOT/work-economy-home"
+  mkdir -p "$home/data"
+  for kind in no-mistakes direct-PR local-only fast-lane scout herdr-ship herdr-scout; do
+    case "$kind" in
+      scout) FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" some-proj --scout >/dev/null || fail "$kind scaffold failed" ;;
+      herdr-scout) FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" some-proj --scout --herdr-lab >/dev/null || fail "$kind scaffold failed" ;;
+      herdr-ship) FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" some-proj --mode no-mistakes --herdr-lab >/dev/null || fail "$kind scaffold failed" ;;
+      fast-lane) FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" some-proj --mode no-mistakes --fast-lane >/dev/null || fail "$kind scaffold failed" ;;
+      *) FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" some-proj --mode "$kind" >/dev/null || fail "$kind scaffold failed" ;;
+    esac
+    brief="$home/data/$kind/brief.md"
+    [ "$(grep -cx '# Work economy' "$brief")" -eq 1 ] || fail "$kind: expected exactly one work-economy block"
+    assert_grep 'wait outside the conversation with ONE blocking command per run that loops internally and prints only the final state' "$brief" "$kind: missing single out-of-conversation wait"
+    assert_grep 'never take sleep-then-check turns' "$brief" "$kind: missing sleep-check prohibition"
+    assert_grep 'Search before reading; read files over ~300 lines by range, and never re-read a whole large file' "$brief" "$kind: missing range-read rule"
+    assert_grep 'Combine related probes into one script run; filter or limit command output' "$brief" "$kind: missing batched-probe rule"
+  done
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
+    "$ROOT/bin/fm-brief.sh" supervisor --secondmate --no-projects >/dev/null || fail "secondmate scaffold failed"
+  assert_no_grep '# Work economy' "$home/data/supervisor/brief.md" "secondmate charter received worker execution guidance"
+  pass "fm-brief.sh: every ship/scout variant carries harness-neutral work economy; secondmate does not"
+}
+
 # The fast lane is a ship-only, no-mistakes-only delivery contract, so the flag
 # must refuse everywhere else and its scaffold must carry the one-review-round
 # instructions plus the lane token the spawn later checks for agreement.
@@ -1098,6 +1125,7 @@ test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_work_economy_in_all_worker_briefs
 test_fast_lane_scaffold_and_refusals
 test_request_checklist_placeholder_and_content_rules
 test_ship_mode_is_required_and_closed_set
