@@ -116,11 +116,11 @@ test_non_md_file_refuses() {
 }
 
 test_non_pi_harness_refuses() {
-  local id=pi-skill-claude-s7 out status
-  make_case claude claude "$id"
+  local id=pi-skill-codex-s7 out status
+  make_case codex codex "$id"
   out=$(run_ship_spawn "$id" "$PROJ_DIR" --skill "$CASE_DIR/skills/seo-audit")
   status=$?
-  assert_refused_before_launch "$out" "$status" "$id" "resolved harness 'claude'" "--skill on a claude worker"
+  assert_refused_before_launch "$out" "$status" "$id" "resolved harness 'codex'" "--skill on a codex worker"
   pass "--skill on a harness without an equivalent refuses and names the harness"
 }
 

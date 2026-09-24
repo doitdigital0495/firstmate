@@ -373,7 +373,7 @@ family_for_basename() {
     fm-send-inbox.test.sh|fm-spawn-batch.test.sh|\
     fm-spawn-dispatch-profile.test.sh|fm-spawn-pi-skill.test.sh|fm-claude-trust.test.sh|\
     fm-trace-context-spawn.test.sh|fm-spawn-worktree-settle.test.sh|\
-    fm-spawn-claude-settings.test.sh|\
+    fm-spawn-claude-settings.test.sh|fm-spawn-claude-lean.test.sh|\
     fm-spawn-compact-adviser-disable.test.sh|\
     fm-spawn-compact-adviser-disable-remote.test.sh|\
     fm-teardown-endpoint-safety.test.sh)

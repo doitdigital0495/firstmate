@@ -458,6 +458,44 @@ Removing the `--force` arm makes the forced generic case refuse; honoring `--for
 Restoring `fm_backend_orca_kill`'s swallowed tool check makes the CLI-absent adapter case report success.
 Dropping the retention-is-not-durable line makes the refusal claim a retention teardown does not own.
 
+## Lean Claude task workers on tmux
+
+Verified 2026-09-24 on Claude Code 2.1.281 and tmux 3.2a with a disposable git project and two fresh pooled worktrees on an isolated tmux server.
+The baseline used `bin/fm-spawn.sh` from commit `b78e0c0d42886a2914a27aa53092876ef4ab416c`, before the lean-worker change; the second launch used the changed script, both with `--harness claude --backend tmux --model sonnet --effort medium --mode direct-PR --yolo off` and the same brief asking for `MEASURED_READY` without tools.
+The baseline loaded normal Claude configuration; the lean launch selected no setting sources, no MCP servers, no discovered slash commands, the worker contract, only Read/Bash/Edit/Write tools and Firstmate's explicit settings file.
+Both turns replied `MEASURED_READY`.
+The baseline's external-CLAUDE.md-import dialog was answered with the safe `No, disable external imports` default; the lean worker launched on a fresh project to avoid changing that declined consent.
+
+```sh
+claude --version; tmux -V
+# In a disposable checkout, stage the pre-change entrypoint in its bin directory.
+git show b78e0c0d42886a2914a27aa53092876ef4ab416c:bin/fm-spawn.sh > bin/.fm-spawn-before.sh
+chmod +x bin/.fm-spawn-before.sh
+# From a separate tmux lab pane with TREEHOUSE_ROOT pointing at the disposable pool:
+FM_HOME="$LAB/home" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 bin/.fm-spawn-before.sh fm-lean-before "$LAB/project" --harness claude --backend tmux --model sonnet --effort medium --mode direct-PR --yolo off
+FM_HOME="$LAB/home" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 bin/fm-spawn.sh fm-lean-after "$LAB/project-lean" --harness claude --backend tmux --model sonnet --effort medium --mode direct-PR --yolo off
+# Read only assistant.message.usage numeric fields for the new sessions' first requests.
+# Count input_tokens + cache_creation_input_tokens + cache_read_input_tokens.
+FM_CLAUDE_SETTINGS_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-claude-settings-live-e2e.test.sh
+```
+
+```text
+2.1.281 (Claude Code)
+tmux 3.2a
+spawned fm-lean-before harness=claude kind=ship mode=direct-PR yolo=off window=lab:fm-fm-lean-before
+spawned fm-lean-after harness=claude kind=ship mode=direct-PR yolo=off window=lab:fm-fm-lean-after
+baseline first-turn usage: input=2 cache_creation=56148 cache_read=0 total=56150
+lean first-turn usage: input=2 cache_creation=8218 cache_read=0 total=8220
+reduction: 85.4%
+lean turn-end: state/fm-lean-after.turn-ended exists
+lean busy-state: v1 ... state=idle source=claude-hook event=stop
+ok - claude 2.1.281 (Claude Code) lean bypass worker runs only Firstmate hooks, not project hooks
+ok - claude 2.1.281 (Claude Code) lean auto worker runs only Firstmate hooks, not project hooks
+```
+
+`fm-teardown.sh` returned both real workers and their slots, and the disposable tmux server and fixture were removed after the measurement.
+The live guard above rechecks that the installed CLI loads Firstmate's explicit hooks but not project hooks under the lean flags; `tests/fm-spawn-claude-lean.test.sh` pins the emitted ship/scout command shape without credentials.
+
 ## Claude workspace trust
 
 Verified 2026-09-03 on Claude Code 2.1.259.
