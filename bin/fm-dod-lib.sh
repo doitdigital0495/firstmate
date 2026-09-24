@@ -331,7 +331,7 @@ fm_dod_block() {  # <mode> <task-id> <data-dir> [lane] [preview]
   [ -z "$lane" ] || fast=$(fm_fast_lane_contract "$id")
   preview_note=
   [ -z "$preview" ] || preview_note="
-PREVIEW-ON-PUSH - this project's CI builds isolated preview environments (portal + Power BI) from every push to your fm/$id branch; no merge is needed for them.
+PREVIEW-ON-PUSH - this project's CI builds isolated preview environments from every push to your fm/$id branch; no merge is needed for them.
 Push your fm/$id branch as soon as your local checks pass, BEFORE you start no-mistakes, so those previews build immediately; previews never gate validation.
 Never open the PR yourself on this task: no-mistakes's pr step opens it after validation, pushing its fix commits on top of your already-pushed branch.
 While previews build, note the push in your status line (working [at=<epoch>]: pushed fm/$id for previews) and iterate with the captain on the preview links if asked.
