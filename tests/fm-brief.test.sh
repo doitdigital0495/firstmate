@@ -300,6 +300,58 @@ test_fast_lane_scaffold_and_refusals() {
   pass "fm-brief.sh: --fast-lane scaffolds the one-review-round contract and refuses misuse"
 }
 
+# Preview-on-push changes only the no-mistakes sequencing: it must not leak
+# into ordinary briefs, and unsupported modes/kinds must fail before writing.
+test_preview_on_push_scaffold_and_refusals() {
+  local home id brief out status args
+  home="$TMP_ROOT/preview-on-push-home"
+  mkdir -p "$home/data"
+  id='brief-preview-p1'
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --preview-on-push >/dev/null \
+    || fail "preview-on-push scaffold failed"
+  brief="$home/data/$id/brief.md"
+  grep -qx 'Delivery contract: mode=no-mistakes' "$brief" \
+    || fail "preview-on-push changed the delivery contract mode"
+  assert_grep "Push your fm/$id branch as soon as your local checks pass, BEFORE you start no-mistakes" "$brief" \
+    "preview-on-push brief must require push before validation"
+  assert_grep "previews never gate validation" "$brief" "preview build must not delay validation"
+  assert_grep "Never open the PR yourself on this task: no-mistakes's pr step opens it" "$brief" \
+    "preview-on-push brief must leave PR creation to no-mistakes"
+  assert_grep "pushing its fix commits on top of your already-pushed branch" "$brief" \
+    "preview-on-push brief must preserve pipeline fix pushes"
+  assert_grep "pushed fm/$id for previews" "$brief" "preview-on-push brief missing push status"
+  id='brief-preview-fast'
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --fast-lane --preview-on-push >/dev/null \
+    || fail "preview-on-push and fast lane should combine"
+  brief="$home/data/$id/brief.md"
+  assert_grep 'Delivery contract: mode=no-mistakes lane=fast' "$brief" "combined brief lost fast lane"
+  assert_grep 'PREVIEW-ON-PUSH' "$brief" "combined brief lost preview sequencing"
+  id='brief-preview-standard'
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null \
+    || fail "standard no-mistakes scaffold failed"
+  assert_no_grep 'PREVIEW-ON-PUSH' "$home/data/$id/brief.md" "standard brief gained preview sequencing"
+  id='brief-preview-direct'
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode direct-PR >/dev/null \
+    || fail "direct-PR scaffold failed"
+  assert_no_grep 'PREVIEW-ON-PUSH' "$home/data/$id/brief.md" "direct-PR brief gained preview sequencing"
+  for args in 'brief-preview-bad1 some-proj --mode direct-PR --preview-on-push' \
+    'brief-preview-bad2 some-proj --mode local-only --preview-on-push' \
+    'brief-preview-bad3 some-proj --scout --preview-on-push' \
+    'brief-preview-bad4 --secondmate --no-projects --preview-on-push'; do
+    id=${args%% *}
+    # shellcheck disable=SC2086  # args intentionally lists command arguments.
+    out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" $args 2>&1); status=$?
+    [ "$status" -ne 0 ] || fail "$id: preview-on-push outside no-mistakes ship should refuse"
+    case "$id" in
+      brief-preview-bad1|brief-preview-bad2)
+        assert_contains "$out" '--preview-on-push requires --mode no-mistakes' "$id: wrong refusal" ;;
+      *) assert_contains "$out" '--preview-on-push applies only to ship briefs' "$id: wrong refusal" ;;
+    esac
+    assert_absent "$home/data/$id/brief.md" "$id: refused scaffold wrote a brief"
+  done
+  pass 'fm-brief.sh: --preview-on-push sequences no-mistakes previews without changing other modes'
+}
+
 # The checklist placeholder and its content rule live in bin/fm-dod-lib.sh, so
 # they are tested against that library directly: an unfilled {ASKS} must read as
 # a leftover placeholder exactly like {TASK}, an empty checklist body must fail
@@ -1127,6 +1179,7 @@ test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_work_economy_in_all_worker_briefs
 test_fast_lane_scaffold_and_refusals
+test_preview_on_push_scaffold_and_refusals
 test_request_checklist_placeholder_and_content_rules
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry

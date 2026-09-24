@@ -299,9 +299,9 @@ Every other gate - intent, test exceptions, document, lint, CI - follows the sta
 EOF
 }
 
-fm_dod_block() {  # <mode> <task-id> <data-dir> [lane]
-  local mode=$1 id=$2 data=$3 lane=${4:-}
-  local checklist fast
+fm_dod_block() {  # <mode> <task-id> <data-dir> [lane] [preview]
+  local mode=$1 id=$2 data=$3 lane=${4:-} preview=${5:-}
+  local checklist fast preview_note
   case "$lane" in
     '') ;;
     fast)
@@ -314,9 +314,28 @@ fm_dod_block() {  # <mode> <task-id> <data-dir> [lane]
       echo "error: fm_dod_block: unknown lane '$lane'" >&2
       return 1 ;;
   esac
+  case "$preview" in
+    '') ;;
+    on-push)
+      if [ "$mode" != no-mistakes ]; then
+        echo "error: fm_dod_block: preview-on-push is a no-mistakes-only sequencing contract, not available for '$mode' (direct-PR already pushes before anything else)" >&2
+        return 1
+      fi
+      ;;
+    *)
+      echo "error: fm_dod_block: unknown preview contract '$preview'" >&2
+      return 1 ;;
+  esac
   checklist=$(fm_request_checklist_contract "$data" "$id")
   fast=
   [ -z "$lane" ] || fast=$(fm_fast_lane_contract "$id")
+  preview_note=
+  [ -z "$preview" ] || preview_note="
+PREVIEW-ON-PUSH - this project's CI builds isolated preview environments (portal + Power BI) from every push to your fm/$id branch; no merge is needed for them.
+Push your fm/$id branch as soon as your local checks pass, BEFORE you start no-mistakes, so those previews build immediately; previews never gate validation.
+Never open the PR yourself on this task: no-mistakes's pr step opens it after validation, pushing its fix commits on top of your already-pushed branch.
+While previews build, note the push in your status line (working [at=<epoch>]: pushed fm/$id for previews) and iterate with the captain on the preview links if asked.
+"
   case "$mode" in
     direct-PR)
       cat <<EOF
@@ -345,7 +364,7 @@ EOF
       cat <<EOF
 # Definition of done
 Delivery contract: mode=no-mistakes${lane:+ lane=$lane}
-The task is complete only when committed on your branch.
+The task is complete only when committed on your branch.${preview_note}
 When you believe it is complete, append \`done [at=<epoch>]: {summary}; asks <done>/<total>\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 

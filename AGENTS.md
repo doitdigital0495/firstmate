@@ -371,6 +371,10 @@ The path's worker, automated gates, and captain approval remain authoritative:
 - **direct-PR** has the worker push and open a PR without the no-mistakes pipeline, then waits for the configured merge authority.
 - **local-only** has the worker stop with a clean ready branch, then waits for the configured merge authority before firstmate uses the guarded fast-forward merge path.
 
+A project whose CI builds preview environments from fm/* pushes registers `preview-on-push` in its data/projects.md posture (captain direction 2026-09-24: no-mistakes gates feature → dev, never the preview).
+For a preview-on-push no-mistakes ship, the worker pushes its fm/* branch right after its local checks pass — before starting the no-mistakes run — so previews build immediately, and never opens the PR itself; no-mistakes still owns review through CI and opens the PR, pushing its fix commits on top of the already-pushed branch.
+Previews never gate validation: the run may start immediately after the push, and preview iteration with the captain happens while it runs.
+
 Delivery mode and `yolo` are orthogonal.
 `yolo` governs merge authority only: with it off, the captain approves every PR merge and every local-only landing; with it on, firstmate merges green, in-scope work itself.
 Never merge a red PR under either setting unless a current explicit captain instruction names the single GitHub check waived through `fm-pr-merge.sh --allow-red`; that attended-only waiver still requires every other check green.
