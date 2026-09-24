@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # fm-dispatch-resolve.sh - resolve one concrete crewmate or scout dispatch
-# profile from a task brief with typesafe.ai's System One model (Jev), opt-in.
+# profile from a task brief with Jev via OpenRouter's System One API, opt-in.
 #
 # Usage:
 #   fm-dispatch-resolve.sh <brief-file> [--project <name>]
 #
-# Opt-in gate: TYPESAFE_API_KEY non-empty in this process environment, else a
-#   TYPESAFE_API_KEY= line in $FM_HOME/.env read with fmx_env_get, the same
+# Opt-in gate: OPENROUTER_API_KEY non-empty in this process environment, else an
+#   OPENROUTER_API_KEY= line in $FM_HOME/.env read with fmx_env_get, the same
 #   accessor as FMX_PAIRING_TOKEN (bin/fm-env-lib.sh). The environment wins.
 #   Absent in both: one "dispatch-resolve: off" line on stderr, nothing on
 #   stdout, exit 0, no network call, so firstmate dispatches exactly as today.
@@ -14,15 +14,14 @@
 #   a file descriptor, never on argv; nothing logs or writes it.
 #
 # What it does when on with at least one rule: one POST to
-#   https://api.typesafe.ai/v1/systemone with the project name and the whole brief as
-#   state and ONE Choice question whose
-#   options are every rule's `when` from config/crew-dispatch.json plus one
-#   fixed generic none option. Jev returns the matched rule, a probability per
+#   https://openrouter.ai/api/v1/systemone with the project name and whole brief as
+#   state and TWO batched Choice questions: rule matching (every rule's `when`
+#   plus a neutral none option) and candidate/effort preference. Jev returns the matched rule, a probability per
 #   option, and a confidence. Everything after that is jq: the confidence
 #   floor, the rule's declared `approval` and `floor`, each profile's declared
-#   `provider` and `floor`, the quota rows from ONE quota-axi --json snapshot,
+#   `provider` and `floor`, the quota rows from per-store quota-axi --json snapshots,
 #   and the spendPriority argmax over the eligible candidates. The model never
-#   sees quota, catalogs, approvals, `why`, or `use`. With no rules, it returns
+#   sees quota, catalogs, approvals, `why`, or credential paths. With no rules, it returns
 #   a non-clear result so firstmate keeps using the existing intake.
 #   docs/configuration.md "Crew dispatch profiles" owns the declared fields and
 #   "Typed dispatch resolution" owns this tool's operator contract.
@@ -44,16 +43,18 @@
 #   actionable, never selected around.
 #
 # Environment:
-#   TYPESAFE_API_KEY is the only resolver-specific environment setting.
+#   OPENROUTER_API_KEY opts in; FM_DISPATCH_ROUTE=direct with TYPESAFE_API_KEY
+#   selects the direct typesafe.ai fallback instead.
 #
 # Authority: this tool never replaces firstmate's judgment, quota-array-dispatch,
 #   the captain-approval gate, or fm-spawn.sh validation; it publishes one
 #   inspectable answer plus every candidate's evidence, in code.
 set -u
 
-TYPESAFE_API_KEY_PRIVATE=${TYPESAFE_API_KEY:-}
-export -n TYPESAFE_API_KEY_PRIVATE 2>/dev/null || true
-unset TYPESAFE_API_KEY
+OPENROUTER_API_KEY_PRIVATE=${OPENROUTER_API_KEY:-}
+DIRECT_API_KEY_PRIVATE=${TYPESAFE_API_KEY:-}
+export -n OPENROUTER_API_KEY_PRIVATE DIRECT_API_KEY_PRIVATE 2>/dev/null || true
+unset OPENROUTER_API_KEY TYPESAFE_API_KEY
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
@@ -68,10 +69,18 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-env-lib.sh"
 # shellcheck source=bin/fm-timing-lib.sh
 . "$SCRIPT_DIR/fm-timing-lib.sh"
+# shellcheck source=bin/fm-account-lib.sh
+. "$SCRIPT_DIR/fm-account-lib.sh"
 
 CONFIDENCE_FLOOR=0.6
-TS_MODEL=jev-latest
-TS_BASE=https://api.typesafe.ai
+TS_MODEL=typesafe/jev-1.13
+TS_BASE=https://openrouter.ai/api
+if [ "${FM_DISPATCH_ROUTE:-}" = direct ]; then
+  TS_MODEL=jev-latest
+  TS_BASE=https://api.typesafe.ai
+  OPENROUTER_API_KEY_PRIVATE=$DIRECT_API_KEY_PRIVATE
+  [ -n "$OPENROUTER_API_KEY_PRIVATE" ] || OPENROUTER_API_KEY_PRIVATE=$(fmx_env_get TYPESAFE_API_KEY "$FM_HOME/.env")
+fi
 TS_TIMEOUT=5
 DEFAULT_WHEN="No listed rule applies to this task."
 
@@ -99,11 +108,12 @@ while [ $# -gt 0 ]; do
 done
 
 # ---- opt-in gate ---------------------------------------------------------------
-if [ -z "$TYPESAFE_API_KEY_PRIVATE" ]; then
-  TYPESAFE_API_KEY_PRIVATE=$(fmx_env_get TYPESAFE_API_KEY "$FM_HOME/.env")
+if [ -z "$OPENROUTER_API_KEY_PRIVATE" ] && [ "${FM_DISPATCH_ROUTE:-}" != direct ]; then
+  OPENROUTER_API_KEY_PRIVATE=$(fmx_env_get OPENROUTER_API_KEY "$FM_HOME/.env")
 fi
-if [ -z "$TYPESAFE_API_KEY_PRIVATE" ]; then
-  echo "dispatch-resolve: off (TYPESAFE_API_KEY absent from the environment and $FM_HOME/.env)" >&2
+if [ -z "$OPENROUTER_API_KEY_PRIVATE" ]; then
+  if [ "${FM_DISPATCH_ROUTE:-}" = direct ]; then key_name=TYPESAFE_API_KEY; else key_name=OPENROUTER_API_KEY; fi
+  echo "dispatch-resolve: off ($key_name absent from the environment and $FM_HOME/.env)" >&2
   exit 0
 fi
 
@@ -146,13 +156,14 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
         end);
   def profile_bad($p):
     ($p | type) != "object"
+    or ($p | has("account") and ((.account | type) != "string" or (.account | test("^[a-z][a-z0-9-]*$") | not)))
     or (($p.harness | type) != "string") or (($p.harness | length) == 0)
     or ($p | has("model") and ((.model | type) != "string" or (.model | length) == 0))
     or ($p | has("effort") and ((.effort | type) != "string" or (.effort | length) == 0))
     or ($p | has("provider") and (provider_id(.provider) | not))
     or ($p | has("floor") and floor_bad(.floor; false));
   def duplicate_profiles($items):
-    ($items | map([.harness, (.model // null), (.effort // null)] | @json)) as $keys
+    ($items | map([.account // null, .harness, (.model // null), (.effort // null)] | @json)) as $keys
     | ($keys | length) != ($keys | unique | length);
   if type != "object" then "top-level value must be an object"
   elif has("rules") and (.rules | type) != "array" then "rules must be an array"
@@ -233,19 +244,34 @@ command -v curl >/dev/null 2>&1 || emit_error "curl not installed"
           type: "choice",
           instructions: "Which ONE dispatch rule best fits `task` (read `task.brief` and `task.project`)? Each option is the rule'"'"'s own matching condition; pick `default` when no rule'"'"'s condition is met, including when a rule'"'"'s own exemption text excludes this task.",
           criteria: ($criteria + {default: $none_criterion})
+        },
+        profile: {
+          type: "choice",
+          instructions: "Choose the best candidate and effort for this task from the rule you matched above. These are preferences only; code checks eligibility and quota independently.",
+          criteria: ([$cfg.rules | to_entries[] | .key as $i | .value as $rule |
+            (if ($rule.use | type) == "array" then $rule.use else [$rule.use] end) | to_entries[] |
+            {key: "rule_\($i + 1)_\(.key + 1)", value: "\($rule.when) | \(.value.harness) \(.value.model // "default") effort=\(.value.effort // "default") account=\(.value.account // "home")"}] | from_entries)
         }
       }
     }')
   T0=$(fm_timing_now_ms)
   HTTP=$(printf '%s' "$REQUEST" | curl -sS --max-time "$TS_TIMEOUT" -o "$RESP_FILE" -w '%{http_code}' \
     -X POST "$TS_BASE/v1/systemone" -H 'Content-Type: application/json' \
-    -H @/dev/fd/3 3< <(printf 'Authorization: Bearer %s\n' "$TYPESAFE_API_KEY_PRIVATE") \
+    -H @/dev/fd/3 3< <(printf 'Authorization: Bearer %s\n' "$OPENROUTER_API_KEY_PRIVATE") \
     --data-binary @- 2>/dev/null) || HTTP=000
   T1=$(fm_timing_now_ms)
   LAT_MS=$(( T1 - T0 ))
   [ "$HTTP" = 200 ] || emit_error "http $HTTP after ${LAT_MS} ms: $(head -c 200 "$RESP_FILE" 2>/dev/null | tr '\n' ' ')"
 jq -e --slurpfile rules "$RULES" '
     (($rules[0].rules | to_entries | map("rule_" + ((.key + 1) | tostring))) + ["default"] | sort) as $choices |
+    ([$rules[0].rules | to_entries[] | .key as $i | .value.use | (if type == "array" then . else [.] end) | to_entries[] | "rule_\($i + 1)_\(.key + 1)"] | sort) as $profiles |
+    (.answers.profile.choice | type) == "string" and
+    (.answers.profile.choice as $preferred | ($profiles | index($preferred)) != null) and
+    (.answers.profile.confidence | type) == "number" and
+    .answers.profile.confidence >= 0 and .answers.profile.confidence <= 1 and
+    (.answers.profile.probabilities | type) == "object" and
+    ((.answers.profile.probabilities | keys | sort) == $profiles) and
+    all(.answers.profile.probabilities[]; type == "number" and . >= 0 and . <= 1) and
     (.answers.rule.choice | type) == "string" and
     (.answers.rule.confidence | type) == "number" and
     .answers.rule.confidence >= 0 and .answers.rule.confidence <= 1 and
@@ -259,22 +285,45 @@ jq -e --slurpfile rules "$RULES" '
        (.usage.output_tokens | type) == "number"))' \
   "$RESP_FILE" >/dev/null 2>&1 || emit_error "response is not a rule Choice answer"
 
-# ---- quota evidence: one quota-axi --json snapshot -----------------------------
+# ---- quota evidence: one snapshot per authorized credential store -------------
 command -v quota-axi >/dev/null 2>&1 || emit_error "quota-axi not installed"
 quota-axi --json > "$QUOTA" 2>/dev/null || emit_error "quota-axi --json failed"
 fm_quota_json_valid < "$QUOTA" || emit_error "quota-axi --json returned an invalid snapshot"
+ACCOUNT_QUOTAS='{}'
+while IFS= read -r account; do
+  [ -n "$account" ] || continue
+  stores=()
+  mapfile -t stores < <(fm_account_stores "$CONFIG/accounts.json" "$account")
+  [ "${#stores[@]}" -eq 3 ] || continue
+  # Memoize identical store triples; no candidate gets another account's quota.
+  store_key=$(printf '%s\n' "${stores[@]}" | jq -Rsc .)
+  previous=$(jq -r --arg key "$store_key" 'to_entries[] | select(.value.key == $key) | .key' <<<"$ACCOUNT_QUOTAS" | head -n 1)
+  if [ -n "$previous" ]; then
+    ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg prev "$previous" '. + {($a): .[$prev]}' <<<"$ACCOUNT_QUOTAS")
+    continue
+  fi
+  account_quota=$(mktemp) || emit_error "mktemp failed"
+  if ! CODEX_HOME=${stores[2]} PI_CODING_AGENT_DIR=${stores[1]} CLAUDE_CONFIG_DIR=${stores[0]} quota-axi --json > "$account_quota" 2>/dev/null || ! fm_quota_json_valid < "$account_quota"; then
+    rm -f "$account_quota"
+    emit_error "quota-axi --json failed for account $account"
+  fi
+  ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" --slurpfile snapshot "$account_quota" '. + {($a): {key: $key, snapshot: $snapshot[0]}}' <<<"$ACCOUNT_QUOTAS")
+  rm -f "$account_quota"
+done < <(jq -r '[((.rules // [])[] | .use | if type == "array" then .[] else . end), (.default // empty | if type == "array" then .[] else . end) | .account // empty] | unique[]' "$RULES")
 
 # ---- resolution: declared gates + quota evidence + argmax, all in jq ------------
-RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" \
+RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" \
   --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" '
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
-  def prov($p): ([$q.providers[] | select(.provider == $p)] | first) // null;
-  def rows($p): (prov($p) | .quotaSemantics.effectiveAvailability // []);
+  def account_quota($c): (if $c.account then $account_quotas[$c.account].snapshot else $q end);
+  def prov($p): ([.providers[] | select(.provider == $p)] | first) // null;
+  def rows($p): (prov($p).quotaSemantics.effectiveAvailability // []);
   def bare($m): ($m | split("/") | last);
   def provider_of($c): ($c.provider // $pmap[$c.harness] // null);
   def measured($p):
-    (prov($p) != null and (["known", "partial"] | index(prov($p).quotaSemantics.status)) != null);
+    (prov($p)) as $provider |
+    ($provider != null and (["known", "partial"] | index($provider.quotaSemantics.status)) != null);
   def applicable($p; $m):
     (bare($m)) as $bare |
     [rows($p)[] | select(
@@ -294,6 +343,9 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
     $rows | map({scope, status, pct: (.effectivePercentRemaining // null), runway: (.runway.status // null), spendPriority: (.selection.spendPriority // null)});
   def evaluate($c):
     (provider_of($c)) as $p |
+    if $c.account and $account_quotas[$c.account] == null then
+      {profile: $c, eligible: false, reason: "cross-account routing disabled or account not registered"}
+    else account_quota($c) |
     if $p == null then {profile: $c, eligible: false, reason: "no provider family for harness \($c.harness); declare provider on the profile"}
     elif prov($p) == null then {profile: $c, provider: $p, eligible: true, unranked: true, reason: "provider \($p) not in the quota snapshot"}
     else
@@ -331,7 +383,7 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
         {profile: $c, provider: $p, bounds: $bounds, scope: $limiting.scope, pct: $limiting.effectivePercentRemaining,
          spendPriority: $limiting.selection.spendPriority, runway: $limiting.runway.status, eligible: true, reason: "ok"}
       end
-    end;
+    end end;
   ($a.choice) as $choice |
   (if ($choice | test("^rule_[1-9][0-9]*$"))
    then ($choice | ltrimstr("rule_") | tonumber)
@@ -339,7 +391,7 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
   (if $choice == "default" then null
    elif $rule_number != null and $rule_number <= (($cfg.rules // []) | length) then $cfg.rules[$rule_number - 1]
    else null end) as $rule |
-  (if $rule == null then "none" else floor_state($rule.floor; $rule.floor.provider) end) as $rule_floor_state |
+  (if $rule == null then "none" else ($q | floor_state($rule.floor; $rule.floor.provider)) end) as $rule_floor_state |
   (if $choice != "default" and $rule == null then []
    elif $rule == null then profiles($cfg.default // null)
    else profiles($rule.use)
@@ -353,7 +405,7 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
    else {source: $choice, use: profiles($rule.use), note: "rule matched"} end) as $sel |
   {
     model: $r.model, latency_ms: $lat, tokens: ($r.usage // null),
-    rule: $choice,
+    rule: $choice, profile_preference: $r.answers.profile.choice,
     rule_when: (if $rule == null then $none_criterion else $rule.when end | .[0:60]),
     confidence: $a.confidence, probabilities: $a.probabilities
   } as $ev |
@@ -370,9 +422,11 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
     if ($elig | length) == 0 then $ev + {status: "escalate", reason: "no rankable eligible candidate", note: $sel.note, candidates: $cands}
     else
       ($elig | max_by(.spendPriority)) as $best |
-      ([$elig[] | select(.spendPriority == $best.spendPriority)] | length) as $ties |
-      if $ties > 1 then $ev + {status: "escalate", reason: "genuine spendPriority tie", note: $sel.note, candidates: $cands}
-      else $ev + {status: "clear", note: $sel.note, candidates: $cands, chosen: $best}
+      ([$elig[] | select(.spendPriority == $best.spendPriority)]) as $ties |
+      ([$ties[] | . as $candidate | $sel.use | to_entries[] |
+        select(.value == $candidate.profile) | select($ev.profile_preference == "\($sel.source)_\(.key + 1)") | $candidate] | first) as $preferred |
+      if ($ties | length) > 1 and $preferred == null then $ev + {status: "escalate", reason: "genuine spendPriority tie", note: $sel.note, candidates: $cands}
+      else $ev + {status: "clear", note: $sel.note, candidates: $cands, chosen: ($preferred // $best)}
         + (if ($unranked | length) > 0 then
              {unranked_note: "\($unranked | length) eligible candidate(s) unranked (\([$unranked[].provider] | unique | join(", ")))"}
            else {} end)
@@ -389,16 +443,19 @@ TEXT=$(jq -r '
   "  model: \(show(.model))   latency_ms: \(show(.latency_ms))   tokens: \(show(.tokens.input_tokens))/\(show(.tokens.output_tokens))",
   "  rule: \(.rule | flat) (\(.rule_when | flat))   confidence: \(.confidence | flat)",
   "  probabilities: \([.probabilities | to_entries[] | "\(.key | flat)=\(.value | flat)"] | join(" "))",
+  "  candidate_preference: \(.profile_preference | flat) (quota gates and spendPriority take precedence)",
   (if .reason then "  reason: \(.reason | flat)" else empty end),
   (if .note then "  note: \(.note | flat)" else empty end),
   (if .unranked_note then "  note: \(.unranked_note | flat)" else empty end),
   (.candidates[]? | "  candidate: \(.profile.harness | flat):\(show(.profile.model))"
+      + (if .profile.account then "  account=\(.profile.account | flat)" else "" end)
       + (if .provider then "  provider=\(.provider | flat)" else "" end)
       + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))  runway=\(show(.runway))" else "" end)
       + (if (.bounds // [] | length) > 1 then "  bounds=" + ([.bounds[] | "\(.scope | flat):\(show(.pct))%/\((.runway // .status) | flat)"] | join(",")) else "" end)
       + "  -> " + (if .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)),
   (if .chosen then "  profile: --harness \(.chosen.profile.harness | shell_arg)"
       + (if .chosen.profile.model then " --model \(.chosen.profile.model | shell_arg)" else "" end)
-      + (if .chosen.profile.effort then " --effort \(.chosen.profile.effort | shell_arg)" else "" end) else empty end)' <<<"$RESULT") || emit_error "output rendering failed"
+      + (if .chosen.profile.effort then " --effort \(.chosen.profile.effort | shell_arg)" else "" end)
+      + (if .chosen.profile.account then " --account \(.chosen.profile.account | shell_arg)" else "" end) else empty end)' <<<"$RESULT") || emit_error "output rendering failed"
 printf '%s\n' "$TEXT"
 exit 0

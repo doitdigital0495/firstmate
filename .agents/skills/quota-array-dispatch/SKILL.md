@@ -40,7 +40,11 @@ The opt-in `bin/fm-dispatch-resolve.sh` (`docs/configuration.md` "Typed dispatch
 
 ## Read the default TOON
 
-Start each intake by running `quota-axi` with no `--json`, and reuse that initial TOON for every candidate until an unknown pool requires the single bounded retry below.
+Start each intake by running `quota-axi` with no `--json` for the home's default account.
+For each distinct named-account store triple referenced by a candidate, read that home's `config/accounts.json` and require `crossAccount.enabled == true` plus an allowlisted account; otherwise mark that candidate `not eligible: cross-account routing disabled` without probing its store.
+Read one additional `quota-axi` snapshot per eligible distinct store triple with `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, and `CODEX_HOME` pinned to that entry; use only that store's snapshot for its candidates, then rank the union with the same spendPriority procedure.
+A home with no `crossAccount` block keeps the default-only intake unchanged, and a home with only the Geris registry entry cannot dispatch a personal candidate.
+Reuse each snapshot for its candidates until an unknown pool requires the bounded retry below.
 Post-consolidation quota-axi (the floor owned by `bin/fm-quota-axi-lib.sh`) puts `spendPriority` in the default `quota[]` block beside `effectivePercentRemaining`, `runway`, `confidence`, `limitedBy`, and `resetsAt`.
 Sparse `exhaustion[]` carries finite-runway seconds only for `projected_exhaustion` and `exhausted_now`.
 Sparse `attention[]` names auth, stale, and unmeasurable facts.
@@ -48,7 +52,7 @@ Sparse `attention[]` names auth, stale, and unmeasurable facts.
 It already computes the economics that older instructions reconstructed by hand from headroom, pace, reserve, and window-id lists; do not recompute those.
 Do not read `--json` on the normal path, and do not reach for `--full` to rebuild that economics.
 
-After reading the TOON, fall back to one `quota-axi --json` call only when that TOON is genuinely ambiguous for the decision, or when the installed quota-axi is somehow below the floor so its TOON lacks `spendPriority`.
+After reading each store's TOON, fall back to one env-pinned `quota-axi --json` call for that store only when its TOON is genuinely ambiguous for the decision, or when the installed quota-axi is somehow below the floor so its TOON lacks `spendPriority`.
 Ambiguous means a candidate's `spendPriority` is the literal `unknown` or unmeasurable, a real tie still needs extra evidence, or a candidate's eligibility is unclear from `quota[]` plus `attention[]`.
 Reuse its JSON result to identify the unknown pools before the bounded warm-up and retry below; do not let the fallback's still-unknown reading settle a choice.
 Below-floor is rare: bootstrap enforces `FM_QUOTA_AXI_MIN` and normally reports `MISSING` before dispatch; if an intake somehow reaches an older build whose TOON lacks `spendPriority`, use the defensive `--json` fallback rather than treating the missing scalar as healthy.

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--fast-lane] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--fast-lane] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--account <id>] [--backend <name>]
 #        [--priority <1-99>] (release order on a shaped Claude credential store; lower goes first, default 50 - bin/fm-claude-admission.sh)
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--account <id>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -91,6 +91,12 @@
 #   worktree is told once to return, and only a shell that will not go refuses.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
+#   --account <id> selects only an account in THIS home's config/accounts.json
+#   when crossAccount.enabled is true, and only for a crewmate or scout.
+#   Unknown, absent, or disabled registries refuse before home identity pinning.
+#   The three resolved stores are recorded as claude_config_dir=, pi_agent_dir=,
+#   and codex_home= in state/<id>.meta and reused on relaunch even when the
+#   switch is later off; --relaunch cannot change the recorded account.
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
@@ -607,6 +613,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
+# shellcheck source=bin/fm-account-lib.sh
+. "$SCRIPT_DIR/fm-account-lib.sh"
 # shellcheck source=bin/fm-trace-context-lib.sh
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
@@ -629,6 +637,8 @@ MODE=
 YOLO=
 TRACEPARENT_ARG=
 PRIORITY_ARG=
+ACCOUNT_ARG=
+ACCOUNT_SET=0
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
@@ -662,6 +672,7 @@ for a in "$@"; do
       yolo) YOLO=$a; YOLO_SET=1 ;;
       traceparent) TRACEPARENT_ARG=$a; TRACEPARENT_SET=1 ;;
       priority) PRIORITY_ARG=$a ;;
+      account) ACCOUNT_ARG=$a; ACCOUNT_SET=1 ;;
       skill) SKILLS+=("$a") ;;
       mcp-config) MCP_CONFIGS+=("$a") ;;
       claude-add-dir) CLAUDE_ADD_DIRS+=("$a") ;;
@@ -690,6 +701,8 @@ for a in "$@"; do
     --fast-lane) FAST_LANE=1; FAST_LANE_SET=1 ;;
     --traceparent) want_value=traceparent ;;
     --traceparent=*) TRACEPARENT_ARG=${a#--traceparent=}; TRACEPARENT_SET=1 ;;
+    --account) want_value=account ;;
+    --account=*) ACCOUNT_ARG=${a#--account=}; ACCOUNT_SET=1 ;;
     --priority) want_value=priority ;;
     --priority=*) PRIORITY_ARG=${a#--priority=} ;;
     --skill) want_value=skill ;;
@@ -731,6 +744,10 @@ done
   echo "error: --yolo requires a non-empty value" >&2
   exit 1
 }
+[ "$ACCOUNT_SET" -eq 0 ] || [ -n "$ACCOUNT_ARG" ] || {
+  echo "error: --account requires a non-empty value" >&2
+  exit 1
+}
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || {
   echo "error: --traceparent requires a non-empty value" >&2
   exit 1
@@ -765,6 +782,10 @@ esac
 # task's own durable record below. Contradicting it on the command line is a
 # refusal rather than a silently-ignored flag.
 if [ "$RELAUNCH" -eq 1 ]; then
+  [ "$ACCOUNT_SET" -eq 0 ] || {
+    echo "error: --relaunch keeps the recorded account; --account cannot override it" >&2
+    exit 1
+  }
   [ "$BACKEND_SET" -eq 0 ] || {
     echo "error: --relaunch reuses the task's recorded backend; --backend cannot override it" >&2
     exit 1
@@ -1398,6 +1419,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   fi
   rc=0
   shared_args=()
+  [ -z "$ACCOUNT_ARG" ] || shared_args+=(--account "$ACCOUNT_ARG")
   [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")
   [ -z "$MODEL" ] || shared_args+=(--model "$MODEL")
   [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
@@ -1466,6 +1488,17 @@ if [ "$RELAUNCH" -ne 1 ]; then
   fm_lease_forbid_branch "new-task spawn (fm-spawn)" --away-relocated
 fi
 
+# Explicit account routing is read-only and fails before the home identity pin or
+# any other durable mutation. Relaunches use the recorded stores, even after off.
+SPAWN_ACCOUNT_STORES=()
+if [ "$ACCOUNT_SET" -eq 1 ]; then
+  [ "$KIND" != secondmate ] || { echo 'error: --account is for workers only' >&2; exit 1; }
+  mapfile -t SPAWN_ACCOUNT_STORES < <(fm_account_stores "$CONFIG/accounts.json" "$ACCOUNT_ARG")
+  [ "${#SPAWN_ACCOUNT_STORES[@]}" -eq 3 ] || {
+    echo "error: account '$ACCOUNT_ARG' is not enabled in this home's config/accounts.json" >&2
+    exit 1
+  }
+fi
 # The home's own session/account pin comes ahead of every durable mutation this
 # spawn could make - the parent's state directory, a second mate's worktree
 # fast-forward, its state directory, and its inherited config all follow this
@@ -3225,8 +3258,24 @@ if [ "$KIND" = secondmate ]; then
 fi
 
 SPAWN_CLAUDE_STORE=
+SPAWN_PI_STORE=
+SPAWN_CODEX_STORE=
 if [ "$RELAUNCH" -eq 1 ] && [ -n "${RELAUNCH_META:-}" ] && [ -f "$RELAUNCH_META" ]; then
   SPAWN_CLAUDE_STORE=$(fm_meta_get "$RELAUNCH_META" claude_config_dir) || SPAWN_CLAUDE_STORE=
+  SPAWN_PI_STORE=$(fm_meta_get "$RELAUNCH_META" pi_agent_dir) || SPAWN_PI_STORE=
+  SPAWN_CODEX_STORE=$(fm_meta_get "$RELAUNCH_META" codex_home) || SPAWN_CODEX_STORE=
+  ACCOUNT_ARG=$(fm_meta_get "$RELAUNCH_META" account) || ACCOUNT_ARG=
+fi
+if [ "$ACCOUNT_SET" -eq 1 ]; then
+  SPAWN_CLAUDE_STORE=${SPAWN_ACCOUNT_STORES[0]}
+  SPAWN_PI_STORE=${SPAWN_ACCOUNT_STORES[1]}
+  SPAWN_CODEX_STORE=${SPAWN_ACCOUNT_STORES[2]}
+fi
+if [ "$ACCOUNT_SET" -eq 0 ] && [ "$KIND" != secondmate ]; then
+  case "$HARNESS" in
+    pi|pi-signed) [ -n "$SPAWN_PI_STORE" ] || { if [ "$RELAUNCH" -eq 1 ]; then SPAWN_PI_STORE=default; else SPAWN_PI_STORE=${PI_CODING_AGENT_DIR:-default}; fi; } ;;
+    codex) [ -n "$SPAWN_CODEX_STORE" ] || { if [ "$RELAUNCH" -eq 1 ]; then SPAWN_CODEX_STORE=default; else SPAWN_CODEX_STORE=${CODEX_HOME:-default}; fi; } ;;
+  esac
 fi
 if [ -z "$SPAWN_CLAUDE_STORE" ] && [ "$HARNESS" = claude ]; then
   # A first launch inherits the HOME's pinned account, never the ambient one, so
@@ -5070,7 +5119,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo lane tasktmp model effort busy_gen spawn_gen traceparent claude_config_dir backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo lane tasktmp model effort busy_gen spawn_gen traceparent account claude_config_dir pi_agent_dir codex_home backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5092,7 +5141,10 @@ preserve_relaunch_meta() {
   # The task's own Claude credential binding, written once at first launch and
   # carried forward verbatim by every relaunch. Kept even while the task runs on
   # another harness, so switching back to claude returns to the same account.
+  [ -z "$ACCOUNT_ARG" ] || echo "account=$ACCOUNT_ARG"
   [ -z "$SPAWN_CLAUDE_STORE" ] || echo "claude_config_dir=$SPAWN_CLAUDE_STORE"
+  [ -z "$SPAWN_PI_STORE" ] || echo "pi_agent_dir=$SPAWN_PI_STORE"
+  [ -z "$SPAWN_CODEX_STORE" ] || echo "codex_home=$SPAWN_CODEX_STORE"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
@@ -5332,6 +5384,22 @@ esac
 case "${HARNESS}:${SPAWN_CLAUDE_STORE}" in
   claude:|claude:default) : ;;  # handled by the -u above
   claude:*) LAUNCH="CLAUDE_CONFIG_DIR=$(shell_quote "$SPAWN_CLAUDE_STORE") $LAUNCH" ;;
+esac
+case "$HARNESS" in
+  pi|pi-signed)
+    case "$SPAWN_PI_STORE" in
+      default) LAUNCH="unset PI_CODING_AGENT_DIR; $LAUNCH" ;;
+      '') : ;;
+      *) LAUNCH="export PI_CODING_AGENT_DIR=$(shell_quote "$SPAWN_PI_STORE"); $LAUNCH" ;;
+    esac
+    ;;
+  codex)
+    case "$SPAWN_CODEX_STORE" in
+      default) LAUNCH="unset CODEX_HOME; $LAUNCH" ;;
+      '') : ;;
+      *) LAUNCH="export CODEX_HOME=$(shell_quote "$SPAWN_CODEX_STORE"); $LAUNCH" ;;
+    esac
+    ;;
 esac
 if [ "$KIND" = secondmate ]; then
   sq_home=$(shell_quote "$PROJ_ABS")

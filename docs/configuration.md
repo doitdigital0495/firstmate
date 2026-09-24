@@ -457,7 +457,7 @@ Every claude launch's `--settings` file, `state/<id>.claude-settings.json`, also
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
-The shell scripts do not match those rules; firstmate chooses the best matching rule with judgment, resolves its profile object or array under the operating contract in `AGENTS.md` section 4 and `quota-array-dispatch`, and passes only concrete `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
+The shell scripts do not match those rules; firstmate chooses the best matching rule with judgment, resolves its profile object or array under the operating contract in `AGENTS.md` section 4 and `quota-array-dispatch`, and passes concrete `--harness`, `--model`, `--effort`, and optional `--account` flags to `fm-spawn.sh`.
 When the file exists, `fm-spawn.sh` enforces that contract by refusing crewmate and scout spawns that lack an explicit harness (`--harness`, a positional adapter, or a raw launch command).
 Batch spawns satisfy the same requirement with a shared `--harness`.
 Secondmate spawns are exempt and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
@@ -472,7 +472,7 @@ This section is the single owner of the canonical schema and its per-field seman
       "approval": "captain",
       "floor": { "scope": "<quota-axi scope>", "min_percent": 20, "provider": "<quota-axi provider>" },
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "provider": "<optional quota-axi provider>", "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
+        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "account": "<optional registry account id>", "provider": "<optional quota-axi provider>", "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
       ],
       "why": "<optional rationale that helps firstmate choose>"
     }
@@ -486,8 +486,9 @@ This section is the single owner of the canonical schema and its per-field seman
 Per rule, `when` and `use` are required; the top-level `rules` array itself may be absent or empty for a default-only configuration.
 Both `use` and the optional top-level `default` accept either one profile object or a non-empty array of profile objects.
 The single-object form stays fully backward-compatible, and every profile needs `harness`.
-Profile `model` and `effort` fields and rule `why` are optional.
-Rule `approval` and `floor`, and profile `provider` and `floor` are optional declarations that only [typed dispatch resolution](#typed-dispatch-resolution-env-typesafe_api_key) applies in code; without that opt-in they are inert, and firstmate's own intake reads them as ordinary hints.
+Profile `model`, `effort`, and `account` fields and rule `why` are optional.
+An absent `account` uses the home's normal seat; a named account must exist in that home's enabled registry and is passed verbatim as `--account` on selection.
+Rule `approval` and `floor`, and profile `provider` and `floor` are optional declarations that only [typed dispatch resolution](#typed-dispatch-resolution-env-openrouter_api_key) applies in code; without that opt-in they are inert, and firstmate's own intake reads them as ordinary hints.
 The resolver supplies the fixed neutral Choice option `No listed rule applies to this task.` for work that matches no listed rule.
 `approval` accepts only `"captain"` and means a task the rule matches is never dispatched from the tool's answer alone.
 A rule `floor` names the quota-axi `provider` and `scope` whose `effectivePercentRemaining` must be at least `min_percent` for the rule's profiles to apply.
@@ -516,6 +517,24 @@ Missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
 While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
 
+## Cross-account worker routing (config/accounts.json)
+
+`config/accounts.json` is an optional, per-home, local account allowlist; absent or malformed files never enable cross-account routing.
+The registry and `crossAccount.enabled` are independent in each home, so a Geris-only home with no switch has no route to a personal seat.
+For the schema and path validation, `bin/fm-account-lib.sh` is authoritative.
+A typical personal-home file is:
+
+```json
+{"crossAccount":{"enabled":true},"accounts":{"personal":{"claude":"~/.claude","pi":"~/.pi/agent","codex":"~/.codex"},"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris"}}}
+```
+
+Run `bin/fm-account-routing.sh on|off|status` to change or inspect the switch atomically; a home without an explicit switch refuses the toggle.
+Off excludes named-account candidates at the next intake without touching workers already running, and `fm-spawn.sh --account <id>` refuses an unregistered or disabled seat before any home mutation.
+The selected store is pinned per harness (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, or `CODEX_HOME`), and the task record retains all three paths for a relaunch even after routing is switched off.
+The default launch path is unchanged except that Pi and Codex also retain their original credential-store decision on relaunch.
+Quota ranking uses one `quota-axi` snapshot for the default store and one environment-pinned snapshot per distinct named store triple, then compares applicable `spendPriority` across the union without a reserve or quota floor.
+Unmeasurable Team-seat five-hour quota remains disclosed uncertainty, not healthy headroom.
+
 ## Home session and account pin (data/home-identity)
 
 Each firstmate home belongs to exactly one terminal session and one Claude account, and `data/home-identity` records that binding.
@@ -532,7 +551,7 @@ A session that does not match is refused by `fm-spawn.sh`, `fm-send.sh`, and `fm
 There is no migration and no merge: homes and their work are left exactly as they are, and the operator opens each home from the session it belongs to.
 An unreadable or malformed pin refuses everything, including re-pinning - a home whose recorded account cannot be read is never re-derived from whatever session happens to be running, because that is precisely how a home would drift onto the wrong subscription.
 
-A worker inherits its home's account rather than the caller's environment.
+Without an explicit cross-account selection, a worker inherits its home's account rather than the caller's environment.
 `fm-spawn.sh` records the resolved store in the task's own `state/<id>.meta` as `claude_config_dir=`, and every later relaunch launches on that recorded value: a task started on a work account stays there, and a task started on the personal default store keeps that binding, with any inherited `CLAUDE_CONFIG_DIR` actively unset rather than merely omitted.
 A second mate is a firstmate home of its own and is seeded with its parent's identity when it is launched, so a second mate and its own workers stay on the account the firstmate that created them belongs to.
 
@@ -578,10 +597,10 @@ Environment knobs, all read by `bin/fm-claude-admission.sh`:
 
 See [`docs/examples/claude-shaped-store`](examples/claude-shaped-store) for a starting point to copy into local `config/claude-shaped-store`.
 
-## Typed dispatch resolution (.env TYPESAFE_API_KEY)
+## Typed dispatch resolution (.env OPENROUTER_API_KEY)
 
-`bin/fm-dispatch-resolve.sh` resolves one concrete crewmate or scout profile from a written brief with typesafe.ai's System One model (Jev), so the rule match that firstmate otherwise reasons out in its own context becomes one short tool turn.
-It is off unless `TYPESAFE_API_KEY` is non-empty in the calling environment or the home's gitignored `.env` holds a `TYPESAFE_API_KEY=` line; the environment wins, matching the Relay and mail-plane contracts, and the Relay accessor in `bin/fm-env-lib.sh` reads the line.
+`bin/fm-dispatch-resolve.sh` resolves one concrete crewmate or scout profile from a written brief with Jev through OpenRouter's System One API, so the rule match that firstmate otherwise reasons out in its own context becomes one short tool turn.
+It is off unless `OPENROUTER_API_KEY` is non-empty in the calling environment or the home's gitignored `.env` holds an `OPENROUTER_API_KEY=` line; the environment wins, matching the Relay and mail-plane contracts, and the Relay accessor in `bin/fm-env-lib.sh` reads the line.
 Off means one `dispatch-resolve: off` line on stderr, nothing on stdout, exit 0, and no network call, so firstmate dispatches exactly as it does without the tool.
 This section is the single owner of the tool's operator contract; the script header owns its exact flags and output lines, and "Crew dispatch profiles" above owns the declared rule and profile fields it applies.
 Rules come only from the effective home's `config/crew-dispatch.json`; `FM_CONFIG_OVERRIDE` selects the config directory for tests and specialized setup like the other scripts.
@@ -591,14 +610,15 @@ bin/fm-dispatch-resolve.sh data/<id>/brief.md --project <name>        # TOON blo
 ```
 
 Firstmate invokes the resolve path directly after writing the brief, without a preflight; the absent-key off line is handled exactly like every other non-clear outcome.
-When on and at least one rule exists, the tool sends the project name and the whole brief as state and asks one Choice question whose options are every rule's `when` plus the fixed neutral option for no matching rule; the model never sees quota, catalogs, `why`, `use`, or approvals.
+When on and at least one rule exists, the tool sends the project name and the whole brief as state and asks two batched Choice questions: the rule's `when` plus a neutral none option, and a candidate/effort preference for the declared rule profiles.
+The model never sees store paths, quota, catalogs, `why`, or approvals; code applies the matched rule, eligibility and quota gates and uses a profile preference only to resolve an otherwise genuine spendPriority tie.
 An absent rules file, a default-only file, or `rules: []` returns the non-clear reason `no rules to match` without a model or quota request, leaving firstmate's existing routing in control; an existing but unreadable or malformed rules file, including a broken symlink, remains an actionable exit 2 configuration error.
-Everything after the answer runs in code: the confidence floor, the matched rule's `approval` and `floor`, each candidate's `provider` and `floor`, every applicable account-wide and model/product row from one `quota-axi --json` snapshot, and the numeric `spendPriority` argmax over candidates using each candidate's limiting row.
+Everything after the answer runs in code: the confidence floor, the matched rule's `approval` and `floor`, each candidate's `provider` and `floor`, every applicable account-wide and model/product row from the default and authorized named-store `quota-axi --json` snapshots, and the numeric `spendPriority` argmax over candidates using each candidate's limiting row.
 Known applicable rows from a provider with partial quota semantics remain rankable; rows whose own status is not known remain unrankable.
 Any applicable `exhausted_now` row or known zero bound makes that candidate ineligible, and a known profile-floor shortfall does the same before unrelated quota uncertainty is considered.
 Missing or nonnumeric `spendPriority` evidence is never ranked, and every candidate is printed beside its evidence or the reason it was not rankable, including on ambiguous and approval-gated outcomes that emit no profile.
-On the opted-in path, duplicate concrete profiles with the same harness, model, and effort inside one rule or the default array are configuration errors rather than ties.
-The result is one of `clear` (a `profile:` line ready for `fm-spawn.sh`), `ambiguous` (confidence below the floor), `escalate` (an approval-gated rule, unverifiable rule floor, nothing rankable, or a genuine tie), or `error` (API, network, malformed response metadata, rendering, or quota-axi failure), and every one of them exits 0.
+On the opted-in path, duplicate concrete profiles with the same account, harness, model, and effort inside one rule or the default array are configuration errors rather than ties.
+The result is one of `clear` (a `profile:` line ready for `fm-spawn.sh`), `ambiguous` (confidence below the floor), `escalate` (an approval-gated rule, unverifiable rule floor, nothing rankable, or a genuine tie without a matching Jev preference), or `error` (API, network, malformed response metadata, rendering, or quota-axi failure), and every one of them exits 0.
 Response probabilities must contain exactly every offered choice, use numeric values from 0 through 1, and sum to approximately 1 within 0.01.
 Only a usage or configuration error exits 2: an unreadable brief, an existing but unreadable or malformed canonical rules file, or missing `jq`, each reported and never selected around.
 Missing `curl` is a normal structured `error` outcome with exit 0 so firstmate uses today's routing.
@@ -606,9 +626,11 @@ The tool never replaces firstmate's judgment, `quota-array-dispatch`, the captai
 By accepted design, a `clear` result does not enforce catalog/authentication, reasoning-class, or completion-runway gates.
 Firstmate passes its profile line unless it states a reason to override, such as the brief's reasoning class or an eligible-unranked-candidate note; every non-clear result returns to the full existing intake.
 
-The resolver and bootstrap copy an environment-provided key into a non-exported private variable and unset `TYPESAFE_API_KEY` before launching child processes, so the secret is absent from child environments.
+The resolver and bootstrap copy an environment-provided key into a non-exported private variable and unset `OPENROUTER_API_KEY` before launching child processes, so the secret is absent from child environments.
 The resolver sends the key to `curl` only as a header read from a file descriptor, never on argv, and nothing prints, logs, or writes it.
-The resolver fixes the endpoint at `https://api.typesafe.ai`, model at `jev-latest`, confidence floor at 0.6, and request timeout at 5 seconds; `TYPESAFE_API_KEY` is its only resolver-specific environment setting.
+The resolver uses `https://openrouter.ai/api/v1/systemone`, model `typesafe/jev-1.13`, confidence floor 0.6, and a five-second timeout.
+If a direct typesafe.ai key is already provisioned as `TYPESAFE_API_KEY`, set `FM_DISPATCH_ROUTE=direct` for the one-line route fallback (`https://api.typesafe.ai`, `jev-latest`).
+With `FM_DISPATCH_CANARY=1`, session startup makes one trivial typed Choice request when the key is present; a route failure prints `DISPATCH_CANARY: FAIL` and never silently counts as a good route.
 The live rule-match evidence is recorded in [`verification/dispatch-resolve.md`](verification/dispatch-resolve.md).
 
 ## Toolchain
@@ -1195,7 +1217,7 @@ FMX_RELAY_URL=https://myfirstmate.io   # optional Relay endpoint override, mainl
 FMX_ENV_FILE=           # optional alternate .env file for direct Relay client invocations; bootstrap still checks $FM_HOME/.env
 FMX_DRY_RUN=            # truthy previews Relay replies and dismissals to state/x-outbox/ without posting or requiring a token
 FMX_X_REPLY_MAX_CHARS=280   # X reply per-message split budget; values below 50 clamp to 50
-TYPESAFE_API_KEY=       # typed dispatch resolution opt-in, from the environment or .env; absent means bin/fm-dispatch-resolve.sh is off (docs/configuration.md "Typed dispatch resolution")
+OPENROUTER_API_KEY=     # typed dispatch resolution opt-in, from the environment or .env; absent means bin/fm-dispatch-resolve.sh is off (docs/configuration.md "Typed dispatch resolution")
 FMX_DISCORD_REPLY_MAX_CHARS=1900   # Discord reply per-message split budget; values below 50 clamp to 50, values above 2000 reset to 1900
 FMX_X_THREAD_MAX=25     # maximum messages in one auto-split reply thread
 FMX_FOLLOWUP_MAX_AGE_SECS=604800   # local window for posting Relay completion follow-ups (7 days)

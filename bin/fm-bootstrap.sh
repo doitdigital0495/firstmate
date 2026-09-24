@@ -157,9 +157,12 @@
 #          nothing; bin/fm-brief.sh uses it to gate scout Lavish hosting.
 set -u
 
-TYPESAFE_API_KEY_PRIVATE=${TYPESAFE_API_KEY:-}
-export -n TYPESAFE_API_KEY_PRIVATE 2>/dev/null || true
-unset TYPESAFE_API_KEY
+OPENROUTER_API_KEY_PRIVATE=${OPENROUTER_API_KEY:-}
+if [ "${FM_DISPATCH_ROUTE:-}" = direct ]; then
+  OPENROUTER_API_KEY_PRIVATE=${TYPESAFE_API_KEY:-}
+fi
+export -n OPENROUTER_API_KEY_PRIVATE 2>/dev/null || true
+unset OPENROUTER_API_KEY TYPESAFE_API_KEY
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
@@ -1122,8 +1125,12 @@ crew_dispatch_validate() {
     echo "CREW_DISPATCH: invalid config/crew-dispatch.json - malformed JSON"
     return 0
   fi
-  typed_key=$TYPESAFE_API_KEY_PRIVATE
-  [ -n "$typed_key" ] || typed_key=$(fmx_env_get TYPESAFE_API_KEY "$FM_HOME/.env")
+  typed_key=$OPENROUTER_API_KEY_PRIVATE
+  if [ "${FM_DISPATCH_ROUTE:-}" = direct ]; then
+    [ -n "$typed_key" ] || typed_key=$(fmx_env_get TYPESAFE_API_KEY "$FM_HOME/.env")
+  else
+    [ -n "$typed_key" ] || typed_key=$(fmx_env_get OPENROUTER_API_KEY "$FM_HOME/.env")
+  fi
   [ -z "$typed_key" ] || typed_active=true
   if $typed_active; then
     verified_harnesses=$(fm_control_harnesses | jq -Rsc 'split("\n") | map(select(length > 0))')
@@ -1158,6 +1165,7 @@ crew_dispatch_validate() {
     def malformed_optional_fields($items):
       ($items | any(has("model") and (((.model | type) != "string") or (.model | length) == 0)))
       or ($items | any(has("effort") and (((.effort | type) != "string") or (.effort | length) == 0)))
+      or ($items | any(has("account") and ((.account | type) != "string" or (.account | test("^[a-z][a-z0-9-]*$") | not))))
       or ($typed and ($items | any(has("provider") and (provider_id(.provider) | not))));
     # A quota floor, on a rule or a profile: bin/fm-dispatch-resolve.sh applies
     # it in code against one quota-axi row, so scope and min_percent must be
@@ -1189,8 +1197,8 @@ crew_dispatch_validate() {
     elif [(.rules // [])[]? | profiles(.use?)[]? | select(type != "object")] | length > 0 then "each use profile must be an object"
     elif [(.rules // [])[]? | profiles(.use?)[]? | select((.harness? | type) != "string" or (.harness | length) == 0)] | length > 0 then "each use profile needs harness"
     elif malformed_optional_fields([(.rules // [])[]? | profiles(.use?)[]?]) then
-      if $typed then "use profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
-      else "use profile model and effort must be non-empty strings when present"
+      if $typed then "use profile model, effort, and account must be valid strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
+      else "use profile model, effort, and account must be valid strings when present"
       end
     elif $typed and malformed_profile_floors([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile floor needs scope and min_percent 0..100"
     elif $typed and ([(.rules // [])[]? | select(has("approval") and .approval != "captain")] | length > 0) then "approval must be \"captain\" when present"
@@ -1203,8 +1211,8 @@ crew_dispatch_validate() {
     elif has("default") and ([profiles(.default)[]? | select(type != "object")] | length) > 0 then "each default profile must be an object"
     elif has("default") and ([profiles(.default)[]? | select((.harness? | type) != "string" or (.harness | length) == 0)] | length) > 0 then "each default profile needs harness"
     elif has("default") and malformed_optional_fields([profiles(.default)[]?]) then
-      if $typed then "default profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
-      else "default profile model and effort must be non-empty strings when present"
+      if $typed then "default profile model, effort, and account must be valid strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
+      else "default profile model, effort, and account must be valid strings when present"
       end
     elif $typed and has("default") and malformed_profile_floors([profiles(.default)[]?]) then "default profile floor needs scope and min_percent 0..100"
     else
