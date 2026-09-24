@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--fast-lane] [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--fast-lane] [--preview-on-push] [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -66,6 +66,12 @@
 # why the worker needs the instruction. The recorded line becomes
 # "Delivery contract: mode=no-mistakes lane=fast", and bin/fm-spawn.sh requires
 # the matching --fast-lane flag there.
+# `--preview-on-push` (ship, --mode no-mistakes only) records that this
+# project's CI builds preview environments from fm/* pushes: the brief's
+# definition of done instructs the worker to push its fm/* branch right after
+# local checks - BEFORE starting no-mistakes - so previews build immediately,
+# and to never open the PR itself (no-mistakes's pr step opens it). Resolve it
+# from the project's registered posture in data/projects.md.
 # The generated ship brief records the chosen mode as a fixed machine-readable
 # "Delivery contract: mode=<mode>" line ("... lane=fast" with --fast-lane).
 # bin/fm-spawn.sh reads that line and refuses
@@ -154,6 +160,7 @@ NO_PROJECTS=0
 MODE=
 MODE_SET=0
 FAST_LANE=0
+PREVIEW_ON_PUSH=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -176,6 +183,7 @@ for a in "$@"; do
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
     --fast-lane) FAST_LANE=1 ;;
+    --preview-on-push) PREVIEW_ON_PUSH=1 ;;
     # yolo never reaches the worker: it is firstmate's merge authority, not a
     # brief input. Refuse it loudly so it is never silently dropped here and then
     # believed to have been recorded.
@@ -210,6 +218,16 @@ if [ "$FAST_LANE" -eq 1 ]; then
   fi
   if [ "$MODE" != no-mistakes ]; then
     echo "error: --fast-lane requires --mode no-mistakes; the one-review-round lane modifies the no-mistakes review drive, so the other modes have nothing for it to modify" >&2
+    exit 1
+  fi
+fi
+if [ "$PREVIEW_ON_PUSH" -eq 1 ]; then
+  if [ "$KIND" != ship ]; then
+    echo "error: --preview-on-push applies only to ship briefs; a scout delivers a report and a charter ships no branch to preview" >&2
+    exit 1
+  fi
+  if [ "$MODE" != no-mistakes ]; then
+    echo "error: --preview-on-push requires --mode no-mistakes; direct-PR pushes before anything else already, so only the pipeline mode delays previews" >&2
     exit 1
   fi
 fi
@@ -506,7 +524,9 @@ esac
 RULE1=$(fm_ship_rule_one "$MODE" "$ID") || exit 1
 LANE=
 [ "$FAST_LANE" -eq 0 ] || LANE=fast
-DOD=$(fm_dod_block "$MODE" "$ID" "$DATA" "$LANE") || exit 1
+PREVIEW=
+[ "$PREVIEW_ON_PUSH" -eq 0 ] || PREVIEW=on-push
+DOD=$(fm_dod_block "$MODE" "$ID" "$DATA" "$LANE" "$PREVIEW") || exit 1
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
