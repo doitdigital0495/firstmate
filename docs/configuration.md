@@ -378,12 +378,27 @@ For omp secondmate launches, `fm-spawn.sh` passes no `-e` at all: omp auto-disco
 
 The optional local, gitignored `config/claude-permission-mode` holds one token selecting the permission flag every Claude worker launch carries: crewmates, scouts, Claude secondmates, and control-plane relaunches alike.
 The token is the file's whitespace-trimmed content.
-`bypass` keeps today's launch, `claude --dangerously-skip-permissions`, and is also the default when the file is absent, so an unconfigured home launches byte-for-byte as before.
-`auto` replaces that flag with `--permission-mode auto`, Claude Code's classifier-reviewed permission mode, for a captain who refuses to run workers in bypass mode; every other part of the Claude launch, including its environment prefix, `--settings` file, model, and effort flags, is unchanged.
+`bypass` keeps `claude --dangerously-skip-permissions` and is the default when the file is absent.
+`auto` replaces that flag with `--permission-mode auto`, Claude Code's classifier-reviewed permission mode, for a captain who refuses to run workers in bypass mode; all other launch controls are the same.
 Any other value, or an unreadable file, refuses every spawn from that home, whichever harness it would launch, before any endpoint, worktree, or task record exists, and names the accepted values; Firstmate never falls back to a permission posture the captain did not choose.
 `bin/fm-spawn.sh` reads the file on every spawn and relaunch, so a change takes effect at the next launch without a restart.
 The file is a captain-wide safety preference, so it is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract; a secondmate's own Claude crewmates then launch on the same posture.
 The [Claude adapter reference](../.agents/skills/harness-adapters/references/harness/claude.md) records the verified shape of both launches and which once-per-machine dialog each one can meet.
+
+## Lean Claude task workers
+
+Claude ships and scouts load only Firstmate's per-task settings source, which retains turn-end and busy-state hooks while excluding user, project and local settings, plugins, and other hooks.
+Tool guards survive: at spawn, Firstmate copies the `PreToolUse` and `PostToolUse` hooks and `permissions.deny` rules from the user settings (in the task's Claude store), the worktree's `.claude/settings.json`, and its `.claude/settings.local.json` into that per-task source, and refuses the spawn when one of those files is not valid JSON.
+They start without MCP servers or discovered slash-command skills; task-specific `--skill` files are appended to the worker contract rather than loaded as slash commands.
+A task may opt in through repeatable `fm-spawn.sh` flags: `--mcp-config <file>` loads only the named servers in the supplied Claude MCP JSON (not ambient MCP configurations), `--skill <path>` loads named skill files, `--claude-add-dir <dir>` grants file access to an extra directory (it does not load that directory's CLAUDE.md), and `--claude-plugin-dir <dir>` loads explicit plugins.
+Pass only trusted Firstmate-owned files as `--skill`, because their contents join the worker's system prompt; an MCP or plugin can run code with the worker's permissions, so opt in only to trusted configurations.
+Each flag takes a readable local path (the skill takes a Markdown file or a directory containing SKILL.md); the flags can be repeated and must be passed again on relaunch.
+Other harnesses, raw launches, and Claude secondmates refuse the Claude-only flags; the default remains lean for every Claude model, including Opus, Sonnet and Haiku.
+The `--tools` list limits a scout to Read and Bash and a ship to Read, Bash, Edit and Write.
+Firstmate pins a default Opus model and medium effort for a task worker when no profile or launch override supplies them.
+Claude secondmates retain their full primary-session configuration instead of this task-worker posture.
+For slash-command workflows such as `/no-mistakes`, lean workers use the corresponding CLI directly.
+The exact launch flags and refusal rules are owned by [`fm-spawn.sh`](../bin/fm-spawn.sh), with regression coverage in [`fm-spawn-claude-lean.test.sh`](../tests/fm-spawn-claude-lean.test.sh).
 
 ## Worker launch environment (config/launch-env-allowlist)
 
@@ -487,7 +502,7 @@ A profile `floor` contains only `scope` and `min_percent`, always uses that prof
 An absent or unknown named row also makes the candidate unrankable and is reported as an unverifiable floor, not as a known shortfall.
 `ultra` is native-only: the model-aware validation contract and launch mapping are owned by `bin/fm-harness.sh validate-native-effort` and `bin/fm-spawn.sh` respectively.
 Codex `max` is valid when the profile selects `gpt-5.6-luna`, whose installed catalog entry supports that reasoning level.
-An omitted model or effort means the selected harness uses its own default for that axis.
+An omitted model or effort means the selected harness uses its own default for that axis, except where `fm-spawn.sh` pins a task-worker default, such as Pi task workers and [lean Claude task workers](#lean-claude-task-workers).
 Every profile array is an implicit quota-aware choice resolved through `quota-array-dispatch`.
 If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to `config/crew-harness`.
 Except for `ultra`, which refuses unsupported profiles under the native-effort contract above, an effort value the chosen harness does not accept is recorded as `effort=` in task meta for traceability but omitted from the launch flags.

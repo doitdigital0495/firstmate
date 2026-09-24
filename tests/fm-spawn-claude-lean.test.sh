@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# Behavior regression for the Claude task-worker launch and per-task skill delivery.
+set -u
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
+
+TMP_ROOT=$(fm_test_tmproot fm-spawn-claude-lean)
+
+make_case() {
+  local name=$1 id=$2
+  CASE_DIR="$TMP_ROOT/$name"
+  HOME_DIR="$CASE_DIR/home"
+  PROJ_DIR="$CASE_DIR/project"
+  WT_DIR="$CASE_DIR/wt"
+  FAKEBIN_DIR=$(fm_test_make_spawn_fakebin "$CASE_DIR/fake" claude)
+  LAUNCH_LOG="$CASE_DIR/launch.log"
+  fm_test_spawn_home "$HOME_DIR" claude
+  fm_git_worktree "$PROJ_DIR" "$WT_DIR" "wt-$name"
+  fm_test_spawn_brief "$HOME_DIR" "$id"
+  : > "$LAUNCH_LOG"
+}
+
+spawn() {
+  FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" fm_test_run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$@"
+}
+
+make_case ship lean-ship-s1
+out=$(spawn lean-ship-s1 "$PROJ_DIR" --mode direct-PR --yolo off)
+expect_code 0 "$?" "Claude ship should launch: $out"
+launch=$(cat "$LAUNCH_LOG")
+assert_contains "$launch" "--setting-sources '' --strict-mcp-config --disable-slash-commands" "worker must exclude settings and discovery"
+assert_contains "$launch" "--tools Read,Bash,Edit,Write " "ship tool boundary"
+assert_contains "$launch" "--model 'opus' --effort 'medium'" "ship defaults must be explicit"
+assert_contains "$launch" "--settings '$HOME_DIR/state/lean-ship-s1.claude-settings.json'" "Firstmate hooks must still load"
+assert_contains "$launch" "--append-system-prompt \"\$(cat '$ROOT/.pi/fm-worker-contract.md'" "worker contract must be appended"
+pass "Claude ship excludes discovered settings, tools and skills but retains Firstmate hooks and contract"
+
+make_case scout lean-scout-s2
+mkdir -p "$CASE_DIR/skills/skill with spaces"
+printf '%s\n' '# Scout skill' > "$CASE_DIR/skills/skill with spaces/SKILL.md"
+out=$(spawn lean-scout-s2 "$PROJ_DIR" --scout --model opus --effort high --skill "$CASE_DIR/skills/skill with spaces")
+expect_code 0 "$?" "Claude scout with a skill should launch: $out"
+launch=$(cat "$LAUNCH_LOG")
+assert_contains "$launch" "--tools Read,Bash " "scout should be read-only"
+assert_not_contains "$launch" "--tools Read,Bash,Edit" "scout must not get write tools"
+assert_contains "$launch" "--model 'opus' --effort 'high'" "requested model and effort"
+assert_contains "$launch" "cat '$CASE_DIR/skills/skill with spaces/SKILL.md'" "explicit skill directory must be read"
+assert_not_contains "$launch" "--skill " "Claude does not support a --skill flag"
+cat > "$FAKEBIN_DIR/claude" <<'SH'
+#!/usr/bin/env bash
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --append-system-prompt ]; then
+    printf '%s\n' "$2" > "$FM_FAKE_CLAUDE_PROMPT"
+    break
+  fi
+  shift
+done
+SH
+chmod +x "$FAKEBIN_DIR/claude"
+FM_FAKE_CLAUDE_PROMPT="$CASE_DIR/delivered-prompt" PATH="$FAKEBIN_DIR:$PATH" bash -c "$launch" >/dev/null \
+  || fail "Claude scout launch did not execute with a synthetic skill"
+assert_contains "$(cat "$CASE_DIR/delivered-prompt")" "# Scout skill" "skill content did not reach appended system prompt"
+assert_contains "$(cat "$CASE_DIR/delivered-prompt")" "# Requested skill ($CASE_DIR/skills/skill with spaces/SKILL.md)" "skill location did not reach appended system prompt"
+assert_contains "$(cat "$CASE_DIR/delivered-prompt")" "Stay within assigned task" "worker contract did not reach appended system prompt"
+pass "Claude scout gets only read tools, explicit model/effort and requested skill content"
+
+for model in opus sonnet haiku; do
+  make_case "model-$model" "lean-model-$model"
+  out=$(spawn "lean-model-$model" "$PROJ_DIR" --scout --model "$model" --effort low)
+  expect_code 0 "$?" "Claude $model scout should launch: $out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--setting-sources '' --strict-mcp-config --disable-slash-commands --tools Read,Bash" "$model must use the lean worker flags"
+  assert_contains "$launch" "--model '$model' --effort 'low'" "$model profile must be explicit"
+done
+make_case model-custom lean-model-custom
+out=$(spawn lean-model-custom "$PROJ_DIR" --scout --model claude-future-model --effort high)
+expect_code 0 "$?" "configured Claude model should use the same launch: $out"
+assert_contains "$(cat "$LAUNCH_LOG")" "--model 'claude-future-model' --effort 'high'" "arbitrary configured model must pass through"
+pass "opus, sonnet, haiku and configured Claude models share one lean launch shape"
+
+make_case opt-in lean-opt-in-s5
+mkdir -p "$CASE_DIR/extra dir" "$CASE_DIR/plugin dir"
+printf '%s\n' '{"mcpServers":{"task-tool":{"command":"true"}}}' > "$CASE_DIR/mcp config.json"
+out=$(spawn lean-opt-in-s5 "$PROJ_DIR" --scout --mcp-config "$CASE_DIR/mcp config.json" --claude-add-dir "$CASE_DIR/extra dir" --claude-plugin-dir "$CASE_DIR/plugin dir")
+expect_code 0 "$?" "Claude explicit capabilities should launch: $out"
+launch=$(cat "$LAUNCH_LOG")
+assert_contains "$launch" "--strict-mcp-config" "explicit MCP configuration must not enable discovered servers"
+assert_contains "$launch" "--mcp-config '$CASE_DIR/mcp config.json'" "named MCP configuration"
+assert_contains "$launch" "--add-dir '$CASE_DIR/extra dir'" "explicit extra directory"
+assert_contains "$launch" "--plugin-dir '$CASE_DIR/plugin dir'" "explicit plugin directory"
+assert_not_contains "$launch" '--mcp-config default' "ambient MCP servers must not load"
+pass "Claude task opts into named MCPs and explicit directories without enabling discovery"
+
+make_case opt-in-batch lean-batch-a
+mkdir -p "$CASE_DIR/extra dir" "$CASE_DIR/plugin dir"
+printf '%s\n' '{"mcpServers":{"task-tool":{"command":"true"}}}' > "$CASE_DIR/mcp config.json"
+fm_test_spawn_brief "$HOME_DIR" lean-batch-b
+out=$(spawn "lean-batch-a=$PROJ_DIR" "lean-batch-b=$PROJ_DIR" --scout --mcp-config "$CASE_DIR/mcp config.json" --claude-add-dir "$CASE_DIR/extra dir" --claude-plugin-dir "$CASE_DIR/plugin dir")
+expect_code 0 "$?" "Claude batch should forward explicit capabilities: $out"
+launch=$(cat "$LAUNCH_LOG")
+assert_contains "$launch" "--mcp-config '$CASE_DIR/mcp config.json'" "batch must forward MCP configuration"
+assert_contains "$launch" "--add-dir '$CASE_DIR/extra dir'" "batch must forward extra directories"
+assert_contains "$launch" "--plugin-dir '$CASE_DIR/plugin dir'" "batch must forward plugins"
+pass "Claude batch dispatch retains per-task opt-ins"
+
+make_case auto lean-auto-s3
+printf 'auto\n' > "$HOME_DIR/config/claude-permission-mode"
+out=$(spawn lean-auto-s3 "$PROJ_DIR" --mode direct-PR --yolo off)
+expect_code 0 "$?" "Claude auto worker should launch: $out"
+launch=$(cat "$LAUNCH_LOG")
+assert_contains "$launch" "--permission-mode auto" "auto permission mode must survive lean launch"
+assert_contains "$launch" "--tools Read,Bash,Edit,Write" "auto mode still limits available tools"
+pass "Claude auto posture restricts tools"
+
+make_case invalid lean-invalid-s4
+out=$(spawn lean-invalid-s3 "$PROJ_DIR" --mode direct-PR --yolo off --skill "$CASE_DIR/missing.md" 2>&1)
+expect_code 1 "$?" "missing skill must refuse"
+assert_contains "$out" "does not exist" "missing skill refusal"
+assert_absent "$HOME_DIR/state/lean-invalid-s3.meta" "invalid skill must not provision"
+[ ! -s "$LAUNCH_LOG" ] || fail "invalid skill still launched"
+pass "invalid Claude skill refuses before provisioning"
+
+for flag in mcp-config claude-add-dir claude-plugin-dir; do
+  make_case "invalid-$flag" "lean-bad-$flag"
+  out=$(spawn "lean-bad-$flag" "$PROJ_DIR" --scout --"$flag" "$CASE_DIR/missing" 2>&1)
+  expect_code 1 "$?" "missing --$flag must refuse"
+  assert_contains "$out" "--$flag" "missing --$flag must name the flag"
+  assert_absent "$HOME_DIR/state/lean-bad-$flag.meta" "invalid $flag must not provision"
+  [ ! -s "$LAUNCH_LOG" ] || fail "invalid $flag still launched"
+done
+make_case unsupported lean-unsupported-s6
+out=$(spawn lean-unsupported-s6 "$PROJ_DIR" --scout --harness codex --mcp-config "$CASE_DIR/missing" 2>&1)
+expect_code 1 "$?" "non-Claude worker must refuse Claude capabilities"
+assert_contains "$out" "only to Claude ship and scout workers" "non-Claude capabilities must refuse"
+pass "invalid and unsupported Claude opt-ins refuse before provisioning"
+
+make_case guards lean-guards-s7
+commit_project_claude() {
+  git -C "$PROJ_DIR" add .claude
+  git -C "$PROJ_DIR" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm "$1"
+  git -C "$PROJ_DIR" push -q origin main
+}
+mkdir -p "$HOME_DIR/user-home/.claude" "$PROJ_DIR/.claude"
+printf '%s\n' '{"enabledPlugins":{"x@y":true},"hooks":{"PreToolUse":[{"matcher":"Read","hooks":[{"type":"command","command":"user-guard"}]}],"SessionStart":[{"hooks":[{"type":"command","command":"user-banner"}]}]},"permissions":{"deny":["Read(./.env)"]}}' \
+  > "$HOME_DIR/user-home/.claude/settings.json"
+printf '%s\n' '{"hooks":{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"project-guard"}]}],"Stop":[{"hooks":[{"type":"command","command":"project-stop"}]}]},"permissions":{"deny":["Bash(rm:*)"]}}' \
+  > "$PROJ_DIR/.claude/settings.json"
+commit_project_claude guards
+out=$(spawn lean-guards-s7 "$PROJ_DIR" --scout)
+expect_code 0 "$?" "Claude worker with user and project guards should launch: $out"
+settings="$HOME_DIR/state/lean-guards-s7.claude-settings.json"
+[ "$(jq -c '[.hooks.PreToolUse[].hooks[].command | select(. == "user-guard")]' "$settings")" = '["user-guard"]' ] \
+  || fail "user PreToolUse guard was not carried: $(cat "$settings")"
+[ "$(jq -c '[.hooks.PostToolUse[].hooks[].command | select(. == "project-guard")]' "$settings")" = '["project-guard"]' ] \
+  || fail "project PostToolUse guard was not carried: $(cat "$settings")"
+[ "$(jq -c '.permissions.deny' "$settings")" = '["Read(./.env)","Bash(rm:*)"]' ] \
+  || fail "deny rules were not carried: $(cat "$settings")"
+[ "$(jq -c '[.hooks.SessionStart, .enabledPlugins, (.hooks.Stop // [] | map(.hooks[].command) | index("project-stop"))]' "$settings")" = '[null,null,null]' ] \
+  || fail "non-guard settings leaked into the lean worker: $(cat "$settings")"
+[ "$(jq -r '.feedbackDrafts' "$settings")" = off ] || fail "Firstmate policy keys were lost: $(cat "$settings")"
+pass "Claude worker keeps user and project tool guards and deny rules without other settings"
+
+make_case bad-guards lean-bad-guards-s8
+mkdir -p "$PROJ_DIR/.claude"
+printf '%s\n' '{not json' > "$PROJ_DIR/.claude/settings.json"
+commit_project_claude bad-guards
+out=$(spawn lean-bad-guards-s8 "$PROJ_DIR" --scout 2>&1)
+expect_code 1 "$?" "malformed guard layer must refuse"
+assert_contains "$out" "could not carry Claude guard hooks" "malformed guard layer refusal"
+[ ! -s "$LAUNCH_LOG" ] || fail "malformed guard layer still launched"
+pass "malformed Claude settings layer refuses rather than dropping guards"
+
+echo "all fm-spawn-claude-lean tests passed"

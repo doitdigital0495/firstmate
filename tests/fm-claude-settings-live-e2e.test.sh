@@ -71,4 +71,30 @@ for perm in --dangerously-skip-permissions '--permission-mode auto'; do
 
   pass "claude $CLAUDE_VERSION ($perm) loads --settings from outside the workspace, merges its hooks with the project's own, and accepts the policy keys in the same file"
 done
+
+# A task worker excludes the user/project/local setting layers without --bare:
+# --bare would also suppress Firstmate's explicitly loaded hooks and OAuth.
+# Check the installed CLI rather than assuming an empty --setting-sources value
+# means no settings; a skipped source could silently re-enable project hooks.
+for perm in bypass auto; do
+  rm -f "$LAB/fm-submit" "$LAB/fm-stop" "$LAB/project-stop"
+  if [ "$perm" = bypass ]; then
+    permission=(--dangerously-skip-permissions)
+  else
+    permission=(--permission-mode auto)
+  fi
+  ( cd "$WORKSPACE" && claude "${permission[@]}" \
+      --setting-sources '' --strict-mcp-config --disable-slash-commands \
+      --tools Read,Bash --model opus --effort medium \
+      --settings "$LAB/fm-settings.json" \
+      --append-system-prompt "$(cat "$ROOT/.pi/fm-worker-contract.md")" \
+      -p "reply with the single word ok" ) \
+    > "$LAB/out" 2> "$LAB/err" < /dev/null \
+    || fail "claude $CLAUDE_VERSION refused the lean $perm launch: $(cat "$LAB/err")"
+  [ -e "$LAB/fm-submit" ] && [ -e "$LAB/fm-stop" ] \
+    || fail "claude $CLAUDE_VERSION disabled Firstmate hooks under lean $perm settings"
+  [ ! -e "$LAB/project-stop" ] \
+    || fail "claude $CLAUDE_VERSION ran project hooks despite empty --setting-sources ($perm)"
+  pass "claude $CLAUDE_VERSION lean $perm worker runs only Firstmate hooks, not project hooks"
+done
 echo "all fm-claude-settings-live-e2e tests passed"
