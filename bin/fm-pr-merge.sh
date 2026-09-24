@@ -137,6 +137,14 @@ if ! fm_pr_task_id_valid "$ID" || ! fm_pr_url_parse "$RAW_URL"; then
 fi
 URL=$FM_PR_URL
 PROVIDER=$FM_PR_PROVIDER
+# An Azure DevOps merge stays a human decision this home never performs: the
+# poll fm-pr-check.sh arms follows the hand merge, its conflicts, and its
+# post-merge pipelines, so refusing here loses nothing and keeps the az usage
+# read-only.
+if [ "$PROVIDER" = ado ]; then
+  echo "error: $URL is not merged by firstmate; merge it by hand and keep the poll armed with bin/fm-pr-check.sh" >&2
+  exit 2
+fi
 PR_HOST=$FM_PR_HOST
 PR_PATH=$FM_PR_PATH
 PR_OWNER=$FM_PR_OWNER

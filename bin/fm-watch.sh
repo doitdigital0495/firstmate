@@ -2251,6 +2251,23 @@ retire_merged_pr_poll() {  # <id>
   fi
 }
 
+# The Azure DevOps poll repeats its conflict line on every sweep while the
+# conflict stands; $STATE/<id>.ado-conflict holds the delivered conflict's
+# stable "ado conflict: <url>" key so the same conflict wakes once whatever
+# reason wording accompanies it. Only the poll's positive "ado clear" line
+# ends it, and that line never wakes; silence from a failed lookup keeps it.
+ado_conflict_unreported() {  # <id> <poll-output>
+  local marker="$STATE/$1.ado-conflict"
+  case "$2" in
+    'ado clear: '*) rm -f "$marker"; return 1 ;;
+    'ado conflict: '*) ;;
+    *) return 0 ;;
+  esac
+  [ -f "$marker" ] && [ ! -L "$marker" ] \
+    && [ "$(cat "$marker")" = "${2%% needs a rebase*}" ] && return 1
+  return 0
+}
+
 # A poll armed before a state volume remount can fail capture only because its
 # registration names the old device number; bin/fm-pr-lib.sh
 # fm_pr_poll_registration_rerecord_device owns the proof and the rewrite.
@@ -2399,9 +2416,16 @@ while :; do
             triage_log "PR poll for $id changed before its validated check; skipping the stale snapshot"
             continue
           fi
+          # The task's state directory and id travel as data so the Azure
+          # DevOps poll can run its git conflict probe in the task's worktree;
+          # the github and gitlab polls ignore them.
           run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --validated \
-            "$provider" "$url" "$host" "$path" "$number" || exit 1
+            "$provider" "$url" "$host" "$path" "$number" "$STATE" "$id" || exit 1
           out=$FM_CHECK_RESULT
+          if [ "$provider" = ado ] && ! ado_conflict_unreported "$id" "$out"; then
+            pr_poll_control_release || exit 1
+            continue
+          fi
         elif fm_custom_check_snapshot_prepare "$STATE" "$id"; then
           custom_snapshot=$FM_CUSTOM_CHECK_SNAPSHOT
           run_check_capture "$custom_snapshot" || exit 1
@@ -2434,16 +2458,22 @@ EOF
           fi
         fi
         reason="check: $c: $out"
-        if [ "$is_pr_poll" -eq 1 ] && [ "$out" = merged ]; then
+        # The github and gitlab polls emit exactly "merged"; the Azure
+        # DevOps poll appends its post-merge pipeline verdicts to the same
+        # first word, and fm_pr_poll_merged_output owns what still counts as
+        # the terminal merged result either way.
+        if [ "$is_pr_poll" -eq 1 ] && fm_pr_poll_merged_output "$out"; then
           if ! fm_merge_authority_read "$STATE" "$id" \
               "$provider" "$host" "$path" "$number"; then
             triage_log "no matching persisted merge authority for $id; recording an external merge outcome"
           fi
           merge_authority=$FM_MERGE_AUTHORITY
           merge_authority_record_identity=$FM_MERGE_AUTHORITY_RECORD_IDENTITY
+          merge_detail=
+          [ "$out" = merged ] || merge_detail=${out#merged }
           merge_outcome_rc=0
           fm_merge_outcome_report "$FM_HOME" "$STATE" "$id" "$url" poll \
-            "$merge_authority" || merge_outcome_rc=$?
+            "$merge_authority" "$merge_detail" || merge_outcome_rc=$?
           if [ "$merge_outcome_rc" -ne 0 ]; then
             triage_log "merge outcome for $id could not be recorded (rc=$merge_outcome_rc)"
             exit 1
@@ -2466,6 +2496,15 @@ EOF
         fi
         pr_poll_control_release || exit 1
         fm_wake_append check "$c" "$reason" || exit 1
+        if [ "$is_pr_poll" -eq 1 ] && [ "$provider" = ado ]; then
+          case "$out" in
+            'ado conflict: '*)
+              rm -f "$STATE/$id.ado-conflict"
+              printf '%s\n' "${out%% needs a rebase*}" > "$STATE/$id.ado-conflict" \
+                || triage_log "could not record the reported conflict for $id; it may wake again"
+              ;;
+          esac
+        fi
         touch "$STATE/.last-check"
         wake "$reason"
       fi

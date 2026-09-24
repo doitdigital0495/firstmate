@@ -4,11 +4,14 @@
 # URLs before constructing task paths or performing any side effect.
 #
 # The stored identity is provider-tagged: provider, url, host, path, number.
-# "path" is the full project path, which is owner/repository on GitHub and an
-# arbitrarily nested group/subgroup/project namespace on GitLab. A GitLab
+# "path" is the full project path, which is owner/repository on GitHub, an
+# arbitrarily nested group/subgroup/project namespace on GitLab, and
+# <organization>/<project>/_git/<repository> on Azure DevOps. A GitLab
 # project can sit at any depth, so no owner/repository pair can address one and
 # the sidecar carries the whole path instead. GitLab also runs on self-hosted
-# instances, so the host is part of that identity rather than a constant. Every
+# instances, so the host is part of that identity rather than a constant;
+# Azure DevOps serves every organization on the constant dev.azure.com host, so
+# the organization travels in the path instead. Every
 # consumer re-derives the identity from the stored URL and refuses any record
 # whose parts do not reconstruct that exact URL.
 #
@@ -160,6 +163,40 @@ fm_pr_gitlab_path_valid() {
   done
 }
 
+# Azure DevOps serves every organization on dev.azure.com, so the organization
+# is the first path segment rather than part of the host. Organization names
+# may contain uppercase (dev.azure.com is case-preserving), and each of the
+# three segments is restricted to the URL-safe class below: names with spaces
+# or percent-encoded characters exist in Azure DevOps but have no one-spelling
+# canonical URL form here, so they are refused rather than guessed at. A
+# leading hyphen is refused because these segments are also passed to az as
+# --project and --organization arguments. The legacy
+# <organization>.visualstudio.com URLs are not accepted: only one spelling of
+# a PR URL is canonical, and dev.azure.com is it.
+fm_pr_ado_segment_valid() {
+  local segment=${1-} kind=${2-}
+  local LC_ALL=C
+  [ "${#segment}" -ge 1 ] || return 1
+  case "$kind" in
+    org)
+      [ "${#segment}" -le 63 ] || return 1
+      case "$segment" in
+        -*|*-|*--*|*[!A-Za-z0-9-]*) return 1 ;;
+      esac
+      ;;
+    project|repo)
+      [ "${#segment}" -le 64 ] || return 1
+      # "_git" is the route separator between project and repository, so no
+      # project or repository of that name is addressable at all.
+      case "$segment" in
+        .|..|_git|-*|*[!A-Za-z0-9._-]*) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
 # Parse a canonical PR or MR URL into the provider-tagged identity. Validation
 # is strict and per provider: the GitHub username and repository rules are
 # unchanged, and GitLab gets its own host and namespace rules rather than a
@@ -195,6 +232,19 @@ fm_pr_url_parse() {
     FM_PR_NUMBER=${BASH_REMATCH[3]}
     return 0
   fi
+  pattern='^https://dev\.azure\.com/([A-Za-z0-9][A-Za-z0-9-]{0,62})/([A-Za-z0-9._-]{1,64})/_git/([A-Za-z0-9._-]{1,64})/pullrequest/([1-9][0-9]*)$'
+  if [[ "$raw" =~ $pattern ]]; then
+    [[ "${BASH_REMATCH[1]}" != *--* ]] || return 1
+    fm_pr_ado_segment_valid "${BASH_REMATCH[1]}" org || return 1
+    fm_pr_ado_segment_valid "${BASH_REMATCH[2]}" project || return 1
+    fm_pr_ado_segment_valid "${BASH_REMATCH[3]}" repo || return 1
+    FM_PR_PROVIDER=ado
+    FM_PR_URL=$raw
+    FM_PR_HOST=dev.azure.com
+    FM_PR_PATH="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/_git/${BASH_REMATCH[3]}"
+    FM_PR_NUMBER=${BASH_REMATCH[4]}
+    return 0
+  fi
   # The path class contains "/" and "-", so this match is greedy to the last
   # "/-/merge_requests/". Any earlier separator therefore lands inside the
   # captured path, where the reserved "-" segment is refused.
@@ -209,6 +259,70 @@ fm_pr_url_parse() {
   FM_PR_HOST=$host
   FM_PR_PATH=$path
   FM_PR_NUMBER=${BASH_REMATCH[3]}
+}
+
+# Validate a stored ado path's organization, project, and repository using the
+# same rules as the URL parse and export the organization, so a caller rebuilding
+# https://dev.azure.com/<organization> from a sidecar revalidates the stored
+# bytes instead of trusting them.
+fm_pr_ado_path_parts() {
+  local path=${1-} org project repo
+  local LC_ALL=C
+  local -a parts
+  FM_PR_ADO_ORG=
+  IFS=/ read -ra parts <<< "$path"
+  [ "${#parts[@]}" -eq 4 ] || return 1
+  [ "${parts[2]}" = _git ] || return 1
+  org=${parts[0]}
+  project=${parts[1]}
+  repo=${parts[3]}
+  fm_pr_ado_segment_valid "$org" org || return 1
+  fm_pr_ado_segment_valid "$project" project || return 1
+  fm_pr_ado_segment_valid "$repo" repo || return 1
+  [ "$path" = "$org/$project/_git/$repo" ] || return 1
+  # Consumed by bin/fm-pr-check.sh, which addresses the organization URL.
+  # shellcheck disable=SC2034
+  FM_PR_ADO_ORG=$org
+}
+
+# Single owner of what merge-poll output is a terminal merged result: exactly
+# "merged", or "merged " followed by one line of non-empty detail. The Azure
+# DevOps poll appends its post-merge pipeline verdicts to that detail, and no
+# other output can retire a poll: multi-line text, a bare "merged " with blank
+# detail, or anything that merely starts with the word is not terminal.
+fm_pr_poll_merged_output() {
+  local out=${1-} detail
+  local LC_ALL=C
+  case "$out" in
+    merged) return 0 ;;
+    merged\ ?*)
+      detail=${out#merged }
+      case "$detail" in
+        *$'\n'*|'') return 1 ;;
+      esac
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# Resolve the read-only az CLI used to arm and poll an Azure DevOps watch. The
+# Microsoft installer puts it at ~/.local/bin/az, which is not always on the
+# watcher's PATH, so that location is the fallback rather than a second
+# requirement.
+fm_ado_az_bin() {
+  local candidate
+  local -a candidates=()
+  if command -v az >/dev/null 2>&1; then
+    candidates+=("$(command -v az)")
+  fi
+  candidates+=("$HOME/.local/bin/az")
+  for candidate in "${candidates[@]}"; do
+    [ -n "$candidate" ] && [ -f "$candidate" ] && [ -x "$candidate" ] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
 }
 
 fm_pr_head_valid() {

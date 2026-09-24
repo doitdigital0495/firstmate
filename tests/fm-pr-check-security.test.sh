@@ -412,6 +412,13 @@ https://gitlab.com/group/sub/deep/project/-/merge_requests/42|gitlab.com|group/s
 https://gitlab.example.co.uk/g/p/-/merge_requests/7|gitlab.example.co.uk|g/p|7
 https://code.internal/team/tools/ci-runner/-/merge_requests/123456|code.internal|team/tools/ci-runner|123456
 EOF
+  fm_pr_url_parse https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801 \
+    || fail "parser rejected canonical Azure DevOps URL"
+  [ "$FM_PR_PROVIDER" = ado ] \
+    && [ "$FM_PR_HOST" = dev.azure.com ] \
+    && [ "$FM_PR_PATH" = Org-1/Insights-Requests/_git/fabric_monorepo ] \
+    && [ "$FM_PR_NUMBER" = 801 ] \
+    || fail "parser returned the wrong Azure DevOps identity"
   fm_pr_url_parse https://github.com/a/b/pull/1 || fail "parser rejected canonical URL"
   [ "$FM_PR_PROVIDER" = github ] || fail "parser did not tag a pull request URL as github"
   [ "$FM_PR_HOST" = github.com ] || fail "parser returned wrong GitHub host"
@@ -428,6 +435,121 @@ EOF
   fm_pr_task_id_valid "$id" || fail "operational validator rejected a path-safe legacy task ID"
   ! fm_task_id_creation_valid "$id" || fail "creation validator accepted an overlong task ID"
   pass "raw-byte parser accepts canonical URLs and rejects the complete adversarial matrix"
+}
+
+test_ado_poll_conflict_and_postmerge_verdicts() {
+  local dir url out
+  dir=$(make_case ado-poll)
+  url=https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801
+  cat > "$dir/fakebin/az" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'repos pr show'*)
+    if [ "${FM_TEST_AZ_STATUS:-completed}" = active ]; then
+      printf 'active\n%s\nrefs/heads/main\nrefs/heads/fm/test\nNone\nNone\n' "${FM_TEST_AZ_MERGE_STATUS:-conflicts}"
+    else
+      printf 'completed\nNone\nrefs/heads/main\nrefs/heads/fm/test\n0123456789abcdef0123456789abcdef01234567\n%s\n' "${FM_TEST_AZ_CLOSED:-2020-01-01T00:00:00Z}"
+    fi
+    ;;
+  *'pipelines runs list'*)
+    case " $* " in *' --branch refs/heads/main '*) ;; *) exit 3 ;; esac
+    [ "${FM_TEST_AZ_RUNS:-}" != fail ] || exit 1
+    [ "${FM_TEST_AZ_RUNS:-}" != none ] || exit 0
+    printf 'fabric-deploy\tcompleted\tsucceeded\t8513\nreports-deploy\tcompleted\tfailed\t8519\ndbt-dev-build\tcompleted\tsucceeded\t8521\n'
+    [ "${FM_TEST_AZ_RUNS:-}" != pending ] || printf 'prod-deploy\tnotStarted\tNone\t8530\n'
+    ;;
+  *) exit 2 ;;
+esac
+SH
+  chmod +x "$dir/fakebin/az"
+  out=$(FM_TEST_AZ_STATUS=active PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  case "$out" in 'ado conflict: '*needs\ a\ rebase*) ;; *) fail "ADO conflict was not surfaced: $out" ;; esac
+  out=$(FM_ADO_POSTMERGE_GRACE_SECS=0 PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  case "$out" in
+    *fabric-deploy=GREEN*reports-deploy=RED*dbt-dev-build=GREEN*) ;;
+    *) fail "ADO merge pipeline verdicts did not distinguish red from green: $out" ;;
+  esac
+  out=$(FM_TEST_AZ_RUNS=pending FM_TEST_AZ_CLOSED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    FM_ADO_POSTMERGE_GRACE_SECS=0 PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  [ -z "$out" ] || fail "ADO merge was reported before a pending run finished or the cap passed: $out"
+  out=$(FM_TEST_AZ_RUNS=pending PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  case "$out" in
+    'merged azure-devops '*reports-deploy=RED*prod-deploy=PENDING*) ;;
+    *) fail "a run still pending past the cap held back the ADO merge line: $out" ;;
+  esac
+  out=$(FM_TEST_AZ_RUNS=fail PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  case "$out" in
+    'merged azure-devops '*'could not be read'*) ;;
+    *) fail "unreadable pipeline runs past the cap held back the ADO merge line: $out" ;;
+  esac
+  out=$(FM_TEST_AZ_RUNS=none FM_TEST_AZ_CLOSED=None PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  case "$out" in
+    'merged azure-devops '*'no pipeline runs'*'completion time could not be read') ;;
+    *) fail "an unreadable completion time was reported as an elapsed wait: $out" ;;
+  esac
+  out=$(FM_TEST_AZ_STATUS=active FM_TEST_AZ_MERGE_STATUS=succeeded PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$POLL" --validated ado "$url" dev.azure.com \
+    Org-1/Insights-Requests/_git/fabric_monorepo 801)
+  [ "$out" = "ado clear: $url" ] || fail "a clean ADO merge status was not confirmed clear: $out"
+  pass "Azure DevOps polls surface conflicts and per-pipeline post-merge colors"
+}
+
+test_ado_conflict_wakes_once_per_conflict() {
+  local dir state url
+  dir=$(make_case ado-conflict-once)
+  state="$dir/home/state"
+  url=https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801
+  cat > "$dir/fakebin/az" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'repos pr show'*)
+    [ "$(cat "${0%/*}/az-merge-status")" != fail ] || exit 1
+    printf 'active\n%s\nrefs/heads/main\nrefs/heads/fm/test\nNone\nNone\n' "$(cat "${0%/*}/az-merge-status")"
+    ;;
+  *) exit 2 ;;
+esac
+SH
+  chmod +x "$dir/fakebin/az"
+  printf 'conflicts\n' > "$dir/fakebin/az-merge-status"
+  write_poll_meta "$state" task-a "$url"
+  seed_canonical_poll "$dir" task-a "$url"
+  add_stop_custom_check "$dir"
+  ado_cycle() {
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2>&1 || true
+    grep -q 'stop-cycle\|ado conflict: ' "$state/.wake-queue" \
+      || fail "the watcher cycle did not run its checks: $(cat "$dir/watch.out")"
+    cat "$state/.wake-queue" >> "$dir/wakes"
+    rm -f "$state/.wake-queue" "$state/.watcher-down"
+  }
+  ado_cycle
+  ado_cycle
+  printf 'fail\n' > "$dir/fakebin/az-merge-status"
+  ado_cycle
+  printf 'conflicts\n' > "$dir/fakebin/az-merge-status"
+  ado_cycle
+  [ "$(grep -c 'ado conflict: ' "$dir/wakes")" -eq 1 ] \
+    || fail "a standing ADO conflict woke more than once: $(cat "$dir/wakes")"
+  printf 'succeeded\n' > "$dir/fakebin/az-merge-status"
+  ado_cycle
+  ! grep -q 'ado clear: ' "$dir/wakes" \
+    || fail "a cleared ADO conflict woke firstmate: $(cat "$dir/wakes")"
+  printf 'conflicts\n' > "$dir/fakebin/az-merge-status"
+  ado_cycle
+  [ "$(grep -c 'ado conflict: ' "$dir/wakes")" -eq 2 ] \
+    || fail "a conflict that returned after clearing did not wake again: $(cat "$dir/wakes")"
+  pass "a standing Azure DevOps conflict wakes once until it clears"
 }
 
 test_invalid_entrypoints_have_zero_side_effects() {
@@ -2244,6 +2366,21 @@ test_merged_poll_row_carries_the_merge_authority() {
   pass "queued merges retain yolo and away-grant after captain return"
 }
 
+test_merged_outcome_row_carries_poll_detail() {
+  local dir state url detail
+  url=https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801
+  detail="azure-devops $url merge commit 01234567: fabric-deploy=GREEN (succeeded, run 8513)"
+  dir=$(make_case merged-outcome-detail)
+  state="$dir/home/state"
+  # shellcheck source=/dev/null
+  ( . "$ROOT/bin/fm-merge-outcome-lib.sh"
+    fm_merge_outcome_report "$dir/home" "$state" task-a "$url" poll external "$detail" ) \
+    || fail "merge outcome with poll detail was not recorded"
+  [ "$(merged_ledger_row "$state" task-a)" = "check: merge landed: task-a $url external: $detail" ] \
+    || fail "merge outcome row dropped the poll detail: $(merged_ledger_row "$state" task-a)"
+  pass "durable merge outcome row carries the poll's pipeline verdicts"
+}
+
 test_merged_poll_row_names_no_authority_when_no_record_grants_one() {
   local dir state url
   url=https://github.com/o/r/pull/1
@@ -2753,6 +2890,9 @@ SH
 }
 
 test_parser_matrix
+test_ado_poll_conflict_and_postmerge_verdicts
+test_ado_conflict_wakes_once_per_conflict
+test_merged_outcome_row_carries_poll_detail
 test_gitlab_merge_watch
 test_merged_poll_retires_once
 test_merged_poll_reregistration_after_notification_is_absorbed

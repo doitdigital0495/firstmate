@@ -3,8 +3,10 @@
 # exact pr_head=<sha> when available, then atomically arm a static merge poll.
 # The watcher check source is byte-for-byte bin/fm-pr-poll.sh; task and PR data
 # live only in a private sidecar and are never interpolated into shell source.
-# A GitHub pull request URL and a GitLab merge request URL are both accepted,
-# including a merge request on a self-hosted GitLab instance.
+# A GitHub pull request URL, a GitLab merge request URL, and an Azure DevOps
+# pull request URL are all accepted, including a merge request on a
+# self-hosted GitLab instance. The Azure DevOps poll is read-only az usage; a
+# merge there stays a human decision this home never performs.
 # Usage: fm-pr-check.sh <task-id> <pr-url>
 set -eu
 
@@ -51,21 +53,29 @@ fm_pr_poll_retirement_recover_one "$STATE" "$ID" "$SCRIPT_DIR/fm-pr-poll.sh" || 
   exit 1
 }
 
-# Refuse to arm a GitLab watch with no glab on PATH. The poll is silent on
-# every error by design, so a missing CLI would be indistinguishable from a
-# merge request that is never merged. Arming is the one point where that can be
-# reported, so the absent tool stops the watch here instead of watching nothing.
+# Refuse to arm a GitLab watch with no glab on PATH, or an Azure DevOps watch
+# with no az on PATH or at ~/.local/bin/az, where the Microsoft installer puts
+# it. The poll is silent on every error by design, so a missing CLI would be
+# indistinguishable from a pull request that is never merged. Arming is the one
+# point where that can be reported, so the absent tool stops the watch here
+# instead of watching nothing.
 if [ "$PROVIDER" = gitlab ] && ! command -v glab >/dev/null 2>&1; then
   echo "error: watching a GitLab merge request requires glab on PATH" >&2
+  exit 1
+fi
+if [ "$PROVIDER" = ado ] && ! fm_ado_az_bin >/dev/null; then
+  echo "error: watching an Azure DevOps pull request requires az on PATH or at ~/.local/bin/az" >&2
   exit 1
 fi
 
 "$FM_ROOT/bin/fm-guard.sh" || true
 
 # pr_head is recorded only when the forge's CLI can supply it. gh exposes the
-# head commit as a selectable field; plain glab exposes it only inside its JSON
-# output, which would need a JSON processor firstmate does not require, so a
-# GitLab task records no pr_head. Both consumers already treat it as optional:
+# head commit as a selectable field; az exposes it through the pull request's
+# lastMergeSourceCommit under a JMESPath query with tsv output, so no JSON
+# processor is needed. Plain glab exposes it only inside its JSON output, which
+# would need a JSON processor firstmate does not require, so a GitLab task
+# records no pr_head. All consumers already treat it as optional:
 # bin/fm-teardown.sh reads the head from the forge at teardown rather than from
 # metadata and falls back to its provider-agnostic content check, and
 # bin/fm-review-diff.sh resolves the head from the remote when none is recorded.
@@ -75,6 +85,16 @@ WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 PR_HEAD=
 if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
   if REMOTE_HEAD=$(cd "$WT" && gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) \
+    && fm_pr_head_valid "$REMOTE_HEAD"; then
+    PR_HEAD=$REMOTE_HEAD
+  fi
+fi
+if [ "$PROVIDER" = ado ] && fm_pr_ado_path_parts "$PROJECT_PATH"; then
+  ADO_AZ=$(fm_ado_az_bin) || ADO_AZ=
+  if [ -n "$ADO_AZ" ] \
+    && REMOTE_HEAD=$("$ADO_AZ" repos pr show --id "$NUMBER" \
+        --organization "https://dev.azure.com/$FM_PR_ADO_ORG" \
+        --query lastMergeSourceCommit.commitId --output tsv 2>/dev/null) \
     && fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi
