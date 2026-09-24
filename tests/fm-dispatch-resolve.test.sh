@@ -724,5 +724,16 @@ assert_equals '1' "$(grep -c '^https://' "$LOG/argv")" "exactly one canary netwo
 assert_equals 'typesafe/jev-1.13' "$(jq -r '.model' "$LOG/body")" "canary uses pinned Jev"
 assert_not_contains "$(cat "$LOG/child-env")" 'secret-present' "key is not exported into the curl environment"
 pass "opt-in startup canary makes one typed Choice request without exporting a credential"
+reset_log
+PATH="$FAKEBIN:$BASE_PATH" FM_HOME="$HOME_DIR" FM_DISPATCH_CANARY=1 FM_DISPATCH_ROUTE=direct OPENROUTER_API_KEY="$KEY" "$CANARY" > "$TMP_ROOT/canary.out" 2> "$TMP_ROOT/canary.err"
+assert_contains "$(cat "$TMP_ROOT/canary.err")" 'TYPESAFE_API_KEY absent' "direct canary is off without the direct key"
+assert_absent "$LOG/argv" "direct canary never probes OpenRouter"
+reset_log
+PATH="$FAKEBIN:$BASE_PATH" FM_HOME="$HOME_DIR" FM_DISPATCH_CANARY=1 FM_DISPATCH_ROUTE=direct TYPESAFE_API_KEY="$KEY" "$CANARY" > "$TMP_ROOT/canary.out"
+assert_equals 'DISPATCH_CANARY: ok' "$(cat "$TMP_ROOT/canary.out")" "direct canary accepts a typed Choice"
+assert_contains "$(cat "$LOG/argv")" 'https://api.typesafe.ai/v1/systemone' "direct canary probes the resolver's direct base"
+assert_equals 'jev-latest' "$(jq -r '.model' "$LOG/body")" "direct canary uses the resolver's direct model"
+assert_equals "Authorization: Bearer $KEY" "$(cat "$LOG/header")" "direct canary uses the direct key"
+pass "startup canary follows the resolver's route selection"
 
 printf '# all fm-dispatch-resolve tests passed\n'

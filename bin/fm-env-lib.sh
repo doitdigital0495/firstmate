@@ -29,3 +29,18 @@ fmx_env_get() {
   esac
   printf '%s' "$val"
 }
+
+# fmx_dispatch_route <openrouter-key> <typesafe-key> <env-file>
+# Select the System One route shared by bin/fm-dispatch-resolve.sh and
+# bin/fm-dispatch-canary.sh: OpenRouter by default, direct typesafe.ai when
+# FM_DISPATCH_ROUTE=direct. Sets TS_MODEL, TS_BASE, TS_KEY_NAME and TS_KEY (not
+# exported); an empty key argument falls back to TS_KEY_NAME in <env-file>.
+# shellcheck disable=SC2034
+fmx_dispatch_route() {
+  TS_MODEL=typesafe/jev-1.13 TS_BASE=https://openrouter.ai/api TS_KEY_NAME=OPENROUTER_API_KEY TS_KEY=$1
+  if [ "${FM_DISPATCH_ROUTE:-}" = direct ]; then
+    TS_MODEL=jev-latest TS_BASE=https://api.typesafe.ai TS_KEY_NAME=TYPESAFE_API_KEY TS_KEY=$2
+  fi
+  export -n TS_KEY 2>/dev/null || true
+  [ -n "$TS_KEY" ] || TS_KEY=$(fmx_env_get "$TS_KEY_NAME" "$3")
+}

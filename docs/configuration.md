@@ -630,7 +630,7 @@ The resolver and bootstrap copy an environment-provided key into a non-exported 
 The resolver sends the key to `curl` only as a header read from a file descriptor, never on argv, and nothing prints, logs, or writes it.
 The resolver uses `https://openrouter.ai/api/v1/systemone`, model `typesafe/jev-1.13`, confidence floor 0.6, and a five-second timeout.
 If a direct typesafe.ai key is already provisioned as `TYPESAFE_API_KEY`, set `FM_DISPATCH_ROUTE=direct` for the one-line route fallback (`https://api.typesafe.ai`, `jev-latest`).
-With `FM_DISPATCH_CANARY=1`, session startup makes one trivial typed Choice request when the key is present; a route failure prints `DISPATCH_CANARY: FAIL` and never silently counts as a good route.
+With `FM_DISPATCH_CANARY=1`, session startup makes one trivial typed Choice request on the resolver's own route (base, model, and key, including `FM_DISPATCH_ROUTE=direct`) when that route's key is present; a route failure prints `DISPATCH_CANARY: FAIL` and never silently counts as a good route.
 The live rule-match evidence is recorded in [`verification/dispatch-resolve.md`](verification/dispatch-resolve.md).
 
 ## Toolchain

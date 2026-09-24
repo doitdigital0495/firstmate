@@ -73,14 +73,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-account-lib.sh"
 
 CONFIDENCE_FLOOR=0.6
-TS_MODEL=typesafe/jev-1.13
-TS_BASE=https://openrouter.ai/api
-if [ "${FM_DISPATCH_ROUTE:-}" = direct ]; then
-  TS_MODEL=jev-latest
-  TS_BASE=https://api.typesafe.ai
-  OPENROUTER_API_KEY_PRIVATE=$DIRECT_API_KEY_PRIVATE
-  [ -n "$OPENROUTER_API_KEY_PRIVATE" ] || OPENROUTER_API_KEY_PRIVATE=$(fmx_env_get TYPESAFE_API_KEY "$FM_HOME/.env")
-fi
+fmx_dispatch_route "$OPENROUTER_API_KEY_PRIVATE" "$DIRECT_API_KEY_PRIVATE" "$FM_HOME/.env"
+unset OPENROUTER_API_KEY_PRIVATE DIRECT_API_KEY_PRIVATE
 TS_TIMEOUT=5
 DEFAULT_WHEN="No listed rule applies to this task."
 
@@ -108,12 +102,8 @@ while [ $# -gt 0 ]; do
 done
 
 # ---- opt-in gate ---------------------------------------------------------------
-if [ -z "$OPENROUTER_API_KEY_PRIVATE" ] && [ "${FM_DISPATCH_ROUTE:-}" != direct ]; then
-  OPENROUTER_API_KEY_PRIVATE=$(fmx_env_get OPENROUTER_API_KEY "$FM_HOME/.env")
-fi
-if [ -z "$OPENROUTER_API_KEY_PRIVATE" ]; then
-  if [ "${FM_DISPATCH_ROUTE:-}" = direct ]; then key_name=TYPESAFE_API_KEY; else key_name=OPENROUTER_API_KEY; fi
-  echo "dispatch-resolve: off ($key_name absent from the environment and $FM_HOME/.env)" >&2
+if [ -z "$TS_KEY" ]; then
+  echo "dispatch-resolve: off ($TS_KEY_NAME absent from the environment and $FM_HOME/.env)" >&2
   exit 0
 fi
 
@@ -257,7 +247,7 @@ command -v curl >/dev/null 2>&1 || emit_error "curl not installed"
   T0=$(fm_timing_now_ms)
   HTTP=$(printf '%s' "$REQUEST" | curl -sS --max-time "$TS_TIMEOUT" -o "$RESP_FILE" -w '%{http_code}' \
     -X POST "$TS_BASE/v1/systemone" -H 'Content-Type: application/json' \
-    -H @/dev/fd/3 3< <(printf 'Authorization: Bearer %s\n' "$OPENROUTER_API_KEY_PRIVATE") \
+    -H @/dev/fd/3 3< <(printf 'Authorization: Bearer %s\n' "$TS_KEY") \
     --data-binary @- 2>/dev/null) || HTTP=000
   T1=$(fm_timing_now_ms)
   LAT_MS=$(( T1 - T0 ))
