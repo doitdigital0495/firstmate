@@ -79,13 +79,13 @@ done
 for perm in bypass auto; do
   rm -f "$LAB/fm-submit" "$LAB/fm-stop" "$LAB/project-stop"
   if [ "$perm" = bypass ]; then
-    permission=(--dangerously-skip-permissions --allowedTools 'Read,Bash')
+    permission=(--dangerously-skip-permissions)
   else
     permission=(--permission-mode auto)
   fi
   ( cd "$WORKSPACE" && claude "${permission[@]}" \
       --setting-sources '' --strict-mcp-config --disable-slash-commands \
-      --tools Read,Bash --model sonnet --effort medium \
+      --tools Read,Bash --model opus --effort medium \
       --settings "$LAB/fm-settings.json" \
       --append-system-prompt "$(cat "$ROOT/.pi/fm-worker-contract.md")" \
       -p "reply with the single word ok" ) \

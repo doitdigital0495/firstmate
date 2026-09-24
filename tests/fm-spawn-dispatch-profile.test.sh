@@ -131,7 +131,7 @@ test_no_profile_keeps_claude_profile_defaults() {
   status=$?
   expect_code 0 "$status" "claude spawn without profile flags should succeed"
   assert_contains "$out" "spawned $id harness=claude" "spawn did not report claude"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" claude sonnet medium
+  assert_meta_profile "$HOME_DIR/state/$id.meta" claude opus medium
 
   launch=$(cat "$LAUNCH_LOG")
   # Every per-launch setting rides one --settings file in state/, so nothing is
@@ -408,7 +408,7 @@ test_claude_threads_model_and_effort() {
   expect_code 0 "$status" "claude spawn with profile flags should succeed"
   assert_meta_profile "$HOME_DIR/state/$id.meta" claude sonnet high
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "claude --dangerously-skip-permissions --settings '$(cd "$HOME_DIR/state" && pwd -P)/$id.claude-settings.json' --setting-sources '' --strict-mcp-config --disable-slash-commands --tools Read,Bash,Edit,Write --allowedTools Read,Bash,Edit,Write $CLAUDE_CONTROL_CHANNEL_FLAG" \
+  assert_contains "$launch" "claude --dangerously-skip-permissions --settings '$(cd "$HOME_DIR/state" && pwd -P)/$id.claude-settings.json' --setting-sources '' --strict-mcp-config --disable-slash-commands --tools Read,Bash,Edit,Write $CLAUDE_CONTROL_CHANNEL_FLAG" \
     "claude launch did not keep its out-of-worktree settings before the task-worker prompt"
   assert_contains "$launch" "$CLAUDE_CONTROL_CHANNEL_FLAG --model 'sonnet' --effort 'high'" \
     "claude launch did not thread model and effort flags"
@@ -1498,13 +1498,12 @@ SH
 }
 
 # config/claude-permission-mode (bin/fm-spawn.sh header): absent and `bypass`
-# produce the same lean launch, while `auto` keeps the classifier in charge by
-# omitting --allowedTools. Invalid tokens refuse before endpoint or metadata.
+# produce the same lean launch, while `auto` swaps only the permission flag.
+# Invalid tokens refuse before endpoint or metadata.
 claude_expected_launch() {  # <home> <id> <permission-flag>
   local home=$1 id=$2 flag=$3
-  local allow='' model="--model 'sonnet' --effort 'medium'"
-  [ "$flag" = '--permission-mode auto' ] || allow='--allowedTools Read,Bash,Edit,Write '
-  printf '%s' "export COMPACT_ADVISER_DISABLE=1; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u CLAUDE_CONFIG_DIR CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $flag --settings '$(cd "$home/state" && pwd -P)/$id.claude-settings.json' --setting-sources '' --strict-mcp-config --disable-slash-commands --tools Read,Bash,Edit,Write ${allow}$CLAUDE_CONTROL_CHANNEL_FLAG $model \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$home/data/$id/launch-brief.md')\""
+  local model="--model 'opus' --effort 'medium'"
+  printf '%s' "export COMPACT_ADVISER_DISABLE=1; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u CLAUDE_CONFIG_DIR CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $flag --settings '$(cd "$home/state" && pwd -P)/$id.claude-settings.json' --setting-sources '' --strict-mcp-config --disable-slash-commands --tools Read,Bash,Edit,Write $CLAUDE_CONTROL_CHANNEL_FLAG $model \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$home/data/$id/launch-brief.md')\""
 }
 
 test_claude_permission_mode_bypass_matches_absent_launch() {

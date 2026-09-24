@@ -29,8 +29,8 @@ out=$(spawn lean-ship-s1 "$PROJ_DIR" --mode direct-PR --yolo off)
 expect_code 0 "$?" "Claude ship should launch: $out"
 launch=$(cat "$LAUNCH_LOG")
 assert_contains "$launch" "--setting-sources '' --strict-mcp-config --disable-slash-commands" "worker must exclude settings and discovery"
-assert_contains "$launch" "--tools Read,Bash,Edit,Write --allowedTools Read,Bash,Edit,Write" "ship tool boundary"
-assert_contains "$launch" "--model 'sonnet' --effort 'medium'" "ship defaults must be explicit"
+assert_contains "$launch" "--tools Read,Bash,Edit,Write " "ship tool boundary"
+assert_contains "$launch" "--model 'opus' --effort 'medium'" "ship defaults must be explicit"
 assert_contains "$launch" "--settings '$HOME_DIR/state/lean-ship-s1.claude-settings.json'" "Firstmate hooks must still load"
 assert_contains "$launch" "--append-system-prompt \"\$(cat '$ROOT/.pi/fm-worker-contract.md'" "worker contract must be appended"
 pass "Claude ship excludes discovered settings, tools and skills but retains Firstmate hooks and contract"
@@ -41,7 +41,7 @@ printf '%s\n' '# Scout skill' > "$CASE_DIR/skills/skill with spaces/SKILL.md"
 out=$(spawn lean-scout-s2 "$PROJ_DIR" --scout --model opus --effort high --skill "$CASE_DIR/skills/skill with spaces")
 expect_code 0 "$?" "Claude scout with a skill should launch: $out"
 launch=$(cat "$LAUNCH_LOG")
-assert_contains "$launch" "--tools Read,Bash --allowedTools Read,Bash" "scout should be read-only"
+assert_contains "$launch" "--tools Read,Bash " "scout should be read-only"
 assert_not_contains "$launch" "--tools Read,Bash,Edit" "scout must not get write tools"
 assert_contains "$launch" "--model 'opus' --effort 'high'" "requested model and effort"
 assert_contains "$launch" "cat '$CASE_DIR/skills/skill with spaces/SKILL.md'" "explicit skill directory must be read"
@@ -70,8 +70,7 @@ expect_code 0 "$?" "Claude auto worker should launch: $out"
 launch=$(cat "$LAUNCH_LOG")
 assert_contains "$launch" "--permission-mode auto" "auto permission mode must survive lean launch"
 assert_contains "$launch" "--tools Read,Bash,Edit,Write" "auto mode still limits available tools"
-assert_not_contains "$launch" "--allowedTools" "auto mode must not preapprove tools around its classifier"
-pass "Claude auto posture restricts tools without bypassing classifier review"
+pass "Claude auto posture restricts tools"
 
 make_case invalid lean-invalid-s4
 out=$(spawn lean-invalid-s3 "$PROJ_DIR" --mode direct-PR --yolo off --skill "$CASE_DIR/missing.md" 2>&1)

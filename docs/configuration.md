@@ -390,8 +390,7 @@ The [Claude adapter reference](../.agents/skills/harness-adapters/references/har
 Claude ships and scouts load only Firstmate's per-task settings source, which retains turn-end and busy-state hooks while excluding user, project and local settings, plugins, and hooks.
 They start without MCP servers or discovered slash-command skills; task-specific `--skill` files are appended to the worker contract rather than loaded as slash commands.
 The `--tools` list limits a scout to Read and Bash and a ship to Read, Bash, Edit and Write.
-In `auto` permission mode, those tools remain subject to Claude's classifier rather than being preapproved through `--allowedTools`.
-Firstmate pins a default Sonnet model and medium effort for a task worker when no profile or launch override supplies them.
+Firstmate pins a default Opus model and medium effort for a task worker when no profile or launch override supplies them.
 Claude secondmates retain their full primary-session configuration instead of this task-worker posture.
 For slash-command workflows such as `/no-mistakes`, lean workers use the corresponding CLI directly.
 The exact launch flags and refusal rules are owned by [`fm-spawn.sh`](../bin/fm-spawn.sh), with regression coverage in [`fm-spawn-claude-lean.test.sh`](../tests/fm-spawn-claude-lean.test.sh).
