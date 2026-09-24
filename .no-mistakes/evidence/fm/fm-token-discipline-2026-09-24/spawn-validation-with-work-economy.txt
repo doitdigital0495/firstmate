@@ -1,0 +1,11 @@
+placeholders: none
+content_valid: yes
+--- captain intent body:
+Tweak the report header.
+
+--- rendered launch-brief work economy:
+# Work economy
+For CI, pipelines, deploys, and long jobs, wait outside the conversation with ONE blocking command per run that loops internally and prints only the final state; never take sleep-then-check turns.
+Search before reading; read files over ~300 lines by range, and never re-read a whole large file.
+Combine related probes into one script run; filter or limit command output.
+
