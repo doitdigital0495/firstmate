@@ -1,0 +1,30 @@
+$ # missing registry
+error: missing or malformed account registry: /tmp/tmp.JUBqARoug4/config/accounts.json
+rc=1
+$ # registry without crossAccount switch (Geris-only home)
+error: this home has no crossAccount switch
+rc=1
+$ fm-account-routing.sh status
+cross-account routing: off
+rc=0 file.enabled=false
+$ fm-account-routing.sh on
+cross-account routing: on
+rc=0 file.enabled=true
+$ fm-account-routing.sh status
+cross-account routing: on
+rc=0 file.enabled=true
+$ fm-account-routing.sh off
+cross-account routing: off
+rc=0 file.enabled=false
+$ fm-account-routing.sh status
+cross-account routing: off
+rc=0 file.enabled=false
+$ fm-account-routing.sh bogus
+usage: fm-account-routing.sh on|off|status
+rc=2 file.enabled=false
+$ # malformed store path
+error: missing or malformed account registry: /tmp/tmp.JUBqARoug4/config/accounts.json
+rc=1
+$ # symlinked registry
+error: refusing symlinked account registry
+rc=1 real.enabled=false

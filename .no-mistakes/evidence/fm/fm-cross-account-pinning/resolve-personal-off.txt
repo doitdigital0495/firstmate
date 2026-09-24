@@ -1,0 +1,18 @@
+$ fm-account-routing.sh off
+cross-account routing: off
+$ personal home, crossAccount OFF
+dispatch-resolve:
+  status: clear
+  model: typesafe/jev-1.13-20260917   latency_ms: 325   tokens: 4156/544
+  rule: rule_2 (read-only investigation: locating code, mapping a module, fi)   confidence: 1
+  probabilities: rule_3=0 rule_7=0 rule_2=1 rule_1=0 rule_6=0 rule_10=0 rule_8=0 rule_5=0 default=0 rule_4=0 rule_9=0 rule_11=0
+  candidate_preference: rule_2_2 (quota gates and spendPriority take precedence)
+  note: rule matched
+  candidate: pi:openai-codex/gpt-6-luna  account=geris  -> not eligible: cross-account routing disabled or account not registered
+  candidate: claude:haiku  provider=claude  scope=all_models  remaining=26%  spendPriority=-1.2199  runway=projected_exhaustion  -> eligible
+  candidate: pi:openai-codex/gpt-6-luna  provider=codex  scope=all_models  remaining=77%  spendPriority=-0.4054  runway=projected_exhaustion  -> eligible
+  candidate: pi:zai/glm-5.3-flash  provider=zai  scope=all_models  remaining=62%  spendPriority=-0.3941  runway=projected_exhaustion  -> eligible
+  candidate: claude:haiku  account=geris  -> not eligible: cross-account routing disabled or account not registered
+  profile: --harness 'pi' --model 'zai/glm-5.3-flash' --effort 'low'
+rc=0
+cross-account routing: on

@@ -1,0 +1,14 @@
+$ ADVERSARIAL: Geris home ladder names account=personal
+dispatch-resolve:
+  status: clear
+  model: typesafe/jev-1.13-20260917   latency_ms: 422   tokens: 2169/357
+  rule: rule_2 (read-only investigation: locating code, mapping a module, fi)   confidence: 1
+  probabilities: rule_2=1 rule_7=0 rule_10=0 rule_3=0 rule_4=0 rule_5=0 rule_6=0 rule_1=0 rule_8=0 rule_9=0 default=0
+  candidate_preference: rule_2_1 (quota gates and spendPriority take precedence)
+  note: rule matched
+  note: 1 eligible candidate(s) unranked (claude)
+  candidate: claude:haiku  account=personal  -> not eligible: cross-account routing disabled or account not registered
+  candidate: pi:openai-codex/gpt-6-luna  provider=codex  scope=all_models  remaining=77%  spendPriority=-0.4054  runway=projected_exhaustion  -> eligible
+  candidate: claude:haiku  provider=claude  scope=all_models  remaining=-%  spendPriority=-  runway=unknown  -> eligible, unranked: provider claude unmeasured (unknown): disclosed uncertainty
+  profile: --harness 'pi' --model 'openai-codex/gpt-6-luna' --effort 'xhigh'
+rc=0

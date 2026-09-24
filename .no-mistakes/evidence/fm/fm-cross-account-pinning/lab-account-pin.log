@@ -1,0 +1,48 @@
+== 1. spawn --harness pi --account geris (switch on)
+warning: /tmp/fm-acct-lab.MhNSnC/home/data/acctgeris/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned acctgeris harness=pi kind=ship mode=no-mistakes yolo=off window=fm-lab-fm-acct-pin-480237-15466:w1:p2 worktree=/home/daan/.treehouse/proj-a51501/1/proj
+rc=0
+account=geris
+claude_config_dir=/tmp/fm-acct-lab.MhNSnC/stores/.claude-geris
+pi_agent_dir=/tmp/fm-acct-lab.MhNSnC/stores/.pi-geris/agent
+codex_home=/tmp/fm-acct-lab.MhNSnC/stores/.codex-geris
+herdr_session=fm-lab-fm-acct-pin-480237-15466
+herdr_pane_id=w1:p2
+-- env seen by the worker process in the Herdr lab pane:
+PI_CODING_AGENT_DIR=/tmp/fm-acct-lab.MhNSnC/stores/.pi-geris/agent
+CODEX_HOME=/home/daan/.codex
+CLAUDE_CONFIG_DIR=/home/daan/.claude
+== 2. adversarial: switch off, a NEW --account geris spawn refuses before mutation
+cross-account routing: off
+error: account 'geris' is not enabled in this home's config/accounts.json
+rc=1
+acctoff.meta absent (no durable mutation)
+== 3. adversarial: --relaunch --account personal refuses
+error: --relaunch keeps the recorded account; --account cannot override it
+rc=1
+== 4. relaunch with switch off keeps recorded Geris store
+warning: /tmp/fm-acct-lab.MhNSnC/home/data/acctgeris/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned acctgeris harness=pi kind=ship mode=no-mistakes yolo=off window=fm-lab-fm-acct-pin-480237-15466:w1:p2 worktree=/home/daan/.treehouse/proj-a51501/1/proj
+rc=0
+-- env seen by relaunched worker:
+PI_CODING_AGENT_DIR=/tmp/fm-acct-lab.MhNSnC/stores/.pi-geris/agent
+CODEX_HOME=/home/daan/.codex
+CLAUDE_CONFIG_DIR=/home/daan/.claude
+account=geris
+pi_agent_dir=/tmp/fm-acct-lab.MhNSnC/stores/.pi-geris/agent
+== 5. unpinned pi spawn, no ambient PI_CODING_AGENT_DIR: launch leaves the pane store alone
+warning: /tmp/fm-acct-lab.MhNSnC/home/data/acctplain/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned acctplain harness=pi kind=ship mode=no-mistakes yolo=off window=fm-lab-fm-acct-pin-480237-15466:w1:p3 worktree=/home/daan/.treehouse/proj-a51501/2/proj
+rc=0
+pi_agent_dir lines in meta: 0
+-- env seen by unpinned worker:
+PI_CODING_AGENT_DIR=/tmp/fm-acct-lab.MhNSnC/stores/.pi-geris/agent
+CODEX_HOME=/home/daan/.codex
+CLAUDE_CONFIG_DIR=/home/daan/.claude
+PI_CODING_AGENT_DIR=/tmp/fm-acct-lab.MhNSnC/stores/.pi-geris/agent
+CODEX_HOME=/home/daan/.codex
+CLAUDE_CONFIG_DIR=/home/daan/.claude
+PI_CODING_AGENT_DIR=/home/daan/.pi/agent
+CODEX_HOME=/home/daan/.codex
+CLAUDE_CONFIG_DIR=/home/daan/.claude
+teardown rc=0

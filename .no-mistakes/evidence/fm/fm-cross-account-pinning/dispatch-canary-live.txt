@@ -1,0 +1,8 @@
+$ FM_DISPATCH_CANARY=1 fm-dispatch-canary.sh  (OpenRouter route, key via opr)
+DISPATCH_CANARY: ok
+rc=0
+$ FM_DISPATCH_CANARY=1 FM_DISPATCH_ROUTE=direct fm-dispatch-canary.sh  (no TYPESAFE key)
+DISPATCH_CANARY: off (TYPESAFE_API_KEY absent)
+rc=0
+$ fm-dispatch-canary.sh (canary not opted in)
+rc=0 (no output = off)
