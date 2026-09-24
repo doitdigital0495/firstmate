@@ -749,7 +749,7 @@ if [ "$TRACEPARENT_SET" -eq 1 ]; then
   }
 fi
 [ "${#SKILLS[@]}" -eq 0 ] || [ "$KIND" != secondmate ] || {
-  echo "error: --skill applies only to Pi ship and scout workers; a --secondmate spawn has no lean worker launch to carry it" >&2
+  echo "error: --skill applies only to Pi or Claude ship and scout workers; a --secondmate spawn has no lean worker launch to carry it" >&2
   exit 1
 }
 case "$EFFORT" in
