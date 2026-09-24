@@ -47,6 +47,8 @@
 #                the configured merge authority approves, firstmate merges to local main
 # no-mistakes-prod-only is a registry policy, not a task mode; resolve it to one of
 # the three concrete modes at intake before calling this script.
+# Every ship and scout scaffold carries a shared harness-neutral work-economy
+# block for blocking waits, range reads, batched probes, and short output.
 # Every ship and scout scaffold also carries `## Request checklist` with an
 # `{ASKS}` placeholder Firstmate fills before dispatch: one numbered checkbox line
 # per distinct captain ask, in the captain's terms ("1. [ ] <ask>"). The
@@ -399,6 +401,16 @@ IFS= read -r -d '' TASK_SECTION <<'EOF' || true
 EOF
 TASK_SECTION=${TASK_SECTION%$'\n'}
 
+# Shared across ship/scout delivery modes and harnesses; secondmates supervise,
+# rather than execute, worker tasks.
+IFS= read -r -d '' WORK_ECONOMY_SECTION <<'EOF' || true
+# Work economy
+For CI, pipelines, deploys, and long jobs, wait outside the conversation with ONE blocking command per run that loops internally and prints only the final state; never take sleep-then-check turns.
+Search before reading; read files over ~300 lines by range, and never re-read a whole large file.
+Combine related probes into one script run; filter or limit command output.
+EOF
+WORK_ECONOMY_SECTION=${WORK_ECONOMY_SECTION%$'\n'}
+
 if [ "$KIND" = scout ]; then
 if "$SCRIPT_DIR/fm-bootstrap.sh" lavish-compatible >/dev/null 2>&1; then
   LAVISH_LINE='If your deliverable is a visual artifact the captain will review and iterate on, you may host the Lavish review loop yourself (poll, revise, re-serve, staying alive) instead of handing it back to firstmate.'
@@ -411,6 +423,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 $TASK_SECTION
 
 $HERDR_SECTION
+
+$WORK_ECONOMY_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
@@ -500,6 +514,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 $TASK_SECTION
 
 $HERDR_SECTION
+
+$WORK_ECONOMY_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.

@@ -327,11 +327,13 @@ Record the resulting mode, `yolo` merge posture, and the one-line reason for any
 Turn each distinct captain ask of the task into one numbered checkbox line under the brief's `## Request checklist` (`{ASKS}` in the scaffold), in the captain's terms; a multi-part ask stays multiple lines, and a genuinely single-ask task still gets its one line.
 That checklist is the loss detector: the worker must account for every item with proof in a done report at `data/<id>/report.md` and end every `done:` line with `asks <done>/<total>`, so a dropped ask is visible the moment work first reports done rather than a day later.
 Keep the checklist to the captain's asks, not Firstmate build steps; those belong in `## Firstmate spec`.
+Name the exact context-doc section or file range to read in the brief, not a whole guide.
+Split large multi-part changes, such as report data, visuals, and validation, into sequential tasks with a fresh worker session for each.
 
-A `no-mistakes` report tweak the captain will iterate on anyway (visuals, measures, text, portal UI) may ship the fast lane: scaffold and spawn the brief with `--fast-lane` (ship tasks only, `--mode no-mistakes` only), and pass `--fast-lane` to a scout promotion that ships that class.
+A `no-mistakes` report tweak the captain will iterate on anyway (visuals, measures, text, portal UI) defaults to the fast lane when its risk criteria hold: scaffold and spawn the brief with `--fast-lane` (ship tasks only, `--mode no-mistakes` only), and pass `--fast-lane` to a scout promotion that ships that class.
 The lane is a worker-drive rule, not a no-mistakes option: no-mistakes has no per-run setting that caps review rounds (only `--skip <steps>`, which removes a step entirely), so the brief's definition of done instructs the worker to answer the first review gate with `--action approve`, never `--action fix` there, with scope locked to the request checklist and out-of-scope findings recorded as follow-ups instead of commits.
 In the fast lane an ask-user finding escalates (Validate, below) when it is error-severity or destructive, irreversible, or security-sensitive at any severity; every other warning- or info-severity ask-user finding is a non-gating done-report follow-up the worker never answers or fixes, and firstmate decides it through `ask-user-authority` when filing it.
-Select it per task on risk you can state, never as a default; when unsure, ship the standard lane.
+Select it per task on risk you can state; when unsure, ship the standard lane.
 
 Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
@@ -344,6 +346,7 @@ Spawn only through `bin/fm-spawn.sh` after the profile and backend checks in sec
 The spawn must resolve a genuine isolated task worktree distinct from the primary checkout; a failed isolation assertion stops the task.
 When the configured tasks-axi backlog gate applies, the spawn itself moves the work item to In flight and refuses rather than dispatching work this home has no item for, so recording the dispatch is never a separate step to remember; a manual-backend home retains the hand-editing contract in `docs/configuration.md`.
 After spawning, confirm the worker is processing the brief and handle any trust dialog through `harness-adapters`.
+Diagnose a failed dispatch before any re-dispatch; never rerun it blind.
 A persistent secondmate is recorded in the secondmate registry and runtime state, never as a backlog work item.
 
 Steer a worker with ordinary text through fail-closed `fm-send`: the message becomes a durable record in the task's steering inbox (multi-line text is legal, local and remote alike) and the worker's terminal receives only a constant doorbell line, with the watcher re-ringing an unacknowledged local message and escalating a stuck one (`bin/fm-task-inbox-lib.sh`; `bin/fm-send.sh` owns the typed-plane carve-outs).
