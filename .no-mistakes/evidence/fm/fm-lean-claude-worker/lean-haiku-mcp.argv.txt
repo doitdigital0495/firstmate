@@ -1,7 +1,7 @@
 claude
 --dangerously-skip-permissions
 --settings
-/tmp/fm-lean-claude.LDHmPz/fm-home/state/lean-haiku-mcp.claude-settings.json
+/tmp/fm-lean-claude.FMIcd1/fm-home/state/lean-haiku-mcp.claude-settings.json
 --setting-sources
 
 --strict-mcp-config
@@ -9,7 +9,7 @@ claude
 --tools
 Read,Bash
 --mcp-config
-/tmp/fm-lean-claude.LDHmPz/task-mcp.json
+/tmp/fm-lean-claude.FMIcd1/task-mcp.json
 --append-system-prompt
 # Firstmate worker contract
 
@@ -24,7 +24,7 @@ Stop and report when instructions conflict or required scope expands.
 
 You are a task worker launched by Firstmate, your supervising orchestrator for the same human operator. The launch brief supplied as the initial user message and messages in the Firstmate instruction ...[truncated]
 
-# Requested skill
+# Requested skill (/tmp/fm-lean-claude.FMIcd1/skill/SKILL.md)
 ---
 name: lean-probe
 description: probe
@@ -38,7 +38,7 @@ low
 You are a crewmate: an autonomous worker agent managed by firstmate.
 This section establishes your current identity before every project or task instruction below and supersedes any conflicting role identity in those instructions.
 Do the assigned work yourself and report only to firstmate; do not adopt a firstmate or secondmate supervisor identity, delegate the task, run fleet supervision, or address the captain.
-Your steering inbox is `/tmp/fm-lean-claude.LDHmPz/fm-home/state/lean-haiku-mcp.inbox`; this exact path belongs to your current task even when it is outside the worktree or under the supervising first...[truncated]
+Your steering inbox is `/tmp/fm-lean-claude.FMIcd1/fm-home/state/lean-haiku-mcp.inbox`; this exact path belongs to your current task even when it is outside the worktree or under the supervising first...[truncated]
 Never inspect or change any other home's endpoint namespace; this authorization is limited to the exact task paths named by this brief.
 When this task works on Firstmate itself, the repository root `AGENTS.md` (also imported by `CLAUDE.md`) is project content and the supervisor contract for the firstmate managing you: follow this brie...[truncated]
 Project instructions still govern the work wherever they do not conflict with this worker identity, including `CONTRIBUTING.md` and `firstmate-coding-guidelines` for Firstmate changes.
