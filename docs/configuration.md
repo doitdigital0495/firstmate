@@ -528,9 +528,9 @@ A typical personal-home file is:
 {"crossAccount":{"enabled":true},"plans":{"claude":"Max 5x","codex":"ChatGPT Plus"},"accounts":{"personal":{"claude":"~/.claude","pi":"~/.pi/agent","codex":"~/.codex","plans":{"claude":"Max 5x"}},"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris","plans":{"claude":"Pro","zai":"Z.ai Pro"}}}}
 ```
 
-The optional top-level `plans` object declares fallback subscription names for the default home store, and each account's optional `plans` object declares them for that named store; keys are provider ids (not harness names) and values are nonempty printable plan labels of at most 80 characters.
-For each candidate, quota-axi's provider plan/tier metadata wins when published, then the selected store's vendor profile plan field, then this fallback; if none is available the candidate shows `plan=unknown (unavailable)` without becoming ineligible.
-Claude's profile metadata is read at `${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json` for the default store or `<claude store>/.claude.json` for a named account, and Codex top-level plan metadata at `<codex store>/auth.json`; JWT tokens are never decoded or displayed, so a plan present only inside a token needs the declared fallback.
+The optional top-level `plans` object declares subscription names for the default home store, and each account's optional `plans` object declares them for that named store; keys are provider ids (not harness names) and values are nonempty printable plan labels of at most 80 characters.
+For each candidate, a declared plan wins because quota-axi publishes only coarse labels (for example `max` for every Claude Max tier), and the quota-axi label is shown beside it: `plan=Max 20x (config; quota-axi: max)`.
+Without a declaration the quota-axi label is used (`plan=max (quota-axi)`); if neither is available the candidate shows `plan=unknown (unavailable)` without becoming ineligible.
 A Pi candidate uses its declared provider's plan, not Pi's harness name.
 Run `bin/fm-account-routing.sh on|off|status` to change or inspect the switch atomically; a home without an explicit switch refuses the toggle.
 Off excludes named-account candidates at the next intake without touching workers already running, and `fm-spawn.sh --account <id>` refuses an unregistered or disabled seat before any home mutation.

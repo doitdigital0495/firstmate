@@ -87,8 +87,6 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-timing-lib.sh"
 # shellcheck source=bin/fm-account-lib.sh
 . "$SCRIPT_DIR/fm-account-lib.sh"
-# shellcheck source=bin/fm-plan-lib.sh
-. "$SCRIPT_DIR/fm-plan-lib.sh"
 
 CONFIDENCE_FLOOR=0.6
 # Bounded gather for an incomplete choice: attempts and the doubling backoff base.
@@ -303,13 +301,11 @@ jq -e --slurpfile rules "$RULES" '
        (.usage.output_tokens | type) == "number"))' \
   "$RESP_FILE" >/dev/null 2>&1 || emit_error "response is not a rule Choice answer"
 
-# ---- plan evidence: store metadata and local declarations (never credentials) --
+# ---- plan evidence: declared plans in config/accounts.json ---------------------
 PLAN_CONFIG='{}'
 if fm_account_registry_valid "$CONFIG/accounts.json"; then
   PLAN_CONFIG=$(jq -c '{default: (.plans // {}), accounts: (.accounts | with_entries(.value = (.value.plans // {})))}' "$CONFIG/accounts.json")
 fi
-HOME_PLANS=$(fm_plan_store_fields "${CLAUDE_CONFIG_DIR:-$HOME}" "${CODEX_HOME:-$HOME/.codex}")
-ACCOUNT_PLANS='{}'
 # ---- quota evidence: one snapshot per authorized credential store -------------
 command -v quota-axi >/dev/null 2>&1 || emit_error "quota-axi not installed"
 gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapshot
@@ -335,7 +331,6 @@ gather_account_snapshot() {  # <account>: refresh ACCOUNT_QUOTAS[account] from i
   mapfile -t stores < <(fm_account_stores "$CONFIG/accounts.json" "$account")
   [ "${#stores[@]}" -eq 3 ] || return 0
   store_key=$(printf '%s\n' "${stores[@]}" | jq -Rsc .)
-  ACCOUNT_PLANS=$(jq -cn --argjson prev "$ACCOUNT_PLANS" --arg a "$account" --argjson plans "$(fm_plan_store_fields "${stores[0]}" "${stores[2]}")" '$prev + {($a): $plans}')
   account_quota=$(mktemp) || emit_error "mktemp failed"
   if ! CODEX_HOME=${stores[2]} PI_CODING_AGENT_DIR=${stores[1]} CLAUDE_CONFIG_DIR=${stores[0]} quota-axi --json > "$account_quota" 2>/dev/null || ! fm_quota_json_valid < "$account_quota"; then
     ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" '. + {($a): {key: $key, failed: true}}' <<<"$ACCOUNT_QUOTAS")
@@ -354,7 +349,6 @@ while IFS= read -r account; do
   store_key=$(printf '%s\n' "${stores[@]}" | jq -Rsc .)
   previous=$(jq -r --arg key "$store_key" 'to_entries[] | select(.value.key == $key) | .key' <<<"$ACCOUNT_QUOTAS" | head -n 1)
   if [ -n "$previous" ]; then
-    ACCOUNT_PLANS=$(jq -cn --argjson prev "$ACCOUNT_PLANS" --arg a "$account" --arg other "$previous" '$prev + {($a): $prev[$other]}')
     ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg prev "$previous" '. + {($a): .[$prev]}' <<<"$ACCOUNT_QUOTAS")
     continue
   fi
@@ -363,7 +357,7 @@ done < <(jq -r '[((.rules // [])[] | .use | if type == "array" then .[] else . e
 
 # ---- resolution: declared gates + quota evidence + argmax, all in jq ----------
 fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
-  jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson home_plans "$HOME_PLANS" --argjson account_plans "$ACCOUNT_PLANS" --argjson quota_attempts "$1" --argjson warmups "$2" \
+  jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" \
     --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" '
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
@@ -375,12 +369,11 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   def plan_label($v): if ($v | type) == "string" and ($v | length) > 0 and ($v | length) <= 80 and ($v | test("^[[:print:]]+$")) then $v else null end;
   def plan_for($c; $p):
     (if $c.account then $account_quotas[$c.account].snapshot else $q end) as $snapshot |
-    (if $c.account then $account_plans[$c.account][$p] else $home_plans[$p] end) as $vendor |
-    (if $c.account then $plan_config.accounts[$c.account][$p] else $plan_config.default[$p] end) as $fallback |
+    (plan_label(if $c.account then $plan_config.accounts[$c.account][$p] else $plan_config.default[$p] end)) as $declared |
     ([($snapshot.providers // [])[] | select(.provider == $p) | (.plan // .tier // .account.plan // null) | plan_label(.)] | first) as $quota_plan |
-    if $quota_plan != null then {plan: $quota_plan, plan_source: "quota-axi"}
-    elif (plan_label($vendor)) != null then {plan: $vendor, plan_source: "vendor profile"}
-    elif (plan_label($fallback)) != null then {plan: $fallback, plan_source: "config/accounts.json"}
+    if $declared != null and $quota_plan != null then {plan: $declared, plan_source: "config; quota-axi: \($quota_plan)"}
+    elif $declared != null then {plan: $declared, plan_source: "config"}
+    elif $quota_plan != null then {plan: $quota_plan, plan_source: "quota-axi"}
     else {plan: "unknown", plan_source: "unavailable"} end;
   def measured($p):
     (prov($p)) as $provider |
@@ -556,7 +549,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       ([$ties[] | . as $candidate | $sel.use | to_entries[] |
         select(.value == $candidate.profile) | select($ev.profile_preference == "\($sel.source)_\(.key + 1)") | $candidate] | first) as $preferred |
       if ($ties | length) > 1 and $preferred == null then $ev + {status: "escalate", reason: "genuine spendPriority tie", note: $sel.note, candidates: $cands}
-      else $ev + {status: "clear", note: ($sel.note + "; compare candidate plan tiers before accepting percent-based capacity"), candidates: $cands, chosen: ($preferred // $best)}
+      else $ev + {status: "clear", note: ($sel.note + (if ([$elig[].plan] | unique | length) > 1 then "; compare candidate plan tiers before accepting percent-based capacity" else "" end)), candidates: $cands, chosen: ($preferred // $best)}
         + (if ($unranked | length) > 0 then
              {unranked_note: "\($unranked | length) eligible candidate(s) unranked (\([$unranked[].provider] | unique | join(", ")))"}
            else {} end)
