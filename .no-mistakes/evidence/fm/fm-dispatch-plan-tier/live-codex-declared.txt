@@ -1,0 +1,14 @@
+== accounts.json (declared)
+{"crossAccount":{"enabled":true},"accounts":{"personal":{"plans":{"claude":"Max 20x","codex":"ChatGPT Pro"},"claude":"/home/daan/.claude","pi":"/home/daan/.pi/agent","codex":"/home/daan/.codex"},"geris":{"plans":{"codex":"ChatGPT Plus"},"claude":"/home/daan/.claude-geris","pi":"/home/daan/.pi-geris/agent","codex":"/home/daan/.codex-geris"}}}
+== fm-dispatch-resolve.sh output
+dispatch-resolve:
+  status: clear
+  model: jev-1.13.0   latency_ms: 7   tokens: 1/1
+  rule: rule_1 (A simple bug fix with a stated root cause.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  candidate_preference: rule_1_1 (quota gates and spendPriority take precedence)
+  note: rule matched; compare candidate plan tiers before accepting percent-based capacity
+  candidate: codex:gpt-5.6-sol  account=geris  provider=codex  windows=five_hour:50%@2026-09-25T14:51:00Z,weekly:67%@2026-09-28T07:41:22Z  scope=all_models  remaining=50%  spendPriority=1.0301  runway=projected_exhaustion  -> eligible  plan=ChatGPT Plus (config; quota-axi: team)
+  candidate: pi:openai-codex/gpt-5.6-sol  account=personal  provider=codex  windows=weekly:69%@2026-09-30T12:34:22Z  scope=all_models  remaining=69%  spendPriority=-0.1579  runway=projected_exhaustion  -> eligible  plan=ChatGPT Pro (config; quota-axi: prolite)
+  profile: --harness 'codex' --model 'gpt-5.6-sol' --account 'geris'
+exit=0

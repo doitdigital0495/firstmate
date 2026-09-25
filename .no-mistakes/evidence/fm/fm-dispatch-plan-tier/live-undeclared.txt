@@ -1,0 +1,15 @@
+== accounts.json (undeclared)
+{"crossAccount":{"enabled":true},"accounts":{"personal":{"claude":"/home/daan/.claude","pi":"/home/daan/.pi/agent","codex":"/home/daan/.codex"},"geris":{"claude":"/home/daan/.claude-geris","pi":"/home/daan/.pi-geris/agent","codex":"/home/daan/.codex-geris"}}}
+== fm-dispatch-resolve.sh output
+dispatch-resolve:
+  status: incomplete
+  model: jev-1.13.0   latency_ms: 6   tokens: 1/1
+  rule: rule_1 (A simple bug fix with a stated root cause.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  candidate_preference: rule_1_1 (quota gates and spendPriority take precedence)
+  reason: quota window evidence incomplete: claude:sonnet missing five_hour, seven_day
+  note: gather first: 3 quota-axi attempt(s) with backoff and named warm-ups; wait for the named measurements and re-run; never pick by hand or drop a candidate
+  candidate: claude:sonnet  account=personal  provider=claude  windows=five_hour:68%@2026-09-25T11:29:59Z,seven_day:20%@2026-09-28T17:59:59Z  scope=all_models  remaining=20%  spendPriority=-0.5154  runway=projected_exhaustion  -> eligible  plan=max (quota-axi)
+  candidate: claude:sonnet  account=geris  provider=claude  windows_missing=five_hour,seven_day (Claude quota endpoint rate limited; retry after 2026-09-25T11:23:54.437Z)  -> incomplete: provider claude unmeasured (unknown): gather first, wait and re-run  plan=team (quota-axi)
+  candidate: pi:openai-codex/gpt-5.6-sol  account=personal  provider=codex  windows=weekly:69%@2026-09-30T12:34:22Z  scope=all_models  remaining=69%  spendPriority=-0.1581  runway=projected_exhaustion  -> eligible  plan=prolite (quota-axi)
+exit=0
