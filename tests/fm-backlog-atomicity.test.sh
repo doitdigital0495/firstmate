@@ -1665,6 +1665,29 @@ test_completion_records_a_relative_report_for_relocated_data() {
   pass "completion records relocated scout reports relative to the backlog root"
 }
 
+test_ado_pr_close_and_replay_record_note() {
+  local case_dir id home data url marker out
+  id=atomic-ado-close-b7
+  case_dir=$(make_home ado-close)
+  home=$(home_of "$case_dir")
+  data="$home/data"
+  url=https://dev.azure.com/Org-1/Project/_git/Repo/pullrequest/801
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  marker="$home/state/$id.backlog-close"
+  # Exercise the same durable close transition used by teardown and restart.
+  out=$(bash -c '
+    . "$1/bin/fm-tasks-axi-lib.sh"
+    . "$1/bin/fm-backlog-transition-lib.sh"
+    fm_backlog_close_marker_write "$2/state" "$3" "$2/data" spawn-ado --pr "$4" \
+      && fm_backlog_close_marker_replay "$2/state" "$2/state/$3.backlog-close" "$2/data"
+  ' _ "$ROOT" "$home" "$id" "$url") || fail "ADO close failed: $out"
+  [ "$(row_state "$case_dir" "$id")" = 'done' ] || fail "ADO close left the row in flight"
+  assert_absent "$marker" "ADO close retained its pending record"
+  assert_grep "$url" "$data/backlog.md" "ADO close lost the deliverable note"
+  pass "ADO pull request close records the URL as a note and retires its marker"
+}
+
 test_space_containing_scout_report_marker_replays() {
   local case_dir id data backlog marker out rc=0
   id=atomic-space-report-replay-b7
@@ -3038,6 +3061,7 @@ test_completion_closes_a_scout_with_its_report
 test_completion_refuses_a_legacy_record_without_an_incarnation
 test_completion_refuses_ambiguous_incarnation_metadata
 test_completion_records_a_relative_report_for_relocated_data
+test_ado_pr_close_and_replay_record_note
 test_space_containing_scout_report_marker_replays
 test_trailing_newline_data_path_fails_closed
 test_control_character_data_path_is_refused_before_cleanup

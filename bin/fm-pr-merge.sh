@@ -137,12 +137,12 @@ if ! fm_pr_task_id_valid "$ID" || ! fm_pr_url_parse "$RAW_URL"; then
 fi
 URL=$FM_PR_URL
 PROVIDER=$FM_PR_PROVIDER
-# An Azure DevOps merge stays a human decision this home never performs: the
-# poll fm-pr-check.sh arms follows the hand merge, its conflicts, and its
-# post-merge pipelines, so refusing here loses nothing and keeps the az usage
-# read-only.
+# Azure DevOps exposes auto-complete via az repos pr update, but that request
+# may land later at a different head and after away authority has lapsed. Unlike
+# gh/glab's pinned-head merge, it cannot satisfy this entrypoint's synchronous
+# verified-head contract; leave the read-only merge poll armed for a hand merge.
 if [ "$PROVIDER" = ado ]; then
-  echo "error: $URL is not merged by firstmate; merge it by hand and keep the poll armed with bin/fm-pr-check.sh" >&2
+  echo "error: Azure DevOps auto-complete for $URL can merge asynchronously at an unverified head; fm-pr-merge refuses it. Merge it by hand and keep the poll armed with bin/fm-pr-check.sh" >&2
   exit 2
 fi
 PR_HOST=$FM_PR_HOST

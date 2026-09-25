@@ -437,6 +437,17 @@ EOF
   pass "raw-byte parser accepts canonical URLs and rejects the complete adversarial matrix"
 }
 
+test_ado_merge_refuses_unpinned_auto_complete() {
+  local dir out rc=0 url
+  dir=$(make_fixture ado-merge-refusal)
+  url=https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801
+  out=$(run_merge_entry "$dir" task-a "$url" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "ADO asynchronous merge was accepted"
+  assert_contains "$out" "Azure DevOps auto-complete for $url can merge asynchronously at an unverified head" \
+    "ADO merge refusal did not explain the unsafe asynchronous head"
+  pass "ADO merge refuses asynchronous auto-complete with an actionable reason"
+}
+
 test_ado_poll_conflict_and_postmerge_verdicts() {
   local dir url out
   dir=$(make_case ado-poll)
@@ -2890,6 +2901,7 @@ SH
 }
 
 test_parser_matrix
+test_ado_merge_refuses_unpinned_auto_complete
 test_ado_poll_conflict_and_postmerge_verdicts
 test_ado_conflict_wakes_once_per_conflict
 test_merged_outcome_row_carries_poll_detail
