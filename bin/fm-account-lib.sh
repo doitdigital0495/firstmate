@@ -6,9 +6,15 @@ fm_account_registry_valid() {
   [ -f "$file" ] && jq -e '
     def store_path: type == "string" and length > 2 and
       (startswith("/") or startswith("~/")) and (test("[[:cntrl:]]") | not);
+    def plans_ok: type == "object" and all(to_entries[];
+      (.key | test("^[a-z0-9]+(-[a-z0-9]+)*$")) and
+      (.value | type == "string") and ((.value | length) > 0) and ((.value | length) <= 80) and
+      (.value | test("^[[:print:]]+$")));
     type == "object" and (.accounts | type == "object") and
+    ((.plans // {}) | plans_ok) and
     all(.accounts | to_entries[]; (.key | test("^[a-z][a-z0-9-]*$")) and
       (.value | type == "object") and
+      ((.value.plans // {}) | plans_ok) and
       all([.value.claude, .value.pi, .value.codex][]; store_path)) and
     ((.crossAccount // null) == null or
       ((.crossAccount | type) == "object" and (.crossAccount.enabled | type) == "boolean"))

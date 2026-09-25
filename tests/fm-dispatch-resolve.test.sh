@@ -717,6 +717,45 @@ rm -f "$HOME_DIR/config/accounts.json"
 unset GERIS_QUOTA_FIXTURE
 pass "account-aware union ranking, kill switch, and fail-closed missing/malformed registry"
 
+# --- plan evidence follows the candidate's provider and pinned account --------
+cp "$BASE_RULES" "$RULES"
+cat > "$HOME_DIR/config/accounts.json" <<'JSON'
+{"crossAccount":{"enabled":true},"plans":{"claude":"Pro","cursor":"Business"},"accounts":{"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris","plans":{"claude":"Max 20x"}}}}
+JSON
+mkdir -p "$HOME_DIR/.claude" "$HOME_DIR/.claude-geris"
+printf '%s\n' '{"oauthAccount":{"subscriptionType":"Max 5x"},"oauthToken":"SECRET-DO-NOT-PRINT"}' > "$HOME_DIR/.claude.json"
+printf '%s\n' '{"oauthAccount":{"subscriptionType":"Max 10x"},"oauthToken":"SECRET-DO-NOT-PRINT"}' > "$HOME_DIR/.claude-geris/.claude.json"
+jq '.rules[3].use += [{"harness":"claude","model":"sonnet","account":"geris"}, {"harness":"pi","model":"openai-codex/gpt-5.6-sol","provider":"codex"}]' "$BASE_RULES" > "$RULES"
+write_response "$RESPONSE" rule_4 0.9
+reset_log
+HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$HOME_DIR" OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
+assert_contains "$out" 'plan=Max 5x (vendor profile)' "default Claude plan comes from its profile"
+assert_contains "$out" 'plan=Max 10x (vendor profile)' "named account plan comes from its own store, not the default"
+assert_contains "$out" 'plan=Business (config/accounts.json)' "another provider gets its fallback"
+assert_contains "$out" 'plan=unknown (unavailable)' "Pi Codex does not inherit Claude plan"
+assert_not_contains "$out" 'SECRET-DO-NOT-PRINT' "profile secrets are never displayed"
+mkdir -p "$HOME_DIR/.codex"
+printf '%s\n' '{"plan":"ChatGPT Pro","tokens":{"id_token":"SECRET-DO-NOT-PRINT"}}' > "$HOME_DIR/.codex/auth.json"
+reset_log
+HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$HOME_DIR" CODEX_HOME="$HOME_DIR/.codex" OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
+assert_contains "$out" 'plan=ChatGPT Pro (vendor profile)' "Pi Codex uses the Codex store plan metadata"
+assert_not_contains "$out" 'SECRET-DO-NOT-PRINT' "Codex tokens are not displayed"
+rm -f "$HOME_DIR/.codex/auth.json"
+QUOTA_PLAN="$TMP_ROOT/quota-plan.json"
+jq '(.providers[] | select(.provider == "claude")).plan = "Max 20x"' "$QUOTA" > "$QUOTA_PLAN"
+reset_log
+HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$HOME_DIR" OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$QUOTA_PLAN" run code out err "$BRIEF"
+assert_contains "$out" 'plan=Max 20x (quota-axi)' "quota-axi plan overrides vendor metadata"
+assert_contains "$out" 'compare candidate plan tiers before accepting percent-based capacity' "clear outcome prompts tier-aware assessment"
+rm -f "$HOME_DIR/.claude.json" "$HOME_DIR/.claude-geris/.claude.json"
+reset_log
+HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$HOME_DIR" OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
+assert_contains "$out" 'plan=Pro (config/accounts.json)' "default fallback when no vendor plan"
+assert_contains "$out" 'plan=Max 20x (config/accounts.json)' "named fallback when no vendor plan"
+cp "$BASE_RULES" "$RULES"
+rm -f "$HOME_DIR/config/accounts.json"
+pass "each candidate discloses account/provider plan, source precedence, fallback, and uncertainty"
+
 # --- API and response failures are error outcomes, exit 0 ----------------------
 reset_log
 run_without_curl code out err "$BRIEF"

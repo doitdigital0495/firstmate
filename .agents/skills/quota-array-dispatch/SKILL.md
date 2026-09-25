@@ -61,6 +61,10 @@ Below-floor is rare: bootstrap enforces `FM_QUOTA_AXI_MIN` and normally reports 
 Read `quota-axi auth --json` only when a candidate's credential surface is in question.
 
 For each candidate, preserve explicit `harness`, `model`, and `provider`; `harness-adapters` owns identity, and model/provider never infer harness.
+Establish the subscription plan for that candidate's actual account and provider from quota-axi plan metadata where published, then vendor profile plan fields where available, then the declared `config/accounts.json` plans map documented in `docs/configuration.md`.
+Show the plan and its source (or `unknown` and the missing evidence) for every candidate, including ineligible ones; unknown is uncertainty, never a block.
+Consider the plan's allowance size when interpreting comparable percentages and task runway: equal remaining percentages on a Pro and a Max seat do not mean equal absolute capacity.
+Do not invent a numeric conversion or override the published spendPriority scalar with an unsupported tier ranking; explain any plan-based judgment in the choice rationale.
 
 ## Committed demand on a shaped Claude credential store
 
@@ -179,6 +183,6 @@ If no candidate survives the known-evidence and feasibility checks, report the b
 
 ## Account for every candidate
 
-Account for every candidate visibly before selecting or escalating, naming its catalog evidence, provider relation, applicable quota and authentication facts, warm-up and retry outcome or missing windows, fit and reasoning class, `spendPriority`, runway-versus-horizon result, and any Claude reserve or split decision.
+Account for every candidate visibly before selecting or escalating, naming its catalog evidence, provider relation and account plan with source, applicable quota and authentication facts, warm-up and retry outcome or missing windows, fit and reasoning class, `spendPriority`, runway-versus-horizon result, and any Claude reserve or split decision.
 A blocked credential report must name `harness`, `model`, authentication surface, and concrete failure evidence; never emit a bare `Grok unauthenticated` statement.
 Never conclude with an unexplained "best quota" label.
