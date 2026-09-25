@@ -841,8 +841,6 @@ test_promote_preview_on_push_matches_ship_brief() {
     cmp -s "$fresh" "$TMP_ROOT/promote-preview/promoted-$lane" \
       || fail "$lane: promoted and fresh preview Definitions of done differ"
   done
-  out=$("$PROMOTE" --help)
-  assert_contains "$out" '[--preview-on-push]' 'promotion help omitted the preview flag'
   pass 'fm-promote: preview-on-push matches fresh no-mistakes briefs and refuses other modes'
 }
 

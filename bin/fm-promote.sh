@@ -84,7 +84,6 @@ for a in "$@"; do
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
     --fast-lane) FAST_LANE=1 ;;
     --preview-on-push) PREVIEW_ON_PUSH=1 ;;
-    -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
     *) POS+=("$a") ;;
   esac
 done
