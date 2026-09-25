@@ -424,6 +424,9 @@
 # busy turn - answering the dialog first if it renders anyway - before
 # reporting success (the rovo/kimi launch-then-confirm shape). Its busy state
 # is a screen-scrape fallback like grok and rovo, and it is crewmate/scout only.
+# pi and pi-signed crewmate/scout launches pre-register the worktree in the
+# launch's own Pi agent dir trust.json through bin/fm-pi-trust.sh (non-fatal,
+# like agy), because Pi's project-trust dialog would otherwise hold the brief.
 # cursor installs no per-task hook either: it writes state/<id>.cursor-session to
 # bind the pane to cursor's own conversation transcript (projects root, the exact
 # workspace path cursor records in .workspace-trusted, and the conversations that
@@ -4545,6 +4548,18 @@ agy)
       AGY_TRUST_PREREGISTERED=1
     else
       echo "warning: could not pre-register agy workspace trust for $WT; the launch will answer the folder-trust dialog in window $T instead" >&2
+    fi
+  fi
+  ;;
+pi|pi-signed)
+  # Pi gates a fresh worktree carrying project resources (this repo's own
+  # .agents/skills is enough) behind "Trust project folder?", and its decision
+  # store is trust.json in the agent dir this launch exports, so the entry goes
+  # into that same dir: the pinned account's store, else the inherited one.
+  # Not fatal, the agy shape: the dialog stays answerable with one Enter.
+  if [ "$KIND" != secondmate ]; then
+    if ! "$FM_ROOT/bin/fm-pi-trust.sh" "$WT" "$PROJ_ABS" "${SPAWN_PI_STORE:-${PI_CODING_AGENT_DIR:-}}" >/dev/null; then
+      echo "warning: could not pre-register pi project trust for $WT; if window $T shows Pi's trust dialog, answer it with Enter" >&2
     fi
   fi
   ;;
