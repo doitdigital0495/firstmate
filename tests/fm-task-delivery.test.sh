@@ -799,6 +799,51 @@ test_promote_records_the_fast_lane() {
   pass "fm-promote: --fast-lane records the lane and delivers the one-round contract"
 }
 
+# Promotion must deliver the same preview sequencing as a fresh ship brief,
+# both to the current worker and to a replacement launched from the brief.
+test_promote_preview_on_push_matches_ship_brief() {
+  local home id meta out status lane args fresh promoted stored
+  home="$TMP_ROOT/promote-preview/home"
+  mkdir -p "$home/state"
+  for lane in standard fast; do
+    id="promote-preview-$lane"
+    meta="$home/state/$id.meta"
+    write_brief "$home" "$id"
+    printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
+    args=()
+    [ "$lane" != fast ] || args=(--fast-lane)
+
+    for mode in direct-PR local-only; do
+      out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode "$mode" --yolo off --preview-on-push 2>&1)
+      status=$?
+      [ "$status" -ne 0 ] || fail "$mode: preview promotion should refuse a non-pipeline mode"
+      assert_contains "$out" '--preview-on-push requires --mode no-mistakes' "$mode: wrong preview refusal"
+      assert_grep 'kind=scout' "$meta" "$mode: refused preview promotion changed task kind"
+    done
+
+    FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode no-mistakes --yolo off "${args[@]}" --preview-on-push >/dev/null \
+      || fail "$lane: preview promotion should succeed"
+    promoted="$home/data/$id/ship-instructions.md"
+    stored="$home/data/$id/brief.md"
+    assert_grep 'Push your fm/'"$id"' branch as soon as your local checks pass, BEFORE you start no-mistakes' "$promoted" \
+      "$lane: promoted worker missed push-before-validation"
+    assert_grep 'pushed fm/'"$id"' for previews' "$stored" \
+      "$lane: promoted relaunch brief missed preview status"
+    assert_grep "Never open the PR yourself on this task: no-mistakes's pr step opens it" "$stored" \
+      "$lane: promoted relaunch brief lost pipeline PR ownership"
+
+    rm "$stored"
+    FM_HOME="$home" "$BRIEF" "$id" fixture-project --mode no-mistakes "${args[@]}" --preview-on-push >/dev/null \
+      || fail "$lane: fresh preview brief should succeed"
+    fresh="$TMP_ROOT/promote-preview/fresh-$lane"
+    awk '/^# Definition of done$/ { emit=1 } emit' "$stored" > "$fresh"
+    awk '/^# Definition of done$/ { emit=1 } emit' "$promoted" > "$TMP_ROOT/promote-preview/promoted-$lane"
+    cmp -s "$fresh" "$TMP_ROOT/promote-preview/promoted-$lane" \
+      || fail "$lane: promoted and fresh preview Definitions of done differ"
+  done
+  pass 'fm-promote: preview-on-push matches fresh no-mistakes briefs and refuses other modes'
+}
+
 # The registry parser survives for the mechanical consumers only. It accepts the
 # conditional policy, maps it to its most rigorous leg for them, and exposes the
 # raw annotation for the one caller that must tell a policy from a flat mode.
@@ -1299,6 +1344,7 @@ test_promotion_delivers_the_real_definition_of_done
 test_fast_lane_flag_is_validated_and_recorded
 test_spawn_enforces_brief_lane_agreement
 test_promote_records_the_fast_lane
+test_promote_preview_on_push_matches_ship_brief
 test_project_mode_maps_the_conditional_policy
 test_spawn_and_promote_require_filled_task_subsections
 echo "# all fm-task-delivery tests passed"

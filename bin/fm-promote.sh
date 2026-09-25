@@ -28,7 +28,10 @@
 # one-review-round lane: the rendered definition of done carries the fast-lane
 # contract, the recorded line becomes "mode=no-mistakes lane=fast", and the meta
 # gains lane=fast so a later --relaunch reuses the lane (bin/fm-spawn.sh).
-# Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--fast-lane]
+# --preview-on-push (optional, --mode no-mistakes only) renders the same
+# push-before-validation Definition of done as fm-brief.sh for projects whose
+# CI builds previews from fm/* pushes; resolve it from data/projects.md.
+# Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--fast-lane] [--preview-on-push]
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,6 +60,7 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 MODE=
 YOLO=
 FAST_LANE=0
+PREVIEW_ON_PUSH=0
 MODE_SET=0
 YOLO_SET=0
 POS=()
@@ -79,11 +83,12 @@ for a in "$@"; do
     --yolo) want_value=yolo ;;
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
     --fast-lane) FAST_LANE=1 ;;
+    --preview-on-push) PREVIEW_ON_PUSH=1 ;;
     *) POS+=("$a") ;;
   esac
 done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
-[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off>" >&2; exit 1; }
+[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--fast-lane] [--preview-on-push]" >&2; exit 1; }
 [ "$MODE_SET" -eq 1 ] || {
   echo "error: promotion requires --mode <no-mistakes|direct-PR|local-only>; decide it now from the scout's findings and the project's registered posture in data/projects.md" >&2
   exit 1
@@ -107,8 +112,14 @@ if [ "$FAST_LANE" -eq 1 ] && [ "$MODE" != no-mistakes ]; then
   echo "error: --fast-lane requires --mode no-mistakes; the one-review-round lane modifies the no-mistakes review drive, so the other modes have nothing for it to modify" >&2
   exit 1
 fi
+if [ "$PREVIEW_ON_PUSH" -eq 1 ] && [ "$MODE" != no-mistakes ]; then
+  echo "error: --preview-on-push requires --mode no-mistakes; direct-PR pushes before anything else already, so only the pipeline mode delays previews" >&2
+  exit 1
+fi
 LANE=
 [ "$FAST_LANE" -eq 0 ] || LANE=fast
+PREVIEW=
+[ "$PREVIEW_ON_PUSH" -eq 0 ] || PREVIEW=on-push
 
 ID=${POS[0]}
 fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; }
@@ -217,7 +228,7 @@ EOF
     printf '%s\n' "$PROMOTION_ASK_USER_BLOCK"
   fi
   printf '\n'
-  fm_dod_block "$MODE" "$ID" "$DATA" "$LANE"
+  fm_dod_block "$MODE" "$ID" "$DATA" "$LANE" "$PREVIEW"
 }
 mkdir -p "$DATA/$ID"
 [ ! -d "$INSTRUCTIONS" ] || { echo "error: ship instructions path is a directory: $INSTRUCTIONS" >&2; exit 1; }
