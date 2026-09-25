@@ -1,0 +1,25 @@
+===== A complete-candidates-clear
+rules: {"rules":[{"when":"A bug fix.","use":[{"harness":"claude","model":"sonnet","effort":"high"},{"harness":"codex","model":"gpt-5.6-sol"}]}]}
+dispatch-resolve:
+  status: incomplete
+  model: jev-stub   latency_ms: 8   tokens: 1/1
+  rule: rule_1 (A bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  candidate_preference: rule_1_1 (quota gates and spendPriority take precedence)
+  reason: quota window evidence incomplete: claude:sonnet missing five_hour, model:fable, seven_day
+  note: gather first: 2 quota-axi attempt(s) with backoff and named warm-ups; wait for the named measurements and re-run; never pick by hand or drop a candidate
+  candidate: claude:sonnet  provider=claude  windows_missing=five_hour,model:fable,seven_day (Claude quota endpoint rate limited; retry after 2026-09-25T09:06:54.641Z)  -> incomplete: provider claude unmeasured (unknown): gather first, wait and re-run
+  candidate: codex:gpt-5.6-sol  provider=codex  windows=weekly:72%@2026-09-30T12:34:22Z  scope=all_models  remaining=72%  spendPriority=-0.0763  runway=projected_exhaustion  -> eligible
+exit=0  real quota-axi calls=2  elapsed=2s
+===== E rule-floor-model-scope-known (fable 95%)
+rules: {"rules":[{"when":"A bug fix.","floor":{"scope":"model:fable","min_percent":20,"provider":"claude"},"use":{"harness":"claude","model":"fable","effort":"xhigh"}}]}
+dispatch-resolve:
+  status: incomplete
+  model: jev-stub   latency_ms: 6   tokens: 1/1
+  rule: rule_1 (A bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  candidate_preference: rule_1_1 (quota gates and spendPriority take precedence)
+  reason: quota window evidence incomplete: claude:fable missing five_hour, model:fable, seven_day; rule floor claude/model:fable unmeasured
+  note: gather first: 2 quota-axi attempt(s) with backoff and named warm-ups; wait for the named measurements and re-run; never pick by hand or drop a candidate
+  candidate: claude:fable  provider=claude  windows_missing=five_hour,model:fable,seven_day (Claude quota endpoint rate limited; retry after 2026-09-25T09:06:56.223Z)  bounds=all_models:-%/unknown,model:fable:-%/unknown  -> incomplete: provider claude unmeasured (unknown): gather first, wait and re-run
+exit=0  real quota-axi calls=2  elapsed=1s

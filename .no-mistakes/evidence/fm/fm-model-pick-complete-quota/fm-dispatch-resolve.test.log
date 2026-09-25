@@ -1,0 +1,26 @@
+ok - absent key is off: one stderr line, exit 0, no network call
+ok - OPENROUTER_API_KEY= in .env activates the tool; environment and config overrides work
+ok - clear: one rule Choice request, key on the fd header only, spendPriority argmax over every candidate
+ok - rules snapshots and shell quoting preserve the profile protocol
+ok - no-rule fallback, Agy, Gemini, and documented configurations resolve
+ok - ambiguous: confidence below the fixed floor hands the decision back
+ok - escalate: a rule declared approval: captain never yields a profile
+ok - rule floor: known shortfall falls through while unavailable evidence escalates
+ok - declared provider and profile floor evidence are applied in code
+ok - nonnumeric spendPriority evidence is never ranked
+ok - partial, missing, and unknown quota evidence is disclosed and never selected around
+ok - completeness gate: unmeasured windows are gathered first and otherwise non-dispatchable
+ok - bounded retry drives the named Z.ai warm-up exactly once
+ok - provider-wide and exact quota rows combine into one limiting candidate
+ok - default: no rule matched resolves among the default profiles
+ok - tie: equal spendPriority never breaks by array order
+ok - stage-3 candidate/effort preference operates only inside the top eligible quota tier
+ok - no rankable candidate: the tool escalates instead of guessing
+ok - quota evidence comes from one quota-axi --json read, and its failure is an error outcome
+ok - account-aware union ranking, kill switch, and fail-closed missing/malformed registry
+ok - API, transport, and response failures are error outcomes with exit 0
+ok - configuration errors exit 2 before any network call
+ok - direct route fallback changes base, model, and key without touching the default route
+ok - opt-in startup canary makes one typed Choice request without exporting a credential
+ok - startup canary follows the resolver's route selection
+# all fm-dispatch-resolve tests passed

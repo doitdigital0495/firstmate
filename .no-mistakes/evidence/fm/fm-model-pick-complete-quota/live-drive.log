@@ -1,0 +1,54 @@
+===== A complete-candidates-clear
+rules: {"rules":[{"when":"A bug fix.","use":[{"harness":"claude","model":"sonnet","effort":"high"},{"harness":"codex","model":"gpt-5.6-sol"}]}]}
+dispatch-resolve:
+  status: clear
+  model: jev-stub   latency_ms: 7   tokens: 1/1
+  rule: rule_1 (A bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  candidate_preference: rule_1_1 (quota gates and spendPriority take precedence)
+  note: rule matched
+  candidate: claude:sonnet  provider=claude  windows=five_hour:92%@2026-09-25T11:29:59Z,seven_day:24%@2026-09-28T17:59:59Z  scope=all_models  remaining=24%  spendPriority=-0.8881  runway=projected_exhaustion  -> eligible
+  candidate: codex:gpt-5.6-sol  provider=codex  windows=weekly:72%@2026-09-30T12:34:22Z  scope=all_models  remaining=72%  spendPriority=-0.0765  runway=projected_exhaustion  -> eligible
+  profile: --harness 'codex' --model 'gpt-5.6-sol'
+exit=0  real quota-axi calls=1  elapsed=1s
+===== B one-unmeasured-candidate-incomplete (cursor live state=error)
+rules: {"rules":[{"when":"A bug fix.","use":[{"harness":"claude","model":"sonnet","effort":"high"},{"harness":"cursor","model":"cursor-grok-4.6-medium"}]}]}
+dispatch-resolve:
+  status: incomplete
+  model: jev-stub   latency_ms: 5   tokens: 1/1
+  rule: rule_1 (A bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  candidate_preference: rule_1_1 (quota gates and spendPriority take precedence)
+  reason: quota window evidence incomplete: claude:sonnet missing five_hour, model:fable, seven_day; cursor:cursor-grok-4.6-medium missing 
+  note: gather first: 2 quota-axi attempt(s) with backoff and named warm-ups; wait for the named measurements and re-run; never pick by hand or drop a candidate
+  candidate: claude:sonnet  provider=claude  windows_missing=five_hour,model:fable,seven_day (Claude quota endpoint rate limited; retry after 2026-09-25T09:06:35.621Z)  -> incomplete: provider claude unmeasured (unknown): gather first, wait and re-run
+  candidate: cursor:cursor-grok-4.6-medium  provider=cursor  windows_missing= (sqlite3_unavailable)  -> incomplete: provider cursor unmeasured (unknown): gather first, wait and re-run
+exit=0  real quota-axi calls=2  elapsed=2s
+===== C auth_required-provider-only-incomplete (kimi)
+rules: {"rules":[{"when":"A bug fix.","use":[{"harness":"kimi","model":"kimi-code/k3"}]}]}
+dispatch-resolve:
+  status: incomplete
+  model: jev-stub   latency_ms: 6   tokens: 1/1
+  rule: rule_1 (A bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  candidate_preference: rule_1_1 (quota gates and spendPriority take precedence)
+  reason: quota window evidence incomplete: kimi:kimi-code/k3 missing 
+  note: gather first: 2 quota-axi attempt(s) with backoff and named warm-ups; wait for the named measurements and re-run; never pick by hand or drop a candidate
+  candidate: kimi:kimi-code/k3  provider=kimi  windows_missing= (kimi_credential_unavailable)  -> incomplete: provider kimi unmeasured (unknown): gather first, wait and re-run
+exit=0  real quota-axi calls=2  elapsed=1s
+===== D profile-floor-on-unmeasured-provider (codex gated by cursor floor)
+rules: {"rules":[{"when":"A bug fix.","use":[{"harness":"codex","model":"gpt-5.6-sol","floor":{"scope":"all_models","min_percent":10,"provider":"cursor"}},{"harness":"claude","model":"sonnet"}]}]}
+error: malformed rules file: /tmp/nm-dr-live.0ihD/home/config/crew-dispatch.json - each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
+exit=2  real quota-axi calls=0  elapsed=0s
+===== E rule-floor-model-scope-known (fable 95%)
+rules: {"rules":[{"when":"A bug fix.","floor":{"scope":"model:fable","min_percent":20,"provider":"claude"},"use":{"harness":"claude","model":"fable","effort":"xhigh"}}]}
+dispatch-resolve:
+  status: incomplete
+  model: jev-stub   latency_ms: 6   tokens: 1/1
+  rule: rule_1 (A bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  candidate_preference: rule_1_1 (quota gates and spendPriority take precedence)
+  reason: quota window evidence incomplete: claude:fable missing five_hour, model:fable, seven_day; rule floor claude/model:fable unmeasured
+  note: gather first: 2 quota-axi attempt(s) with backoff and named warm-ups; wait for the named measurements and re-run; never pick by hand or drop a candidate
+  candidate: claude:fable  provider=claude  windows_missing=five_hour,model:fable,seven_day (Claude quota endpoint rate limited; retry after 2026-09-25T09:06:38.830Z)  bounds=all_models:-%/unknown,model:fable:-%/unknown  -> incomplete: provider claude unmeasured (unknown): gather first, wait and re-run
+exit=0  real quota-axi calls=2  elapsed=2s
