@@ -360,7 +360,7 @@
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode
 #     __PIBIN__    quoted concrete Pi-family executable path resolved from PATH
-#     __PIPREFIX__ optional `opr -f __PIOPENV__ -- ` prefix for a zai task worker
+#     __PIPREFIX__ optional `opr -f __PIOPENV__ -- <bin/fm-pi-tty-bridge.sh> ` prefix for a zai task worker
 #     __PIOPENV__ absolute tracked ZAI_API_KEY reference map
 #     __PITUIMODE__ optional --tui-mode regular when that executable advertises it
 #     __PIHERDREXT__ absolute operator Pi herdr-agent-state extension path

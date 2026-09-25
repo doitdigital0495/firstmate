@@ -12,10 +12,11 @@ Darwin)
   exec script -q /dev/null "$@"
   ;;
 Linux)
-  # util-linux script takes one shell command. Bash %q preserves every argument
-  # without interpreting the prompt or expanding shell metacharacters again.
+  # util-linux script takes one shell command and runs it with $SHELL -c. Bash
+  # %q preserves every argument without interpreting the prompt or expanding
+  # shell metacharacters again, so pin SHELL to the bash that produced it.
   printf -v command '%q ' "$@"
-  exec script -q -e -c "$command" /dev/null
+  SHELL=$BASH exec script -q -e -c "$command" /dev/null
   ;;
 *) echo 'error: Pi terminal bridge supports only macOS and Linux' >&2; exit 1 ;;
 esac
