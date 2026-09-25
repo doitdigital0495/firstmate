@@ -1,0 +1,47 @@
+== [base-dfc82fd] teardown close transition: marker write + replay (--pr https://dev.azure.com/Org/Project/_git/Repo/pullrequest/801)
+exit=1 error=error: Task pr link must be an http(s) pull request URL ending in /pull/<number>
+== pending marker present?
+/tmp/tmp.IWbdGyqIRF/home/state/ado-demo.backlog-close
+== tasks-axi show ado-demo
+task:
+  id: ado-demo
+  title: ADO demo
+  state: in_flight
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: 2026-09-25
+  closed: "-"
+  deps: none
+  links: none
+  body: ""
+
+== [target-4c9ed13] teardown close transition: marker write + replay (--pr https://dev.azure.com/Org/Project/_git/Repo/pullrequest/801)
+exit=0 error=none
+== pending marker present?
+no (retired)
+== tasks-axi show ado-demo
+task:
+  id: ado-demo
+  title: ADO demo
+  state: done
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+  priority: "-"
+  created: "-"
+  closed: 2026-09-25
+  deps: none
+  links: none
+  body: "PR https://dev.azure.com/Org/Project/_git/Repo/pullrequest/801"

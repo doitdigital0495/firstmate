@@ -1,0 +1,3 @@
+$ FM_HOME=<tmp> bin/fm-pr-merge.sh task-a https://dev.azure.com/Org/Project/_git/Repo/pullrequest/801
+error: Azure DevOps auto-complete for https://dev.azure.com/Org/Project/_git/Repo/pullrequest/801 can merge asynchronously at an unverified head; fm-pr-merge refuses it. Merge it by hand and keep the poll armed with bin/fm-pr-check.sh
+exit=2

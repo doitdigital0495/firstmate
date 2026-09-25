@@ -1,0 +1,26 @@
+## S3 stuck pre-fix marker (written+failed by base code) replayed by fixed code
+base exit=1
+marker after base: stuck.backlog-close
+target replay exit=0
+marker after target replay: 
+  state: done
+  links: none
+  body: "PR https://dev.azure.com/Org/Project/_git/Repo/pullrequest/9"
+
+## S4 GitHub PR regression: still recorded as --pr link
+exit=0
+  state: done
+  links: "pr:https://github.com/o/r/pull/12"
+  body: ""
+  links: "pr:https://github.com/o/r/pull/12"
+  body: ""
+
+## S5 retain (captain-hold/requeue) with ADO PR: body deliverable, no --pr row artifact
+retain exit=0 err=none
+artifact supported=no (captain-hold skips update --pr)
+  state: queued
+  links: none
+  body: "Deliverable of the finished work: PR https://dev.azure.com/Org/Project/_git/Repo/pullrequest/10"
+
+## S5b base retain with ADO PR (pre-fix)
+base retain exit=1 err=error: "--pr must be an http(s) pull request URL ending in /pull/<number>"
