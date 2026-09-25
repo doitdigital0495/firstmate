@@ -58,8 +58,7 @@ cat > "$BASE_RULES" <<'JSON'
       "when": "A simple bug fix with a stated root cause.",
       "use": [
         { "harness": "claude", "model": "sonnet", "effort": "high" },
-        { "harness": "cursor", "model": "cursor-grok-4.6-medium" },
-        { "harness": "kimi", "model": "kimi-code/k3" }
+        { "harness": "cursor", "model": "cursor-grok-4.6-medium" }
       ]
     }
   ],
@@ -78,17 +77,30 @@ write_quota() {  # <path> <cursor spendPriority> [<claude all_models spendPriori
   "generatedAt": "2030-01-01T00:00:00Z",
   "schemaVersion": 5,
   "providers": [
-    { "provider": "claude", "state": { "status": "fresh" }, "quotaSemantics": { "status": "known", "effectiveAvailability": [
-      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 79, "runway": { "status": "projected_exhaustion" }, "selection": { "spendPriority": $claude } },
-      { "scope": "model:fable", "status": "known", "effectivePercentRemaining": 15, "runway": { "status": "projected_exhaustion" }, "selection": { "spendPriority": -0.79 } } ] } },
-    { "provider": "codex", "state": { "status": "fresh" }, "quotaSemantics": { "status": "known", "effectiveAvailability": [
-      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 31, "runway": { "status": "projected_exhaustion" }, "selection": { "spendPriority": -0.1649 } } ] } },
-    { "provider": "cursor", "state": { "status": "fresh" }, "quotaSemantics": { "status": "known", "effectiveAvailability": [
-      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 91, "runway": { "status": "through_reset" }, "selection": { "spendPriority": $cursor } } ] } },
-    { "provider": "agy", "state": { "status": "fresh" }, "quotaSemantics": { "status": "known", "effectiveAvailability": [
-      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 64, "runway": { "status": "through_reset" }, "selection": { "spendPriority": 0.4 } } ] } },
-    { "provider": "google", "state": { "status": "fresh" }, "quotaSemantics": { "status": "known", "effectiveAvailability": [
-      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 72, "runway": { "status": "through_reset" }, "selection": { "spendPriority": 0.3 } } ] } },
+    { "provider": "claude", "state": { "status": "fresh" },
+      "windows": [
+        { "id": "five_hour", "kind": "session", "percentRemaining": 93, "resetsAt": "2030-01-01T04:00:00Z" },
+        { "id": "seven_day", "kind": "weekly", "percentRemaining": 79, "resetsAt": "2030-01-04T00:00:00Z" },
+        { "id": "model:fable", "kind": "model", "percentRemaining": 15, "resetsAt": "2030-01-04T00:00:00Z" } ],
+      "quotaSemantics": { "status": "known", "effectiveAvailability": [
+      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 79, "boundedBy": ["five_hour", "seven_day"], "runway": { "status": "projected_exhaustion" }, "selection": { "spendPriority": $claude } },
+      { "scope": "model:fable", "status": "known", "effectivePercentRemaining": 15, "boundedBy": ["five_hour", "seven_day", "model:fable"], "runway": { "status": "projected_exhaustion" }, "selection": { "spendPriority": -0.79 } } ] } },
+    { "provider": "codex", "state": { "status": "fresh" },
+      "windows": [ { "id": "weekly", "kind": "weekly", "percentRemaining": 31, "resetsAt": "2030-01-06T00:00:00Z" } ],
+      "quotaSemantics": { "status": "known", "effectiveAvailability": [
+      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 31, "boundedBy": ["weekly"], "runway": { "status": "projected_exhaustion" }, "selection": { "spendPriority": -0.1649 } } ] } },
+    { "provider": "cursor", "state": { "status": "fresh" },
+      "windows": [ { "id": "weekly", "kind": "weekly", "percentRemaining": 91, "resetsAt": "2030-01-03T00:00:00Z" } ],
+      "quotaSemantics": { "status": "known", "effectiveAvailability": [
+      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 91, "boundedBy": ["weekly"], "runway": { "status": "through_reset" }, "selection": { "spendPriority": $cursor } } ] } },
+    { "provider": "agy", "state": { "status": "fresh" },
+      "windows": [ { "id": "weekly", "kind": "weekly", "percentRemaining": 64, "resetsAt": "2030-01-02T00:00:00Z" } ],
+      "quotaSemantics": { "status": "known", "effectiveAvailability": [
+      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 64, "boundedBy": ["weekly"], "runway": { "status": "through_reset" }, "selection": { "spendPriority": 0.4 } } ] } },
+    { "provider": "google", "state": { "status": "fresh" },
+      "windows": [ { "id": "weekly", "kind": "weekly", "percentRemaining": 72, "resetsAt": "2030-01-02T00:00:00Z" } ],
+      "quotaSemantics": { "status": "known", "effectiveAvailability": [
+      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 72, "boundedBy": ["weekly"], "runway": { "status": "through_reset" }, "selection": { "spendPriority": 0.3 } } ] } },
     { "provider": "kimi", "state": { "status": "unknown" }, "quotaSemantics": { "status": "unknown", "effectiveAvailability": [] } }
   ]
 }
@@ -157,18 +169,36 @@ fi
 printf '%s\n' "$*" >> "${QUOTA_AXI_CALLS:?}"
 [ "${FAKE_QUOTA_FAIL:-0}" = 1 ] && exit 1
 [ "${1:-}" = --json ] || exit 2
+call_index=$(grep -c . "${QUOTA_AXI_CALLS:?}" || true)
 if [ -n "${GERIS_QUOTA_FIXTURE:-}" ] && [ "${CODEX_HOME:-}" = "$HOME/.codex-geris" ]; then
   printf 'geris pinned\n' >> "${QUOTA_AXI_CALLS:?}"
-  [ "${FAKE_GERIS_QUOTA_FAIL:-0}" = 1 ] && exit 1
-  cat "$GERIS_QUOTA_FIXTURE"
+  # pinned-call count separates the first probe from its retries
+  pinned_index=$(grep -c 'geris pinned' "${QUOTA_AXI_CALLS:?}" || true)
+  if [ -n "${GERIS_QUOTA_RETRY_FIXTURE:-}" ] && [ "$pinned_index" -ge 2 ]; then
+    cat "$GERIS_QUOTA_RETRY_FIXTURE"
+  elif [ "${FAKE_GERIS_QUOTA_FAIL:-0}" = 1 ]; then
+    exit 1
+  else
+    cat "$GERIS_QUOTA_FIXTURE"
+  fi
+elif [ -n "${QUOTA_AXI_RETRY_FIXTURE:-}" ] && [ "$call_index" -ge 2 ]; then
+  cat "$QUOTA_AXI_RETRY_FIXTURE"
 else
   cat "${QUOTA_AXI_FIXTURE:?}"
 fi
 SH
 chmod +x "$FAKEBIN/quota-axi"
 
+cat > "$FAKEBIN/zai-window-warm" <<'SH'
+#!/usr/bin/env bash
+printf 'warm\n' >> "${ZAI_WARM_LOG:?}"
+SH
+chmod +x "$FAKEBIN/zai-window-warm"
+
 RESPONSE="$TMP_ROOT/response.json"
-export FAKE_CURL_LOG="$LOG" FAKE_CURL_RESPONSE="$RESPONSE" QUOTA_AXI_CALLS="$LOG/quota-axi.calls" QUOTA_AXI_FIXTURE="$QUOTA" CHILD_ENV_LOG="$LOG/child-env"
+export FAKE_CURL_LOG="$LOG" FAKE_CURL_RESPONSE="$RESPONSE" QUOTA_AXI_CALLS="$LOG/quota-axi.calls" QUOTA_AXI_FIXTURE="$QUOTA" CHILD_ENV_LOG="$LOG/child-env" ZAI_WARM_LOG="$LOG/zai-warm.calls"
+# Retry tests keep the bounded gather fast; production defaults live in the tool.
+export FM_DISPATCH_QUOTA_BACKOFF_MS="${FM_DISPATCH_QUOTA_BACKOFF_MS:-20}"
 
 reset_log() {
   rm -rf "$LOG"
@@ -201,9 +231,15 @@ KEY='test-key-9f1c2d3e-never-on-argv'
 code='' out='' err=''
 
 # --- absent key: off, silent on stdout, no network, no quota read -----------
+# The worker shell may export a key; this outcome must hold without one.
 reset_log
 write_response "$RESPONSE" rule_4 0.9
-run code out err "$BRIEF" --project pager
+( unset OPENROUTER_API_KEY OPENROUTER_API_KEY_PRIVATE
+  PATH="$FAKEBIN:$BASE_PATH" FM_HOME="$HOME_DIR" "$TOOL" "$BRIEF" --project pager
+) > "$TMP_ROOT/sub-out" 2> "$TMP_ROOT/sub-err"
+code=$?
+out=$(cat "$TMP_ROOT/sub-out")
+err=$(cat "$TMP_ROOT/sub-err")
 expect_code 0 "$code" "absent key exits 0"
 assert_equals '' "$out" "absent key prints nothing on stdout"
 assert_contains "$err" 'dispatch-resolve: off (OPENROUTER_API_KEY absent from the environment and' "absent key explains itself on stderr"
@@ -214,7 +250,12 @@ pass "absent key is off: one stderr line, exit 0, no network call"
 # --- .env key, and the environment wins over it ------------------------------
 printf '%s\n' '# local secrets' 'FMX_PAIRING_TOKEN=abc' "export OPENROUTER_API_KEY=\"$KEY\"" > "$HOME_DIR/.env"
 reset_log
-run code out err "$BRIEF" --project pager
+( unset OPENROUTER_API_KEY OPENROUTER_API_KEY_PRIVATE
+  PATH="$FAKEBIN:$BASE_PATH" FM_HOME="$HOME_DIR" "$TOOL" "$BRIEF" --project pager
+) > "$TMP_ROOT/sub-out" 2> "$TMP_ROOT/sub-err"
+code=$?
+out=$(cat "$TMP_ROOT/sub-out")
+err=$(cat "$TMP_ROOT/sub-err")
 expect_code 0 "$code" ".env key resolves"
 assert_contains "$out" '  status: clear' ".env key produces a clear result"
 assert_contains "$(cat "$LOG/header")" "Authorization: Bearer $KEY" ".env key reaches curl on the fd header"
@@ -239,9 +280,8 @@ assert_contains "$out" 'dispatch-resolve:' "TOON block header"
 assert_contains "$out" '  status: clear' "clear status"
 assert_contains "$out" '  rule: rule_4 (A simple bug fix with a stated root cause.)   confidence: 0.9' "rule and confidence line"
 assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-medium'" "argmax picks the highest spendPriority"
-assert_contains "$out" 'candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=-0.4627  runway=projected_exhaustion  -> eligible' "every candidate is accounted for"
-assert_contains "$out" 'candidate: kimi:kimi-code/k3  provider=kimi  -> eligible, unranked: provider kimi unmeasured (unknown): disclosed uncertainty' "unmeasured provider stays listed as eligible and unranked"
-assert_contains "$out" '  note: 1 eligible candidate(s) unranked (kimi)' "clear results flag eligible unranked candidates once"
+assert_contains "$out" 'candidate: claude:sonnet  provider=claude  windows=five_hour:93%@2030-01-01T04:00:00Z,seven_day:79%@2030-01-04T00:00:00Z  scope=all_models  remaining=79%  spendPriority=-0.4627  runway=projected_exhaustion  -> eligible' "every candidate is accounted for with its window evidence"
+assert_not_contains "$out" 'unranked' "a clear result ranks from complete evidence only"
 assert_not_contains "$out" '--effort' "cursor profile without effort emits no --effort"
 argv=$(cat "$LOG/argv")
 assert_not_contains "$argv" "$KEY" "the key never appears on curl argv"
@@ -326,7 +366,7 @@ JSON
 add_profile_response "$RESPONSE"
 reset_log
 OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
-assert_contains "$out" 'candidate: agy:-  provider=agy  scope=all_models  remaining=64%  spendPriority=0.4  runway=through_reset  -> eligible' "agy uses its resolver-only authoritative quota provider"
+assert_contains "$out" 'candidate: agy:-  provider=agy  windows=weekly:64%@2030-01-02T00:00:00Z  scope=all_models  remaining=64%  spendPriority=0.4  runway=through_reset  -> eligible' "agy uses its resolver-only authoritative quota provider"
 assert_contains "$out" "  profile: --harness 'agy'" "provider-less agy rule resolves"
 
 GEMINI_RULE="$TMP_ROOT/gemini-rule.json"
@@ -334,7 +374,7 @@ printf '%s\n' '{"rules":[{"when":"Gemini work.","use":{"harness":"gemini","model
 cp "$GEMINI_RULE" "$RULES"
 reset_log
 OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
-assert_contains "$out" 'candidate: gemini:gemini-3.8-flash-high  provider=google  scope=all_models  remaining=72%  spendPriority=0.3  runway=through_reset  -> eligible' "Gemini resolves through its explicit provider"
+assert_contains "$out" 'candidate: gemini:gemini-3.8-flash-high  provider=google  windows=weekly:72%@2030-01-02T00:00:00Z  scope=all_models  remaining=72%  spendPriority=0.3  runway=through_reset  -> eligible' "Gemini resolves through its explicit provider"
 assert_contains "$out" "  profile: --harness 'gemini' --model 'gemini-3.8-flash-high'" "Gemini is a typed verified dispatch harness"
 
 cp "$ROOT/docs/examples/crew-dispatch.json" "$RULES"
@@ -345,7 +385,7 @@ add_profile_response "$RESPONSE"
 reset_log
 OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
 assert_contains "$out" '  status: clear' "the documented example passes opted-in resolution"
-assert_contains "$out" 'candidate: pi:anthropic/claude-sonnet-5  provider=claude' "the documented Pi default uses its declared Claude provider"
+assert_contains "$out" 'candidate: pi:anthropic/claude-sonnet-5  provider=claude  windows=five_hour:93%@2030-01-01T04:00:00Z,seven_day:79%@2030-01-04T00:00:00Z' "the documented Pi default uses its declared Claude provider with window evidence"
 assert_not_contains "$err" 'malformed rules file' "the documented example reaches resolution"
 cp "$BASE_RULES" "$RULES"
 pass "no-rule fallback, Agy, Gemini, and documented configurations resolve"
@@ -357,8 +397,7 @@ OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
 expect_code 0 "$code" "ambiguous exits 0"
 assert_contains "$out" '  status: ambiguous' "below the floor is ambiguous"
 assert_contains "$out" '  reason: confidence 0.41 below floor 0.6' "ambiguous names the floor"
-assert_contains "$out" 'candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=-0.4627  runway=projected_exhaustion  -> eligible' "ambiguous preserves matched candidate evidence"
-assert_contains "$out" 'candidate: kimi:kimi-code/k3  provider=kimi  -> eligible, unranked: provider kimi unmeasured (unknown): disclosed uncertainty' "ambiguous preserves eligible unranked candidate evidence"
+assert_contains "$out" 'candidate: claude:sonnet  provider=claude  windows=five_hour:93%@2030-01-01T04:00:00Z,seven_day:79%@2030-01-04T00:00:00Z  scope=all_models  remaining=79%  spendPriority=-0.4627  runway=projected_exhaustion  -> eligible' "ambiguous preserves matched candidate evidence"
 assert_not_contains "$out" '  profile:' "ambiguous emits no profile line"
 pass "ambiguous: confidence below the fixed floor hands the decision back"
 
@@ -369,7 +408,7 @@ OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
 expect_code 0 "$code" "escalate exits 0"
 assert_contains "$out" '  status: escalate' "approval-gated rule escalates"
 assert_contains "$out" "  reason: rule requires the captain's explicit approval before dispatch" "escalate names the approval gate"
-assert_contains "$out" 'candidate: claude:fable  provider=claude  scope=model:fable  remaining=15%  spendPriority=-0.79  runway=projected_exhaustion  bounds=all_models:79%/projected_exhaustion,model:fable:15%/projected_exhaustion  -> eligible' "approval escalation preserves matched candidate evidence"
+assert_contains "$out" 'candidate: claude:fable  provider=claude  windows=five_hour:93%@2030-01-01T04:00:00Z,seven_day:79%@2030-01-04T00:00:00Z,model:fable:15%@2030-01-04T00:00:00Z  scope=model:fable  remaining=15%  spendPriority=-0.79  runway=projected_exhaustion  bounds=all_models:79%/projected_exhaustion,model:fable:15%/projected_exhaustion  -> eligible' "approval escalation preserves matched candidate evidence"
 assert_not_contains "$out" '  profile:' "escalate emits no profile line"
 pass "escalate: a rule declared approval: captain never yields a profile"
 
@@ -394,8 +433,9 @@ pass "rule floor: known shortfall falls through while unavailable evidence escal
 reset_log
 write_response "$RESPONSE" rule_2 0.99
 OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
-assert_contains "$out" 'candidate: pi:openai-codex/gpt-5.6-sol  provider=codex  scope=all_models  remaining=31%' "declared provider routes a Pi profile to the codex row"
-assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  scope=all_models  remaining=31%  spendPriority=-  runway=projected_exhaustion  -> not eligible: profile floor all_models below 50%' "profile floor makes a candidate ineligible with its reason"
+assert_contains "$out" '  status: clear' "a weekly-only plan resolves clear: the measured window set is the plan's own evidence"
+assert_contains "$out" 'candidate: pi:openai-codex/gpt-5.6-sol  provider=codex  windows=weekly:31%@2030-01-06T00:00:00Z  scope=all_models  remaining=31%' "declared provider routes a Pi profile to the codex row with its window evidence"
+assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  windows=weekly:31%@2030-01-06T00:00:00Z  scope=all_models  remaining=31%  spendPriority=-  runway=projected_exhaustion  -> not eligible: profile floor all_models below 50%' "profile floor makes a candidate ineligible with its reason"
 assert_contains "$out" "  profile: --harness 'pi' --model 'openai-codex/gpt-5.6-sol'" "the remaining eligible candidate wins"
 
 FLOOR_BOUNDS="$TMP_ROOT/floor-bounds.json"
@@ -403,7 +443,7 @@ jq '(.providers[] | select(.provider == "codex") | .quotaSemantics.effectiveAvai
   {"scope":"model:gpt-5.6-sol","status":"known","effectivePercentRemaining":10,"runway":{"status":"projected_exhaustion"},"selection":{"spendPriority":-0.9}}
 ]' "$QUOTA" > "$FLOOR_BOUNDS"
 OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$FLOOR_BOUNDS" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  scope=all_models  remaining=31%  spendPriority=-  runway=projected_exhaustion  bounds=all_models:31%/projected_exhaustion,model:gpt-5.6-sol:10%/projected_exhaustion  -> not eligible: profile floor all_models below 50%' "a failed profile floor reports its named row while retaining all bounds"
+assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  windows=weekly:31%@2030-01-06T00:00:00Z  scope=all_models  remaining=31%  spendPriority=-  runway=projected_exhaustion  bounds=all_models:31%/projected_exhaustion,model:gpt-5.6-sol:10%/projected_exhaustion  -> not eligible: profile floor all_models below 50%' "a failed profile floor reports its named row while retaining all bounds"
 
 FLOOR_WITH_UNKNOWN="$TMP_ROOT/floor-with-unknown.json"
 jq '(.providers[] | select(.provider == "codex") | .quotaSemantics) |= (.status = "partial" | .effectiveAvailability += [
@@ -411,13 +451,36 @@ jq '(.providers[] | select(.provider == "codex") | .quotaSemantics) |= (.status 
 ])' "$QUOTA" > "$FLOOR_WITH_UNKNOWN"
 OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$FLOOR_WITH_UNKNOWN" run code out err "$BRIEF"
 assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  scope=all_models  remaining=31%  spendPriority=-  runway=projected_exhaustion  bounds=all_models:31%/projected_exhaustion,model:gpt-5.6-sol:-%/unknown  -> not eligible: profile floor all_models below 50%' "a known profile-floor shortfall wins over unrelated unknown model evidence"
+assert_contains "$out" '  status: incomplete' "an unknown model window still blocks the choice"
+assert_contains "$out" 'candidate: pi:openai-codex/gpt-5.6-sol  provider=codex  windows_missing=model:gpt-5.6-sol  bounds=all_models:31%/projected_exhaustion,model:gpt-5.6-sol:-%/unknown  -> incomplete: unmeasured windows: model:gpt-5.6-sol: gather first, wait and re-run' "the candidate bounded by the unknown window is incomplete, not dropped"
+assert_not_contains "$out" '  profile:' "unknown window evidence never authorizes a selection"
+
+BAD_HOME_RETRY="$TMP_ROOT/bad-home-retry.json"
+printf 'not json\n' > "$BAD_HOME_RETRY"
+reset_log
+OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$FLOOR_WITH_UNKNOWN" QUOTA_AXI_RETRY_FIXTURE="$BAD_HOME_RETRY" run code out err "$BRIEF"
+assert_contains "$out" '  status: incomplete' "a failed home re-read keeps the incomplete block instead of an error"
+assert_contains "$out" 'windows_missing=model:gpt-5.6-sol' "the kept snapshot still names the missing window"
+
+UNMEASURED_PROFILE_FLOOR="$TMP_ROOT/unmeasured-profile-floor.json"
+jq '(.providers[] | select(.provider == "codex") | .quotaSemantics) |= (.status = "partial" | .effectiveAvailability += [
+  {"scope":"model:other","status":"unknown","runway":{"status":"unknown"}}
+])' "$QUOTA" > "$UNMEASURED_PROFILE_FLOOR"
+jq '.rules[1].use[1].floor.scope = "model:other"' "$BASE_RULES" > "$RULES"
+reset_log
+OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$UNMEASURED_PROFILE_FLOOR" run code out err "$BRIEF"
+assert_contains "$out" '  status: incomplete' "an unmeasured profile floor blocks the choice"
+assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  windows_missing=model:other' "the unmeasured floor scope is named as missing"
+assert_not_contains "$out" '  profile:' "an unmeasured profile floor never authorizes a selection"
+cp "$BASE_RULES" "$RULES"
 
 MISSING_PROFILE_FLOOR_RULES="$TMP_ROOT/missing-profile-floor-rules.json"
 jq '.rules[1].use[1].floor.scope = "model:missing"' "$BASE_RULES" > "$MISSING_PROFILE_FLOOR_RULES"
 cp "$MISSING_PROFILE_FLOOR_RULES" "$RULES"
 OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
-assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  scope=model:missing  remaining=-%  spendPriority=-  runway=-  -> eligible, unranked: profile floor model:missing is unverifiable: not rankable: disclosed uncertainty' "a missing profile floor remains eligible but unranked"
+assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  windows=weekly:31%@2030-01-06T00:00:00Z  scope=model:missing  remaining=-%  spendPriority=-  runway=-  -> eligible, unranked: profile floor model:missing is unverifiable: not rankable: disclosed uncertainty' "a missing profile floor remains eligible but unranked"
 assert_not_contains "$out" 'profile floor model:missing below' "missing profile evidence is not described as a shortfall"
+assert_contains "$out" '  note: 1 eligible candidate(s) unranked (codex)' "the unranked candidate is disclosed on the clear result"
 assert_contains "$out" "  profile: --harness 'pi' --model 'openai-codex/gpt-5.6-sol'" "another candidate may clear without misrepresenting missing floor evidence"
 cp "$BASE_RULES" "$RULES"
 pass "declared provider and profile floor evidence are applied in code"
@@ -428,7 +491,7 @@ NONNUMERIC="$TMP_ROOT/nonnumeric-spend-priority.json"
 jq '(.providers[] | select(.provider == "cursor") | .quotaSemantics.effectiveAvailability[] | select(.scope == "all_models") | .selection.spendPriority) = "high"' "$QUOTA" > "$NONNUMERIC"
 write_response "$RESPONSE" rule_4 0.9
 OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$NONNUMERIC" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  scope=all_models  remaining=91%  spendPriority=-  runway=through_reset  -> eligible, unranked: spendPriority missing or non-numeric at all_models: not rankable: disclosed uncertainty' "a nonnumeric spendPriority remains eligible but unranked"
+assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  windows=weekly:91%@2030-01-03T00:00:00Z  scope=all_models  remaining=91%  spendPriority=-  runway=through_reset  -> eligible, unranked: spendPriority missing or non-numeric at all_models: not rankable: disclosed uncertainty' "a nonnumeric spendPriority remains eligible but unranked"
 assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high'" "numeric evidence wins without mixed-type ordering"
 pass "nonnumeric spendPriority evidence is never ranked"
 
@@ -438,7 +501,7 @@ PARTIAL="$TMP_ROOT/partial.json"
 jq '(.providers[] | select(.provider == "cursor") | .quotaSemantics.status) = "partial"' "$QUOTA" > "$PARTIAL"
 write_response "$RESPONSE" rule_4 0.9
 OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$PARTIAL" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  scope=all_models  remaining=91%  spendPriority=0.7597  runway=through_reset  -> eligible' "a known row from a partial provider remains rankable"
+assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  windows=weekly:91%@2030-01-03T00:00:00Z  scope=all_models  remaining=91%  spendPriority=0.7597  runway=through_reset  -> eligible' "a known row from a partial provider remains rankable"
 assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-medium'" "partial provider evidence can win the argmax"
 
 PARTIAL_UNKNOWN="$TMP_ROOT/partial-unknown.json"
@@ -446,9 +509,10 @@ jq '(.providers[] | select(.provider == "cursor") | .quotaSemantics) |= (.status
   {"scope":"model:cursor-grok-4.6-medium","status":"unknown","runway":{"status":"unknown"}}
 ])' "$QUOTA" > "$PARTIAL_UNKNOWN"
 OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$PARTIAL_UNKNOWN" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  scope=model:cursor-grok-4.6-medium  remaining=-%  spendPriority=-  runway=-  bounds=all_models:91%/through_reset,model:cursor-grok-4.6-medium:-%/unknown  -> eligible, unranked: quota row model:cursor-grok-4.6-medium unknown: not rankable: disclosed uncertainty' "an unknown exact-model row preserves partial known evidence without ranking"
-assert_contains "$out" '  note: 2 eligible candidate(s) unranked (cursor, kimi)' "clear result lists every provider with unranked uncertainty"
-assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high'" "another measured candidate can clear"
+assert_contains "$out" '  status: incomplete' "an unknown exact-model window makes the choice incomplete"
+assert_contains "$out" '  reason: quota window evidence incomplete: cursor:cursor-grok-4.6-medium missing model:cursor-grok-4.6-medium' "the reason names the candidate and its missing window"
+assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  windows_missing=model:cursor-grok-4.6-medium  bounds=all_models:91%/through_reset,model:cursor-grok-4.6-medium:-%/unknown  -> incomplete: unmeasured windows: model:cursor-grok-4.6-medium: gather first, wait and re-run' "an unknown exact-model row is disclosed, never selected around"
+assert_not_contains "$out" '  profile:' "unknown model windows never authorize a selection"
 
 PARTIAL_EXHAUSTED="$TMP_ROOT/partial-exhausted.json"
 jq '(.providers[] | select(.provider == "cursor") | .quotaSemantics) |= (.status = "partial" | .effectiveAvailability += [
@@ -456,7 +520,7 @@ jq '(.providers[] | select(.provider == "cursor") | .quotaSemantics) |= (.status
 ] | .effectiveAvailability[] |= if .scope == "all_models" then .effectivePercentRemaining = 0 | .runway.status = "exhausted_now" else . end)' "$QUOTA" > "$PARTIAL_EXHAUSTED"
 OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$PARTIAL_EXHAUSTED" run code out err "$BRIEF"
 assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  scope=all_models  remaining=0%  spendPriority=-  runway=exhausted_now  bounds=all_models:0%/exhausted_now,model:cursor-grok-4.6-medium:-%/unknown  -> not eligible: runway exhausted_now at all_models' "known exhaustion vetoes a candidate despite unknown exact-model evidence"
-assert_contains "$out" '  note: 1 eligible candidate(s) unranked (kimi)' "an exhausted candidate is excluded from the unranked uncertainty note"
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high'" "a concretely vetoed candidate needs no window evidence to clear the rest"
 
 UNKNOWN_EXHAUSTED="$TMP_ROOT/unknown-exhausted.json"
 jq '(.providers[] | select(.provider == "cursor") | .quotaSemantics) = {
@@ -472,9 +536,73 @@ jq '(.providers[] | select(.provider == "cursor") | .quotaSemantics.effectiveAva
   {"scope":"model:other","status":"known","effectivePercentRemaining":91,"runway":{"status":"through_reset"},"selection":{"spendPriority":0.8}}
 ]' "$QUOTA" > "$NO_APPLICABLE"
 OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$NO_APPLICABLE" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  -> eligible, unranked: no applicable quota row for provider cursor: disclosed uncertainty' "a candidate without an applicable row remains eligible but unranked"
-assert_contains "$out" '  note: 2 eligible candidate(s) unranked (cursor, kimi)' "no-applicable-row uncertainty appears in the clear-result note"
-pass "partial and missing quota evidence remain eligible but unranked"
+assert_contains "$out" '  status: incomplete' "a candidate without an applicable row blocks the choice"
+assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  windows_missing=*  -> incomplete: no applicable quota row for provider cursor: gather first, wait and re-run' "a candidate without an applicable row is incomplete, not unranked"
+assert_not_contains "$out" '  profile:' "no-applicable-row evidence never authorizes a selection"
+pass "partial, missing, and unknown quota evidence is disclosed and never selected around"
+
+# --- completeness gate: gather first, never select around unknown quota ------
+reset_log
+UNMEASURED="$TMP_ROOT/unmeasured.json"
+jq '(.providers[] | select(.provider == "claude")) |= (
+  .state = { "status": "stale", "error": "Claude quota endpoint rate limited", "retryAfter": "2020-01-01T00:00:10Z" } |
+  .windows = [ { "id": "five_hour", "kind": "session" }, { "id": "seven_day", "kind": "weekly" } ] |
+  .quotaSemantics = { "status": "unknown", "effectiveAvailability": [
+    { "scope": "all_models", "status": "unknown", "boundedBy": ["five_hour", "seven_day"], "selection": { "unmeasurableWindowIds": ["five_hour", "seven_day"] } } ] }
+)' "$QUOTA" > "$UNMEASURED"
+write_response "$RESPONSE" rule_4 0.9
+OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$UNMEASURED" FM_DISPATCH_QUOTA_ATTEMPTS=1 run code out err "$BRIEF"
+expect_code 0 "$code" "an unmeasured provider exits 0"
+assert_contains "$out" '  status: incomplete' "an unmeasured provider makes the choice incomplete"
+assert_contains "$out" '  reason: quota window evidence incomplete: claude:sonnet missing five_hour, seven_day' "the status names the candidate and its missing windows"
+assert_contains "$out" 'candidate: claude:sonnet  provider=claude  windows_missing=five_hour,seven_day (Claude quota endpoint rate limited; retry after 2020-01-01T00:00:10Z)  -> incomplete: provider claude unmeasured (unknown): gather first, wait and re-run' "the unmeasured candidate discloses its missing windows and retry time"
+assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  windows=weekly:91%@2030-01-03T00:00:00Z  scope=all_models  remaining=91%  spendPriority=0.7597  runway=through_reset  -> eligible' "a measured candidate keeps complete evidence"
+assert_contains "$out" 'never pick by hand or drop a candidate' "the incomplete note forbids hand-picking"
+assert_not_contains "$out" '  profile:' "an incomplete choice never emits a profile"
+assert_equals '1' "$(grep -c '^--json$' "$LOG/quota-axi.calls")" "FM_DISPATCH_QUOTA_ATTEMPTS=1 honors a single gather"
+reset_log
+OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$UNMEASURED" QUOTA_AXI_RETRY_FIXTURE="$QUOTA" run code out err "$BRIEF"
+assert_contains "$out" '  status: clear' "a recovered measurement clears the choice on the retry"
+assert_contains "$out" 'candidate: claude:sonnet  provider=claude  windows=five_hour:93%@2030-01-01T04:00:00Z,seven_day:79%@2030-01-04T00:00:00Z' "the recovered attempt lists the measured windows"
+assert_equals '2' "$(grep -c '^--json$' "$LOG/quota-axi.calls")" "the incomplete home store is re-read once and the loop stops"
+assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-medium'" "the argmax runs only after the gate passes"
+reset_log
+LATE_RETRY="$TMP_ROOT/unmeasured-late.json"
+jq '(.providers[] | select(.provider == "claude") | .state.retryAfter) = "2031-01-01T00:00:00Z"' "$UNMEASURED" > "$LATE_RETRY"
+write_response "$RESPONSE" rule_4 0.9
+OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$LATE_RETRY" run code out err "$BRIEF"
+assert_contains "$out" '  status: incomplete' "a retry time beyond the bounded wait stays incomplete"
+assert_contains "$out" 'retry after 2031-01-01T00:00:00Z' "the block names the published retry time"
+assert_equals '1' "$(grep -c '^--json$' "$LOG/quota-axi.calls")" "a late retry time stops the gather loop before sleeping"
+reset_log
+write_response "$RESPONSE" rule_4 0.41
+OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$UNMEASURED" FM_DISPATCH_QUOTA_ATTEMPTS=1 run code out err "$BRIEF"
+assert_contains "$out" '  status: incomplete' "hand-picking on ambiguous also requires complete window evidence"
+assert_not_contains "$out" '  status: ambiguous' "a low confidence never downgrades the completeness gate"
+assert_not_contains "$out" '  profile:' "no profile without complete evidence"
+pass "completeness gate: unmeasured windows are gathered first and otherwise non-dispatchable"
+
+# --- bounded retry drives the named Z.ai warm-up exactly once -----------------
+ZAI_RULE="$TMP_ROOT/zai-rule.json"
+printf '%s\n' '{"rules":[{"when":"Zai work.","use":{"harness":"pi","model":"zai/glm-5.3","provider":"zai"}}]}' > "$ZAI_RULE"
+cp "$ZAI_RULE" "$RULES"
+cat > "$RESPONSE" <<'JSON'
+{"model":"jev-1.13.0","answers":{"rule":{"type":"choice","choice":"rule_1","confidence":0.99,"probabilities":{"rule_1":0.99,"default":0.01}},"profile":{"type":"choice","choice":"rule_1_1","confidence":0.99,"probabilities":{"rule_1_1":1.0}}},"usage":{"input_tokens":100,"output_tokens":60}}
+JSON
+add_profile_response "$RESPONSE"
+ZAI_UNMEASURED="$TMP_ROOT/zai-unmeasured.json"
+jq '.providers += [ { "provider": "zai", "state": { "status": "stale", "error": "Z.ai quota endpoint unavailable" },
+  "windows": [ { "id": "five_hour", "kind": "session" } ],
+  "quotaSemantics": { "status": "unknown", "effectiveAvailability": [
+    { "scope": "all_models", "status": "unknown", "boundedBy": ["five_hour"], "selection": { "unmeasurableWindowIds": ["five_hour"] } } ] } } ]' "$QUOTA" > "$ZAI_UNMEASURED"
+reset_log
+OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$ZAI_UNMEASURED" run code out err "$BRIEF"
+assert_contains "$out" '  status: incomplete' "an unmeasurable Z.ai window stays incomplete"
+assert_contains "$out" 'candidate: pi:zai/glm-5.3  provider=zai  windows_missing=five_hour (Z.ai quota endpoint unavailable)  -> incomplete: provider zai unmeasured (unknown): gather first, wait and re-run' "the Z.ai candidate names its missing window and state error"
+assert_equals '3' "$(grep -c '^--json$' "$LOG/quota-axi.calls")" "default attempts bound the gather loop"
+assert_equals '1' "$(grep -c . "$LOG/zai-warm.calls")" "the named warm-up runs exactly once across retries"
+cp "$BASE_RULES" "$RULES"
+pass "bounded retry drives the named Z.ai warm-up exactly once"
 
 # --- provider-wide rows remain bounds beside exact model rows ------------------
 reset_log
@@ -484,13 +612,13 @@ jq '(.providers[] | select(.provider == "claude") | .quotaSemantics.effectiveAva
 ]' "$QUOTA" > "$BOUNDED"
 write_response "$RESPONSE" rule_4 0.9
 OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$BOUNDED" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=-0.4627' "the limiting provider-wide row drives ranking"
+assert_contains "$out" 'candidate: claude:sonnet  provider=claude  windows=five_hour:93%@2030-01-01T04:00:00Z,seven_day:79%@2030-01-04T00:00:00Z  scope=all_models  remaining=79%  spendPriority=-0.4627' "the limiting provider-wide row drives ranking"
 assert_contains "$out" 'bounds=all_models:79%/projected_exhaustion,model:sonnet:99%/through_reset' "all applicable quota bounds are disclosed"
 
 EXHAUSTED_WIDE="$TMP_ROOT/exhausted-wide.json"
 jq '(.providers[] | select(.provider == "claude") | .quotaSemantics.effectiveAvailability[] | select(.scope == "all_models")) |= (.effectivePercentRemaining = 0 | .runway.status = "exhausted_now")' "$BOUNDED" > "$EXHAUSTED_WIDE"
 OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$EXHAUSTED_WIDE" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: claude:sonnet  provider=claude  scope=all_models  remaining=0%' "the exhausted account-wide bound is the candidate evidence"
+assert_contains "$out" 'candidate: claude:sonnet  provider=claude  windows=five_hour:93%@2030-01-01T04:00:00Z,seven_day:79%@2030-01-04T00:00:00Z  scope=all_models  remaining=0%' "the exhausted account-wide bound is the candidate evidence"
 assert_contains "$out" '-> not eligible: runway exhausted_now at all_models' "a healthy exact row cannot bypass an exhausted account-wide bound"
 pass "provider-wide and exact quota rows combine into one limiting candidate"
 
@@ -562,12 +690,19 @@ assert_contains "$(cat "$LOG/quota-axi.calls")" 'geris pinned' "secondary quota 
 reset_log
 OPENROUTER_API_KEY=$KEY FAKE_GERIS_QUOTA_FAIL=1 run code out err "$BRIEF"
 assert_not_contains "$out" '  status: error' "a failed Geris probe does not fail the resolution"
-assert_contains "$out" 'account=geris  -> not eligible: quota-axi --json failed for account geris' "failed Geris probe excludes only that seat"
-assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-medium'" "home seat still resolves"
+assert_contains "$out" '  status: incomplete' "a failed Geris probe makes the choice incomplete, never a home-only selection"
+assert_contains "$out" 'candidate: claude:sonnet  account=geris  provider=claude  windows_missing=*  -> incomplete: quota-axi --json failed for account geris: gather first, wait and re-run' "the failed seat names its missing evidence"
+assert_not_contains "$out" '  profile:' "the home seat cannot be selected around the failed seat"
+assert_equals '4' "$(grep -c '^--json$' "$LOG/quota-axi.calls")" "the failed store is retried within the attempts bound"
+reset_log
+OPENROUTER_API_KEY=$KEY FAKE_GERIS_QUOTA_FAIL=1 GERIS_QUOTA_RETRY_FIXTURE="$GERIS_QUOTA" run code out err "$BRIEF"
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high' --account 'geris'" "the retried Geris store recovers and wins the argmax"
+assert_equals '3' "$(grep -c '^--json$' "$LOG/quota-axi.calls")" "only the incomplete store is re-read"
+assert_equals '2' "$(grep -c 'geris pinned' "$LOG/quota-axi.calls")" "the home snapshot is not re-read while complete"
 FM_HOME="$HOME_DIR" "$ROOT/bin/fm-account-routing.sh" off >/dev/null
 reset_log
 OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
-assert_contains "$out" 'account=geris  -> not eligible: cross-account routing disabled' "off excludes Geris"
+assert_contains "$out" 'account=geris  provider=claude  -> not eligible: cross-account routing disabled' "off excludes Geris"
 assert_equals '1' "$(grep -c '^--json$' "$LOG/quota-axi.calls")" "off never probes Geris store"
 rm -f "$HOME_DIR/config/accounts.json"
 reset_log

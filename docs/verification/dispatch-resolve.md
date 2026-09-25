@@ -63,11 +63,16 @@ It proves the documented starter configuration resolves its Pi default through t
 It proves the key is absent from child environments, never appears on `curl` argv, and arrives only as the bearer header on the descriptor.
 It proves the request uses the fixed endpoint and model, carries only the project, brief, and rule Choice with one option per rule plus the fixed neutral none option, and never carries `why`, `use`, or quota.
 It proves the clear, fixed-floor ambiguous with candidate evidence, escalate (approval with candidate evidence, unverifiable rule floor, tie, nothing rankable), known rule-floor fall-through, known and unverifiable profile-floor evidence, explicit-provider and provider-ID enforcement, authoritative Agy and explicit-provider Gemini routing, partial providers, eligible unranked candidates and their clear-result note, concrete quota vetoes and profile-floor shortfalls taking precedence over uncertainty, account-wide quota veto, limiting-bound ranking, missing-curl and quota-axi failures, HTTP 429 and 500, transport failure, malformed usage, zero-mass or malformed probabilities or confidence, malformed or duplicate profile, invalid selector, removed-option rejection, and out-of-range rule ID paths behave as the contract states, with configuration errors exiting 2 before any network call.
+Re-verified 2026-09-25 for the completeness gate on the same fake-bin harness: every candidate line carries `windows=` evidence (weekly, session, and named model windows with percent and reset), an unmeasured provider, an unknown applicable row, a window without percent or reset, a failed named-account snapshot, a rule floor on an unmeasured provider, and a profile floor on an unmeasured row each return `incomplete` with the missing window ids, the provider's state error and retry time when published, and no profile line; a low-confidence answer over incomplete evidence stays `incomplete`; a known `exhausted_now` or zero bound still vetoes before the gate.
+The fake `quota-axi` counts its calls, so the suite also proves the bounded gather: `FM_DISPATCH_QUOTA_ATTEMPTS=1` reads once, a recovering store clears on its first retry and stops the loop, a retry time beyond the bounded wait stops before sleeping, a failed Geris store is re-read within the attempt bound while the complete home snapshot is not, an invalid home re-read keeps the previous snapshot and its `incomplete` block, and a missing Z.ai window runs the named `zai-window-warm` fake exactly once across retries.
+A weekly-only plan is proven complete from its single measured weekly window.
 `tests/fm-bootstrap.test.sh` proves bootstrap ignores resolver-only fields without the typed key, validates each malformed shape when the environment or home `.env` activates typed resolution, and prevents an environment-provided key from reaching child processes.
 
 ```console
 $ bash tests/fm-dispatch-resolve.test.sh | tail -1
 # all fm-dispatch-resolve tests passed
 ```
+
+That suite passed on 2026-09-25 with the completeness gate in place.
 
 A live run needs a key and is not part of the suite; rerun the table above by pointing the tool at a brief with the key injected for that one command.
