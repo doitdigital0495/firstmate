@@ -739,6 +739,14 @@ assert_contains "$out" 'plan=Pro (config; quota-axi: max)' "declared plan wins o
 assert_contains "$out" 'plan=Max 20x (config; quota-axi: max)' "named declaration wins over its account snapshot label"
 assert_contains "$out" 'plan=prolite (quota-axi)' "undeclared provider uses the quota-axi label"
 cat > "$HOME_DIR/config/accounts.json" <<'JSON'
+{"crossAccount":{"enabled":true},"plans":{"claude":"","cursor":"Business","z.ai":"Pro"},"accounts":{"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris","plans":"Max 20x"}}}
+JSON
+reset_log
+HOME="$HOME_DIR" OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$QUOTA_PLAN" run code out err "$BRIEF"
+geris_line=$(printf '%s\n' "$out" | grep 'account=geris')
+assert_contains "$geris_line" '-> eligible  plan=max (quota-axi)' "a malformed plan entry never blocks named-account routing and falls back per entry"
+assert_contains "$out" 'plan=Business (config)' "valid declarations survive a sibling invalid entry"
+cat > "$HOME_DIR/config/accounts.json" <<'JSON'
 {"crossAccount":{"enabled":true},"accounts":{"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris"}}}
 JSON
 reset_log

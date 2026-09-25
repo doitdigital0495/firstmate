@@ -304,7 +304,7 @@ jq -e --slurpfile rules "$RULES" '
 # ---- plan evidence: declared plans in config/accounts.json ---------------------
 PLAN_CONFIG='{}'
 if fm_account_registry_valid "$CONFIG/accounts.json"; then
-  PLAN_CONFIG=$(jq -c '{default: (.plans // {}), accounts: (.accounts | with_entries(.value = (.value.plans // {})))}' "$CONFIG/accounts.json")
+  PLAN_CONFIG=$(jq -c 'def plans: if type == "object" then . else {} end; {default: (.plans | plans), accounts: (.accounts | with_entries(.value = (.value.plans | plans)))}' "$CONFIG/accounts.json")
 fi
 # ---- quota evidence: one snapshot per authorized credential store -------------
 command -v quota-axi >/dev/null 2>&1 || emit_error "quota-axi not installed"
@@ -370,7 +370,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   def plan_for($c; $p):
     (if $c.account then $account_quotas[$c.account].snapshot else $q end) as $snapshot |
     (plan_label(if $c.account then $plan_config.accounts[$c.account][$p] else $plan_config.default[$p] end)) as $declared |
-    ([($snapshot.providers // [])[] | select(.provider == $p) | (.plan // .tier // .account.plan // null) | plan_label(.)] | first) as $quota_plan |
+    ([($snapshot.providers // [])[] | select(.provider == $p) | .plan | plan_label(.)] | first) as $quota_plan |
     if $declared != null and $quota_plan != null then {plan: $declared, plan_source: "config; quota-axi: \($quota_plan)"}
     elif $declared != null then {plan: $declared, plan_source: "config"}
     elif $quota_plan != null then {plan: $quota_plan, plan_source: "quota-axi"}

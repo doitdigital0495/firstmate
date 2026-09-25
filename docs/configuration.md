@@ -529,6 +529,7 @@ A typical personal-home file is:
 ```
 
 The optional top-level `plans` object declares subscription names for the default home store, and each account's optional `plans` object declares them for that named store; keys are provider ids (not harness names) and values are nonempty printable plan labels of at most 80 characters.
+Plans are evidence only: an invalid entry shows as unknown for that candidate and never invalidates the registry or blocks routing.
 For each candidate, a declared plan wins because quota-axi publishes only coarse labels (for example `max` for every Claude Max tier), and the quota-axi label is shown beside it: `plan=Max 20x (config; quota-axi: max)`.
 Without a declaration the quota-axi label is used (`plan=max (quota-axi)`); if neither is available the candidate shows `plan=unknown (unavailable)` without becoming ineligible.
 A Pi candidate uses its declared provider's plan, not Pi's harness name.
