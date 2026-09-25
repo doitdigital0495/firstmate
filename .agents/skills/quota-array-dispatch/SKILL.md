@@ -2,9 +2,10 @@
 name: quota-array-dispatch
 description: >-
   Agent-only decision procedure for resolving a matched crew-dispatch profile
-  array from quota-axi's default TOON, resolving unknown pools before ranking
-  by spendPriority, splitting runway-limited work, and reserving Claude
-  orchestration capacity alongside shaped-store committed demand.
+  array from quota-axi's default TOON, gathering complete window evidence
+  for every candidate before ranking by spendPriority, splitting
+  runway-limited work, and reserving Claude orchestration capacity
+  alongside shaped-store committed demand.
   Load when a dispatch rule or default resolves to more than one profile candidate,
   and before treating a store listed in config/claude-shaped-store as having headroom.
 user-invocable: false
@@ -36,7 +37,7 @@ Authoritative multi-provider routing - including provider discovery from the har
 Use it only when the brief already fixed the candidate order and every candidate's provider is the harness's primary family.
 It does not replace the reasoning-class, runway-feasibility, or authentication gates above.
 Firstmate can optionally arm `bin/fm-procevent-quota.sh` for a recurring mid-task check that wakes when the tracked provider drops below its configured threshold or its runway becomes `exhausted_now`.
-The opt-in `bin/fm-dispatch-resolve.sh` (`docs/configuration.md` "Typed dispatch resolution") applies the same eligibility gates and `spendPriority` argmax in code after a typed rule match; it never removes this skill's authority, and its `ambiguous`, `escalate`, and `error` outcomes return here.
+The opt-in `bin/fm-dispatch-resolve.sh` (`docs/configuration.md` "Typed dispatch resolution") applies the same eligibility gates and `spendPriority` argmax in code after a typed rule match; it never removes this skill's authority, and its `incomplete`, `ambiguous`, `escalate`, and `error` outcomes return here.
 
 ## Read the default TOON
 
@@ -125,13 +126,13 @@ When every remaining candidate is tight, dispatch inside the strongest-reasoning
 ### 3. Resolve unknown pools before ranking
 
 After catalog, authentication, and reasoning-class checks, identify every eligible candidate whose applicable pool is unknown in headroom, `spendPriority`, runway, or quota applicability; missing model-specific quota alone is not unknown when a known provider-wide bound applies.
-Do not compare known candidates or pick one until every candidate still in this choice has known applicable quota and runway, or has been dropped by this procedure.
+Do not compare known candidates or pick one until every candidate still in this choice has complete limit information - every applicable window's remaining percent and reset time, weekly and session alike - or the whole choice is incomplete; never resolve an unknown by dropping a candidate.
 For each distinct unknown pool with a known warm-up, invoke that pool's warm-up once on demand, not on a timer; today the only known warm-up is `zai-window-warm` for Z.ai, which pings glm-5.3-flash once to open its rolling window.
 This is an approved pool warm-up, not a candidate authentication probe or permission to launch another harness's CLI for model discovery; do not substitute an arbitrary vendor command when the helper is absent or fails.
 After attempting the available warm-ups, re-read `quota-axi` once for the choice, including pools without a warm-up, and re-evaluate all candidates against the new snapshot.
 Use default TOON first and the narrow `--json` fallback only if needed to disambiguate that retry; do not loop or repeatedly ping to force a number.
-If an applicable pool is still unknown after that one retry, drop only candidates bounded by that unknown pool from this choice, record the attempted or unavailable warm-up and both readings, and continue with known candidates.
-An unavailable warm-up never makes the whole choice wait; if no candidates remain, stop and report that none can be ranked rather than guessing or silently switching reasoning class.
+If an applicable pool is still unknown after that one retry, the whole choice is incomplete: record the attempted or unavailable warm-up and both readings, name each candidate's missing windows, wait for the published retry time or the next reset, and re-run the choice; never pick by hand, drop a candidate, or treat the unknown as healthy.
+An unavailable warm-up does not stall the choice forever: its missing measurement still makes this choice incomplete now, and the report names the unavailable warm-up rather than guessing or silently switching reasoning class.
 An absent auth source remains disclosed uncertainty rather than proof of failed login, but never fabricates quota evidence for an unmodeled pool.
 
 ### 4. Rank by spendPriority
@@ -156,7 +157,7 @@ Establish an inspectable likely-completion horizon for the work before accepting
 Read `runway` from every applicable `quota[]` bound: `through_reset` passes the generic feasibility check because the window refills without exhausting; never compare its `resetsAt` with the completion horizon as though reset were an exhaustion deadline.
 `exhausted_now` is zero, and `projected_exhaustion` uses the matching `exhaustion[]` row's `usableRunwaySeconds`.
 Known runway shorter than the full-task horizon fails full-task feasibility even at the highest `spendPriority`; do not launch an unsliced job into a known stall.
-Unknown or unmeasurable runway cannot prove feasibility: it must already have been resolved by the bounded warm-up and retry above, or its candidate dropped.
+Unknown or unmeasurable runway cannot prove feasibility: it must already have been resolved by the bounded warm-up and retry above, or the whole choice stays incomplete.
 Do not invent a generic percentage floor, and honor an explicit captain floor for a candidate when one exists.
 
 Firstmate itself spends Claude quota while orchestrating.
@@ -178,6 +179,6 @@ If no candidate survives the known-evidence and feasibility checks, report the b
 
 ## Account for every candidate
 
-Account for every candidate visibly before selecting or escalating, naming its catalog evidence, provider relation, applicable quota and authentication facts, warm-up and retry outcome or dropped reason, fit and reasoning class, `spendPriority`, runway-versus-horizon result, and any Claude reserve or split decision.
+Account for every candidate visibly before selecting or escalating, naming its catalog evidence, provider relation, applicable quota and authentication facts, warm-up and retry outcome or missing windows, fit and reasoning class, `spendPriority`, runway-versus-horizon result, and any Claude reserve or split decision.
 A blocked credential report must name `harness`, `model`, authentication surface, and concrete failure evidence; never emit a bare `Grok unauthenticated` statement.
 Never conclude with an unexplained "best quota" label.
