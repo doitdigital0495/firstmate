@@ -538,11 +538,9 @@ fm_backlog_mutate() {  # <data-dir> <verb> <id> [flag...]
   # tasks-axi validates --pr as a GitHub-style /pull/N URL. Preserve an ADO
   # deliverable verbatim in its note instead, including during marker replay.
   local -a mutation_args=("$@")
-  if [ "$verb" = 'done' ] || [ "$verb" = update ]; then
-    if [ "${mutation_args[0]-}" = --pr ] && fm_pr_url_parse "${mutation_args[1]-}" \
-      && [ "$FM_PR_PROVIDER" = ado ]; then
-      mutation_args=(--note "PR ${mutation_args[1]}")
-    fi
+  if [ "$verb" = 'done' ] && [ "${mutation_args[0]-}" = --pr ] \
+    && fm_pr_url_parse "${mutation_args[1]-}" && [ "$FM_PR_PROVIDER" = ado ]; then
+    mutation_args=(--note "PR ${mutation_args[1]}")
   fi
   FM_BACKLOG_TRANSITION_ERROR=
   fm_backlog_source_present "$data" "$authorized_data"
@@ -582,7 +580,7 @@ fm_backlog_done() {  # <data-dir> <id> [flag...]
 fm_backlog_row_artifact_supported() {
   local id=$1 flag=${2:-} value=${3:-}
   case "$flag" in
-    --pr) return 0 ;;
+    --pr) ! { fm_pr_url_parse "$value" && [ "$FM_PR_PROVIDER" = ado ]; } ;;
     --report) [ "$value" = "data/$id/report.md" ] ;;
     *) return 1 ;;
   esac
@@ -615,9 +613,7 @@ fm_backlog_retain() {  # <data-dir> <id> [flag...]
         ;;
       --pr)
         deliverable="${deliverable:+$deliverable; }PR $arg"
-        if fm_pr_url_parse "$arg" && [ "$FM_PR_PROVIDER" = ado ]; then
-          row_args=()
-        else
+        if fm_backlog_row_artifact_supported "$id" --pr "$arg"; then
           row_args=(--pr "$arg")
         fi
         ;;
