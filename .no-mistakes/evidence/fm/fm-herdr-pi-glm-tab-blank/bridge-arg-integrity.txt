@@ -1,0 +1,9 @@
+tty0=y tty1=n
+0000000   m   u   l   t   i  \n   l   i   n   e       $   H   O   M   E
+0000020       `   i   d   `       ;       e   c   h   o       I   N   J
+0000040   E   C   T   E   D       '   q   '       "   d   q   "       *
+0000060
+ARG_INTACT
+ARG_INTACT_nonexistent_shell
+stdin+stdout are tty under piped caller
+no-bridge: stdout NOT tty

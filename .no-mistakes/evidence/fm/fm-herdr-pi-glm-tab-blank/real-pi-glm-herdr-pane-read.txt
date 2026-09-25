@@ -1,0 +1,46 @@
+### with bridge (real pi zai/glm-5.3 via opr + fm-pi-tty-bridge.sh, SHELL=/bin/sh)
+    ✗ ~/.claude/skills/synced/89ae019c-27b9-4784-a32d-72406aa6ec1e_2995b4f2-1b27-48bd-810b-605891d7f877/pptx/SKILL.md
+(skipped)
+  "skill-creator" collision:
+    ✓ user
+~/.claude/skills/synced/880363fb-2d50-43b2-894e-67ab50c641c6_ed014232-1c6b-4d68-9592-8c747decb3a2/skill-creator/SKILL.m
+d
+    ✗
+~/.claude/skills/synced/89ae019c-27b9-4784-a32d-72406aa6ec1e_2995b4f2-1b27-48bd-810b-605891d7f877/skill-creator/SKILL.m
+d (skipped)
+  "xlsx" collision:
+    ✓ user
+~/.claude/skills/synced/880363fb-2d50-43b2-894e-67ab50c641c6_ed014232-1c6b-4d68-9592-8c747decb3a2/xlsx/SKILL.md
+    ✗ ~/.claude/skills/synced/89ae019c-27b9-4784-a32d-72406aa6ec1e_2995b4f2-1b27-48bd-810b-605891d7f877/xlsx/SKILL.md
+(skipped)
+  "no-mistakes" collision:
+    ✓ user ~/.claude/skills/no-mistakes/SKILL.md
+    ✗ ~/.agents/skills/no-mistakes/SKILL.md (skipped)
+
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 0.87.1 is available. Run pi update
+ Changelog: https://pi.dev/changelog
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ cl personal                   5h ●○○○○○○○   7%  (4h 14m)                │ 7d ●●●●●●●○  82%  (5.6%/d) (Mon 20:00)
+ ↻1 22 Oct
+ cl geris                      5h ○○○○○○○○   0%  (--)                    │ 7d ○○○○○○○○   0%  (25.9%/d) (Tue 11:00)
+ ↻1 22 Oct
+ cx daan.aerts.2000@gmail.com  5h --                                     │ 7d ●●●○○○○○  32%  (13.6%/d) (Wed 14:34)
+ ↻1 5 Oct ↻1 22 Oct
+ cx daan.aerts@geris.nl        5h ●●●●○○○○  54%  (2h 35m)                │ 7d ●●●○○○○○  34%  (23.5%/d) (Mon 09:41)
+ ↻2 4 Oct ↻1 22 Oct
+ zai personal                  5h ○○○○○○○○   1%  (1h 45m)                │ 7d ●●●○○○○○  41%  (13.9%/d) (Tue 20:04)
+ [0.5x off-peak, 0.5x promo]  │ CPU 50% RAM 9.2/23.5G
+/tmp
+0.0%/1.0M (auto)                                                                                   (zai) glm-5.3 • high
+
+### without bridge (opr -- pi, pre-fix launch shape)
+daan@Workstation:/tmp$ opr -f /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M3C7NRC6PA4G7ETRF241ZBS5/.env.op -- pi --
+model zai/glm-5.3
+daan@Workstation:/tmp$
