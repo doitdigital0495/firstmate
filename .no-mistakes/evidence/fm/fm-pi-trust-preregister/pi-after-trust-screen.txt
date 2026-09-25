@@ -1,0 +1,38 @@
+[>7u
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/fmpt.nOjS/wt-task (task)
+0.0%/0 (auto)                                                                                                    unknown pi v0.86.1                                                                                                             
+ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more                                        
+ Press ctrl+o to show full startup help and loaded resources.                                                           
+                                                                                                                        
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.                                  
+
+[Skills]                                                                                                                
+  demo, no-mistakes                                                                                                     
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/fmpt.nOjS/wt-task (task)
+0.0%/0 (auto)                                                                                                    unknown Warning: No models available. Use /login to log into a provider via OAuth or API key. See:                             
+   /home/daan/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/docs/providers.md                            
+   /home/daan/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/docs/models.md                               
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/fmpt.nOjS/wt-task (task)
+0.0%/0 (auto)                                                                                                    unknown────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available                                                                                                       
+ New version 0.87.1 is available. Run pi update                                                                         
+ Changelog: https://pi.dev/changelog                                                                                    
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                                        
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/fmpt.nOjS/wt-task (task)
+0.0%/0 (auto)                                                                                                    unknown

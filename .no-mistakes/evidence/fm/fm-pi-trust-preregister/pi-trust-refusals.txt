@@ -1,0 +1,23 @@
+$ fm-pi-trust.sh /tmp/fmpt.nOjS/proj /tmp/fmpt.nOjS/proj /tmp/fmpt.nOjS/agent
+error: refusing to pre-register pi trust: '/tmp/fmpt.nOjS/proj' is a primary checkout, not an isolated worktree
+exit=1
+$ fm-pi-trust.sh /tmp/fmpt.nOjS/proj/sub /tmp/fmpt.nOjS/proj /tmp/fmpt.nOjS/agent
+error: refusing to pre-register pi trust: '/tmp/fmpt.nOjS/proj/sub' is not a worktree root (its root is '/tmp/fmpt.nOjS/proj')
+exit=1
+$ fm-pi-trust.sh /tmp/fmpt.nOjS/plain /tmp/fmpt.nOjS/proj /tmp/fmpt.nOjS/agent
+error: refusing to pre-register pi trust: '/tmp/fmpt.nOjS/plain' is not inside a git repository
+exit=1
+$ fm-pi-trust.sh /tmp/fmpt.nOjS/wt-task /tmp/fmpt.nOjS/other /tmp/fmpt.nOjS/agent
+error: refusing to pre-register pi trust: '/tmp/fmpt.nOjS/wt-task' is not a worktree of project '/tmp/fmpt.nOjS/other'
+exit=1
+$ fm-pi-trust.sh /home/daan /tmp/fmpt.nOjS/proj /tmp/fmpt.nOjS/agent
+error: refusing to pre-register pi trust: '/home/daan' is the home directory, not a task worktree
+exit=1
+$ fm-pi-trust.sh /tmp/fmpt.nOjS/wt-task /tmp/fmpt.nOjS/proj relative/dir
+error: refusing to pre-register pi trust: agent dir 'relative/dir' is not an absolute path
+exit=1
+$ fm-pi-trust.sh /tmp/fmpt.nOjS/wt-task /tmp/fmpt.nOjS/proj /tmp/fmpt.nOjS/agent2
+error: refusing to pre-register pi trust: '/etc/hostname' is not owned by this user
+exit=1
+$ trust.json unchanged after refusals?
+unchanged

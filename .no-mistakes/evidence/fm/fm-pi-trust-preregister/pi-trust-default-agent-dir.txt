@@ -1,0 +1,6 @@
+$ HOME=/tmp/fmpt.nOjS/home fm-pi-trust.sh wt proj ''
+trusted: /tmp/fmpt.nOjS/wt-task in /tmp/fmpt.nOjS/home/.pi/agent/trust.json
+exit=0
+{
+  "/tmp/fmpt.nOjS/wt-task": true
+}

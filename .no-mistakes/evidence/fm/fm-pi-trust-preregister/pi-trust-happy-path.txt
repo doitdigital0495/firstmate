@@ -1,0 +1,13 @@
+$ cat trust.json (before: unrelated entry + stale false for worktree)
+{"/some/other/dir": true, "/tmp/fmpt.nOjS/wt-task": false}
+$ bin/fm-pi-trust.sh /tmp/fmpt.nOjS/wt-task /tmp/fmpt.nOjS/proj /tmp/fmpt.nOjS/agent
+trusted: /tmp/fmpt.nOjS/wt-task in /tmp/fmpt.nOjS/agent/trust.json
+exit=0
+$ cat trust.json (after)
+{
+  "/some/other/dir": true,
+  "/tmp/fmpt.nOjS/wt-task": true
+}
+
+$ launch real pi 0.86.1 in worktree with PI_CODING_AGENT_DIR=agent
+NO_TRUST_DIALOG
