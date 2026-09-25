@@ -301,6 +301,11 @@ jq -e --slurpfile rules "$RULES" '
        (.usage.output_tokens | type) == "number"))' \
   "$RESP_FILE" >/dev/null 2>&1 || emit_error "response is not a rule Choice answer"
 
+# ---- plan evidence: declared plans in config/accounts.json ---------------------
+PLAN_CONFIG='{}'
+if fm_account_registry_valid "$CONFIG/accounts.json"; then
+  PLAN_CONFIG=$(jq -c 'def plans: if type == "object" then . else {} end; {default: (.plans | plans), accounts: (.accounts | with_entries(.value = (.value.plans | plans)))}' "$CONFIG/accounts.json")
+fi
 # ---- quota evidence: one snapshot per authorized credential store -------------
 command -v quota-axi >/dev/null 2>&1 || emit_error "quota-axi not installed"
 gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapshot
@@ -352,7 +357,7 @@ done < <(jq -r '[((.rules // [])[] | .use | if type == "array" then .[] else . e
 
 # ---- resolution: declared gates + quota evidence + argmax, all in jq ----------
 fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
-  jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson quota_attempts "$1" --argjson warmups "$2" \
+  jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" \
     --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" '
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
@@ -361,6 +366,15 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   def rows($p): (prov($p).quotaSemantics.effectiveAvailability // []);
   def bare($m): ($m | split("/") | last);
   def provider_of($c): ($c.provider // $pmap[$c.harness] // null);
+  def plan_label($v): if ($v | type) == "string" and ($v | length) > 0 and ($v | length) <= 80 and ($v | test("^[[:print:]]+$")) then $v else null end;
+  def plan_for($c; $p):
+    (if $c.account then $account_quotas[$c.account].snapshot else $q end) as $snapshot |
+    (plan_label(if $c.account then $plan_config.accounts[$c.account][$p] else $plan_config.default[$p] end)) as $declared |
+    ([($snapshot.providers // [])[] | select(.provider == $p) | .plan | plan_label(.)] | first) as $quota_plan |
+    if $declared != null and $quota_plan != null then {plan: $declared, plan_source: "config; quota-axi: \($quota_plan)"}
+    elif $declared != null then {plan: $declared, plan_source: "config"}
+    elif $quota_plan != null then {plan: $quota_plan, plan_source: "quota-axi"}
+    else {plan: "unknown", plan_source: "unavailable"} end;
   def measured($p):
     (prov($p)) as $provider |
     ($provider != null and (["known", "partial"] | index($provider.quotaSemantics.status)) != null);
@@ -495,7 +509,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
      then {source: "default", use: profiles($cfg.default // null), note: "rule \($choice) floor \($rule.floor.scope) below \($rule.floor.min_percent)%: fall through to default"}
    else {source: $choice, use: profiles($rule.use), note: "rule matched"} end) as $sel |
   (if ((($floor | tonumber) > $a.confidence) or $sel.escalate) then $answer_use else ($sel.use // []) end) as $decision_use |
-  ($decision_use | map(evaluate(.))) as $cands |
+  ($decision_use | map(. as $c | (provider_of($c)) as $p | (evaluate($c) + plan_for($c; $p)))) as $cands |
   ([$cands[] | select(.incomplete)]) as $incomplete |
   {
     model: $r.model, latency_ms: $lat, tokens: ($r.usage // null),
@@ -535,7 +549,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       ([$ties[] | . as $candidate | $sel.use | to_entries[] |
         select(.value == $candidate.profile) | select($ev.profile_preference == "\($sel.source)_\(.key + 1)") | $candidate] | first) as $preferred |
       if ($ties | length) > 1 and $preferred == null then $ev + {status: "escalate", reason: "genuine spendPriority tie", note: $sel.note, candidates: $cands}
-      else $ev + {status: "clear", note: $sel.note, candidates: $cands, chosen: ($preferred // $best)}
+      else $ev + {status: "clear", note: ($sel.note + (if ([$elig[].plan] | unique | length) > 1 then "; compare candidate plan tiers before accepting percent-based capacity" else "" end)), candidates: $cands, chosen: ($preferred // $best)}
         + (if ($unranked | length) > 0 then
              {unranked_note: "\($unranked | length) eligible candidate(s) unranked (\([$unranked[].provider] | unique | join(", ")))"}
            else {} end)
@@ -612,7 +626,8 @@ TEXT=$(jq -r '
         elif .windows then "  windows=\(winstr(.windows))" else "" end)
       + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))  runway=\(show(.runway))" else "" end)
       + (if (.bounds // [] | length) > 1 then "  bounds=" + ([.bounds[] | "\(.scope | flat):\(show(.pct))%/\((.runway // .status) | flat)"] | join(",")) else "" end)
-      + "  -> " + (if .incomplete then "incomplete: \(.reason | flat): gather first, wait and re-run" elif .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)),
+      + "  -> " + (if .incomplete then "incomplete: \(.reason | flat): gather first, wait and re-run" elif .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)
+      + "  plan=\(.plan | flat) (\(.plan_source | flat))"),
   (if .chosen then "  profile: --harness \(.chosen.profile.harness | shell_arg)"
       + (if .chosen.profile.model then " --model \(.chosen.profile.model | shell_arg)" else "" end)
       + (if .chosen.profile.effort then " --effort \(.chosen.profile.effort | shell_arg)" else "" end)

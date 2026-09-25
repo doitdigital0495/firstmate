@@ -525,9 +525,14 @@ For the schema and path validation, `bin/fm-account-lib.sh` is authoritative.
 A typical personal-home file is:
 
 ```json
-{"crossAccount":{"enabled":true},"accounts":{"personal":{"claude":"~/.claude","pi":"~/.pi/agent","codex":"~/.codex"},"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris"}}}
+{"crossAccount":{"enabled":true},"plans":{"claude":"Max 5x","codex":"ChatGPT Plus"},"accounts":{"personal":{"claude":"~/.claude","pi":"~/.pi/agent","codex":"~/.codex","plans":{"claude":"Max 5x"}},"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris","plans":{"claude":"Pro","zai":"Z.ai Pro"}}}}
 ```
 
+The optional top-level `plans` object declares subscription names for the default home store, and each account's optional `plans` object declares them for that named store; keys are provider ids (not harness names) and values are nonempty printable plan labels of at most 80 characters.
+Plans are evidence only: an invalid entry shows as unknown for that candidate and never invalidates the registry or blocks routing.
+For each candidate, a declared plan wins because quota-axi publishes only coarse labels (for example `max` for every Claude Max tier), and the quota-axi label is shown beside it: `plan=Max 20x (config; quota-axi: max)`.
+Without a declaration the quota-axi label is used (`plan=max (quota-axi)`); if neither is available the candidate shows `plan=unknown (unavailable)` without becoming ineligible.
+A Pi candidate uses its declared provider's plan, not Pi's harness name.
 Run `bin/fm-account-routing.sh on|off|status` to change or inspect the switch atomically; a home without an explicit switch refuses the toggle.
 Off excludes named-account candidates at the next intake without touching workers already running, and `fm-spawn.sh --account <id>` refuses an unregistered or disabled seat before any home mutation.
 The selected store is pinned per harness (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, or `CODEX_HOME`), and the task record retains all three paths for a relaunch even after routing is switched off.
@@ -620,7 +625,7 @@ An incomplete choice triggers a bounded gather in code: when Z.ai windows are am
 `FM_DISPATCH_QUOTA_ATTEMPTS` (default 3, clamped 1..10) bounds the resolve attempts and `FM_DISPATCH_QUOTA_BACKOFF_MS` (default 1500, clamped 250..30000) sets the first backoff.
 The `incomplete` block names each candidate's missing windows and retry times, and its note is the standing instruction: gather first, wait for the named measurements, and re-run; never pick by hand or drop a candidate.
 Any applicable `exhausted_now` row or known zero bound makes that candidate ineligible, and a known profile-floor shortfall does the same before unrelated quota uncertainty is considered.
-Missing or nonnumeric `spendPriority` evidence is never ranked, and every candidate is printed beside its window evidence (`windows=` with each id, remaining percent, and reset) or the reason it was not rankable, including on ambiguous and approval-gated outcomes that emit no profile.
+Missing or nonnumeric `spendPriority` evidence is never ranked, and every candidate prints its plan and evidence source (or unknown uncertainty) beside its window evidence (`windows=` with each id, remaining percent, and reset) or the reason it was not rankable, including on ambiguous and approval-gated outcomes that emit no profile.
 On the opted-in path, duplicate concrete profiles with the same account, harness, model, and effort inside one rule or the default array are configuration errors rather than ties.
 The result is one of `clear` (a `profile:` line ready for `fm-spawn.sh`), `incomplete` (some candidate's limit windows are not fully measured), `ambiguous` (confidence below the floor, which also requires complete window evidence), `escalate` (an approval-gated rule, unverifiable rule floor, nothing rankable, or a genuine tie without a matching Jev preference), or `error` (API, network, malformed response metadata, rendering, or quota-axi failure), and every one of them exits 0.
 Response probabilities must contain exactly every offered choice, use numeric values from 0 through 1, and sum to approximately 1 within 0.01.

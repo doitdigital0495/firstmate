@@ -717,6 +717,46 @@ rm -f "$HOME_DIR/config/accounts.json"
 unset GERIS_QUOTA_FIXTURE
 pass "account-aware union ranking, kill switch, and fail-closed missing/malformed registry"
 
+# --- plan evidence follows the candidate's provider and pinned account --------
+cp "$BASE_RULES" "$RULES"
+cat > "$HOME_DIR/config/accounts.json" <<'JSON'
+{"crossAccount":{"enabled":true},"plans":{"claude":"Pro","cursor":"Business"},"accounts":{"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris","plans":{"claude":"Max 20x"}}}}
+JSON
+jq '.rules[3].use += [{"harness":"claude","model":"sonnet","account":"geris"}, {"harness":"pi","model":"openai-codex/gpt-5.6-sol","provider":"codex"}]' "$BASE_RULES" > "$RULES"
+write_response "$RESPONSE" rule_4 0.9
+reset_log
+HOME="$HOME_DIR" OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
+assert_contains "$out" 'plan=Pro (config)' "default Claude plan comes from its declaration"
+assert_contains "$out" 'plan=Max 20x (config)' "named account plan comes from its own declaration, not the default"
+assert_contains "$out" 'plan=Business (config)' "another provider gets its own declaration"
+assert_contains "$out" 'plan=unknown (unavailable)' "Pi Codex does not inherit Claude plan"
+assert_contains "$out" 'compare candidate plan tiers before accepting percent-based capacity' "differing ranked plans prompt tier-aware assessment"
+QUOTA_PLAN="$TMP_ROOT/quota-plan.json"
+jq '(.providers[] | select(.provider == "claude")).plan = "max" | (.providers[] | select(.provider == "codex")).plan = "prolite"' "$QUOTA" > "$QUOTA_PLAN"
+reset_log
+HOME="$HOME_DIR" OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$QUOTA_PLAN" run code out err "$BRIEF"
+assert_contains "$out" 'plan=Pro (config; quota-axi: max)' "declared plan wins over the coarse quota-axi label, shown beside it"
+assert_contains "$out" 'plan=Max 20x (config; quota-axi: max)' "named declaration wins over its account snapshot label"
+assert_contains "$out" 'plan=prolite (quota-axi)' "undeclared provider uses the quota-axi label"
+cat > "$HOME_DIR/config/accounts.json" <<'JSON'
+{"crossAccount":{"enabled":true},"plans":{"claude":"","cursor":"Business","z.ai":"Pro"},"accounts":{"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris","plans":"Max 20x"}}}
+JSON
+reset_log
+HOME="$HOME_DIR" OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$QUOTA_PLAN" run code out err "$BRIEF"
+geris_line=$(printf '%s\n' "$out" | grep 'account=geris')
+assert_contains "$geris_line" '-> eligible  plan=max (quota-axi)' "a malformed plan entry never blocks named-account routing and falls back per entry"
+assert_contains "$out" 'plan=Business (config)' "valid declarations survive a sibling invalid entry"
+cat > "$HOME_DIR/config/accounts.json" <<'JSON'
+{"crossAccount":{"enabled":true},"accounts":{"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris"}}}
+JSON
+reset_log
+HOME="$HOME_DIR" OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
+assert_contains "$out" 'status: clear' "undeclared plans still resolve"
+assert_not_contains "$out" 'compare candidate plan tiers' "identical ranked plans add no tier note"
+cp "$BASE_RULES" "$RULES"
+rm -f "$HOME_DIR/config/accounts.json"
+pass "each candidate discloses account/provider plan, declared-over-quota-axi precedence, and uncertainty"
+
 # --- API and response failures are error outcomes, exit 0 ----------------------
 reset_log
 run_without_curl code out err "$BRIEF"
