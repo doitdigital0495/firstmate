@@ -303,11 +303,22 @@ jq -e --slurpfile rules "$RULES" '
 
 # ---- quota evidence: one snapshot per authorized credential store -------------
 command -v quota-axi >/dev/null 2>&1 || emit_error "quota-axi not installed"
-gather_home_quota() {
-  quota-axi --json > "$QUOTA" 2>/dev/null || emit_error "quota-axi --json failed"
-  fm_quota_json_valid < "$QUOTA" || emit_error "quota-axi --json returned an invalid snapshot"
+gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapshot
+  local fresh
+  fresh=$(mktemp) || { printf 'mktemp failed'; return 1; }
+  if ! quota-axi --json > "$fresh" 2>/dev/null; then
+    rm -f "$fresh"
+    printf 'quota-axi --json failed'
+    return 1
+  fi
+  if ! fm_quota_json_valid < "$fresh"; then
+    rm -f "$fresh"
+    printf 'quota-axi --json returned an invalid snapshot'
+    return 1
+  fi
+  mv "$fresh" "$QUOTA"
 }
-gather_home_quota
+home_quota_error=$(gather_home_quota) || emit_error "$home_quota_error"
 gather_account_snapshot() {  # <account>: refresh ACCOUNT_QUOTAS[account] from its pinned store
   local account=$1 stores account_quota store_key
   [ -n "$account" ] || return 0
@@ -446,6 +457,11 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
          windows_missing: ($gate.missing // []),
          reason: ($gate.reason // "quota window evidence incomplete"),
          state_error: ($gate.state_error // null), retry_after: ($gate.retry_after // null)}
+      elif $profile_floor_state == "unmeasured" then
+        {profile: $c, provider: $p, bounds: $bounds, eligible: false, incomplete: true,
+         windows_missing: [$c.floor.scope],
+         reason: "profile floor \($c.floor.scope) is unmeasured",
+         state_error: (prov($p).state.error // null), retry_after: (prov($p).state.retryAfter // null)}
       elif $profile_floor_state == "absent" then
         ([rows($p)[] | select(.scope == $c.floor.scope)] | first) as $floor_row |
         {profile: $c, provider: $p, bounds: $bounds, windows: ($gate.windows // null), scope: $c.floor.scope, pct: ($floor_row.effectivePercentRemaining // null), runway: ($floor_row.runway.status // null), eligible: true, unranked: true, reason: "profile floor \($c.floor.scope) is unverifiable: not rankable"}
@@ -552,17 +568,17 @@ while [ "$(jq -r '.status // ""' <<<"$RESULT" 2>/dev/null)" = "incomplete" ] && 
   all_late=1
   any_hint=0
   while IFS= read -r retry_after; do
-    [ -n "$retry_after" ] || continue
+    [ -n "$retry_after" ] || { all_late=0; continue; }
     any_hint=1
     retry_ms=$(fm_dispatch_epoch_ms_of "$retry_after") || { all_late=0; continue; }
     [ "$(( retry_ms - now_ms ))" -gt "$budget_ms" ] || all_late=0
-  done < <(jq -r '.incomplete[]? | .retry_after // empty' <<<"$RESULT" | sort -u)
+  done < <(jq -r '.incomplete[]? | .retry_after // ""' <<<"$RESULT" | sort -u)
   if [ "$any_hint" -eq 1 ] && [ "$all_late" -eq 1 ]; then
     break
   fi
   sleep "$(awk -v base="$QUOTA_BACKOFF_MS" -v n="$quota_attempts" 'BEGIN { printf "%.3f", (base * (2 ^ (n - 1))) / 1000 }')"
   if jq -e 'any(.incomplete[]?; .account == null)' <<<"$RESULT" >/dev/null 2>&1; then
-    gather_home_quota
+    gather_home_quota >/dev/null || true
   fi
   while IFS= read -r account; do
     [ -n "$account" ] || continue

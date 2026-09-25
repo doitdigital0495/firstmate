@@ -455,6 +455,25 @@ assert_contains "$out" '  status: incomplete' "an unknown model window still blo
 assert_contains "$out" 'candidate: pi:openai-codex/gpt-5.6-sol  provider=codex  windows_missing=model:gpt-5.6-sol  bounds=all_models:31%/projected_exhaustion,model:gpt-5.6-sol:-%/unknown  -> incomplete: unmeasured windows: model:gpt-5.6-sol: gather first, wait and re-run' "the candidate bounded by the unknown window is incomplete, not dropped"
 assert_not_contains "$out" '  profile:' "unknown window evidence never authorizes a selection"
 
+BAD_HOME_RETRY="$TMP_ROOT/bad-home-retry.json"
+printf 'not json\n' > "$BAD_HOME_RETRY"
+reset_log
+OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$FLOOR_WITH_UNKNOWN" QUOTA_AXI_RETRY_FIXTURE="$BAD_HOME_RETRY" run code out err "$BRIEF"
+assert_contains "$out" '  status: incomplete' "a failed home re-read keeps the incomplete block instead of an error"
+assert_contains "$out" 'windows_missing=model:gpt-5.6-sol' "the kept snapshot still names the missing window"
+
+UNMEASURED_PROFILE_FLOOR="$TMP_ROOT/unmeasured-profile-floor.json"
+jq '(.providers[] | select(.provider == "codex") | .quotaSemantics) |= (.status = "partial" | .effectiveAvailability += [
+  {"scope":"model:other","status":"unknown","runway":{"status":"unknown"}}
+])' "$QUOTA" > "$UNMEASURED_PROFILE_FLOOR"
+jq '.rules[1].use[1].floor.scope = "model:other"' "$BASE_RULES" > "$RULES"
+reset_log
+OPENROUTER_API_KEY=$KEY QUOTA_AXI_FIXTURE="$UNMEASURED_PROFILE_FLOOR" run code out err "$BRIEF"
+assert_contains "$out" '  status: incomplete' "an unmeasured profile floor blocks the choice"
+assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  windows_missing=model:other' "the unmeasured floor scope is named as missing"
+assert_not_contains "$out" '  profile:' "an unmeasured profile floor never authorizes a selection"
+cp "$BASE_RULES" "$RULES"
+
 MISSING_PROFILE_FLOOR_RULES="$TMP_ROOT/missing-profile-floor-rules.json"
 jq '.rules[1].use[1].floor.scope = "model:missing"' "$BASE_RULES" > "$MISSING_PROFILE_FLOOR_RULES"
 cp "$MISSING_PROFILE_FLOOR_RULES" "$RULES"
