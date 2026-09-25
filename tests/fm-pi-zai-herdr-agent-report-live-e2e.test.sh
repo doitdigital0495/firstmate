@@ -4,9 +4,10 @@
 #
 # The defect this pins: the zai launch rides `opr` so ZAI_API_KEY stays behind
 # the secret boundary, but sudoers `use_pty` moves the whole chain off the
-# pane's pty and `op run` pipes stdout for output masking, so pi resolves print
-# mode and the operator's herdr-agent-state extension (tui-gated by design)
-# never reports. Herdr showed nothing for the worker: `agent get` answered
+# pane's pty and `op run` pipes stdout for output masking. Without an inner
+# terminal bridge, Pi resolves print mode rather than rendering its TUI and the
+# operator's herdr-agent-state extension (tui-gated by design) never reports.
+# Herdr showed nothing for the worker: `agent get` answered
 # agent_not_found while the worker ran. bin/fm-spawn.sh therefore brackets the
 # zai opr chain with best-effort pane-side `herdr pane report-agent` calls
 # (working before, idle or blocked from the exit status after) under Firstmate's
@@ -14,9 +15,10 @@
 #
 # This guard drives the REAL bin/fm-spawn.sh through a REAL isolated Herdr lab
 # session, proving the pane-side reports for a zai/GLM worker without spending
-# model tokens. The fake Pi sleeps and exits 0; opr, the vault reference map,
-# and Herdr run for real. All Herdr operations use fm-herdr-lab.sh so the test
-# cannot affect the fleet's default session.
+# model tokens. The fake Pi requires stdout to be a terminal, prints a TUI
+# marker, sleeps and exits 0; opr, the vault reference map, and Herdr run for
+# real. All Herdr operations use fm-herdr-lab.sh so the test cannot affect the
+# fleet's default session.
 #
 # Always runs on a private, named, throwaway lab session, never the default
 # one (tests/herdr-test-safety.sh; bin/fm-herdr-lab.sh owns the isolation).
@@ -71,6 +73,11 @@ cat > "$FAKEBIN/pi" <<'SH'
 if [ "${1:-}" = --help ]; then
   printf '%s\n' 'Pi 0.86.1 (firstmate fake)' 'Options: --help --tui-mode <mode>'
   exit 0
+fi
+if [ -t 0 ] && [ -t 1 ]; then
+  printf 'FIRSTMATE_FAKE_PI_TUI_VISIBLE\n'
+else
+  printf 'FIRSTMATE_FAKE_PI_PRINT_MODE\n'
 fi
 sleep 12
 exit 0
@@ -143,6 +150,19 @@ wait_for_status() {  # <expected-status> <tries>
 wait_for_status working 120 || fail "the zai pi worker never registered as working in Herdr (agent get read '$(registered_field agent)/$(registered_field agent_status)' for 60s in pane $PANE); the pane-side herdr report wrapper is what registers it"
 [ "$(registered_field agent)" = pi ] \
   || fail "the pane registered agent '$(registered_field agent)' rather than pi"
+wait_for_pane_tui() {
+  local i=0
+  while [ "$i" -lt 120 ]; do
+    lab pane read "$PANE" --lines 80 | grep -q 'FIRSTMATE_FAKE_PI_TUI_VISIBLE' && return 0
+    sleep 0.5
+    i=$((i + 1))
+  done
+  return 1
+}
+wait_for_pane_tui \
+  || fail "zai Pi had no interactive terminal rendered in the Herdr pane: $(lab pane read "$PANE" --lines 80 | tail -12)"
+lab pane read "$PANE" --lines 80 | grep -q 'FIRSTMATE_FAKE_PI_PRINT_MODE' \
+  && fail "zai Pi resolved print mode instead of interactive mode"
 
 # The sidebar fact itself: agent list must carry the pane's record.
 lab agent list 2>/dev/null | grep -q "$PANE" \
@@ -174,7 +194,8 @@ CODEX_WORKTREE=$(grep '^worktree=' "$CODEX_META" 2>/dev/null | cut -d= -f2-)
 PANE=$CODEX_PANE
 wait_for_status working 120 || fail "the Codex Pi worker never registered as working in Herdr (read '$(registered_field agent)/$(registered_field agent_status)' for 60s in pane $PANE)"
 [ "$(registered_field agent)" = pi ] || fail "the Codex Pi pane registered agent '$(registered_field agent)' rather than pi"
+wait_for_pane_tui || fail "Codex Pi had no interactive terminal rendered in the Herdr pane"
 lab agent list 2>/dev/null | grep -q "$PANE" || fail "herdr agent list does not show Codex Pi worker pane $PANE"
 wait_for_status idle 120 || fail "the Codex Pi worker did not report idle after its launch exited"
 note "Codex Pi worker pane $PANE registered working then idle in isolated Herdr lab"
-pass "real fm-spawn + isolated Herdr lab: GLM and Codex Pi task workers appear in the agents sidebar with real agent_status"
+pass "real fm-spawn + isolated Herdr lab: GLM and Codex Pi render interactive terminal output and appear in the agents sidebar with real agent_status"
