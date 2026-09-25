@@ -822,7 +822,7 @@ test_pi_glm_uses_same_lean_shape_and_supported_reasoning() {
   expect_code 0 "$status" "pi GLM spawn with supported reasoning should succeed"
   launch=$(cat "$LAUNCH_LOG")
   openv=$(cd "$ROOT" && pwd -P)/.env.op
-  assert_contains "$launch" "opr -f '$openv' -- '$FAKEBIN_DIR/pi'" "pi GLM launch did not resolve credentials through opr"
+  assert_contains "$launch" "opr -f '$openv' -- '$ROOT/bin/fm-pi-tty-bridge.sh' '$FAKEBIN_DIR/pi'" "pi GLM launch did not place the interactive terminal bridge inside opr"
   assert_contains "$launch" "--tools read,bash,edit,write --provider 'zai' --model 'glm-5.3-flash' --thinking 'high'" \
     "pi GLM launch diverged from the common lean shape"
   assert_not_contains "$launch" "$secret" "pi GLM launch exposed ZAI_API_KEY in command text"

@@ -257,6 +257,7 @@ A human-blocked permission dialog has no busy banner and still surfaces.
 
 ## Composer and injection safety
 
+Z.ai Pi task workers retain their interactive TUI behind the `opr` credential boundary through `bin/fm-pi-tty-bridge.sh`; the guarded Herdr verification entry point is `tests/fm-pi-zai-herdr-agent-report-live-e2e.test.sh` and current evidence is in [`verification/runtime-backends.md`](verification/runtime-backends.md#pi-task-worker-glm-and-codex-visibility-in-herdr).
 Herdr has no direct cursor-row primitive.
 The adapter is a thin capture: it hands a bounded ANSI tail plus Herdr's capability facts to the fleet-wide classifier in `bin/fm-composer-lib.sh`, which owns every shape - bordered boxes, bare agent-glyph rows (including muse's `⟩`, which the adapter's retired local pattern silently omitted), opencode's left bar, and the Pi separator region this adapter pioneered, admitted only when native `agent get` identity is exactly Pi and state is idle or done.
 A blocked Pi is parked on an interactive prompt, so its blank composer region is a menu's and not a free composer's; that state defers instead of proving emptiness.

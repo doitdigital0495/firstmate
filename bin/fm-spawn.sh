@@ -2483,6 +2483,10 @@ if [ "$PI_TASK_WORKER" -eq 1 ]; then
       echo "error: a Pi zai worker requires opr so ZAI_API_KEY stays behind the secret boundary" >&2
       exit 1
     }
+    command -v script >/dev/null 2>&1 || {
+      echo "error: a Pi zai worker requires script to keep its interactive terminal behind opr" >&2
+      exit 1
+    }
     ;;
   *)
     echo "error: Pi task workers support providers openai-codex, codex-native, and zai; got '$PI_PROVIDER'" >&2
@@ -5308,17 +5312,18 @@ LAUNCH=${LAUNCH//__PITOOLS__/$PI_TOOLS}
 if [ "$KIND" = scout ]; then CLAUDE_TOOLS=Read,Bash; else CLAUDE_TOOLS=Read,Bash,Edit,Write; fi
 LAUNCH=${LAUNCH//__CLAUDETOOLS__/$CLAUDE_TOOLS}
 # A zai task worker rides `opr` so ZAI_API_KEY is resolved from the vault into
-# the child environment and never copied into launch text. The outer
-# op-broker/sudo/setpriv chain can also detach Pi from its Herdr pane and make
-# its TUI-gated agent-state extension silent. Herdr binds a pane's agent record
-# to reports from pane-resident processes, so bracket every Pi task-worker
+# the child environment and never copied into launch text. The broker's output
+# pipe otherwise makes Pi start in print mode; the bridge gives Pi a pty inside
+# opr while leaving the broker's output masking intact. The outer sudo use_pty
+# chain can still detach Pi from Herdr's pane process view. Herdr binds a
+# pane's agent record to reports from pane-resident processes, so bracket every Pi task-worker
 # launch with best-effort pane-side reports: working before the launch, idle or
 # blocked from its exit status afterward. The source id must NOT use the
 # reserved `herdr:` prefix - a wrapper reporting as `herdr:pi` is acknowledged
 # but never materialized (verified live, Herdr 0.9.1). Reports never gate the
 # launch, and the runtime guard makes the wrapper a no-op outside a Herdr pane.
 if [ "$PI_PROVIDER" = zai ]; then
-  PI_PREFIX='opr -f __PIOPENV__ -- '
+  PI_PREFIX="opr -f __PIOPENV__ -- $(shell_quote "$FM_ROOT/bin/fm-pi-tty-bridge.sh") "
 else
   PI_PREFIX=
 fi
@@ -5365,7 +5370,7 @@ case "$HARNESS" in
     fi
     # Pi task workers report from the pane around the complete env-prefixed
     # launch, including opr for zai. This avoids relying on Pi's TUI extension
-    # when the op-broker chain detaches the worker from the pane.
+    # when sudo use_pty detaches the worker from the pane process view.
     if [ "$PI_TASK_WORKER" -eq 1 ]; then
       LAUNCH="$PI_TASK_HERDR_PRE$LAUNCH$PI_TASK_HERDR_POST"
     fi
