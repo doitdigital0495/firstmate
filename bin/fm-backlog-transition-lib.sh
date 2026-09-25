@@ -78,6 +78,8 @@ FM_BACKLOG_CLOSE_REPLAY_RESULT=
 # library does not source fm-tasks-axi-lib.sh does not apply.
 # shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-pr-lib.sh disable=SC1091
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-pr-lib.sh"
 
 # Latched when a row read hits its bound. fm_backlog_row_show runs inside a
 # command substitution, so the subshell can READ this latch but cannot set it;
@@ -533,6 +535,13 @@ fm_backlog_mutate() {  # <data-dir> <verb> <id> [flag...]
     return 1
   fi
   shift 3
+  # tasks-axi validates --pr as a GitHub-style /pull/N URL. Preserve an ADO
+  # deliverable verbatim in its note instead, including during marker replay.
+  local -a mutation_args=("$@")
+  if [ "$verb" = 'done' ] && [ "${mutation_args[0]-}" = --pr ] \
+    && fm_pr_url_parse "${mutation_args[1]-}" && [ "$FM_PR_PROVIDER" = ado ]; then
+    mutation_args=(--note "PR ${mutation_args[1]}")
+  fi
   FM_BACKLOG_TRANSITION_ERROR=
   fm_backlog_source_present "$data" "$authorized_data"
   source_status=$?
@@ -541,9 +550,9 @@ fm_backlog_mutate() {  # <data-dir> <verb> <id> [flag...]
   source_status=$?
   [ "$source_status" -eq 0 ] || return "$source_status"
   if [ -n "$FM_BACKLOG_AXI_FILE" ]; then
-    out=$(cd "$FM_BACKLOG_AXI_ROOT" 2>/dev/null && fm_tasks_axi "$verb" "$id" "$@" --file "$FM_BACKLOG_AXI_FILE" 2>&1)
+    out=$(cd "$FM_BACKLOG_AXI_ROOT" 2>/dev/null && fm_tasks_axi "$verb" "$id" "${mutation_args[@]}" --file "$FM_BACKLOG_AXI_FILE" 2>&1)
   else
-    out=$(cd "$FM_BACKLOG_AXI_ROOT" 2>/dev/null && fm_tasks_axi "$verb" "$id" "$@" 2>&1)
+    out=$(cd "$FM_BACKLOG_AXI_ROOT" 2>/dev/null && fm_tasks_axi "$verb" "$id" "${mutation_args[@]}" 2>&1)
   fi
   command_status=$?
   [ "$command_status" -ne 0 ] || return 0
@@ -571,7 +580,7 @@ fm_backlog_done() {  # <data-dir> <id> [flag...]
 fm_backlog_row_artifact_supported() {
   local id=$1 flag=${2:-} value=${3:-}
   case "$flag" in
-    --pr) return 0 ;;
+    --pr) ! { fm_pr_url_parse "$value" && [ "$FM_PR_PROVIDER" = ado ]; } ;;
     --report) [ "$value" = "data/$id/report.md" ] ;;
     *) return 1 ;;
   esac
@@ -604,7 +613,9 @@ fm_backlog_retain() {  # <data-dir> <id> [flag...]
         ;;
       --pr)
         deliverable="${deliverable:+$deliverable; }PR $arg"
-        row_args=(--pr "$arg")
+        if fm_backlog_row_artifact_supported "$id" --pr "$arg"; then
+          row_args=(--pr "$arg")
+        fi
         ;;
       --note) deliverable="${deliverable:+$deliverable; }$arg" ;;
     esac
