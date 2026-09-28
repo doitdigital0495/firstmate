@@ -63,6 +63,8 @@ FM_FAKE_CLAUDE_PROMPT="$CASE_DIR/delivered-prompt" PATH="$FAKEBIN_DIR:$PATH" bas
 assert_contains "$(cat "$CASE_DIR/delivered-prompt")" "# Scout skill" "skill content did not reach appended system prompt"
 assert_contains "$(cat "$CASE_DIR/delivered-prompt")" "# Requested skill ($CASE_DIR/skills/skill with spaces/SKILL.md)" "skill location did not reach appended system prompt"
 assert_contains "$(cat "$CASE_DIR/delivered-prompt")" "Stay within assigned task" "worker contract did not reach appended system prompt"
+assert_not_contains "$(cat "$CASE_DIR/delivered-prompt")" "call ToolSearch again" "a worker without an MCP opt-in needs no MCP retry note"
+FAKE_PROMPT_CLAUDE=$(cat "$FAKEBIN_DIR/claude")
 pass "Claude scout gets only read tools, explicit model/effort and requested skill content"
 
 for model in opus sonnet haiku; do
@@ -88,6 +90,12 @@ launch=$(cat "$LAUNCH_LOG")
 assert_contains "$launch" "--strict-mcp-config" "explicit MCP configuration must not enable discovered servers"
 assert_contains "$launch" "--mcp-config '$CASE_DIR/mcp config.json'" "named MCP configuration"
 assert_contains "$launch" "--tools Read,Bash,ToolSearch " "an MCP opt-in must let the first turn wait for a connecting server"
+printf '%s\n' "$FAKE_PROMPT_CLAUDE" > "$CASE_DIR/prompt-claude"; chmod +x "$CASE_DIR/prompt-claude"
+mkdir -p "$CASE_DIR/prompt-bin"; mv "$CASE_DIR/prompt-claude" "$CASE_DIR/prompt-bin/claude"
+FM_FAKE_CLAUDE_PROMPT="$CASE_DIR/delivered-prompt" PATH="$CASE_DIR/prompt-bin:$FAKEBIN_DIR:$PATH" bash -c "$launch" >/dev/null \
+  || fail "Claude MCP opt-in launch did not execute"
+assert_contains "$(cat "$CASE_DIR/delivered-prompt")" "If ToolSearch reports that a server is still connecting, call ToolSearch again" "MCP opt-in must tell the worker to keep waiting for a connecting server"
+assert_contains "$(cat "$CASE_DIR/delivered-prompt")" "Stay within assigned task" "worker contract must still follow the MCP note"
 assert_contains "$launch" "--add-dir '$CASE_DIR/extra dir'" "explicit extra directory"
 assert_contains "$launch" "--plugin-dir '$CASE_DIR/plugin dir'" "explicit plugin directory"
 assert_not_contains "$launch" '--mcp-config default' "ambient MCP servers must not load"

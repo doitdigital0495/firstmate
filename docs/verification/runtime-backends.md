@@ -535,9 +535,11 @@ Run `bin/fm-test-run.sh tests/fm-spawn-claude-lean.test.sh` to pin the shared mo
 
 Verified 2026-09-28 with Claude Code 2.1.283 and tmux 3.2a on Linux, using one disposable git project and an isolated tmux server started with `tmux -L fmlab -f /dev/null` so the operator's tmux plugins could not load.
 Interactive Claude connects `--mcp-config` servers asynchronously and submits the launch brief before they finish, so a still-connecting server's tools are absent from the first turn; neither `MCP_CONNECTION_NONBLOCKING=0` in the launch environment nor allowing the built-in `WaitForMcpServers` tool changed that on this version.
-With `ToolSearch` allowed, MCP tools become deferred, the first turn's deferred-tool listing names the server as pending, and `ToolSearch` waits for it and answers `Some MCP servers are still connecting: <name>` until it connects.
+With `ToolSearch` allowed, MCP tools become deferred, the first turn's deferred-tool listing names the server as pending, and each `ToolSearch` call waits about 5 seconds for it and answers `Some MCP servers are still connecting: <name>` while it has not connected.
 Under the lean `--tools` allowlist the only other deferred tool was `EndConversation`, so this adds no built-in capability.
 `bin/fm-spawn.sh` therefore appends `ToolSearch` to a Claude task worker's `--tools` exactly when `--mcp-config` is passed.
+Because each call's wait is bounded, the same launches also append a system-prompt note telling the worker to call `ToolSearch` again while a server is still connecting.
+Without that note, an opus/low worker whose brief said to reply `MCP_UNAVAILABLE` "if the tool is not available right now" gave up after two searches against the 15-second server; with it, three of three such runs searched a third time and replied `MCP_PROVED`.
 
 The server was a disposable stdio MCP server exposing `ping` that returns `MCP_PROVED`, with an optional startup sleep; `task-mcp.json` used no sleep and `task-mcp-15.json` slept 15 seconds.
 Each scout brief asked the worker to call `ping` as its first action and reply `MCP_UNAVAILABLE` if the tool was not available.
