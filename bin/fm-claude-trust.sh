@@ -144,16 +144,18 @@
 # argument to gate external-imports consent against, so the two import flags
 # are never written there.
 #
-# Only the launching user's own store is written. In worktree mode: the
+# Only the one store CLAUDE_CONFIG_DIR names is written. In worktree mode: the
 # projects entries for the worktree path and the resolved canonical project
 # path in ${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json, which must be a regular
 # file this uid owns; every unrelated key and project entry is preserved, and
 # both entries land in one atomic replacement. In secondmate-home mode: the
 # single projects entry for the registered home path, same store, same atomic
-# replacement. fm-spawn.sh forwards CLAUDE_CONFIG_DIR onto the claude launch
-# verbatim rather than resolving it, and the pane starts in the registered
-# directory, so only an absolute value names the same store on both sides; a
-# relative one is refused below rather than guessed at.
+# replacement. fm-spawn.sh runs this under the same CLAUDE_CONFIG_DIR binding it
+# pins onto the claude launch from the task's resolved store (unset for the
+# default store), so an --account worker's entry lands in that account's store
+# rather than the caller's. The pane starts in the registered directory, so only
+# an absolute value names the same store on both sides; a relative one is
+# refused below rather than guessed at.
 set -u
 # Path resolution here must answer from the filesystem, never from the caller's
 # environment, because the refusals below are the safety property. CDPATH would

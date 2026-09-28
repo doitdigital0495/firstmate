@@ -657,6 +657,37 @@ test_claude_spawn_pretrusts_its_worktree_and_reaches_the_brief() {
   pass "fm-spawn.sh: a claude spawn pre-trusts its worktree and launches with the brief"
 }
 
+# An --account spawn launches the worker on that account's Claude store, so the
+# registration must land there too; the launching user's default store is the
+# one place it must not go, since the worker never reads it.
+test_account_claude_spawn_pretrusts_in_the_account_store() {
+  local case_dir home proj wt acct default_store fakebin launch_log out
+  case_dir="$TMP_ROOT/account-spawn"
+  home="$case_dir/home"
+  proj="$case_dir/project"
+  wt="$case_dir/wt"
+  acct="$case_dir/acct-claude"
+  launch_log="$case_dir/launch.log"
+  fakebin=$(make_spawn_fakebin "$case_dir/fake" claude)
+  fm_test_spawn_home "$home" claude
+  fm_git_worktree "$proj" "$wt" wt-account-spawn
+  fm_test_spawn_brief "$home" trustaccount
+  default_store="$home/user-home/.claude.json"
+  printf '%s\n' "{\"accounts\":{\"work\":{\"claude\":\"$acct\",\"pi\":\"$case_dir/acct-pi\",\"codex\":\"$case_dir/acct-codex\"}},\"crossAccount\":{\"enabled\":true}}" \
+    > "$home/config/accounts.json"
+  out=$(FM_FAKE_LAUNCH_LOG="$launch_log" \
+    fm_test_run_spawn "$home" "$wt" "$fakebin" trustaccount "$proj" claude \
+    --mode no-mistakes --yolo off --account work)
+  expect_code 0 $? "the claude --account spawn must succeed: $out"
+  assert_grep "CLAUDE_CONFIG_DIR='$acct'" "$launch_log" \
+    "the launch command did not point the worker at the account's store"
+  assert_trusted "$acct/.claude.json" "$wt" \
+    "the --account spawn did not pre-register trust in the account's store"
+  assert_not_trusted "$default_store" "$wt" \
+    "the --account spawn registered trust in the launching user's default store"
+  pass "fm-spawn.sh: a claude --account spawn pre-trusts its worktree in the account's store"
+}
+
 # A secondmate home is the second directory a claude launch starts in, and it is
 # as unseen by Claude as a fresh worktree. The standalone-clone shape is the one
 # that wedged in production: the trust step was skipped for every secondmate, so
@@ -838,6 +869,7 @@ test_corrupt_store_fails_closed
 test_missing_node_is_refused
 test_scope_refusal_stays_fail_closed_without_node
 test_claude_spawn_pretrusts_its_worktree_and_reaches_the_brief
+test_account_claude_spawn_pretrusts_in_the_account_store
 test_refused_spawn_leaves_no_task_state
 test_secondmate_standalone_clone_home_is_trusted
 test_secondmate_leased_worktree_home_is_trusted
