@@ -3,7 +3,7 @@
 #
 # bin/fm-lint.sh is the single owner invoked by CI
 # (.github/workflows/ci.yml) and by the pre-push gate (.no-mistakes.yaml
-# commands.lint). CI runs its two full-rigor canonical partitions; the local
+# commands.lint). CI runs its four full-rigor canonical partitions; the local
 # gate uses its context-selected default. Their selection differs deliberately,
 # while this owner keeps analysis flags, configuration, and tool versions from
 # drifting.
@@ -179,13 +179,13 @@ test_list_files_reports_the_shell_inventory() {
 }
 
 test_canonical_partitions_preserve_full_lint() {
-  local tmp fakebin all part selected log flags mode rc option
+  local tmp fakebin all part selected log flags mode rc option peak
   tmp=$(fm_test_tmproot fm-lint-partitions)
   fakebin="$tmp/bin"
   mkdir -p "$fakebin"
   all=$(CI=true "$LINT" --list-files | LC_ALL=C sort)
   : > "$tmp/union"
-  for part in 1of2 2of2; do
+  for part in 1of4 2of4 3of4 4of4; do
     selected=$(CI=false GITHUB_ACTIONS=false "$LINT" --partition "$part" --list-files) \
       || fail "partition $part must select full canonical roots even on a local branch"
     [ -n "$selected" ] || fail "empty lint partition $part"
@@ -195,29 +195,39 @@ test_canonical_partitions_preserve_full_lint() {
     log="$tmp/$part.roots"
     flags="$tmp/$part.flags"
     mode="$tmp/$part.mode"
+    peak="$tmp/$part.peak"
     fm_lint_stub_shellcheck "$fakebin" "$log"
     PATH="$fakebin:$PATH" FM_TEST_FLAG_LOG="$flags" FM_TEST_MODE_LOG="$mode" \
+      FM_TEST_ACTIVE_DIR="$tmp/$part.active" FM_TEST_PEAK_LOG="$peak" \
       "$LINT" --partition "$part" > "$tmp/$part.out" 2>&1 \
       || fail "canonical partition $part failed: $(cat "$tmp/$part.out")"
+    [ "$(LC_ALL=C sort -u "$peak")" = 1 ] \
+      || fail "partition $part ran concurrent ShellCheck processes and can exceed CI runner memory"
     [ "$(LC_ALL=C sort "$log")" = "$(printf '%s\n' "$selected" | LC_ALL=C sort)" ] \
       || fail "partition $part executed a different root set than it listed"
     [ "$(LC_ALL=C sort -u "$flags")" = "$(printf 'exclude=none\nexternal-sources=yes')" ] \
       || fail "partition $part weakened source-aware analysis"
     [ "$(LC_ALL=C sort -u "$mode")" = on ] || fail "partition $part disabled full analysis"
   done
+  printf '#!/usr/bin/env bash\n:\n' > "$tmp/a.sh"
+  printf '#!/usr/bin/env bash\n:\n' > "$tmp/b.sh"
+  PATH="$fakebin:$PATH" FM_TEST_ACTIVE_DIR="$tmp/control.active" FM_TEST_PEAK_LOG="$tmp/control.peak" \
+    "$LINT" --jobs 2 "$tmp/a.sh" "$tmp/b.sh" > "$tmp/control.out" 2>&1 \
+    || fail "two-worker overlap control failed: $(cat "$tmp/control.out")"
+  grep -qx 2 "$tmp/control.peak" || fail "overlap probe cannot observe concurrent ShellCheck workers"
   [ "$(LC_ALL=C sort "$tmp/union")" = "$all" ] || fail "lint partitions lose or duplicate canonical roots"
-  for option in 0of2 3of2 1of3; do
+  for option in 0of4 5of4 1of2 2of2 1of3 10of4; do
     rc=0
     "$LINT" --partition "$option" --list-files > "$tmp/refused" 2>&1 || rc=$?
     [ "$rc" = 2 ] || fail "invalid partition $option was not refused"
   done
   rc=0
-  "$LINT" --partition 1of2 --fast > "$tmp/refused" 2>&1 || rc=$?
+  "$LINT" --partition 1of4 --fast > "$tmp/refused" 2>&1 || rc=$?
   [ "$rc" = 2 ] || fail "partition accepted --fast"
   rc=0
-  "$LINT" --partition 1of2 bin/fm-lint.sh > "$tmp/refused" 2>&1 || rc=$?
+  "$LINT" --partition 1of4 bin/fm-lint.sh > "$tmp/refused" 2>&1 || rc=$?
   [ "$rc" = 2 ] || fail "partition accepted an explicit subset"
-  pass "two canonical lint partitions preserve complete source-aware coverage and reject weakened modes"
+  pass "four canonical lint partitions preserve complete source-aware coverage, run one ShellCheck at a time, and reject weakened modes"
 }
 
 # fm_lint_stub_git <fakebin-dir>: install a git stub for the changed-file mode
@@ -320,6 +330,14 @@ if [ -n "\${FM_TEST_FLAG_LOG:-}" ]; then
 fi
 [ "\$#" -eq 0 ] || shift
 printf '%s\n' "\$@" >> "$log"
+# Optional overlap probe: record how many stub invocations were live at once.
+if [ -n "\${FM_TEST_ACTIVE_DIR:-}" ]; then
+  mkdir -p "\$FM_TEST_ACTIVE_DIR"
+  : > "\$FM_TEST_ACTIVE_DIR/\$\$"
+  sleep 0.5
+  printf '%s\n' "\$(find "\$FM_TEST_ACTIVE_DIR" -type f | wc -l | tr -d '[:space:]')" >> "\$FM_TEST_PEAK_LOG"
+  rm -f "\$FM_TEST_ACTIVE_DIR/\$\$"
+fi
 exit 0
 SH
   chmod +x "$fakebin/shellcheck"
