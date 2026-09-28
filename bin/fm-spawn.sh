@@ -438,7 +438,7 @@
 # any per-task state exists, and before its state/ settings source is written,
 # every claude launch pre-registers the directory the pane
 # starts in - the task worktree, or the secondmate home for a --secondmate spawn -
-# in the launching user's own Claude trust store through bin/fm-claude-trust.sh,
+# in the Claude store that launch will read through bin/fm-claude-trust.sh,
 # because Claude's interactive workspace-trust dialog gates a folder it has never
 # seen and firstmate cannot answer it. That helper's header owns the structural
 # scope test for both shapes and every refusal; a failed registration stops this
@@ -4541,7 +4541,18 @@ claude*)
   else
     spawn_trust_args=("$WT" "$PROJ_ABS")
   fi
-  if ! "$FM_ROOT/bin/fm-claude-trust.sh" "${spawn_trust_args[@]}" >/dev/null; then
+  # The entry must land in the store the pane will read, so the helper runs under
+  # the same CLAUDE_CONFIG_DIR binding the launch pins below from this task's
+  # resolved store; writing the caller's own store left an --account worker
+  # wedged on the dialog in a store nothing had registered.
+  spawn_trust_env=()
+  if [ "$HARNESS" = claude ]; then
+    case "$SPAWN_CLAUDE_STORE" in
+      ''|default) spawn_trust_env=(-u CLAUDE_CONFIG_DIR) ;;
+      *) spawn_trust_env=("CLAUDE_CONFIG_DIR=$SPAWN_CLAUDE_STORE") ;;
+    esac
+  fi
+  if ! env "${spawn_trust_env[@]+"${spawn_trust_env[@]}"}" "$FM_ROOT/bin/fm-claude-trust.sh" "${spawn_trust_args[@]}" >/dev/null; then
     echo "error: could not pre-register Claude workspace trust for $WT; refusing to launch a claude worker that would wedge on the trust dialog; inspect window $T" >&2
     exit 1
   fi
