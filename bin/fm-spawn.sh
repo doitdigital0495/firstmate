@@ -4535,7 +4535,8 @@ fi
 # skipping the step for that kind left a standalone-clone secondmate home with
 # nothing registered and a pane wedged on a dialog firstmate cannot answer.
 # bin/fm-claude-trust.sh owns the structural scope test for both shapes and
-# refuses anything that is neither this project's own isolated worktree nor a
+# refuses anything that is neither an isolated worktree of this project (or of
+# another clone of its origin remote, which shares its treehouse pool) nor a
 # seeded secondmate home marked for this id; a refusal blocks the spawn rather
 # than launching a worker that would wedge. Refusing here rather than beside the
 # arm keeps this in the same class as the two worktree refusals just above: no
