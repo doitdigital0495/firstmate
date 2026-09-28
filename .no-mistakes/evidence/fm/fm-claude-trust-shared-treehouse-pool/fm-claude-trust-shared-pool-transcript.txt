@@ -1,0 +1,50 @@
+++ git init -q --bare $T/remote.git
+++ git clone -q $T/remote.git $T/owner
+++ git -C $T/owner commit -q --allow-empty -m init
+[90m10:54AM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m10:54AM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 75.9ms[0m
+[90m10:54AM[0m [32mINF[0m [1mno leaks found[0m
+++ git -C $T/owner push -q origin HEAD:main
+remote: no-mistakes: gate push refused before ref mutation:        
+remote: [33mA new version of no-mistakes is available: v1.79.0 -> v1.84.0        
+remote: Run "no-mistakes update" to update[0m        
+remote: error:        
+remote:   code: nested_gate_context        
+remote:   message: refusing pipeline control from an active no-mistakes validation step        
+remote:   run: "01M3KKG2R417N25QB9JVV22G5B"        
+remote:   phase: test        
+remote: note: "The enclosing executor owns validation, push, PR, and CI. This step must return only its assigned phase."        
+remote: allowed[3]: no-mistakes axi status --run 01M3KKG2R417N25QB9JVV22G5B,no-mistakes axi logs --run 01M3KKG2R417N25QB9JVV22G5B --step <phase>,no-mistakes doctor        
+remote: help[1]: "Return control to the outer executor; do not initialize, start, reattach, rerun, respond to, synchronize, abort, or eject a pipeline from this step."        
+To $T/remote.git
+ ! [remote rejected] HEAD -> main (pre-receive hook declined)
+error: failed to push some refs to '$T/remote.git'
+++ git -C $T/owner remote set-url origin git@github.com:doitdigital0495/agentic-setup.git
+++ git clone -q $T/remote.git $T/code-work-agentic-setup
+warning: You appear to have cloned an empty repository.
+++ git -C $T/code-work-agentic-setup remote set-url origin https://github.com/doitdigital0495/agentic-setup
+++ git -C $T/owner worktree add -q $T/pool/slot-1 -b pool-1
+++ set +x
+=== [before] fm-claude-trust.sh <pool slot owned by owner clone> <other clone of same remote>
+error: refusing to pre-register Claude trust: '$T/pool/slot-1' is not a worktree of project '$T/code-work-agentic-setup'
+exit=1
+(no .claude.json written)
+=== [after] fm-claude-trust.sh <pool slot owned by owner clone> <other clone of same remote>
+trusted: $T/pool/slot-1
+trusted (project root): $T/owner
+exit=0
+$T/pool/slot-1 {"hasTrustDialogAccepted":true}
+$T/owner {"hasTrustDialogAccepted":true}
+=== adversarial: different remote (fork)
+error: refusing to pre-register Claude trust: '$T/pool/slot-1' is not a worktree of project '$T/code-work-agentic-setup' nor of another clone of its origin remote
+exit=1
+=== adversarial: no origin on either side
+error: refusing to pre-register Claude trust: '$T/pool/slot-1' is not a worktree of project '$T/code-work-agentic-setup' nor of another clone of its origin remote
+exit=1
+=== adversarial: subdirectory of shared slot
+error: refusing to pre-register Claude trust: '$T/pool/slot-1/sub' is not a worktree root (its root is '$T/pool/slot-1')
+exit=1
+=== regression: own worktree of project still trusted
+trusted: $T/own-wt
+trusted (project root): $T/code-work-agentic-setup
+exit=0
