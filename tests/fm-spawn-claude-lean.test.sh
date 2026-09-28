@@ -30,6 +30,7 @@ expect_code 0 "$?" "Claude ship should launch: $out"
 launch=$(cat "$LAUNCH_LOG")
 assert_contains "$launch" "--setting-sources '' --strict-mcp-config --disable-slash-commands" "worker must exclude settings and discovery"
 assert_contains "$launch" "--tools Read,Bash,Edit,Write " "ship tool boundary"
+assert_not_contains "$launch" "ToolSearch" "a worker without an MCP opt-in needs no tool search"
 assert_contains "$launch" "--model 'opus' --effort 'medium'" "ship defaults must be explicit"
 assert_contains "$launch" "--settings '$HOME_DIR/state/lean-ship-s1.claude-settings.json'" "Firstmate hooks must still load"
 assert_contains "$launch" "--append-system-prompt \"\$(cat '$ROOT/.pi/fm-worker-contract.md'" "worker contract must be appended"
@@ -86,10 +87,18 @@ expect_code 0 "$?" "Claude explicit capabilities should launch: $out"
 launch=$(cat "$LAUNCH_LOG")
 assert_contains "$launch" "--strict-mcp-config" "explicit MCP configuration must not enable discovered servers"
 assert_contains "$launch" "--mcp-config '$CASE_DIR/mcp config.json'" "named MCP configuration"
+assert_contains "$launch" "--tools Read,Bash,ToolSearch " "an MCP opt-in must let the first turn wait for a connecting server"
 assert_contains "$launch" "--add-dir '$CASE_DIR/extra dir'" "explicit extra directory"
 assert_contains "$launch" "--plugin-dir '$CASE_DIR/plugin dir'" "explicit plugin directory"
 assert_not_contains "$launch" '--mcp-config default' "ambient MCP servers must not load"
 pass "Claude task opts into named MCPs and explicit directories without enabling discovery"
+
+make_case opt-in-ship lean-opt-in-ship
+printf '%s\n' '{"mcpServers":{"task-tool":{"command":"true"}}}' > "$CASE_DIR/mcp.json"
+out=$(spawn lean-opt-in-ship "$PROJ_DIR" --mode direct-PR --yolo off --mcp-config "$CASE_DIR/mcp.json")
+expect_code 0 "$?" "Claude ship with an MCP opt-in should launch: $out"
+assert_contains "$(cat "$LAUNCH_LOG")" "--tools Read,Bash,Edit,Write,ToolSearch " "ship MCP opt-in must allow ToolSearch"
+pass "Claude MCP opt-in lets the first turn wait for a connecting server"
 
 make_case opt-in-batch lean-batch-a
 mkdir -p "$CASE_DIR/extra dir" "$CASE_DIR/plugin dir"
@@ -99,6 +108,7 @@ out=$(spawn "lean-batch-a=$PROJ_DIR" "lean-batch-b=$PROJ_DIR" --scout --mcp-conf
 expect_code 0 "$?" "Claude batch should forward explicit capabilities: $out"
 launch=$(cat "$LAUNCH_LOG")
 assert_contains "$launch" "--mcp-config '$CASE_DIR/mcp config.json'" "batch must forward MCP configuration"
+assert_contains "$launch" "--tools Read,Bash,ToolSearch " "batch MCP opt-in must allow ToolSearch"
 assert_contains "$launch" "--add-dir '$CASE_DIR/extra dir'" "batch must forward extra directories"
 assert_contains "$launch" "--plugin-dir '$CASE_DIR/plugin dir'" "batch must forward plugins"
 pass "Claude batch dispatch retains per-task opt-ins"

@@ -222,6 +222,8 @@
 #   --mcp-config <file>, --claude-add-dir <dir>, and --claude-plugin-dir <dir>
 #   (all repeatable) opt Claude task workers into named MCP servers, file access
 #   to extra directories, and plugins respectively. The default loads none.
+#   An --mcp-config launch also allows ToolSearch, so a first turn can wait for
+#   a server that is still connecting instead of reporting its tools missing.
 #   Never pass untrusted project material as --skill (it joins the worker's
 #   system prompt). Invalid paths and unsupported harnesses refuse
 #   before provisioning. Other harnesses, raw launches and secondmates refuse
@@ -5325,6 +5327,10 @@ LAUNCH=${LAUNCH//__PIWORKERCONTRACT__/$sq_piworkercontract}
 if [ "$KIND" = scout ]; then PI_TOOLS=read,bash; else PI_TOOLS=read,bash,edit,write; fi
 LAUNCH=${LAUNCH//__PITOOLS__/$PI_TOOLS}
 if [ "$KIND" = scout ]; then CLAUDE_TOOLS=Read,Bash; else CLAUDE_TOOLS=Read,Bash,Edit,Write; fi
+# Claude connects --mcp-config servers asynchronously; without ToolSearch a
+# still-connecting server's tools are simply absent from the first turn, while
+# ToolSearch waits for pending servers and exposes only deferred MCP tools.
+[ -z "$CLAUDE_MCP" ] || CLAUDE_TOOLS=$CLAUDE_TOOLS,ToolSearch
 LAUNCH=${LAUNCH//__CLAUDETOOLS__/$CLAUDE_TOOLS}
 # A zai task worker rides `opr` so ZAI_API_KEY is resolved from the vault into
 # the child environment and never copied into launch text. The broker's output
