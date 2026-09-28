@@ -395,6 +395,7 @@ Pass only trusted Firstmate-owned files as `--skill`, because their contents joi
 Each flag takes a readable local path (the skill takes a Markdown file or a directory containing SKILL.md); the flags can be repeated and must be passed again on relaunch.
 Other harnesses, raw launches, and Claude secondmates refuse the Claude-only flags; the default remains lean for every Claude model, including Opus, Sonnet and Haiku.
 The `--tools` list limits a scout to Read and Bash and a ship to Read, Bash, Edit and Write.
+An `--mcp-config` launch also allows ToolSearch, which lets the first turn wait for a server that is still connecting and loads only MCP tools ([evidence](verification/runtime-backends.md#claude-mcp-first-turn-readiness)).
 Firstmate pins a default Opus model and medium effort for a task worker when no profile or launch override supplies them.
 Claude secondmates retain their full primary-session configuration instead of this task-worker posture.
 For slash-command workflows such as `/no-mistakes`, lean workers use the corresponding CLI directly.

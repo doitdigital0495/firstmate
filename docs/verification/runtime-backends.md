@@ -525,11 +525,57 @@ spawned lean-sonnet harness=claude kind=scout window=lab:fm-lean-sonnet worktree
 lean-sonnet.turn-ended exists; busy-state: state=idle source=claude-hook event=stop
 ```
 
-On the Sonnet arm, the initial turn reported the MCP tool unavailable, then the following turn successfully called it after the server had connected; Claude 2.1.281 starts explicit MCP servers asynchronously, so a task needing an MCP on its very first turn must allow for connection latency.
+That Sonnet arm predates the first-turn fix recorded under [Claude MCP first-turn readiness](#claude-mcp-first-turn-readiness): its initial turn reported the MCP tool unavailable and only a follow-up turn reached it.
 A non-interactive CLI control with the same `--settings`, `--setting-sources ''`, `--strict-mcp-config`, `--disable-slash-commands`, `--tools Read,Bash`, `--mcp-config`, `--append-system-prompt`, model, and effort flags called the same tool and replied `MCP_PROVED` on its first turn.
 `--claude-add-dir` and `--claude-plugin-dir` were not exercised live.
 All three real workers were returned through `bin/fm-teardown.sh` after the `fm-captain-hold.sh complete <id> --none` disposable scout inventory; their slots and isolated tmux server were then removed.
 Run `bin/fm-test-run.sh tests/fm-spawn-claude-lean.test.sh` to pin the shared model-independent launch shape and explicit opt-ins in CI; the live model calls above were manual and spent provider tokens.
+
+### Claude MCP first-turn readiness
+
+Verified 2026-09-28 with Claude Code 2.1.283 and tmux 3.2a on Linux, using one disposable git project and an isolated tmux server started with `tmux -L fmlab -f /dev/null` so the operator's tmux plugins could not load.
+Interactive Claude connects `--mcp-config` servers asynchronously and submits the launch brief before they finish, so a still-connecting server's tools are absent from the first turn; neither `MCP_CONNECTION_NONBLOCKING=0` in the launch environment nor allowing the built-in `WaitForMcpServers` tool changed that on this version.
+With `ToolSearch` allowed, MCP tools become deferred, the first turn's deferred-tool listing names the server as pending, and each `ToolSearch` call waits about 5 seconds for it and answers `Some MCP servers are still connecting: <name>` while it has not connected.
+Under the lean `--tools` allowlist the only other deferred tool was `EndConversation`, so this adds no built-in capability.
+`bin/fm-spawn.sh` therefore appends `ToolSearch` to a Claude task worker's `--tools` exactly when `--mcp-config` is passed.
+Because each call's wait is bounded, the same launches also append a system-prompt note telling the worker to call `ToolSearch` again while a server is still connecting.
+Without that note, an opus/low worker whose brief said to reply `MCP_UNAVAILABLE` "if the tool is not available right now" gave up after two searches against the 15-second server; with it, three of three such runs searched a third time and replied `MCP_PROVED`.
+
+The server was a disposable stdio MCP server exposing `ping` that returns `MCP_PROVED`, with an optional startup sleep; `task-mcp.json` used no sleep and `task-mcp-15.json` slept 15 seconds.
+Each scout brief asked the worker to call `ping` as its first action and reply `MCP_UNAVAILABLE` if the tool was not available.
+The baseline ran the pre-fix script; the other launches ran the changed script.
+
+```sh
+claude --version; tmux -V
+# From a shell inside the isolated lab session, for each scout brief scaffolded with bin/fm-brief.sh --scout:
+FM_HOME="$LAB/home" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 bin/fm-spawn.sh base1 "$LAB/project" --scout --harness claude --backend tmux --model sonnet --effort low --mcp-config "$LAB/task-mcp.json"
+FM_HOME="$LAB/home" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 bin/fm-spawn.sh fix0 "$LAB/project" --scout --harness claude --backend tmux --model sonnet --effort low --mcp-config "$LAB/task-mcp.json"
+FM_HOME="$LAB/home" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 bin/fm-spawn.sh fix15 "$LAB/project" --scout --harness claude --backend tmux --model sonnet --effort low --mcp-config "$LAB/task-mcp-15.json"
+FM_HOME="$LAB/home" FM_BACKEND=tmux FM_SPAWN_NO_GUARD=1 bin/fm-spawn.sh fixopus "$LAB/project" --scout --harness claude --backend tmux --model opus --effort medium --mcp-config "$LAB/task-mcp-15.json"
+```
+
+```text
+2.1.283 (Claude Code)
+tmux 3.2a
+base1 (--tools Read,Bash):            ● MCP_UNAVAILABLE    (a follow-up turn then replied ● MCP_PROVED)
+fix0 (--tools Read,Bash,ToolSearch):  Called task-only-marker / ● MCP_PROVED    (4s)
+fix15 (--tools Read,Bash,ToolSearch): Called task-only-marker / ● MCP_PROVED    (19s)
+fixopus (--tools Read,Bash,ToolSearch): Called task-only-marker / ● MCP_PROVED  (21s)
+```
+
+The fix15 session transcript shows the wait itself:
+
+```text
+deferred_tools_delta added=['EndConversation'] pending=['task-only-marker']
+ToolSearch select:mcp__task-only-marker__ping -> No matching deferred tools found. Some MCP servers are still connecting: task-only-marker.
+ToolSearch ping task-only-marker              -> No matching deferred tools found. Some MCP servers are still connecting: task-only-marker.
+ToolSearch ping                               -> tool_reference mcp__task-only-marker__ping
+mcp__task-only-marker__ping                   -> MCP_PROVED
+```
+
+A direct interactive control with the same lean flags and the 15-second server replied `MCP_UNAVAILABLE` under `--tools Read,Bash` and `MCP_PROVED` under `--tools Read,Bash,ToolSearch`.
+All real workers were returned through `bin/fm-teardown.sh` after `fm-captain-hold.sh complete <id> --none`, and the isolated tmux server was then killed.
+`tests/fm-spawn-claude-lean.test.sh` pins that ship and scout launches add `ToolSearch` only with an MCP opt-in; rerun the live spawns above after a Claude Code upgrade, since they spend provider tokens.
 
 ## Claude workspace trust
 
