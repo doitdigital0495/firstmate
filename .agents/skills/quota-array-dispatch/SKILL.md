@@ -45,6 +45,7 @@ Start each intake by running `quota-axi` with no `--json` for the home's default
 For each distinct named-account store triple referenced by a candidate, read that home's `config/accounts.json` and require `crossAccount.enabled == true` plus an allowlisted account; otherwise mark that candidate `not eligible: cross-account routing disabled` without probing its store.
 Read one additional `quota-axi` snapshot per eligible distinct store triple with `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, and `CODEX_HOME` pinned to that entry; use only that store's snapshot for its candidates, then rank the union with the same spendPriority procedure.
 A home with no `crossAccount` block keeps the default-only intake unchanged, and a home with only the Geris registry entry cannot dispatch a personal candidate.
+A usage-limit move of a running worker may likewise pick a candidate on another allowlisted account when its quota does not hurt significantly more than the best intra-account switch; `fm-control.sh relaunch --account <id>` performs that move under the same eligibility gates.
 Reuse each snapshot for its candidates until an unknown pool requires the bounded retry below.
 Post-consolidation quota-axi (the floor owned by `bin/fm-quota-axi-lib.sh`) puts `spendPriority` in the default `quota[]` block beside `effectivePercentRemaining`, `runway`, `confidence`, `limitedBy`, and `resetsAt`.
 Sparse `exhaustion[]` carries finite-runway seconds only for `projected_exhaustion` and `exhausted_now`.

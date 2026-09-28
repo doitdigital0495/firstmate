@@ -161,7 +161,7 @@ The worktree and the task's records are unaffected either way.
 - This home is pinned to the terminal session and Claude account it was started from, so every verb is refused from another session before the task is touched; see [Home session and account pin](configuration.md#home-session-and-account-pin-datahome-identity).
 - When the replacement would launch onto a shaped Claude credential store, the release decision is previewed **before** the old agent is stopped, so a relaunch that has no release slot yet refuses with the task queued and its agent still running rather than leaving it with no worker.
   `relaunch --priority <1-99>` sets that release order, lower first; see [Claude release shaping](configuration.md#claude-release-shaping-configclaude-shaped-store).
-  The replacement always launches on the account recorded for the task, never the caller's environment.
+  The replacement launches on the account recorded for the task, never the caller's environment, unless `relaunch --account <id>` deliberately moves it under the cross-account gates ([Cross-account worker routing](configuration.md#cross-account-worker-routing-configaccountsjson)).
 - `exit`'s composer-empty check, above, is itself a fail-closed boundary that `relaunch` inherits by stopping the old agent through `exit`.
 - `fm-spawn --relaunch` independently refuses unless the endpoint is positively agent-free - either a `dead` endpoint that survives, or a Herdr endpoint proven gone by the absence proof above - so a replacement can never join a live agent.
   An `alive`, `ambiguous`, or `unreadable` verdict all refuse, and so does any endpoint whose absence is not provable, which on tmux is every `missing`; absence is claimed only from positive evidence of it.
