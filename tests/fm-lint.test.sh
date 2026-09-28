@@ -227,12 +227,6 @@ test_canonical_partitions_preserve_full_lint() {
   rc=0
   "$LINT" --partition 1of4 bin/fm-lint.sh > "$tmp/refused" 2>&1 || rc=$?
   [ "$rc" = 2 ] || fail "partition accepted an explicit subset"
-  rc=0
-  "$LINT" --partition 1of4 --jobs 2 > "$tmp/refused" 2>&1 || rc=$?
-  [ "$rc" = 2 ] || fail "partition accepted concurrent ShellCheck workers"
-  rc=0
-  FM_LINT_JOBS=2 "$LINT" --partition 1of4 > "$tmp/refused" 2>&1 || rc=$?
-  [ "$rc" = 2 ] || fail "partition accepted concurrent ShellCheck workers from FM_LINT_JOBS"
   pass "four canonical lint partitions preserve complete source-aware coverage, run one ShellCheck at a time, and reject weakened modes"
 }
 

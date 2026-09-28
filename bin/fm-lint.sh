@@ -403,8 +403,6 @@ fm_lint_run_backend_purity() {
 }
 
 JOBS=${FM_LINT_JOBS:-2}
-JOBS_REQUESTED=0
-[ -z "${FM_LINT_JOBS:-}" ] || JOBS_REQUESTED=1
 PARTITION_COUNT=4
 TELEMETRY=${FM_LINT_TELEMETRY:-}
 FAST=0
@@ -417,12 +415,10 @@ while [ "$#" -gt 0 ]; do
     --jobs)
       [ "$#" -ge 2 ] || { printf 'fm-lint.sh: --jobs requires 1 or 2.\n' >&2; exit 2; }
       JOBS=$2
-      JOBS_REQUESTED=1
       shift 2
       ;;
     --jobs=*)
       JOBS=${1#*=}
-      JOBS_REQUESTED=1
       shift
       ;;
     --telemetry)
@@ -486,10 +482,6 @@ case "$PARTITION" in
     fi
     if [ "$FAST" -eq 1 ] || [ "$#" -gt 0 ]; then
       printf 'fm-lint.sh: --partition requires full canonical lint; omit --fast and explicit paths.\n' >&2
-      exit 2
-    fi
-    if [ "$JOBS_REQUESTED" -eq 1 ] && [ "$JOBS" -ne 1 ]; then
-      printf 'fm-lint.sh: --partition runs one ShellCheck process at a time to bound CI memory; omit --jobs.\n' >&2
       exit 2
     fi
     JOBS=1
