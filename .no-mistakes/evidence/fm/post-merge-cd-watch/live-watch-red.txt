@@ -1,0 +1,14 @@
+armed /tmp/fm-deploy-live.CYBnLW/state/task-red.deploy-watch mode 600:
+    https://github.com/vercel/next.js/pull/97141
+    1790588041
+--- draining and acking the merge-landed wake so the watcher reaches its check sweep
+1790588041	1	check	merged-task-red-https://github.com/vercel/next.js/pull/97141	check: merge landed: task-red https://github.com/vercel/next.js/pull/97141
+--- running real fm-watch.sh (real gh on PATH)
+watcher exit 0
+--- watcher stdout
+check: task-red deploy RED: https://github.com/vercel/next.js/pull/97141 merge commit 34931db7: PR CI Comment=SKIPPED (skipped, workflow 31440684649); PR CI Comment=SKIPPED (skipped, workflow 31440684551); Generate Stats=RED (failure, workflow 31440682186); build-and-deploy=GREEN (success, workflow 31440681806); build-and-test=GREEN (success, workflow 31440682201)
+--- deploy wake rows in .wake-queue
+check: task-red deploy RED: https://github.com/vercel/next.js/pull/97141 merge commit 34931db7: PR CI Comment=SKIPPED (skipped, workflow 31440684649); PR CI Comment=SKIPPED (skipped, workflow 31440684551); Generate Stats=RED (failure, workflow 31440682186); build-and-deploy=GREEN (success, workflow 31440681806); build-and-test=GREEN (success, workflow 31440682201)
+--- remaining deploy watches
+(none, all retired)
+--- triage log deploy lines

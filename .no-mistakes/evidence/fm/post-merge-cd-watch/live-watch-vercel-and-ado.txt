@@ -1,0 +1,17 @@
+armed /tmp/fm-deploy-live.h4s7sW/state/task-vercel.deploy-watch mode 600:
+    https://github.com/vercel/commerce/pull/1531
+    1790588071
+armed /tmp/fm-deploy-live.h4s7sW/state/task-ado.deploy-watch mode :
+    (not armed)
+--- draining and acking the merge-landed wake so the watcher reaches its check sweep
+1790588070	1	check	merged-task-vercel-https://github.com/vercel/commerce/pull/1531	check: merge landed: task-vercel https://github.com/vercel/commerce/pull/1531
+1790588071	2	check	merged-task-ado-https://dev.azure.com/Org-1/P/_git/r/pullrequest/8	check: merge landed: task-ado https://dev.azure.com/Org-1/P/_git/r/pullrequest/8
+--- running real fm-watch.sh (real gh on PATH)
+watcher exit 0
+--- watcher stdout
+check: task-vercel deploy GREEN: https://github.com/vercel/commerce/pull/1531 merge commit 3761e52e: Socket Security: Pull Request Alerts=SKIPPED (neutral, check 80663027216); Socket Security: Project Report=GREEN (success, check 80663006625); Vercel – v0-commerce-4c=GREEN (success); Vercel – commerce-shopify=GREEN (success)
+--- deploy wake rows in .wake-queue
+check: task-vercel deploy GREEN: https://github.com/vercel/commerce/pull/1531 merge commit 3761e52e: Socket Security: Pull Request Alerts=SKIPPED (neutral, check 80663027216); Socket Security: Project Report=GREEN (success, check 80663006625); Vercel – v0-commerce-4c=GREEN (success); Vercel – commerce-shopify=GREEN (success)
+--- remaining deploy watches
+(none, all retired)
+--- triage log deploy lines

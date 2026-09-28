@@ -1,0 +1,14 @@
+armed /tmp/fm-deploy-live.dm4tSp/state/task-green.deploy-watch mode 600:
+    https://github.com/doitdigital0495/firstmate/pull/37
+    1790588068
+--- draining and acking the merge-landed wake so the watcher reaches its check sweep
+1790588067	1	check	merged-task-green-https://github.com/doitdigital0495/firstmate/pull/37	check: merge landed: task-green https://github.com/doitdigital0495/firstmate/pull/37
+--- running real fm-watch.sh (real gh on PATH)
+watcher exit 0
+--- watcher stdout
+check: task-green deploy GREEN: https://github.com/doitdigital0495/firstmate/pull/37 merge commit f6b50910: CI=GREEN (success, workflow 36137746802)
+--- deploy wake rows in .wake-queue
+check: task-green deploy GREEN: https://github.com/doitdigital0495/firstmate/pull/37 merge commit f6b50910: CI=GREEN (success, workflow 36137746802)
+--- remaining deploy watches
+(none, all retired)
+--- triage log deploy lines

@@ -1,0 +1,16 @@
+## RED: next.js canary merge whose push run failed
+$ bin/fm-deploy-poll.sh https://github.com/vercel/next.js/pull/97141 1790587972
+deploy RED: https://github.com/vercel/next.js/pull/97141 merge commit 34931db7: PR CI Comment=SKIPPED (skipped, workflow 31440684649); PR CI Comment=SKIPPED (skipped, workflow 31440684551); Generate Stats=RED (failure, workflow 31440682186); build-and-deploy=GREEN (success, workflow 31440681806); build-and-test=GREEN (success, workflow 31440682201)
+[exit 0]
+## cancelled: next.js PR 97638 (build-and-test cancelled)
+$ bin/fm-deploy-poll.sh https://github.com/vercel/next.js/pull/97638 1790587972
+deploy RED: https://github.com/vercel/next.js/pull/97638 merge commit 8c7ed006: upload-preview-tarballs=RED (failure, workflow 32466385290); upload-preview-tarballs=RED (failure, workflow 32466282615); 56 more GREEN, SKIPPED or SUPERSEDED
+[exit 0]
+## Vercel commit status: vercel/commerce PR 1531
+$ bin/fm-deploy-poll.sh https://github.com/vercel/commerce/pull/1531 1790587972
+deploy GREEN: https://github.com/vercel/commerce/pull/1531 merge commit 3761e52e: Socket Security: Pull Request Alerts=SKIPPED (neutral, check 80663027216); Socket Security: Project Report=GREEN (success, check 80663006625); Vercel – v0-commerce-4c=GREEN (success); Vercel – commerce-shopify=GREEN (success)
+[exit 0]
+## Vercel: vercel/examples PR 1583
+$ bin/fm-deploy-poll.sh https://github.com/vercel/examples/pull/1583 1790587972
+deploy RED: https://github.com/vercel/examples/pull/1583 merge commit cf7f8cd8: Prebuild Next.js Boilerplate Example=RED (failure, workflow 36026043419); Prebuild Vercel Tutor=RED (failure, workflow 36026043307); Prebuild Vibe Coding Platform=RED (failure, workflow 36026043220); Vercel – turborepo-hono-api=RED (failure); Vercel – examples-q42o=RED (failure); Vercel – fantix-examples-nextjs-fastapi=RED (failure); Vercel – mintlify-docs-rewrite=RED (failure); Vercel – vercel-plus-fastapi=RED (failure); Vercel – xmcp-demo=RED (failure); Vercel – hono-mcp-example=RED (failure); Vercel – laurens-test=RED (failure); Vercel – redirects-bloom-filter=RED (failure); Vercel – geolocation-script=RED (failure); Vercel – redirect-with-fallback=RED (failure); Vercel – solutions-testing=RED (failure); Vercel – mint-nft=RED (failure); Vercel – example-auth-with-ory=RED (failure); 89 more GREEN, SKIPPED or SUPERSEDED
+[exit 0]

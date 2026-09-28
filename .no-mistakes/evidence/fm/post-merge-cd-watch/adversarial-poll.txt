@@ -1,0 +1,18 @@
+## grace not yet passed (grace forced beyond merge age): verdict must be held
+$ env FM_DEPLOY_WATCH_GRACE_SECS=9999999999 bin/fm-deploy-poll.sh https://github.com/vercel/next.js/pull/97141 1790588085
+[exit 0 ; output above, blank = silent]
+## open (unmerged) PR: ends quietly with deploy none
+$ bin/fm-deploy-poll.sh https://github.com/doitdigital0495/firstmate/pull/39 1790588085
+deploy none: https://github.com/doitdigital0495/firstmate/pull/39: the pull request is OPEN, not merged, so no deploy was watched
+[exit 0 ; output above, blank = silent]
+## non-GitHub URL / bogus epoch: silent
+$ bin/fm-deploy-poll.sh https://dev.azure.com/Org-1/P/_git/r/pullrequest/8 1790588085
+[exit 0 ; output above, blank = silent]
+$ bin/fm-deploy-poll.sh https://github.com/vercel/next.js/pull/97141 x;rm
+[exit 0 ; output above, blank = silent]
+## nonexistent PR (unreadable) before cap: silent; after cap (cap forced 0 with armed=1): UNREAD
+$ bin/fm-deploy-poll.sh https://github.com/doitdigital0495/firstmate/pull/999999 1790588085
+[exit 0 ; output above, blank = silent]
+$ env FM_DEPLOY_WATCH_GRACE_SECS=0 FM_DEPLOY_WATCH_CAP_SECS=0 bin/fm-deploy-poll.sh https://github.com/doitdigital0495/firstmate/pull/999999 1
+deploy UNREAD: https://github.com/doitdigital0495/firstmate/pull/999999: the merge commit could not be read within 0s of merge
+[exit 0 ; output above, blank = silent]

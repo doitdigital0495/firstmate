@@ -1,0 +1,9 @@
+$ bin/fm-deploy-poll.sh https://github.com/doitdigital0495/firstmate/pull/37 1790587937
+deploy GREEN: https://github.com/doitdigital0495/firstmate/pull/37 merge commit f6b50910: CI=GREEN (success, workflow 36137746802)
+[exit 0]
+$ bin/fm-deploy-poll.sh https://github.com/doitdigital0495/firstmate/pull/36 1790587937
+deploy GREEN: https://github.com/doitdigital0495/firstmate/pull/36 merge commit 158983e6: CI=GREEN (success, workflow 36140343338)
+[exit 0]
+$ bin/fm-deploy-poll.sh https://github.com/doitdigital0495/firstmate/pull/35 1790587937
+deploy GREEN: https://github.com/doitdigital0495/firstmate/pull/35 merge commit 4fa8588d: CI=GREEN (success, workflow 36132727776)
+[exit 0]

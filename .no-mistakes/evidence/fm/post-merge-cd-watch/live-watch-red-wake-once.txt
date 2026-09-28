@@ -1,0 +1,4 @@
+## second watcher pass on the same home after acking the RED wake (expect no new deploy wake)
+watcher exit 124 (124 = still waiting, nothing to wake on)
+stdout: Terminated
+deploy wake rows total in queue: 0
