@@ -1633,6 +1633,13 @@ JSON
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "export PI_CODING_AGENT_DIR='$HOME_DIR/user-home/.pi-geris/agent';" 'Pi process inherits the Geris store'
   bash -n <<< "$launch" || fail 'account-pinned Pi launch is not valid shell syntax'
+  # A relaunch passes the same cross-account gates before it reads the task's
+  # endpoint at all, so an unlisted seat refuses the move identically; the
+  # control-plane relaunch path covers the successful switch end to end.
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" account-geris --relaunch --account personal)
+  expect_code 1 "$?" "an unlisted seat refuses a relaunch account switch: $out"
+  assert_contains "$out" "account 'personal' is not enabled in this home's config/accounts.json" \
+    'the relaunch refusal must use the registry wording'
   FM_HOME="$HOME_DIR" "$ROOT/bin/fm-account-routing.sh" off >/dev/null
   assert_grep '"enabled": false' "$HOME_DIR/config/accounts.json" 'off toggle is atomic and durable'
   pass 'explicit account validates registry and switch before mutation and pins all harness stores'

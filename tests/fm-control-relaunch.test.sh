@@ -1218,6 +1218,153 @@ test_relaunch_keeps_a_personal_task_off_a_work_account() {
   pass "fm-control relaunch: a personal task cannot be moved onto a work account"
 }
 
+make_case_accounts_registry() {  # <case-dir> <enabled:true|false> <id:store-dir>...
+  local dir=$1 enabled=$2 pair first=1
+  shift 2
+  mkdir -p "$dir/home/config"
+  {
+    printf '{"crossAccount":{"enabled":%s},"accounts":{' "$enabled"
+    for pair in "$@"; do
+      [ "$first" = 1 ] || printf ','
+      first=0
+      printf '"%s":{"claude":"%s/claude","pi":"%s/pi","codex":"%s/codex"}' \
+        "${pair%%:*}" "${pair#*:}" "${pair#*:}" "${pair#*:}"
+    done
+    printf '}}\n'
+  } > "$dir/home/config/accounts.json"
+}
+
+test_relaunch_switches_the_task_recorded_account() {
+  local dir geris personal meta out rc
+  dir=$(new_case acctswitch rl43)
+  add_ship_task "$dir" rl43 codex
+  printf 'codex' > "$dir/fake/becomes"
+  meta="$dir/home/state/rl43.meta"
+  geris="$dir/geris-store"
+  personal="$dir/personal-store"
+  mkdir -p "$geris" "$personal"
+  make_case_accounts_registry "$dir" true "geris:$geris" "personal:$personal"
+  printf 'account=geris\nclaude_config_dir=%s/claude\npi_agent_dir=%s/pi\ncodex_home=%s/codex\n' \
+    "$geris" "$geris" "$geris" >> "$meta"
+
+  out=$(run_control "$dir" rl43 relaunch --account personal --note "usage-limit move"); rc=$?
+  expect_code 0 "$rc" "an allowed cross-account relaunch should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" rl43 account)" = personal ] \
+    || fail "the record must rebind to the requested account, got '$(meta_field "$dir" rl43 account)'"
+  [ "$(meta_field "$dir" rl43 codex_home)" = "$personal/codex" ] \
+    || fail "the Codex store must follow the account switch"
+  [ "$(meta_field "$dir" rl43 claude_config_dir)" = "$personal/claude" ] \
+    || fail "the Claude store must follow the account switch"
+  [ "$(meta_field "$dir" rl43 pi_agent_dir)" = "$personal/pi" ] \
+    || fail "the Pi store must follow the account switch"
+  assert_contains "$(cat "$dir/fake/literal")" "export CODEX_HOME='$personal/codex'" \
+    "the replacement must launch on the new account's store"
+  assert_not_contains "$(cat "$dir/fake/literal")" "export CODEX_HOME='$geris/codex'" \
+    "the old account's store must not survive the switch"
+  [ "$(meta_field "$dir" rl43 worktree)" = "$dir/wt" ] \
+    || fail "an account switch must not touch the recorded worktree"
+  pass "fm-control relaunch: a usage-limit move switches accounts and rebinds every store"
+}
+
+test_relaunch_account_switch_refuses_an_ineligible_seat_before_stop() {
+  local dir geris meta out rc
+  dir=$(new_case acctrefuse rl44)
+  add_ship_task "$dir" rl44 codex
+  printf 'codex' > "$dir/fake/becomes"
+  meta="$dir/home/state/rl44.meta"
+  geris="$dir/geris-store"
+  mkdir -p "$geris"
+  make_case_accounts_registry "$dir" true "geris:$geris"
+  printf 'account=geris\ncodex_home=%s/codex\n' "$geris" >> "$meta"
+  cp "$meta" "$dir/meta.before"
+
+  out=$(run_control "$dir" rl44 relaunch --account personal --note "move"); rc=$?
+  expect_code 1 "$rc" "an account missing from the registry must refuse"
+  assert_contains "$out" "account 'personal' is not enabled in this home's config/accounts.json" \
+    "the refusal must use the registry wording"
+  jq '.crossAccount.enabled = false' "$dir/home/config/accounts.json" \
+    > "$dir/home/config/accounts.next"
+  mv "$dir/home/config/accounts.next" "$dir/home/config/accounts.json"
+  out=$(run_control "$dir" rl44 relaunch --account geris --note "move"); rc=$?
+  expect_code 1 "$rc" "a disabled crossAccount switch must refuse"
+  assert_contains "$out" "account 'geris' is not enabled in this home's config/accounts.json" \
+    "a disabled switch must refuse with the same wording"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "a refused account move must not stop the agent"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused account move must send nothing"
+  cmp -s "$meta" "$dir/meta.before" \
+    || fail "a refused account move must leave the record untouched"
+  [ ! -e "$dir/home/state/rl44.control-relaunch" ] \
+    || fail "a refused account move must not create a durable journal"
+  pass "fm-control relaunch: an account switch refuses an ineligible seat before the agent is touched"
+}
+
+test_relaunch_without_account_keeps_the_recorded_seat() {
+  local dir geris meta out rc
+  dir=$(new_case acctkeep rl45)
+  add_ship_task "$dir" rl45 codex
+  printf 'codex' > "$dir/fake/becomes"
+  meta="$dir/home/state/rl45.meta"
+  geris="$dir/geris-store"
+  mkdir -p "$geris"
+  make_case_accounts_registry "$dir" true "geris:$geris"
+  printf 'account=geris\nclaude_config_dir=%s/claude\npi_agent_dir=%s/pi\ncodex_home=%s/codex\n' \
+    "$geris" "$geris" "$geris" >> "$meta"
+
+  out=$(run_control "$dir" rl45 relaunch --note "same seat"); rc=$?
+  expect_code 0 "$rc" "a relaunch that omits --account should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" rl45 account)" = geris ] \
+    || fail "an omitted --account must keep the recorded account id"
+  [ "$(meta_field "$dir" rl45 codex_home)" = "$geris/codex" ] \
+    || fail "an omitted --account must keep the recorded store"
+  assert_contains "$(cat "$dir/fake/literal")" "export CODEX_HOME='$geris/codex'" \
+    "an omitted --account must relaunch on the recorded store"
+  pass "fm-control relaunch: an omitted --account keeps the recorded account"
+}
+
+test_relaunch_account_switch_refuses_a_secondmate() {
+  local dir home out rc
+  dir=$(new_case acctsm sm7)
+  home="$dir/home"
+  mkdir -p "$home/config"
+  printf 'claude\n' > "$home/config/secondmate-harness"
+  fm_git_worktree "$dir/proj" "$dir/smhome" sm-acct-branch
+  mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin" "$home/data/sm7"
+  printf 'sm7\n' > "$dir/smhome/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/smhome/AGENTS.md"
+  {
+    echo "window=fmses:fm-sm7"
+    echo "endpoint_task_id=sm7"
+    echo "worktree=$dir/smhome"
+    echo "project=$dir/smhome"
+    echo "harness=claude"
+    echo "kind=secondmate"
+    echo "mode=secondmate"
+    echo "yolo=off"
+    echo "model=default"
+    echo "effort=default"
+    echo "home=$dir/smhome"
+  } > "$home/state/sm7.meta"
+  printf '%s\n' "fm-sm7" > "$dir/fake/windows"
+  printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+  make_case_accounts_registry "$dir" true "geris:$dir/geris-store" "personal:$dir/personal-store"
+
+  out=$(run_control "$dir" sm7 relaunch --account personal); rc=$?
+  expect_code 1 "$rc" "a secondmate relaunch must refuse an account switch"
+  assert_contains "$out" "--account is for workers only" \
+    "the refusal must name the workers-only rule"
+  [ "$(cat "$dir/fake/command")" = claude ] \
+    || fail "a refused secondmate account move must not stop the agent"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused secondmate account move must send nothing"
+  # A direct fm-spawn --relaunch is the already-stopped entry point, so model
+  # the agent as gone before asking the launch owner for its own backstop.
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" sm7 --relaunch --account personal); rc=$?
+  expect_code 1 "$rc" "the launch owner must refuse a secondmate account switch itself"
+  assert_contains "$out" "--account is for workers only" \
+    "fm-spawn owns the same workers-only rule for direct relaunch calls"
+  pass "fm-control relaunch: an account switch is a worker move, never a secondmate one"
+}
+
 test_release_shaping_refuses_before_stopping_anything() {
   local dir out rc store
   dir=$(new_case shaped rl40)
@@ -2329,6 +2476,10 @@ test_missing_instructions_refuse_before_stopping_anything
 test_release_shaping_refuses_before_stopping_anything
 test_relaunch_keeps_the_task_recorded_claude_account
 test_relaunch_keeps_a_personal_task_off_a_work_account
+test_relaunch_switches_the_task_recorded_account
+test_relaunch_account_switch_refuses_an_ineligible_seat_before_stop
+test_relaunch_without_account_keeps_the_recorded_seat
+test_relaunch_account_switch_refuses_a_secondmate
 test_checkpoint_refusal_leaves_the_record_byte_identical
 test_checkpoint_refuses_uninspectable_head_and_status
 test_launch_failure_keeps_the_prior_record_and_reports_it

@@ -536,7 +536,8 @@ Without a declaration the quota-axi label is used (`plan=max (quota-axi)`); if n
 A Pi candidate uses its declared provider's plan, not Pi's harness name.
 Run `bin/fm-account-routing.sh on|off|status` to change or inspect the switch atomically; a home without an explicit switch refuses the toggle.
 Off excludes named-account candidates at the next intake without touching workers already running, and `fm-spawn.sh --account <id>` refuses an unregistered or disabled seat before any home mutation.
-The selected store is pinned per harness (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, or `CODEX_HOME`), and the task record retains all three paths for a relaunch even after routing is switched off.
+`fm-control.sh <task> relaunch --account <id>` moves a running worker onto another allowlisted seat under those same gates, rewriting the task's recorded account and its three store bindings while keeping its worktree, branch, and instructions.
+The selected store is pinned per harness (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, or `CODEX_HOME`), and the task record retains all three paths for a relaunch that does not name a new `--account`, even after routing is switched off.
 Without `--account`, a first Pi or Codex launch records an ambient `PI_CODING_AGENT_DIR` or `CODEX_HOME` and relaunches on it; when none is set, nothing is recorded and the worker keeps inheriting the pane's store as before.
 Quota ranking uses one `quota-axi` snapshot for the default store and one environment-pinned snapshot per distinct named store triple, then compares applicable `spendPriority` across the union without a reserve or quota floor.
 Unmeasurable Team-seat five-hour quota remains disclosed uncertainty, not healthy headroom.
@@ -558,7 +559,7 @@ There is no migration and no merge: homes and their work are left exactly as the
 An unreadable or malformed pin refuses everything, including re-pinning - a home whose recorded account cannot be read is never re-derived from whatever session happens to be running, because that is precisely how a home would drift onto the wrong subscription.
 
 Without an explicit cross-account selection, a worker inherits its home's account rather than the caller's environment.
-`fm-spawn.sh` records the resolved store in the task's own `state/<id>.meta` as `claude_config_dir=`, and every later relaunch launches on that recorded value: a task started on a work account stays there, and a task started on the personal default store keeps that binding, with any inherited `CLAUDE_CONFIG_DIR` actively unset rather than merely omitted.
+`fm-spawn.sh` records the resolved store in the task's own `state/<id>.meta` as `claude_config_dir=`, and every later relaunch launches on that recorded value unless `fm-control.sh relaunch --account <id>` deliberately re-routes the task under the cross-account gates: a task started on a work account stays there, and a task started on the personal default store keeps that binding, with any inherited `CLAUDE_CONFIG_DIR` actively unset rather than merely omitted.
 A second mate is a firstmate home of its own and is seeded with its parent's identity when it is launched, so a second mate and its own workers stay on the account the firstmate that created them belongs to.
 
 ## Claude release shaping (config/claude-shaped-store)

@@ -59,6 +59,7 @@
 #   steering inbox. This never rewrites a project's instruction files or a
 #   secondmate's charter.
 #        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
+#                                            [--account <id>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded worktree, reusing its recorded endpoint when that
 #   endpoint still exists, instead of creating either from scratch. It is
@@ -69,8 +70,10 @@
 #   backend, kind, project or home, worktree, endpoint - comes from the task's
 #   validated state/<id>.meta, so --backend, --scout, --secondmate, a project
 #   positional, and batch pairs are all refused alongside it; only harness,
-#   model, and effort may change, which is what makes a harness switch one
-#   ordinary relaunch. It refuses unless the recorded endpoint is positively
+#   model, effort, and - with --account <id>, under the same cross-account
+#   gates as a fresh spawn - the account may change, which is what makes a
+#   harness switch one ordinary relaunch. It refuses unless the recorded
+#   endpoint is positively
 #   agent-free on a backend with a recovery-grade agent-state classifier (tmux
 #   or herdr), and clears the previous harness's per-task wiring before arming
 #   the new incarnation. Two verdicts are agent-free: a `dead` endpoint is
@@ -96,7 +99,10 @@
 #   Unknown, absent, or disabled registries refuse before home identity pinning.
 #   The three resolved stores are recorded as claude_config_dir=, pi_agent_dir=,
 #   and codex_home= in state/<id>.meta and reused on relaunch even when the
-#   switch is later off; --relaunch cannot change the recorded account.
+#   switch is later off; --relaunch --account <id> instead re-routes the task
+#   onto a different seat under the same gates, rewriting those recorded
+#   fields and the account= line, so a usage-limit move can cross accounts,
+#   while an omitted --account keeps the recorded account.
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
@@ -788,10 +794,6 @@ esac
 # task's own durable record below. Contradicting it on the command line is a
 # refusal rather than a silently-ignored flag.
 if [ "$RELAUNCH" -eq 1 ]; then
-  [ "$ACCOUNT_SET" -eq 0 ] || {
-    echo "error: --relaunch keeps the recorded account; --account cannot override it" >&2
-    exit 1
-  }
   [ "$BACKEND_SET" -eq 0 ] || {
     echo "error: --relaunch reuses the task's recorded backend; --backend cannot override it" >&2
     exit 1
@@ -1495,7 +1497,9 @@ if [ "$RELAUNCH" -ne 1 ]; then
 fi
 
 # Explicit account routing is read-only and fails before the home identity pin or
-# any other durable mutation. Relaunches use the recorded stores, even after off.
+# any other durable mutation. A relaunch passes the same gates here when it
+# names a new account; without one it uses the recorded stores, even after the
+# switch is turned off.
 SPAWN_ACCOUNT_STORES=()
 if [ "$ACCOUNT_SET" -eq 1 ]; then
   [ "$KIND" != secondmate ] || { echo 'error: --account is for workers only' >&2; exit 1; }
@@ -1783,6 +1787,13 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_PRIOR_HARNESS=$(fm_meta_get "$RELAUNCH_META" harness)
   KIND=$(fm_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
+  # A cross-account move is a worker move, exactly as a fresh spawn refuses
+  # --account alongside --secondmate: a secondmate home keeps its parent's
+  # account, and only its own provisioning may staff it.
+  if [ "$ACCOUNT_SET" -eq 1 ] && [ "$KIND" = secondmate ]; then
+    echo 'error: --account is for workers only' >&2
+    exit 1
+  fi
   # A secondmate whose endpoint is gone already has ONE owner for that
   # recovery: the session-start liveness sweep respawns it with
   # `fm-spawn.sh <id> --secondmate`, which stands its home's own workspace back
@@ -3274,7 +3285,10 @@ if [ "$RELAUNCH" -eq 1 ] && [ -n "${RELAUNCH_META:-}" ] && [ -f "$RELAUNCH_META"
   SPAWN_CLAUDE_STORE=$(fm_meta_get "$RELAUNCH_META" claude_config_dir) || SPAWN_CLAUDE_STORE=
   SPAWN_PI_STORE=$(fm_meta_get "$RELAUNCH_META" pi_agent_dir) || SPAWN_PI_STORE=
   SPAWN_CODEX_STORE=$(fm_meta_get "$RELAUNCH_META" codex_home) || SPAWN_CODEX_STORE=
-  ACCOUNT_ARG=$(fm_meta_get "$RELAUNCH_META" account) || ACCOUNT_ARG=
+  # An explicit --account keeps its command-line id and swaps every store below,
+  # so the published record rebinds the task onto the new account; only an
+  # omitted one inherits the recorded account.
+  [ "$ACCOUNT_SET" -eq 1 ] || ACCOUNT_ARG=$(fm_meta_get "$RELAUNCH_META" account) || ACCOUNT_ARG=
 fi
 if [ "$ACCOUNT_SET" -eq 1 ]; then
   SPAWN_CLAUDE_STORE=${SPAWN_ACCOUNT_STORES[0]}
@@ -5171,8 +5185,8 @@ preserve_relaunch_meta() {
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
-  # The task's own Claude credential binding, written once at first launch and
-  # carried forward verbatim by every relaunch. Kept even while the task runs on
+  # The task's own Claude credential binding, carried forward by every relaunch
+  # that does not name a new --account. Kept even while the task runs on
   # another harness, so switching back to claude returns to the same account.
   [ -z "$ACCOUNT_ARG" ] || echo "account=$ACCOUNT_ARG"
   [ -z "$SPAWN_CLAUDE_STORE" ] || echo "claude_config_dir=$SPAWN_CLAUDE_STORE"

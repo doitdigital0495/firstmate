@@ -5,7 +5,8 @@
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
-#                                         [--effort <level>] [--priority <1-99>]
+#                                         [--effort <level>] [--account <id>]
+#                                         [--priority <1-99>]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -49,7 +50,16 @@
 #              SAME worktree - and the same endpoint whenever that endpoint
 #              still exists - on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
-#              of this verb. When the recorded endpoint is instead proven gone -
+#              of this verb. --account <id> additionally moves the task onto
+#              another account in this home's config/accounts.json, under the
+#              same cross-account gates as a fresh spawn (registry valid,
+#              crossAccount.enabled, account allowlisted, worker kinds only);
+#              the task's recorded account and its three store bindings are
+#              rewritten for the replacement, which is how a worker that hit a
+#              subscription usage limit moves seats without losing its
+#              worktree, branch, or instructions. Without --account the
+#              replacement launches on the account recorded for the task.
+#              When the recorded endpoint is instead proven gone -
 #              a Herdr pane or workspace destroyed in churn - the launch owner
 #              re-creates one in that worktree, in the herdr session the record
 #              names, and the task's record rebinds to it; that is how a task
@@ -165,6 +175,7 @@ if ! FM_HOME_IDENTITY_OUT=$("$SCRIPT_DIR/fm-home-identity.sh" ensure 2>&1); then
 fi
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 [ -d "$STATE" ] || {
   echo "error: state dir '$STATE' is missing; fm-control cannot resolve tasks for FM_HOME '$FM_HOME'" >&2
   exit 1
@@ -176,6 +187,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-control-lib.sh
 . "$SCRIPT_DIR/fm-control-lib.sh"
+# shellcheck source=bin/fm-account-lib.sh
+. "$SCRIPT_DIR/fm-account-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
@@ -242,9 +255,11 @@ fi
 NEW_HARNESS=
 NEW_MODEL=
 NEW_EFFORT=
+NEW_ACCOUNT=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+ACCOUNT_SET=0
 NOTE=
 NOTE_SET=0
 PRIORITY=
@@ -259,6 +274,7 @@ for control_arg in "$@"; do
       harness) NEW_HARNESS=$control_arg; HARNESS_SET=1 ;;
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
+      account) NEW_ACCOUNT=$control_arg; ACCOUNT_SET=1 ;;
       priority) PRIORITY=$control_arg; PRIORITY_SET=1 ;;
       note) NOTE=$control_arg; NOTE_SET=1 ;;
       note_file)
@@ -277,6 +293,8 @@ for control_arg in "$@"; do
     --model=*) NEW_MODEL=${control_arg#--model=}; MODEL_SET=1 ;;
     --effort) control_want_value=effort ;;
     --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
+    --account) control_want_value=account ;;
+    --account=*) NEW_ACCOUNT=${control_arg#--account=}; ACCOUNT_SET=1 ;;
     --priority) control_want_value=priority ;;
     --priority=*) PRIORITY=${control_arg#--priority=}; PRIORITY_SET=1 ;;
     --note) control_want_value=note ;;
@@ -297,8 +315,8 @@ fi
 
 if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    && [ "$PRIORITY_SET" = 0 ] \
-    || die "--harness, --model, --effort, --priority, and --note apply to 'relaunch' only"
+    && [ "$PRIORITY_SET" = 0 ] && [ "$ACCOUNT_SET" = 0 ] \
+    || die "--harness, --model, --effort, --account, --priority, and --note apply to 'relaunch' only"
 fi
 if [ "$PRIORITY_SET" = 1 ]; then
   case "$PRIORITY" in
@@ -309,6 +327,7 @@ fi
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
+[ "$ACCOUNT_SET" = 0 ] || [ -n "$NEW_ACCOUNT" ] || die "--account requires a non-empty value"
 case "$NEW_EFFORT" in
   ''|default|low|medium|high|xhigh|max|ultra) ;;
   *) die "--effort must be one of default, low, medium, high, xhigh, max, ultra" ;;
@@ -917,7 +936,7 @@ record_note() {
 
 do_relaunch() {
   local exit_result state note_line admission_out admission_store
-  local -a spawn_args admission_args
+  local -a spawn_args admission_args relaunch_account_stores
 
   require_state_verified_backend relaunch
   resolve_relaunch_profile
@@ -940,6 +959,18 @@ do_relaunch() {
       ;;
   esac
 
+  # A cross-account move passes the same eligibility gates a fresh spawn does,
+  # resolved here so an unknown or disabled seat refuses while the running
+  # agent is still untouched; bin/fm-spawn.sh re-validates at launch and owns
+  # the recorded binding the switch rewrites.
+  relaunch_account_stores=()
+  if [ "$ACCOUNT_SET" = 1 ]; then
+    [ "$KIND" != secondmate ] || die "--account is for workers only"
+    mapfile -t relaunch_account_stores < <(fm_account_stores "$CONFIG/accounts.json" "$NEW_ACCOUNT")
+    [ "${#relaunch_account_stores[@]}" -eq 3 ] \
+      || die "account '$NEW_ACCOUNT' is not enabled in this home's config/accounts.json"
+  fi
+
   if [ -n "$NOTE" ]; then
     note_line="note_file=$NOTE_FILE"
   else
@@ -955,8 +986,11 @@ do_relaunch() {
     [ "$PRIORITY_SET" = 0 ] || admission_args+=(--priority "$PRIORITY")
     # The task's OWN recorded credential binding, never this session's ambient
     # one: the release decision must be about the account the task will actually
-    # relaunch onto (bin/fm-spawn.sh owns that binding).
+    # relaunch onto (bin/fm-spawn.sh owns that binding). An account switch
+    # previews the new seat's store instead, since that is what the replacement
+    # will bill.
     admission_store=$(fm_meta_get "$META" claude_config_dir) || admission_store=
+    [ "$ACCOUNT_SET" = 0 ] || admission_store=${relaunch_account_stores[0]}
     [ -z "$admission_store" ] || admission_args+=(--store "$admission_store")
     if ! admission_out=$("$SCRIPT_DIR/fm-claude-admission.sh" check "${admission_args[@]}" 2>&1); then
       printf '%s\n' "$admission_out" >&2
@@ -982,6 +1016,7 @@ do_relaunch() {
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
+  [ "$ACCOUNT_SET" = 0 ] || spawn_args+=(--account "$NEW_ACCOUNT")
   [ "$PRIORITY_SET" = 0 ] || spawn_args+=(--priority "$PRIORITY")
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
