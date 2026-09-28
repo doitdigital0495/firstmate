@@ -592,7 +592,7 @@ test_deploy_poll_verdicts() {
   [ "$out" = "deploy RED: https://github.com/o/r/pull/7 merge commit 01234567: CI=GREEN (success, workflow 11); Deploy=RED (failure, workflow 12); Vercel Preview Comments=SKIPPED (skipped, check 22); Vercel=GREEN (success)" ] \
     || fail "a red deploy was not reported per run, or a scheduled run or Actions job leaked in: $out"
   out=$(FM_DEPLOY_WATCH_LIST_MAX=2 deploy_poll "$dir" 7)
-  [ "$out" = "deploy RED: https://github.com/o/r/pull/7 merge commit 01234567: Deploy=RED (failure, workflow 12); 3 more GREEN or SKIPPED" ] \
+  [ "$out" = "deploy RED: https://github.com/o/r/pull/7 merge commit 01234567: Deploy=RED (failure, workflow 12); 3 more GREEN, SKIPPED or SUPERSEDED" ] \
     || fail "a long run list did not collapse to the runs that are not green: $out"
 
   write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$DEPLOY_OLD" \
@@ -615,6 +615,20 @@ test_deploy_poll_verdicts() {
   out=$(deploy_poll "$dir" 7)
   [ "$out" = "deploy UNFINISHED: https://github.com/o/r/pull/7 merge commit 01234567: Deploy=PENDING (in_progress, workflow 12); Vercel=PENDING (pending)" ] \
     || fail "runs still pending at the cap did not end the watch: $out"
+
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$now_iso" \
+    '[{"name":"Deploy","event":"push","status":"completed","conclusion":"failure","id":12},{"name":"Hung","event":"push","status":"queued","conclusion":null,"id":14}]' '[]' '[]'
+  out=$(deploy_poll "$dir" 7)
+  [ -z "$out" ] || fail "a red verdict was reported inside the grace window: $out"
+  out=$(FM_DEPLOY_WATCH_GRACE_SECS=0 deploy_poll "$dir" 7)
+  [ "$out" = "deploy RED: https://github.com/o/r/pull/7 merge commit 01234567: Deploy=RED (failure, workflow 12); Hung=PENDING (queued, workflow 14)" ] \
+    || fail "a red run waited on an unrelated pending run after grace: $out"
+
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$DEPLOY_OLD" \
+    '[{"name":"Deploy","event":"push","status":"completed","conclusion":"cancelled","id":12},{"name":"Old","event":"push","status":"completed","conclusion":"stale","id":15}]' '[]' "$DEPLOY_STATUS"
+  out=$(deploy_poll "$dir" 7)
+  [ "$out" = "deploy GREEN: https://github.com/o/r/pull/7 merge commit 01234567: Deploy=SUPERSEDED (cancelled, workflow 12); Old=SUPERSEDED (stale, workflow 15); Vercel=GREEN (success)" ] \
+    || fail "a cancelled or stale run was not reported as superseded: $out"
 
   write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$now_iso" '[]' '[]' '[]'
   out=$(deploy_poll "$dir" 7)

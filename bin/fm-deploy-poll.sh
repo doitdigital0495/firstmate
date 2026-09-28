@@ -14,17 +14,20 @@
 #
 # It prints at most one line and stays silent while the watch should continue,
 # including on every read failure before the cap. Each run is spelled out as
-# name=GREEN, name=RED, name=SKIPPED, or name=PENDING with the forge's own
-# result in parentheses. The terminal lines, all ending the watch:
+# name=GREEN, name=RED, name=SKIPPED, name=SUPERSEDED, or name=PENDING with the
+# forge's own result in parentheses; a cancelled or stale run is SUPERSEDED, not
+# RED, because a newer merge's deploy cancelling it is routine. The terminal
+# lines, all ending the watch:
 #   deploy RED: <url> merge commit <sha8>: <runs>        any run failed
-#   deploy GREEN: <url> merge commit <sha8>: <runs>      every run passed or skipped
+#   deploy GREEN: <url> merge commit <sha8>: <runs>      no run failed or is pending
 #   deploy UNFINISHED: <url> merge commit <sha8>: <runs> the cap passed with runs pending
 #   deploy UNREAD: <url>: <why>                          the cap passed with nothing readable
 #   deploy none: <url>: <why>                            no runs appeared by the cap
 # The first four wake firstmate once; "deploy none" ends the watch quietly.
 # A verdict waits until FM_DEPLOY_WATCH_GRACE_SECS (default 600) have passed
-# since the merge, so a deploy a finished workflow triggers is not missed, and
-# nothing waits past FM_DEPLOY_WATCH_CAP_SECS (default 7200). Both are measured
+# since the merge, so a deploy a finished workflow triggers is not missed; a RED
+# verdict is then reported at once, runs still pending included, and
+# nothing else waits past FM_DEPLOY_WATCH_CAP_SECS (default 7200). Both are measured
 # from the forge's merge time, or from <armed-epoch> when that is unreadable.
 set -u
 LC_ALL=C
@@ -130,6 +133,7 @@ while IFS=$'\t' read -r kind name status result id; do
         case "$result" in
           success) outcome=GREEN ;;
           neutral|skipped) outcome=SKIPPED ;;
+          cancelled|stale) outcome=SUPERSEDED ;;
           *) outcome=RED ;;
         esac
         [ "$result" != - ] || result=no-result
@@ -146,7 +150,7 @@ while IFS=$'\t' read -r kind name status result id; do
     *) green=$((green + 1)) ;;
   esac
   verdicts="$verdicts$name=$outcome ($detail$ref); "
-  [ "$outcome" = GREEN ] || [ "$outcome" = SKIPPED ] \
+  [ "$outcome" = GREEN ] || [ "$outcome" = SKIPPED ] || [ "$outcome" = SUPERSEDED ] \
     || flagged="$flagged$name=$outcome ($detail$ref); "
 done << RUNS_EOF
 $workflow_rows
@@ -160,7 +164,7 @@ if [ "$total" -eq 0 ]; then
       "$url" "${sha:0:8}" "$cap"
   exit 0
 fi
-if [ "$pending" -gt 0 ] && [ "$age" -lt "$cap" ]; then
+if [ "$pending" -gt 0 ] && [ "$red" -eq 0 ] && [ "$age" -lt "$cap" ]; then
   exit 0
 fi
 [ "$age" -ge "$grace" ] || exit 0
@@ -179,7 +183,7 @@ case "$list_max" in
   ''|*[!0-9]*) list_max=12 ;;
 esac
 if [ "$total" -gt "$list_max" ]; then
-  verdicts="$flagged$green more GREEN or SKIPPED; "
+  verdicts="$flagged$green more GREEN, SKIPPED or SUPERSEDED; "
 fi
 printf 'deploy %s: %s merge commit %s: %s\n' "$headline" "$url" "${sha:0:8}" "${verdicts%; }"
 exit 0
