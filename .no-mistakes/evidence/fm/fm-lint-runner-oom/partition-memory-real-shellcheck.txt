@@ -1,0 +1,7 @@
+partition 1of4 (FM_LINT_JOBS=2 exported): exit=0 wall=256s max_concurrent_shellcheck=3 peak_combined_shellcheck_RSS=12.04GB largest_single_process_maxRSS=12.04GB
+partition 2of4 (FM_LINT_JOBS=2 exported): exit=0 wall=339s max_concurrent_shellcheck=1 peak_combined_shellcheck_RSS=8.25GB largest_single_process_maxRSS=8.25GB
+partition 3of4 (FM_LINT_JOBS=2 exported): exit=0 wall=275s max_concurrent_shellcheck=1 peak_combined_shellcheck_RSS=5.96GB largest_single_process_maxRSS=5.96GB
+partition 4of4 (FM_LINT_JOBS=2 exported): exit=0 wall=165s max_concurrent_shellcheck=2 peak_combined_shellcheck_RSS=3.77GB largest_single_process_maxRSS=3.77GB
+DONE
+## scoped overlap check, partition 4of4, FM_LINT_JOBS=2 exported
+distinct shellcheck pids in this worktree: 2  overlapping pairs: 0

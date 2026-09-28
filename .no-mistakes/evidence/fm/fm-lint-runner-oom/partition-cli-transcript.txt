@@ -1,0 +1,27 @@
+## Partition inventory (CI=false local branch)
+1of4 rc=0 roots=107 bytes=3538791
+2of4 rc=0 roots=107 bytes=3538869
+3of4 rc=0 roots=107 bytes=3539010
+4of4 rc=0 roots=108 bytes=3538948
+full inventory roots=429  union roots=429  unique=429
+UNION == FULL INVENTORY, no duplicates
+
+## Refusals
+--partition 0of4 -> rc=2 : fm-lint.sh: --partition must be <k>of4 with k from 1 to 4, got 0of4.
+--partition 5of4 -> rc=2 : fm-lint.sh: --partition must be <k>of4 with k from 1 to 4, got 5of4.
+--partition 10of4 -> rc=2 : fm-lint.sh: --partition must be <k>of4 with k from 1 to 4, got 10of4.
+--partition 1of2 -> rc=2 : fm-lint.sh: --partition must be <k>of4 with k from 1 to 4, got 1of2.
+--partition 2of2 -> rc=2 : fm-lint.sh: --partition must be <k>of4 with k from 1 to 4, got 2of2.
+--partition 1of3 -> rc=2 : fm-lint.sh: --partition must be <k>of4 with k from 1 to 4, got 1of3.
+--partition abc -> rc=2 : fm-lint.sh: --partition must be <k>of4 with k from 1 to 4, got abc.
+--partition (no arg) -> rc=2 : fm-lint.sh: --partition requires <k>of4.
+--partition 1of4 --fast -> rc=2 : fm-lint.sh: --partition requires full canonical lint; omit --fast and explicit paths.
+--partition 1of4 <path> -> rc=2 : fm-lint.sh: --partition requires full canonical lint; omit --fast and explicit paths.
+
+## CI workflow matrix (parsed with python yaml)
+lint Lint ${{ matrix.partition }} {'partition': [1, 2, 3, 4]}
+run: set -eu
+mkdir -p "$RUNNER_TEMP/fm-lint"
+bin/fm-lint.sh --partition "${{ matrix.partition }}of${{ strategy.job-total }}" \
+  --telemetry "$RUNNER_TEMP/fm-lint/partition-${{ matrix.partition }}.tsv"
+
