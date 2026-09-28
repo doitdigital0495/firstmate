@@ -1,0 +1,10 @@
+== C: default-pinned home, no --account, no ambient store
+spawn exit=0 ; output tail:
+admitted: advdefault (store /tmp/fm-claude-trust.yYoYeI/adv-c/home/user-home/.claude is not shaped by this home)
+spawned advdefault harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-advdefault worktree=/tmp/fm-claude-trust.yYoYeI/adv-c/wt
+home pin: fm-home-identity-v1 herdr_session=default claude_config_dir=default 
+launch: export COMPACT_ADVISER_DISABLE=1; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u CLAUDE_CONFIG_DIR CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_
+default store ($HOME/.claude.json) trusted paths:
+/tmp/fm-claude-trust.yYoYeI/adv-c/wt
+/tmp/fm-claude-trust.yYoYeI/adv-c/project
+expected wt: /tmp/fm-claude-trust.yYoYeI/adv-c/wt

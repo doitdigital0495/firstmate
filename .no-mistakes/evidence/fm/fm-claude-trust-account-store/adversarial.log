@@ -1,0 +1,45 @@
+ok - fm-claude-trust.sh: a fresh task worktree is trusted
+ok - fm-claude-trust.sh: a fresh registration trusts the project root without manufacturing import consent
+ok - fm-claude-trust.sh: carries forward a project's already-granted import consent to the worktree entry
+ok - fm-claude-trust.sh: preserves unrelated keys on the project-root entry
+ok - fm-claude-trust.sh: refuses to override a project's declined external-imports consent
+ok - fm-claude-trust.sh: a never-asked default external-imports pair is not treated as a decline
+ok - fm-claude-trust.sh: repeat registration is idempotent
+ok - fm-claude-trust.sh: refuses the primary checkout
+ok - fm-claude-trust.sh: an exported CDPATH cannot defeat the scope refusal
+ok - fm-claude-trust.sh: inherited git environment overrides cannot defeat the scope refusal
+ok - fm-claude-trust.sh: refuses a home directory the git checks would accept
+ok - fm-claude-trust.sh: refuses the Claude config directory
+ok - fm-claude-trust.sh: refuses a relative CLAUDE_CONFIG_DIR
+ok - fm-claude-trust.sh: refuses a directory that is not a git worktree
+ok - fm-claude-trust.sh: refuses a path that does not exist
+ok - fm-claude-trust.sh: refuses a worktree belonging to another project
+ok - fm-claude-trust.sh: refuses a subdirectory of the worktree
+ok - fm-claude-trust.sh: a project argument that is itself a linked worktree resolves to the primary checkout
+ok - fm-claude-trust.sh: preserves unrelated store content
+ok - fm-claude-trust.sh: refuses a store symlinked to another user's file
+ok - fm-claude-trust.sh: follows a store symlink to this user's own file and leaves the link intact
+== A: --account store vs ambient CLAUDE_CONFIG_DIR
+spawn exit=0 ; output tail:
+warning: /tmp/fm-claude-trust.Z4ytIC/adv-a/home/data/advacct/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+admitted: advacct (store /tmp/fm-claude-trust.Z4ytIC/adv-a/acct-claude is not shaped by this home)
+spawned advacct harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-advacct worktree=/tmp/fm-claude-trust.Z4ytIC/adv-a/wt
+launch: export COMPACT_ADVISER_DISABLE=1; CLAUDE_CONFIG_DIR='/tmp/fm-claude-trust.Z4ytIC/adv-a/acct-claude' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CL
+account store trusted paths:
+/tmp/fm-claude-trust.Z4ytIC/adv-a/wt
+/tmp/fm-claude-trust.Z4ytIC/adv-a/project
+ambient store trusted paths:
+default store trusted paths:
+expected wt: /tmp/fm-claude-trust.Z4ytIC/adv-a/wt
+== B: default-pinned home vs ambient CLAUDE_CONFIG_DIR
+spawn exit=0 ; output tail:
+warning: /tmp/fm-claude-trust.Z4ytIC/adv-b/home/data/advdef/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+admitted: advdef (store /tmp/fm-claude-trust.Z4ytIC/adv-b/ambient is not shaped by this home)
+spawned advdef harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-advdef worktree=/tmp/fm-claude-trust.Z4ytIC/adv-b/wt
+home pin: fm-home-identity-v1 herdr_session=default claude_config_dir=/tmp/fm-claude-trust.Z4ytIC/adv-b/ambient 
+launch: export COMPACT_ADVISER_DISABLE=1; CLAUDE_CONFIG_DIR='/tmp/fm-claude-trust.Z4ytIC/adv-b/ambient' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE
+ambient store trusted paths:
+/tmp/fm-claude-trust.Z4ytIC/adv-b/wt
+/tmp/fm-claude-trust.Z4ytIC/adv-b/project
+default store trusted paths:
+expected wt: /tmp/fm-claude-trust.Z4ytIC/adv-b/wt
