@@ -1,0 +1,40 @@
+           `*+*_:~____~;/^daan@Workstation:~/.treehouse/proj-7cf196/1/proj$ export GOTMPDIR=/tmp/fm-xa1/gotmp
+daan@Workstation:~/.treehouse/proj-7cf196/1/proj$ export COMPACT_ADVISER_DISABLE=1
+daan@Workstation:~/.treehouse/proj-7cf196/1/proj$ export FM_TASK_ID=xa1
+daan@Workstation:~/.treehouse/proj-7cf196/1/proj$ . '/tmp/fm-xa1+e1091ce1c64f07705f22457b99ee646a11aee6551aa3fb943ed63f4
+a9f64df0e/launch.s1790597947.18844.22409.sh'
+WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary di
+r "/tmp" (codex_home: AbsolutePathBuf("/tmp/fm-xacct-live.jq9yWt/stores/personal/codex"))
+
+             _.=;++====,_
+         _+,/\||+|"==|;_^|*+_
+       ,;/*;|*""`   `"~!**+/^|,
+      /+/\|;,+_          `=*!||\
+     '/*|/^/||*\_           \^\||_
+    /|\\/  .,|\;\\           | \\|
+    =* |    '*\|_"|,          .*/|,
+   ,-|,|     ,-|"/\|          ~_|=|
+    -"'|    ;|*+~|*-~=++___++_~^";|
+    ,\:\, ./*/;;| |*|__,!=.,;\`|\|`
+    '^| | "||+,"   "***"""**,///,/
+     '*~ \+ `              /^+^//
+       =^//*\,          ,+;/",|'
+         =^+,_**^=;=;,:=*;`_+"
+           `*+*_:~____~;/^"
+
+
+  Welcome to Codex, OpenAI's command-line coding agent
+
+  Sign in with ChatGPT to use Codex as part of your paid plan
+  or connect an API key for usage-based billing
+
+> 1. Sign in with ChatGPT
+     Usage included with Plus, Pro, Business, and Enterprise plans
+
+  2. Sign in with Device Code
+     Sign in from another device with a one-time code
+
+  3. Provide your own API key
+     Pay for what you use
+
+  Press enter to continue

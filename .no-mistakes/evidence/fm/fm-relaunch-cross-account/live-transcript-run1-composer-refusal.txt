@@ -1,0 +1,58 @@
+lab session: fm-lab-xacct-relaunch-4098574-5302
+== 1. fresh spawn on account geris (harness codex)
+warning: /tmp/fm-xacct-live.Fq9p8d/home/data/xa1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: xa1 ships mode=local-only while the standing posture for proj is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned xa1 harness=codex kind=ship mode=local-only yolo=off window=fm-lab-xacct-relaunch-4098574-5302:w1:p2 worktree=/home/daan/.treehouse/proj-a4eeb9/1/proj
+spawn rc=0
+worktree=/home/daan/.treehouse/proj-a4eeb9/1/proj
+harness=codex
+account=geris
+claude_config_dir=/tmp/fm-xacct-live.Fq9p8d/stores/geris/claude
+pi_agent_dir=/tmp/fm-xacct-live.Fq9p8d/stores/geris/pi
+codex_home=/tmp/fm-xacct-live.Fq9p8d/stores/geris/codex
+herdr_pane_id=w1:p2
+live codex process env:
+pid 4106982 CODEX_HOME=/tmp/fm-xacct-live.Fq9p8d/stores/geris/codex
+pid 4107051 CODEX_HOME=/tmp/fm-xacct-live.Fq9p8d/stores/geris/codex
+== 2. adversarial: unlisted seat refuses before the agent is touched
+error: account 'nosuch' is not enabled in this home's config/accounts.json
+rc=1
+meta unchanged: yes
+codex still alive on geris:
+pid 4106982 CODEX_HOME=/tmp/fm-xacct-live.Fq9p8d/stores/geris/codex
+pid 4107051 CODEX_HOME=/tmp/fm-xacct-live.Fq9p8d/stores/geris/codex
+== 3. adversarial: --account on a non-relaunch verb is refused
+error: --harness, --model, --effort, --account, --priority, and --note apply to 'relaunch' only
+rc=1
+== 4. cross-account relaunch geris -> personal
+error: task xa1's composer state is 'unknown', not proven empty; refusing to type the /quit exit command because it could concatenate onto existing text. Clear the composer, then retry 'relaunch'
+error: relaunch of xa1 failed while stopping the old agent, which is still running; its original instructions were restored
+relaunch rc=1
+worktree=/home/daan/.treehouse/proj-a4eeb9/1/proj
+harness=codex
+account=geris
+claude_config_dir=/tmp/fm-xacct-live.Fq9p8d/stores/geris/claude
+pi_agent_dir=/tmp/fm-xacct-live.Fq9p8d/stores/geris/pi
+codex_home=/tmp/fm-xacct-live.Fq9p8d/stores/geris/codex
+herdr_pane_id=w1:p2
+live codex process env:
+pid 4106982 CODEX_HOME=/tmp/fm-xacct-live.Fq9p8d/stores/geris/codex
+pid 4107051 CODEX_HOME=/tmp/fm-xacct-live.Fq9p8d/stores/geris/codex
+== 5. relaunch without --account keeps the (new) recorded seat
+error: task xa1's composer state is 'unknown', not proven empty; refusing to type the /quit exit command because it could concatenate onto existing text. Clear the composer, then retry 'relaunch'
+error: relaunch of xa1 failed while stopping the old agent, which is still running; its original instructions were restored
+relaunch rc=1
+account=geris
+codex_home=/tmp/fm-xacct-live.Fq9p8d/stores/geris/codex
+live codex process env:
+pid 4106982 CODEX_HOME=/tmp/fm-xacct-live.Fq9p8d/stores/geris/codex
+pid 4107051 CODEX_HOME=/tmp/fm-xacct-live.Fq9p8d/stores/geris/codex
+== 6. crossAccount disabled: switch back refuses, agent untouched
+error: account 'geris' is not enabled in this home's config/accounts.json
+rc=1
+meta unchanged: yes
+pid 4106982 CODEX_HOME=/tmp/fm-xacct-live.Fq9p8d/stores/geris/codex
+pid 4107051 CODEX_HOME=/tmp/fm-xacct-live.Fq9p8d/stores/geris/codex
+== teardown worker
+fm-teardown rc=0
+teardown rc=0

@@ -1,0 +1,64 @@
+lab session: fm-lab-xacct-relaunch-4192430-29632
+== 1. fresh spawn on account geris (harness codex)
+warning: /tmp/fm-xacct-live.jq9yWt/home/data/xa1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: xa1 ships mode=local-only while the standing posture for proj is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+spawned xa1 harness=codex kind=ship mode=local-only yolo=off window=fm-lab-xacct-relaunch-4192430-29632:w1:p2 worktree=/home/daan/.treehouse/proj-7cf196/1/proj
+spawn rc=0
+worktree=/home/daan/.treehouse/proj-7cf196/1/proj
+harness=codex
+account=geris
+claude_config_dir=/tmp/fm-xacct-live.jq9yWt/stores/geris/claude
+pi_agent_dir=/tmp/fm-xacct-live.jq9yWt/stores/geris/pi
+codex_home=/tmp/fm-xacct-live.jq9yWt/stores/geris/codex
+herdr_pane_id=w1:p2
+live codex process env:
+pid 5722 CODEX_HOME=/tmp/fm-xacct-live.jq9yWt/stores/geris/codex
+pid 5750 CODEX_HOME=/tmp/fm-xacct-live.jq9yWt/stores/geris/codex
+== 2. adversarial: unlisted seat refuses before the agent is touched
+error: account 'nosuch' is not enabled in this home's config/accounts.json
+rc=1
+meta unchanged: yes
+codex still alive on geris:
+pid 5722 CODEX_HOME=/tmp/fm-xacct-live.jq9yWt/stores/geris/codex
+pid 5750 CODEX_HOME=/tmp/fm-xacct-live.jq9yWt/stores/geris/codex
+== 3. adversarial: --account on a non-relaunch verb is refused
+error: --harness, --model, --effort, --account, --priority, and --note apply to 'relaunch' only
+rc=1
+codex after kill:
+(end)
+== 4. cross-account relaunch geris -> personal
+warning: /tmp/fm-xacct-live.jq9yWt/home/data/xa1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: xa1 ships mode=local-only while the standing posture for proj is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+relaunched xa1 harness=codex from=codex model=default effort=default backend=herdr endpoint=fm-lab-xacct-relaunch-4192430-29632:w1:p2 worktree=/home/daan/.treehouse/proj-7cf196/1/proj
+relaunch rc=0
+worktree=/home/daan/.treehouse/proj-7cf196/1/proj
+harness=codex
+account=personal
+claude_config_dir=/tmp/fm-xacct-live.jq9yWt/stores/personal/claude
+pi_agent_dir=/tmp/fm-xacct-live.jq9yWt/stores/personal/pi
+codex_home=/tmp/fm-xacct-live.jq9yWt/stores/personal/codex
+herdr_pane_id=w1:p2
+live codex process env:
+pid 23743 CODEX_HOME=/tmp/fm-xacct-live.jq9yWt/stores/personal/codex
+pid 23831 CODEX_HOME=/tmp/fm-xacct-live.jq9yWt/stores/personal/codex
+codex after kill:
+(end)
+== 5. relaunch without --account keeps the (new) recorded seat
+warning: /tmp/fm-xacct-live.jq9yWt/home/data/xa1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: xa1 ships mode=local-only while the standing posture for proj is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+relaunched xa1 harness=codex from=codex model=default effort=default backend=herdr endpoint=fm-lab-xacct-relaunch-4192430-29632:w1:p2 worktree=/home/daan/.treehouse/proj-7cf196/1/proj
+relaunch rc=0
+account=personal
+codex_home=/tmp/fm-xacct-live.jq9yWt/stores/personal/codex
+live codex process env:
+pid 52896 CODEX_HOME=/tmp/fm-xacct-live.jq9yWt/stores/personal/codex
+pid 52922 CODEX_HOME=/tmp/fm-xacct-live.jq9yWt/stores/personal/codex
+== 6. crossAccount disabled: switch back refuses, agent untouched
+error: account 'geris' is not enabled in this home's config/accounts.json
+rc=1
+meta unchanged: yes
+pid 52896 CODEX_HOME=/tmp/fm-xacct-live.jq9yWt/stores/personal/codex
+pid 52922 CODEX_HOME=/tmp/fm-xacct-live.jq9yWt/stores/personal/codex
+== teardown worker
+fm-teardown rc=0
+teardown rc=0
