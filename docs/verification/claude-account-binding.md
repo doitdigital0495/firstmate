@@ -66,6 +66,7 @@ A session counts as live committed demand only when its park is the last decisiv
 | A pre-store poll refusal that clears and later recurs wakes firstmate again | `tests/fm-claude-admission.test.sh` |
 | A worker records and launches on its home's account | `tests/fm-home-identity.test.sh` |
 | A relaunch keeps the task's own recorded account, in both directions | `tests/fm-control-relaunch.test.sh` |
+| A worker relaunch with `--account` moves it onto another allowlisted seat and rebinds every store, an ineligible seat refuses before the agent is touched, and a second mate is never moved | `tests/fm-control-relaunch.test.sh` |
 | A relaunch that is not released yet refuses before the agent is stopped | `tests/fm-control-relaunch.test.sh` |
 | A lab anchors to running named sessions while `default` is stopped | `tests/fm-herdr-lab.test.sh` |
 | A change to any live session during lab work is a hard tripwire failure | `tests/fm-herdr-lab.test.sh` |
