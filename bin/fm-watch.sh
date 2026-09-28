@@ -2510,6 +2510,39 @@ EOF
       fi
       pr_poll_control_release || exit 1
     done
+    # Deploy watches armed by recorded GitHub merges outlive their task, so
+    # they are swept here rather than as task checks. bin/fm-deploy-poll.sh's
+    # header owns the output contract; a terminal line wakes once, except
+    # "deploy none", which retires the watch quietly.
+    for deploy_watch in "$STATE"/*.deploy-watch; do
+      [ -e "$deploy_watch" ] || [ -L "$deploy_watch" ] || continue
+      id=$(basename "$deploy_watch" .deploy-watch)
+      if ! fm_pr_task_id_valid "$id" || ! fm_deploy_watch_read "$deploy_watch"; then
+        rm -f "$deploy_watch"
+        triage_log "removed unreadable deploy watch $deploy_watch"
+        continue
+      fi
+      deploy_url=$FM_DEPLOY_WATCH_URL
+      deploy_armed=$FM_DEPLOY_WATCH_ARMED
+      run_check_capture "$SCRIPT_DIR/fm-deploy-poll.sh" "$deploy_url" "$deploy_armed" || exit 1
+      out=$FM_CHECK_RESULT
+      case "$out" in
+        'deploy none: '*)
+          fm_deploy_watch_retire "$deploy_watch" "$deploy_url" "$deploy_armed"
+          triage_log "deploy watch for $id ended quietly: $out"
+          continue
+          ;;
+        'deploy RED: '*|'deploy GREEN: '*|'deploy UNFINISHED: '*|'deploy UNREAD: '*)
+          case "$out" in *$'\n'*) continue ;; esac
+          ;;
+        *) continue ;;
+      esac
+      reason="check: $id $out"
+      fm_wake_append check "deploy-$id-$deploy_url" "$reason" || exit 1
+      fm_deploy_watch_retire "$deploy_watch" "$deploy_url" "$deploy_armed"
+      touch "$STATE/.last-check"
+      wake "$reason"
+    done
     if [ -n "$rejected_checks" ]; then
       reason="check: rejected unauthenticated state checks:$rejected_checks"
       fm_wake_append check unauthenticated-state-checks "$reason" || exit 1
