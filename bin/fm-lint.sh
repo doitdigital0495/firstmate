@@ -52,8 +52,9 @@
 # Partition mode always runs one ShellCheck process at a time because
 # source-aware ShellCheck memory does not track root bytes: one heavy root
 # alone can need about 12 GB, so two concurrent workers can exceed a 16 GB CI
-# runner. Its peak is therefore the heaviest single worker, not a sum. Each partition also runs workflow
-# lint and backend-purity checks, keeping either invocation independently useful.
+# runner. Its peak is therefore the heaviest single worker, not a sum, and
+# --jobs/FM_LINT_JOBS do not apply. Each partition also runs workflow lint and
+# backend-purity checks, keeping either invocation independently useful.
 #
 # Optional quiet telemetry writes one bounded TSV snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
