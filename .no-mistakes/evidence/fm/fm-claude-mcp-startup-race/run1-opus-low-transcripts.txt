@@ -1,0 +1,12 @@
+# run1 opus/low, 15s MCP startup, pre-fix (--tools Read,Bash)
+2026-09-28T09:08:55.418Z  attachment  {"pendingMcpServers":["task-only-marker"],"toolSearchAbsent":true}
+2026-09-28T09:08:57.393Z  assistant  thinking
+2026-09-28T09:08:57.981Z  assistant  text MCP_UNAVAILABLE
+
+# run1 opus/low, 15s MCP startup, post-fix (--tools Read,Bash,ToolSearch)
+2026-09-28T09:08:55.431Z  attachment  {"pendingMcpServers":["task-only-marker"],"toolSearchAbsent":null}
+2026-09-28T09:08:57.330Z  assistant  tool_use ToolSearch {"query":"+task-only-marker ping","max_results":3}
+2026-09-28T09:09:02.365Z  user  tool_result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:09:03.577Z  assistant  tool_use ToolSearch {"query":"ping","max_results":3}
+2026-09-28T09:09:08.610Z  user  tool_result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:09:09.373Z  assistant  text MCP_UNAVAILABLE

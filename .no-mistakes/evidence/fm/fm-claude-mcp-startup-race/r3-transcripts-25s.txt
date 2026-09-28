@@ -1,0 +1,52 @@
+# bf3d3825-8f28-4436-bbb0-33f45e867d6f.jsonl start=2026-09-28T09:25:23.681Z "effort":"low" server=25s
+2026-09-28T09:25:25.641Z	assistant	use ToolSearch {"query":"+task-only-marker ping","max_results":3}
+2026-09-28T09:25:30.671Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:25:31.908Z	assistant	use ToolSearch {"query":"+task-only-marker ping","max_results":3}
+2026-09-28T09:25:36.932Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:25:38.327Z	assistant	use ToolSearch {"query":"select:mcp__task-only-marker__ping","max_results":3}
+2026-09-28T09:25:43.358Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:25:45.155Z	assistant	use ToolSearch {"query":"ping","max_results":3}
+2026-09-28T09:25:48.730Z	user	result [{"type":"tool_reference","tool_name":"mcp__task-only-marker__ping"}]
+2026-09-28T09:25:50.098Z	assistant	use mcp__task-only-marker__ping {}
+2026-09-28T09:25:50.113Z	user	result [{"type":"text","text":"MCP_PROVED"}]
+2026-09-28T09:25:51.147Z	assistant	text MCP_PROVED
+
+# e808884c-f4f6-4929-8fc7-26cb4c78d114.jsonl start=2026-09-28T09:25:23.461Z "effort":"medium" server=25s
+2026-09-28T09:25:25.371Z	assistant	use ToolSearch {"query":"+task-only-marker ping","max_results":5}
+2026-09-28T09:25:30.396Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:25:31.691Z	assistant	use ToolSearch {"query":"ping","max_results":5}
+2026-09-28T09:25:36.737Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:25:38.097Z	assistant	use ToolSearch {"query":"select:mcp__task-only-marker__ping","max_results":5}
+2026-09-28T09:25:43.126Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:25:45.135Z	assistant	use ToolSearch {"query":"task-only-marker","max_results":5}
+2026-09-28T09:25:48.502Z	user	result [{"type":"tool_reference","tool_name":"mcp__task-only-marker__ping"}]
+2026-09-28T09:25:49.922Z	assistant	use mcp__task-only-marker__ping {}
+2026-09-28T09:25:49.934Z	user	result [{"type":"text","text":"MCP_PROVED"}]
+2026-09-28T09:25:51.080Z	assistant	text MCP_PROVED
+
+# 12d1165e-3f5e-41b9-9285-303d902c99c0.jsonl start=2026-09-28T09:26:22.382Z "effort":"low" server=25s
+2026-09-28T09:26:25.206Z	assistant	use ToolSearch {"query":"+task-only-marker ping","max_results":5}
+2026-09-28T09:26:30.232Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:26:32.136Z	assistant	use ToolSearch {"query":"+task-only-marker ping","max_results":5}
+2026-09-28T09:26:37.169Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:26:38.882Z	assistant	use ToolSearch {"query":"ping","max_results":5}
+2026-09-28T09:26:43.909Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:26:45.872Z	assistant	use ToolSearch {"query":"select:mcp__task-only-marker__ping","max_results":5}
+2026-09-28T09:26:47.433Z	user	result [{"type":"tool_reference","tool_name":"mcp__task-only-marker__ping"}]
+2026-09-28T09:26:48.778Z	assistant	use mcp__task-only-marker__ping {}
+2026-09-28T09:26:48.794Z	user	result [{"type":"text","text":"MCP_PROVED"}]
+2026-09-28T09:26:49.832Z	assistant	text MCP_PROVED
+
+# 8c67bf10-3c52-40c6-80c7-4cb88bee9e34.jsonl start=2026-09-28T09:26:22.322Z "effort":"low" server=25s
+2026-09-28T09:26:24.446Z	assistant	use ToolSearch {"query":"+task-only-marker ping","max_results":5}
+2026-09-28T09:26:29.474Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:26:30.812Z	assistant	use ToolSearch {"query":"+task-only-marker ping","max_results":5}
+2026-09-28T09:26:35.851Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:26:37.100Z	assistant	use ToolSearch {"query":"select:mcp__task-only-marker__ping","max_results":5}
+2026-09-28T09:26:42.128Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:26:44.143Z	assistant	use ToolSearch {"query":"ping","max_results":5}
+2026-09-28T09:26:47.365Z	user	result [{"type":"tool_reference","tool_name":"mcp__task-only-marker__ping"}]
+2026-09-28T09:26:48.818Z	assistant	use mcp__task-only-marker__ping {}
+2026-09-28T09:26:48.832Z	user	result [{"type":"text","text":"MCP_PROVED"}]
+2026-09-28T09:26:49.880Z	assistant	text MCP_PROVED
+

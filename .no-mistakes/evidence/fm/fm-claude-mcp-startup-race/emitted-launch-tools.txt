@@ -1,0 +1,3 @@
+== fm-spawn emitted launch (base): --tools Read,Bash --mcp-config '/tmp/fm-mcp-lab-nm/task-mcp-15.json'
+== fm-spawn emitted launch (fix): --tools Read,Bash,ToolSearch --mcp-config '/tmp/fm-mcp-lab-nm/task-mcp-15.json'
+== fm-spawn emitted launch (nomcp): --tools Read,Bash 

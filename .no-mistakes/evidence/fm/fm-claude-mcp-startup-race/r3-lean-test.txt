@@ -1,0 +1,12 @@
+ok - Claude ship excludes discovered settings, tools and skills but retains Firstmate hooks and contract
+ok - Claude scout gets only read tools, explicit model/effort and requested skill content
+ok - opus, sonnet, haiku and configured Claude models share one lean launch shape
+ok - Claude task opts into named MCPs and explicit directories without enabling discovery
+ok - Claude MCP opt-in lets the first turn wait for a connecting server
+ok - Claude batch dispatch retains per-task opt-ins
+ok - Claude auto posture restricts tools
+ok - invalid Claude skill refuses before provisioning
+ok - invalid and unsupported Claude opt-ins refuse before provisioning
+ok - Claude worker keeps user and project tool guards and deny rules without other settings
+ok - malformed Claude settings layer refuses rather than dropping guards
+all fm-spawn-claude-lean tests passed

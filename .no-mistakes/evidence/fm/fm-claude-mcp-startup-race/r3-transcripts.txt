@@ -1,0 +1,80 @@
+# 20fbaba8-96b1-49e7-af40-a7ef9c1c29fd.jsonl "effort":"low" 
+2026-09-28T09:24:24.438Z	user	FIRSTMATE_OP: v1 launch-brief: As your very first action, ca
+2026-09-28T09:24:24.437Z	attachment	{"type":"environment","snapshot":{"workingDirectory":"/tmp/fm-mcp-lab-r2/project","isWorktree":false,"isGitRep
+2026-09-28T09:24:24.437Z	attachment	{"type":"model","identity":{"modelId":"claude-opus-5-5","marketingName":"Opus 5.5","knowledgeCutoff":"June 202
+2026-09-28T09:24:24.437Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>15000000 tokens left</total_tokens>"}
+2026-09-28T09:24:24.522Z	attachment	{"type":"session_context","context":{"userEmail":"The user's email address is daan@daeverhuur.nl. Use it only 
+2026-09-28T09:24:24.524Z	attachment	{"type":"credential_org","organizationUuid":"89ae019c-27b9-4784-a32d-72406aa6ec1e"}
+2026-09-28T09:24:24.526Z	attachment	{"type":"prompt_snapshot","systemPrompt":["\\nYou are an interactive agent that helps users with software engin
+2026-09-28T09:24:26.457Z	assistant	use ToolSearch {"query":"+task-only-marker ping","max_results":5}
+2026-09-28T09:24:31.484Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will become available shortly — try searching a
+2026-09-28T09:24:31.485Z	attachment	{"type":"prompt_snapshot","systemPrompt":["\\nYou are an interactive agent that helps users with software engin
+2026-09-28T09:24:31.487Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14993776 tokens left</total_tokens>"}
+2026-09-28T09:24:32.669Z	assistant	use ToolSearch {"query":"+task-only-marker ping","max_results":5}
+2026-09-28T09:24:37.710Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will become available shortly — try searching a
+2026-09-28T09:24:37.713Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14993546 tokens left</total_tokens>"}
+2026-09-28T09:24:39.143Z	assistant	use ToolSearch {"query":"select:mcp__task-only-marker__ping","max_results":5}
+2026-09-28T09:24:39.447Z	user	result [{"type":"tool_reference","tool_name":"mcp__task-only-marker__ping"}]
+2026-09-28T09:24:39.450Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14993310 tokens left</total_tokens>"}
+2026-09-28T09:24:40.836Z	assistant	use mcp__task-only-marker__ping {}
+2026-09-28T09:24:40.848Z	user	result [{"type":"text","text":"MCP_PROVED"}]
+2026-09-28T09:24:40.851Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14993066 tokens left</total_tokens>"}
+2026-09-28T09:24:41.929Z	assistant	text MCP_PROVED
+2026-09-28T09:24:41.958Z	attachment	{"type":"hook_success","hookName":"Stop","toolUseID":"a4430ce1-6335-4cd1-83f6-e758a07f1642","hookEvent":"Stop"
+
+# 4e69c628-0516-4a5a-967a-48e668fa9a29.jsonl "effort":"medium" 
+2026-09-28T09:24:24.430Z	user	FIRSTMATE_OP: v1 launch-brief: As your very first action, ca
+2026-09-28T09:24:24.429Z	attachment	{"type":"environment","snapshot":{"workingDirectory":"/tmp/fm-mcp-lab-r2/project","isWorktree":false,"isGitRep
+2026-09-28T09:24:24.429Z	attachment	{"type":"model","identity":{"modelId":"claude-opus-5-5","marketingName":"Opus 5.5","knowledgeCutoff":"June 202
+2026-09-28T09:24:24.430Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>15000000 tokens left</total_tokens>"}
+2026-09-28T09:24:24.529Z	attachment	{"type":"session_context","context":{"userEmail":"The user's email address is daan@daeverhuur.nl. Use it only 
+2026-09-28T09:24:24.531Z	attachment	{"type":"credential_org","organizationUuid":"89ae019c-27b9-4784-a32d-72406aa6ec1e"}
+2026-09-28T09:24:24.557Z	attachment	{"type":"prompt_snapshot","systemPrompt":["\\nYou are an interactive agent that helps users with software engin
+2026-09-28T09:24:26.395Z	assistant	use ToolSearch {"query":"+task-only-marker ping","max_results":5}
+2026-09-28T09:24:31.429Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will become available shortly — try searching a
+2026-09-28T09:24:31.431Z	attachment	{"type":"prompt_snapshot","systemPrompt":["\\nYou are an interactive agent that helps users with software engin
+2026-09-28T09:24:31.433Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14993947 tokens left</total_tokens>"}
+2026-09-28T09:24:32.706Z	assistant	use ToolSearch {"query":"select:mcp__task-only-marker__ping","max_results":5}
+2026-09-28T09:24:37.748Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will become available shortly — try searching a
+2026-09-28T09:24:37.751Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14993711 tokens left</total_tokens>"}
+2026-09-28T09:24:38.949Z	assistant	use ToolSearch {"query":"ping","max_results":5}
+2026-09-28T09:24:43.972Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will become available shortly — try searching a
+2026-09-28T09:24:43.974Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14993488 tokens left</total_tokens>"}
+2026-09-28T09:24:45.577Z	assistant	use ToolSearch {"query":"+task-only-marker","max_results":5}
+2026-09-28T09:24:50.604Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will become available shortly — try searching a
+2026-09-28T09:24:50.606Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14993207 tokens left</total_tokens>"}
+2026-09-28T09:24:51.809Z	assistant	use ToolSearch {"query":"marker ping","max_results":5}
+2026-09-28T09:24:54.424Z	user	result No matching deferred tools found. Note: these configured MCP servers failed to connect, so their tools are unavailable for this session: task-only-mar
+2026-09-28T09:24:54.427Z	attachment	{"type":"silent_turn_reminder","text":"The user hasn't heard from you in a while — say in a few words what you
+2026-09-28T09:24:54.427Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14992982 tokens left</total_tokens>"}
+2026-09-28T09:24:55.185Z	assistant	text MCP_UNAVAILABLE
+2026-09-28T09:24:55.212Z	attachment	{"type":"hook_success","hookName":"Stop","toolUseID":"edb470c2-0ce6-4b36-8093-285b7e9c931d","hookEvent":"Stop"
+
+# 29b664fa-4187-4cbd-bf0a-3a2d1d6af228.jsonl "effort":"low" 
+2026-09-28T09:24:24.462Z	user	FIRSTMATE_OP: v1 launch-brief: As your very first action, ca
+2026-09-28T09:24:24.461Z	attachment	{"type":"environment","snapshot":{"workingDirectory":"/tmp/fm-mcp-lab-r2/project","isWorktree":false,"isGitRep
+2026-09-28T09:24:24.461Z	attachment	{"type":"model","identity":{"modelId":"claude-opus-5-5","marketingName":"Opus 5.5","knowledgeCutoff":"June 202
+2026-09-28T09:24:24.461Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>15000000 tokens left</total_tokens>"}
+2026-09-28T09:24:24.538Z	attachment	{"type":"session_context","context":{"userEmail":"The user's email address is daan@daeverhuur.nl. Use it only 
+2026-09-28T09:24:24.539Z	attachment	{"type":"credential_org","organizationUuid":"89ae019c-27b9-4784-a32d-72406aa6ec1e"}
+2026-09-28T09:24:24.540Z	attachment	{"type":"prompt_snapshot","systemPrompt":["\\nYou are an interactive agent that helps users with software engin
+2026-09-28T09:24:26.263Z	assistant	use ToolSearch {"query":"+task-only-marker ping","max_results":5}
+2026-09-28T09:24:31.298Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will become available shortly — try searching a
+2026-09-28T09:24:31.299Z	attachment	{"type":"prompt_snapshot","systemPrompt":["\\nYou are an interactive agent that helps users with software engin
+2026-09-28T09:24:31.301Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14993777 tokens left</total_tokens>"}
+2026-09-28T09:24:32.428Z	assistant	use ToolSearch {"query":"ping","max_results":5}
+2026-09-28T09:24:37.471Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will become available shortly — try searching a
+2026-09-28T09:24:37.473Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14993554 tokens left</total_tokens>"}
+2026-09-28T09:24:38.855Z	assistant	use ToolSearch {"query":"select:mcp__task-only-marker__ping","max_results":5}
+2026-09-28T09:24:43.877Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will become available shortly — try searching a
+2026-09-28T09:24:43.879Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14993318 tokens left</total_tokens>"}
+2026-09-28T09:24:45.893Z	assistant	use ToolSearch {"query":"task-only-marker","max_results":5}
+2026-09-28T09:24:50.927Z	user	result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will become available shortly — try searching a
+2026-09-28T09:24:50.929Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14993091 tokens left</total_tokens>"}
+2026-09-28T09:24:52.643Z	assistant	use ToolSearch {"query":"ping marker","max_results":5}
+2026-09-28T09:24:54.462Z	user	result No matching deferred tools found. Note: these configured MCP servers failed to connect, so their tools are unavailable for this session: task-only-mar
+2026-09-28T09:24:54.466Z	attachment	{"type":"silent_turn_reminder","text":"The user hasn't heard from you in a while — say in a few words what you
+2026-09-28T09:24:54.466Z	attachment	{"type":"total_tokens_reminder","text":"<total_tokens>14992866 tokens left</total_tokens>"}
+2026-09-28T09:24:55.585Z	assistant	text MCP_UNAVAILABLE
+2026-09-28T09:24:55.612Z	attachment	{"type":"hook_success","hookName":"Stop","toolUseID":"13d6fa5e-f3f7-40ab-bcf8-bbe7247a5308","hookEvent":"Stop"
+

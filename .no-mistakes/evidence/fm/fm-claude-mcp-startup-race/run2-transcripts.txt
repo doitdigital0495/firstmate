@@ -1,0 +1,27 @@
+# 39d75c5c-d1b1-4059-a974-bfbb85f5e51e.jsonl PRE-FIX --tools Read,Bash model=claude-opus-5-5
+2026-09-28T09:10:05.952Z  attachment  {"pendingMcpServers":["task-only-marker"],"toolSearchAbsent":true}
+2026-09-28T09:10:09.988Z  assistant  thinking
+2026-09-28T09:10:10.074Z  assistant  text MCP_UNAVAILABLE
+
+# 4103a203-eda5-4bed-b4a4-0560a683e4f5.jsonl POST-FIX --tools Read,Bash,ToolSearch model=claude-opus-5-5
+2026-09-28T09:10:05.875Z  attachment  {"pendingMcpServers":["task-only-marker"],"toolSearchAbsent":null}
+2026-09-28T09:10:07.725Z  assistant  tool_use ToolSearch {"query":"+task-only-marker ping","max_results":5}
+2026-09-28T09:10:12.761Z  user  tool_result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:10:14.407Z  assistant  tool_use ToolSearch {"query":"select:mcp__task-only-marker__ping","max_results":5}
+2026-09-28T09:10:19.416Z  user  tool_result No matching deferred tools found. Some MCP servers are still connecting: task-only-marker. Their tools will be
+2026-09-28T09:10:20.547Z  assistant  tool_use ToolSearch {"query":"ping","max_results":5}
+2026-09-28T09:10:20.910Z  user  tool_result [{"type":"tool_reference","tool_name":"mcp__task-only-marker__ping"}]
+2026-09-28T09:10:20.918Z  attachment  {"pendingMcpServers":[],"toolSearchAbsent":null}
+2026-09-28T09:10:21.904Z  assistant  tool_use mcp__task-only-marker__ping {}
+2026-09-28T09:10:21.918Z  user  tool_result [{"type":"text","text":"MCP_PROVED"}]
+2026-09-28T09:10:22.677Z  assistant  text MCP_PROVED
+
+# afbe8293-da68-4247-9144-b2c31f24810f.jsonl POST-FIX --tools Read,Bash,ToolSearch model=claude-opus-5-5
+2026-09-28T09:10:06.053Z  attachment  {"pendingMcpServers":["task-only-marker"],"toolSearchAbsent":null}
+2026-09-28T09:10:07.979Z  assistant  tool_use ToolSearch {"query":"+task-only-marker ping","max_results":5}
+2026-09-28T09:10:09.045Z  user  tool_result [{"type":"tool_reference","tool_name":"mcp__task-only-marker__ping"}]
+2026-09-28T09:10:09.048Z  attachment  {"pendingMcpServers":[],"toolSearchAbsent":null}
+2026-09-28T09:10:10.018Z  assistant  tool_use mcp__task-only-marker__ping {}
+2026-09-28T09:10:10.031Z  user  tool_result [{"type":"text","text":"MCP_PROVED"}]
+2026-09-28T09:10:10.726Z  assistant  text MCP_PROVED
+

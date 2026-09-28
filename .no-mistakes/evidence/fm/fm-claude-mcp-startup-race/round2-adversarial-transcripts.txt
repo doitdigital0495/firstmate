@@ -1,0 +1,33 @@
+2026-09-28T09:15:56.712Z 
+2026-09-28T09:15:58.736Z use ToolSearch
+2026-09-28T09:16:03.790Z result No matching deferred tools found. Some MCP servers are still connecting: task-on
+2026-09-28T09:16:05.016Z use ToolSearch
+2026-09-28T09:16:10.053Z result No matching deferred tools found. Some MCP servers are still connecting: task-on
+2026-09-28T09:16:11.229Z use ToolSearch
+2026-09-28T09:16:11.685Z result [{"type":"tool_reference","tool_name":"mcp__task-only-marker__ping"}]
+2026-09-28T09:16:12.592Z use mcp__task-only-marker__ping
+2026-09-28T09:16:12.611Z result [{"type":"text","text":"MCP_PROVED"}]
+2026-09-28T09:16:13.373Z text MCP_PROVED
+
+2026-09-28T09:15:56.661Z 
+2026-09-28T09:15:58.613Z use ToolSearch
+2026-09-28T09:16:03.640Z result No matching deferred tools found. Some MCP servers are still connecting: task-on
+2026-09-28T09:16:05.001Z use ToolSearch
+2026-09-28T09:16:10.042Z result No matching deferred tools found. Some MCP servers are still connecting: task-on
+2026-09-28T09:16:11.099Z use ToolSearch
+2026-09-28T09:16:11.657Z result [{"type":"tool_reference","tool_name":"mcp__task-only-marker__ping"}]
+2026-09-28T09:16:12.587Z use mcp__task-only-marker__ping
+2026-09-28T09:16:12.605Z result [{"type":"text","text":"MCP_PROVED"}]
+2026-09-28T09:16:13.359Z text MCP_PROVED
+
+2026-09-28T09:15:56.733Z 
+2026-09-28T09:15:58.809Z use ToolSearch
+2026-09-28T09:16:03.821Z result No matching deferred tools found. Some MCP servers are still connecting: task-on
+2026-09-28T09:16:05.209Z use ToolSearch
+2026-09-28T09:16:10.222Z result No matching deferred tools found. Some MCP servers are still connecting: task-on
+2026-09-28T09:16:11.369Z use ToolSearch
+2026-09-28T09:16:11.726Z result [{"type":"tool_reference","tool_name":"mcp__task-only-marker__ping"}]
+2026-09-28T09:16:12.554Z use mcp__task-only-marker__ping
+2026-09-28T09:16:12.571Z result [{"type":"text","text":"MCP_PROVED"}]
+2026-09-28T09:16:13.377Z text MCP_PROVED
+
