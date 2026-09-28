@@ -1325,6 +1325,8 @@ test_relaunch_account_switch_refuses_a_secondmate() {
   local dir home out rc
   dir=$(new_case acctsm sm7)
   home="$dir/home"
+  mkdir -p "$home/config"
+  printf 'claude\n' > "$home/config/secondmate-harness"
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-acct-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin" "$home/data/sm7"
   printf 'sm7\n' > "$dir/smhome/.fm-secondmate-home"
