@@ -96,6 +96,8 @@ FM_PR_RETIRE_RECEIPT_IDENTITY=
 FM_PR_RECORD_STATE=
 FM_PR_RECORD_MERGED=
 FM_PR_POLL_RETIREMENT_REJECTED=
+FM_DEPLOY_WATCH_URL=
+FM_DEPLOY_WATCH_ARMED=
 
 fm_task_id_path_safe() {
   local id=${1-}
@@ -304,6 +306,71 @@ fm_pr_poll_merged_output() {
       ;;
   esac
   return 1
+}
+
+# A recorded GitHub merge arms a deploy watch: $STATE/<id>.deploy-watch holds
+# the canonical PR URL and the epoch it was armed, one per line, private and
+# single-link. It deliberately outlives the task's teardown, because a
+# self-merged pull request is torn down long before its deploy finishes.
+# bin/fm-deploy-poll.sh owns what is watched and its output contract, and
+# bin/fm-watch.sh retires the file after the poll's one terminal line. Other
+# providers arm nothing here: the Azure DevOps merge poll already reports its
+# own post-merge pipelines.
+fm_deploy_watch_arm() {  # <state> <task-id> <pr-url>
+  local state=${1-} id=${2-} url=${3-} dest tmp
+  fm_pr_task_id_valid "$id" || return 2
+  fm_pr_url_parse "$url" || return 2
+  [ "$FM_PR_PROVIDER" = github ] || return 0
+  [ -d "$state" ] && [ ! -L "$state" ] || return 1
+  dest="$state/$id.deploy-watch"
+  fm_pr_regular_destination_or_absent "$dest" || return 1
+  tmp=$(mktemp "$state/.$id.deploy-watch.XXXXXX") || return 1
+  if chmod 0600 "$tmp" && printf '%s\n%s\n' "$FM_PR_URL" "$(date +%s)" > "$tmp" \
+    && mv -f "$tmp" "$dest"; then
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+# Read one deploy watch into FM_DEPLOY_WATCH_URL and FM_DEPLOY_WATCH_ARMED,
+# refusing anything but a regular single-link file of exactly a canonical
+# GitHub pull request URL and a plain epoch.
+fm_deploy_watch_read() {  # <path>
+  local path=${1-} url armed
+  local LC_ALL=C
+  FM_DEPLOY_WATCH_URL=
+  FM_DEPLOY_WATCH_ARMED=
+  [ -f "$path" ] && [ ! -L "$path" ] || return 1
+  [ "$(fm_pr_file_link_count "$path")" = 1 ] || return 1
+  {
+    IFS= read -r url || return 1
+    IFS= read -r armed || return 1
+    if IFS= read -r _; then
+      return 1
+    fi
+  } < "$path" || return 1
+  fm_pr_url_parse "$url" && [ "$FM_PR_PROVIDER" = github ] || return 1
+  case "$armed" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "${#armed}" -le 12 ] || return 1
+  FM_DEPLOY_WATCH_URL=$url
+  # shellcheck disable=SC2034 # Consumed by bin/fm-watch.sh.
+  FM_DEPLOY_WATCH_ARMED=$armed
+}
+
+# Remove a deploy watch only while it still holds the URL and arm epoch the
+# caller acted on, so a watch re-armed for a newer merge is never retired by
+# the older one's result.
+fm_deploy_watch_retire() {  # <path> <url> <armed>
+  local path=${1-} url=${2-} armed=${3-}
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    if fm_deploy_watch_read "$path"; then
+      [ "$FM_DEPLOY_WATCH_URL" = "$url" ] && [ "$FM_DEPLOY_WATCH_ARMED" = "$armed" ] || return 0
+    fi
+    rm -f "$path"
+  fi
 }
 
 # Resolve the read-only az CLI used to arm and poll an Azure DevOps watch. The

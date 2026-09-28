@@ -48,6 +48,7 @@ FM_MERGE_OUTCOME_ALREADY_RECORDED=false
 # no matching record proves that this home authorized the merge.
 # Optional single-line <detail> (the Azure DevOps poll's post-merge pipeline
 # verdicts) is appended to both the parent-channel line and the wake row.
+# A newly recorded GitHub outcome also arms that merge's deploy watch.
 #
 # Returns 0 when the outcome is recorded (or already was), 2 on an invalid
 # request, 3 when this home's own role or parent binding cannot be read well
@@ -113,5 +114,12 @@ fm_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
       "$provider" "$host" "$path" "$number" || status=1
   fi
   fm_lock_release "$lock"
+  # A newly recorded GitHub merge arms its deploy watch (bin/fm-pr-lib.sh
+  # fm_deploy_watch_arm). The merge outcome is already durable, so a watch
+  # that cannot be armed is reported rather than turned into a failed record.
+  if [ "$status" -eq 0 ] && [ "$provider" = github ] \
+    && ! fm_deploy_watch_arm "$state" "$id" "$url"; then
+    printf 'warning: merged %s but could not arm its deploy watch\n' "$url" >&2
+  fi
   return "$status"
 }

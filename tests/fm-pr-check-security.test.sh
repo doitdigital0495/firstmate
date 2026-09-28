@@ -517,6 +517,209 @@ SH
   pass "Azure DevOps polls surface conflicts and per-pipeline post-merge colors"
 }
 
+# A fake gh that answers the deploy poll's reads from forge-shaped JSON
+# fixtures under <dir>/deploy/<pr-number>/, filtered through the real jq with
+# the poll's own -q expression, so event filtering and classification run as
+# written. A missing fixture file is a failed read.
+make_deploy_gh() {  # <dir>
+  local dir=$1
+  mkdir -p "$dir/deploy"
+  cat > "$dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+fixtures="$dir/deploy"
+jq_bin="$REAL_JQ"
+SH
+  cat >> "$dir/fakebin/gh" <<'SH'
+query=
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  [ "${args[$i]}" = -q ] && query=${args[$((i + 1))]}
+done
+case "${1:-} ${2:-}" in
+  "pr view")
+    file="$fixtures/${3##*/}/pr.json"
+    ;;
+  "api "*)
+    sha=$(printf '%s\n' "$2" | sed -n 's/.*head_sha=\([0-9a-f]*\).*/\1/p; s/.*commits\/\([0-9a-f]*\)\/.*/\1/p')
+    number=$(grep -l "\"$sha\"" "$fixtures"/*/pr.json 2>/dev/null | head -1)
+    number=${number%/pr.json}
+    case "$2" in
+      *actions/runs*) file="$number/runs.json" ;;
+      *check-runs*) file="$number/checks.json" ;;
+      */status\?*) file="$number/status.json" ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  *) exit 2 ;;
+esac
+[ -f "$file" ] || exit 1
+"$jq_bin" -r "$query" "$file"
+SH
+  chmod +x "$dir/fakebin/gh"
+}
+
+# <dir> <pr-number> <sha> <merged-iso> <runs-json> <checks-json> <status-json>;
+# a "-" JSON argument leaves that read failing.
+write_deploy_fixture() {
+  local fx="$1/deploy/$2"
+  mkdir -p "$fx"
+  rm -f "$fx/pr.json" "$fx/runs.json" "$fx/checks.json" "$fx/status.json"
+  printf '{"state":"MERGED","mergeCommit":{"oid":"%s"},"mergedAt":"%s"}\n' "$3" "$4" > "$fx/pr.json"
+  [ "$5" = - ] || printf '{"workflow_runs":%s}\n' "$5" > "$fx/runs.json"
+  [ "$6" = - ] || printf '{"check_runs":%s}\n' "$6" > "$fx/checks.json"
+  [ "$7" = - ] || printf '{"statuses":%s}\n' "$7" > "$fx/status.json"
+}
+
+DEPLOY_SHA=0123456789abcdef0123456789abcdef01234567
+DEPLOY_OLD=2020-01-01T00:00:00Z
+DEPLOY_RUNS='[{"name":"CI","event":"push","status":"completed","conclusion":"success","id":11},{"name":"Deploy","event":"workflow_run","status":"completed","conclusion":"failure","id":12},{"name":"Nightly","event":"schedule","status":"completed","conclusion":"failure","id":13}]'
+DEPLOY_CHECKS='[{"name":"CI job","status":"completed","conclusion":"failure","id":21,"app":{"slug":"github-actions"}},{"name":"Vercel Preview Comments","status":"completed","conclusion":"skipped","id":22,"app":{"slug":"vercel"}}]'
+DEPLOY_STATUS='[{"context":"Vercel","state":"success"}]'
+
+deploy_poll() {  # <dir> <pr-number> [armed-epoch]
+  PATH="$1/fakebin:$BASE_PATH" bash "$ROOT/bin/fm-deploy-poll.sh" \
+    "https://github.com/o/r/pull/$2" "${3:-1}"
+}
+
+test_deploy_poll_verdicts() {
+  local dir out now_iso
+  dir=$(make_case deploy-poll)
+  make_deploy_gh "$dir"
+  now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$DEPLOY_OLD" "$DEPLOY_RUNS" "$DEPLOY_CHECKS" "$DEPLOY_STATUS"
+  out=$(deploy_poll "$dir" 7)
+  [ "$out" = "deploy RED: https://github.com/o/r/pull/7 merge commit 01234567: CI=GREEN (success, workflow 11); Deploy=RED (failure, workflow 12); Vercel Preview Comments=SKIPPED (skipped, check 22); Vercel=GREEN (success)" ] \
+    || fail "a red deploy was not reported per run, or a scheduled run or Actions job leaked in: $out"
+  out=$(FM_DEPLOY_WATCH_LIST_MAX=2 deploy_poll "$dir" 7)
+  [ "$out" = "deploy RED: https://github.com/o/r/pull/7 merge commit 01234567: Deploy=RED (failure, workflow 12); 3 more GREEN, SKIPPED or SUPERSEDED" ] \
+    || fail "a long run list did not collapse to the runs that are not green: $out"
+
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$DEPLOY_OLD" \
+    '[{"name":"CI","event":"push","status":"completed","conclusion":"success","id":11}]' '[]' "$DEPLOY_STATUS"
+  out=$(deploy_poll "$dir" 7)
+  [ "$out" = "deploy GREEN: https://github.com/o/r/pull/7 merge commit 01234567: CI=GREEN (success, workflow 11); Vercel=GREEN (success)" ] \
+    || fail "a green deploy was not reported: $out"
+
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$now_iso" \
+    '[{"name":"CI","event":"push","status":"completed","conclusion":"success","id":11}]' '[]' '[]'
+  out=$(deploy_poll "$dir" 7)
+  [ -z "$out" ] || fail "a verdict was reported inside the grace window: $out"
+
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$now_iso" \
+    '[{"name":"Deploy","event":"push","status":"in_progress","conclusion":null,"id":12}]' '[]' '[]'
+  out=$(FM_DEPLOY_WATCH_GRACE_SECS=0 deploy_poll "$dir" 7)
+  [ -z "$out" ] || fail "a pending run was reported before the cap: $out"
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$DEPLOY_OLD" \
+    '[{"name":"Deploy","event":"push","status":"in_progress","conclusion":null,"id":12}]' '[]' '[{"context":"Vercel","state":"pending"}]'
+  out=$(deploy_poll "$dir" 7)
+  [ "$out" = "deploy UNFINISHED: https://github.com/o/r/pull/7 merge commit 01234567: Deploy=PENDING (in_progress, workflow 12); Vercel=PENDING (pending)" ] \
+    || fail "runs still pending at the cap did not end the watch: $out"
+
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$now_iso" \
+    '[{"name":"Deploy","event":"push","status":"completed","conclusion":"failure","id":12},{"name":"Hung","event":"push","status":"queued","conclusion":null,"id":14}]' '[]' '[]'
+  out=$(deploy_poll "$dir" 7)
+  [ -z "$out" ] || fail "a red verdict was reported inside the grace window: $out"
+  out=$(FM_DEPLOY_WATCH_GRACE_SECS=0 deploy_poll "$dir" 7)
+  [ "$out" = "deploy RED: https://github.com/o/r/pull/7 merge commit 01234567: Deploy=RED (failure, workflow 12); Hung=PENDING (queued, workflow 14)" ] \
+    || fail "a red run waited on an unrelated pending run after grace: $out"
+
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$DEPLOY_OLD" \
+    '[{"name":"Deploy","event":"push","status":"completed","conclusion":"cancelled","id":12},{"name":"Old","event":"push","status":"completed","conclusion":"stale","id":15}]' '[]' "$DEPLOY_STATUS"
+  out=$(deploy_poll "$dir" 7)
+  [ "$out" = "deploy GREEN: https://github.com/o/r/pull/7 merge commit 01234567: Deploy=SUPERSEDED (cancelled, workflow 12); Old=SUPERSEDED (stale, workflow 15); Vercel=GREEN (success)" ] \
+    || fail "a cancelled or stale run was not reported as superseded: $out"
+
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$now_iso" '[]' '[]' '[]'
+  out=$(deploy_poll "$dir" 7)
+  [ -z "$out" ] || fail "a merge with no runs yet ended before the cap: $out"
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$DEPLOY_OLD" \
+    "$(printf '%s' "$DEPLOY_RUNS" | "$REAL_JQ" -c '[.[] | select(.event == "schedule")]')" '[]' '[]'
+  out=$(deploy_poll "$dir" 7)
+  case "$out" in
+    'deploy none: https://github.com/o/r/pull/7: no runs'*) ;;
+    *) fail "a merge whose only runs were scheduled did not end quietly at the cap: $out" ;;
+  esac
+
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$now_iso" - '[]' '[]'
+  out=$(deploy_poll "$dir" 7)
+  [ -z "$out" ] || fail "an unreadable run list was reported before the cap: $out"
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$DEPLOY_OLD" - '[]' '[]'
+  out=$(deploy_poll "$dir" 7)
+  case "$out" in
+    'deploy UNREAD: https://github.com/o/r/pull/7: runs on merge commit 01234567 could not be read'*) ;;
+    *) fail "an unreadable run list past the cap did not end the watch: $out" ;;
+  esac
+  rm -f "$dir/deploy/7/pr.json"
+  out=$(deploy_poll "$dir" 7 "$(date +%s)")
+  [ -z "$out" ] || fail "an unreadable pull request was reported before the cap from its arm time: $out"
+  out=$(deploy_poll "$dir" 7 1)
+  case "$out" in
+    'deploy UNREAD: https://github.com/o/r/pull/7: the merge commit could not be read'*) ;;
+    *) fail "an unreadable pull request did not fall back to its arm time for the cap: $out" ;;
+  esac
+
+  out=$(deploy_poll "$dir" 7 not-an-epoch; PATH="$dir/fakebin:$BASE_PATH" bash "$ROOT/bin/fm-deploy-poll.sh" \
+    https://dev.azure.com/Org-1/P/_git/r/pullrequest/7 1)
+  [ -z "$out" ] || fail "an invalid deploy poll request produced output: $out"
+  pass "deploy poll reports per-run green and red verdicts on the merge commit within its grace and cap"
+}
+
+deploy_wake_rows() {  # <state>
+  awk -F'\t' 'index($5, "check: ") == 1 && index($5, " deploy ") > 0 { print $5 }' "$1/.wake-queue" 2>/dev/null
+}
+
+test_github_merge_arms_a_deploy_watch_that_wakes_once() {
+  local dir state url rc id
+  dir=$(make_case deploy-watch)
+  state="$dir/home/state"
+  make_deploy_gh "$dir"
+  url=https://github.com/o/r/pull/7
+
+  # shellcheck source=/dev/null
+  ( . "$ROOT/bin/fm-merge-outcome-lib.sh"
+    fm_merge_outcome_report "$dir/home" "$state" task-a "$url" self attended \
+      && fm_merge_outcome_report "$dir/home" "$state" task-b \
+        https://dev.azure.com/Org-1/P/_git/r/pullrequest/8 poll external ) \
+    || fail "could not record the merge outcomes"
+  [ "$(head -1 "$state/task-a.deploy-watch" 2>/dev/null)" = "$url" ] \
+    || fail "a recorded GitHub merge did not arm its deploy watch"
+  [ "$(file_mode "$state/task-a.deploy-watch")" = 600 ] || fail "the deploy watch is not private"
+  [ ! -e "$state/task-b.deploy-watch" ] \
+    || fail "an Azure DevOps merge armed a second post-merge watch"
+  rm -f "$state/task-a.deploy-watch"
+  # shellcheck source=/dev/null
+  ( . "$ROOT/bin/fm-merge-outcome-lib.sh"
+    fm_merge_outcome_report "$dir/home" "$state" task-a "$url" poll external ) \
+    || fail "could not absorb the duplicate merge outcome"
+  [ ! -e "$state/task-a.deploy-watch" ] \
+    || fail "a duplicate merge outcome re-armed a finished deploy watch"
+
+  # A watch with no runs ends quietly; a red one sorted after it wakes once.
+  write_deploy_fixture "$dir" 6 "$(printf '%040d' 6)" "$DEPLOY_OLD" '[]' '[]' '[]'
+  write_deploy_fixture "$dir" 7 "$DEPLOY_SHA" "$DEPLOY_OLD" "$DEPLOY_RUNS" "$DEPLOY_CHECKS" "$DEPLOY_STATUS"
+  printf 'https://github.com/o/r/pull/6\n1\n' > "$state/a-quiet.deploy-watch"
+  printf 'https://evil.example/o/r/pull/9\n1\n' > "$state/bogus.deploy-watch"
+  printf '%s\n1\n' "$url" > "$state/task-a.deploy-watch"
+  chmod 0600 "$state/a-quiet.deploy-watch" "$state/bogus.deploy-watch" "$state/task-a.deploy-watch"
+  rm -f "$state/.wake-queue" "$state/.watcher-down"
+  set +e
+  run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "the deploy watch cycle did not wake: rc=$rc $(cat "$dir/watch.err")"
+  [ "$(deploy_wake_rows "$state" | wc -l | tr -d ' ')" = 1 ] \
+    || fail "the deploy sweep did not wake exactly once: $(deploy_wake_rows "$state")"
+  case "$(deploy_wake_rows "$state")" in
+    "check: task-a deploy RED: $url merge commit 01234567: "*'Deploy=RED (failure, workflow 12)'*) ;;
+    *) fail "the deploy wake did not name the red run: $(deploy_wake_rows "$state")" ;;
+  esac
+  for id in a-quiet task-a bogus; do
+    [ ! -e "$state/$id.deploy-watch" ] || fail "the $id deploy watch was not retired"
+  done
+  pass "a recorded GitHub merge arms a deploy watch that wakes once with its verdicts"
+}
+
 test_ado_conflict_wakes_once_per_conflict() {
   local dir state url
   dir=$(make_case ado-conflict-once)
@@ -2905,6 +3108,8 @@ test_ado_merge_refuses_unpinned_auto_complete
 test_ado_poll_conflict_and_postmerge_verdicts
 test_ado_conflict_wakes_once_per_conflict
 test_merged_outcome_row_carries_poll_detail
+test_deploy_poll_verdicts
+test_github_merge_arms_a_deploy_watch_that_wakes_once
 test_gitlab_merge_watch
 test_merged_poll_retires_once
 test_merged_poll_reregistration_after_notification_is_absorbed
