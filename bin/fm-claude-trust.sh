@@ -87,7 +87,13 @@
 # own word: a primary checkout (git dir == common dir), a worktree of an
 # unrelated repo, a subdirectory of a worktree, a plain directory, and a home
 # directory are each refused. Refusal is a non-zero exit, never a warning and
-# never a silent skip. When <project> is itself a linked worktree (a
+# never a silent skip. Treehouse shares one pool between every clone of a
+# remote, so a slot can instead be a linked worktree of ANOTHER clone of
+# <project>'s origin; that is accepted only when both origin URLs name the same
+# remote (see origin_identity), and an absent origin never matches. Its
+# canonical project root is then the owning clone, derived and verified the
+# same way as below, because that is the checkout Claude Code collapses the
+# slot to. When <project> is itself a linked worktree (a
 # secondmate home spawned from, rather than as, the primary checkout),
 # refusing outright would wedge a relaunch that is otherwise perfectly valid:
 # its own common dir already IS the primary checkout's own git dir (git's
@@ -221,6 +227,65 @@ common_dir_of() {
   (cd -P -- "$dir" && real_dir "$common")
 }
 
+# The origin remote of a repository in a form two clones of that remote agree
+# on, or empty when it has none. A network URL reduces to lowercased host plus
+# path, without user, trailing slash or .git suffix, so the scp-like and https
+# forms of one repository match. A local remote reduces to its resolved
+# directory, relative ones resolved from <dir>; one that does not resolve yields
+# nothing. Empty never matches, so repositories without an origin share none.
+origin_identity() {
+  local dir=$1 url rest host path
+  url=$(git -C "$dir" remote get-url origin 2>/dev/null) || return 1
+  case $url in
+    file://*)
+      (cd -P -- "$dir" && real_dir "${url#file://}")
+      return
+      ;;
+    *://*)
+      rest=${url#*://}
+      host=${rest%%/*}
+      path=${rest#"$host"}
+      ;;
+    [!/.]*:*)
+      host=${url%%:*}
+      case $host in
+        */*) (cd -P -- "$dir" && real_dir "$url"); return ;;
+      esac
+      path=${url#*:}
+      ;;
+    *)
+      (cd -P -- "$dir" && real_dir "$url")
+      return
+      ;;
+  esac
+  host=$(printf '%s' "${host##*@}" | tr '[:upper:]' '[:lower:]')
+  while case $path in /*) true ;; *) false ;; esac; do path=${path#/}; done
+  while case $path in */) true ;; *) false ;; esac; do path=${path%/}; done
+  path=${path%.git}
+  [ -n "$host" ] && [ -n "$path" ] || return 1
+  printf '%s/%s\n' "$host" "$path"
+}
+
+# The primary checkout of the repository whose common dir is <common>, reached
+# from <dir>, one of its checkouts. <dir> is that checkout itself when its own
+# git dir is <common>; otherwise it is derived structurally as <common>'s parent
+# in the standard non-bare layout and verified, never assumed: the candidate's
+# own resolved git dir must equal <common>. Empty when it cannot be shown.
+primary_checkout_of() {
+  local dir=$1 common=$2 git_dir candidate
+  git_dir=$(git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  git_dir=$(real_dir "$git_dir") || return 1
+  if [ "$git_dir" = "$common" ]; then
+    printf '%s\n' "$dir"
+    return
+  fi
+  candidate=$(real_dir "$(dirname -- "$common")") || return 1
+  git_dir=$(git -C "$candidate" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  git_dir=$(real_dir "$git_dir") || return 1
+  [ "$git_dir" = "$common" ] || return 1
+  printf '%s\n' "$candidate"
+}
+
 TARGET_REAL=$(real_dir "$TARGET_ARG") || true
 [ -n "$TARGET_REAL" ] || refuse "$SCOPE_NOUN '$TARGET_ARG' is not an accessible directory"
 if [ "$MODE" = worktree ]; then
@@ -275,35 +340,26 @@ if [ "$MODE" = worktree ]; then
 
   PROJ_COMMON=$(common_dir_of "$PROJ_REAL") || true
   [ -n "$PROJ_COMMON" ] || refuse "project '$PROJ_REAL' is not inside a git repository"
-  [ "$WT_COMMON" = "$PROJ_COMMON" ] || refuse "'$TARGET_REAL' is not a worktree of project '$PROJ_REAL'"
 
-  # The external-imports flags must land on the primary checkout - its own git
-  # dir equals the common dir - because that is exactly the path Claude Code's
-  # own git-root canonicalization collapses every linked worktree to. When
-  # <project> is itself a linked worktree (a secondmate home spawned from,
-  # rather than as, the primary checkout), refusing outright would wedge a
-  # relaunch that is otherwise perfectly valid: PROJ_COMMON already IS that
-  # primary checkout's own git dir (git's git-common-dir answer never changes
-  # by which worktree asks), so the checkout is derived structurally from it -
-  # its parent directory in the standard non-bare, non-GIT_DIR-overridden
-  # layout this script already requires elsewhere - and verified, never
-  # assumed: the candidate's own resolved git dir must equal PROJ_COMMON, the
-  # same primary-checkout definition used above, or this refuses rather than
-  # guess.
+  # PROJ_CANON is the primary checkout the external-imports flags land on - of
+  # <project> itself, or of the owning clone for a slot shared across clones of
+  # one remote. The WORKTREE MODE header above owns why each is right.
   PROJ_GIT_DIR=$(git -C "$PROJ_REAL" rev-parse --absolute-git-dir 2>/dev/null) || true
   [ -n "$PROJ_GIT_DIR" ] || refuse "project '$PROJ_REAL' has no resolvable git directory"
   PROJ_GIT_DIR=$(real_dir "$PROJ_GIT_DIR") || true
   [ -n "$PROJ_GIT_DIR" ] || refuse "project '$PROJ_REAL' has an unresolvable git directory"
-  if [ "$PROJ_GIT_DIR" = "$PROJ_COMMON" ]; then
-    PROJ_CANON=$PROJ_REAL
-  else
-    PROJ_CANON=$(real_dir "$(dirname -- "$PROJ_COMMON")") || true
+  if [ "$WT_COMMON" = "$PROJ_COMMON" ]; then
+    PROJ_CANON=$(primary_checkout_of "$PROJ_REAL" "$PROJ_COMMON") || true
     [ -n "$PROJ_CANON" ] \
       || refuse "project '$PROJ_REAL' is a linked worktree whose primary checkout could not be resolved"
-    CANON_GIT_DIR=$(git -C "$PROJ_CANON" rev-parse --absolute-git-dir 2>/dev/null) || true
-    CANON_GIT_DIR=$(real_dir "${CANON_GIT_DIR:-}") || true
-    [ -n "$CANON_GIT_DIR" ] && [ "$CANON_GIT_DIR" = "$PROJ_COMMON" ] \
-      || refuse "project '$PROJ_REAL' is a linked worktree whose primary checkout could not be resolved"
+  else
+    WT_ORIGIN=$(origin_identity "$TARGET_REAL") || true
+    PROJ_ORIGIN=$(origin_identity "$PROJ_REAL") || true
+    [ -n "$WT_ORIGIN" ] && [ "$WT_ORIGIN" = "$PROJ_ORIGIN" ] \
+      || refuse "'$TARGET_REAL' is not a worktree of project '$PROJ_REAL' nor of another clone of its origin remote"
+    PROJ_CANON=$(primary_checkout_of "$TARGET_REAL" "$WT_COMMON") || true
+    [ -n "$PROJ_CANON" ] \
+      || refuse "'$TARGET_REAL' is a worktree of another clone of project '$PROJ_REAL' whose primary checkout could not be resolved"
   fi
 else
   # The seed evidence, in the order that names the most useful reason first: the

@@ -445,6 +445,76 @@ test_foreign_project_worktree_is_refused() {
   pass "fm-claude-trust.sh: refuses a worktree belonging to another project"
 }
 
+# make_shared_pool_case <name>: the shape a treehouse pool shared between two
+# clones of one remote leaves behind. The pool slot is a linked worktree of an
+# OWNER clone, while the spawning project is a separate clone of the same
+# origin, so the slot's common dir is the owner's and never the project's.
+# Sets CASE_DIR, OWNER, WT, PROJ and CONFIG.
+make_shared_pool_case() {
+  local name=$1
+  CASE_DIR="$TMP_ROOT/$name"
+  OWNER="$CASE_DIR/owner-clone"
+  WT="$CASE_DIR/pool-slot"
+  PROJ="$CASE_DIR/project-clone"
+  CONFIG="$CASE_DIR/claude-config"
+  mkdir -p "$CONFIG"
+  fm_git_worktree "$OWNER" "$WT" "wt-$name"
+  git clone --quiet "$(git -C "$OWNER" remote get-url origin)" "$PROJ"
+}
+
+test_shared_pool_slot_owned_by_another_clone_is_trusted() {
+  local out
+  make_shared_pool_case shared-pool
+  out=$(run_trust "$CONFIG" "$WT" "$PROJ")
+  expect_code 0 $? "a pool slot owned by another clone of the project's remote must be trusted: $out"
+  assert_trusted "$CONFIG/.claude.json" "$WT" "the shared pool slot was not trusted"
+  # Claude Code canonicalizes the slot to its OWNER checkout, so that is the
+  # project-root entry it reads and the one this registration must write.
+  assert_contains "$out" "trusted (project root): $OWNER" "the outcome did not name the owning clone as the project root"
+  assert_trust_only_no_import_consent "$CONFIG/.claude.json" "$OWNER" \
+    "the owning clone either lost trust or gained unearned import consent"
+  assert_not_trusted "$CONFIG/.claude.json" "$PROJ" \
+    "the spawning clone was recorded as the project root Claude Code never reads for this slot"
+  pass "fm-claude-trust.sh: trusts a pool slot owned by another clone of the same remote"
+}
+
+test_shared_pool_slot_matches_equivalent_remote_url_forms() {
+  local out
+  make_shared_pool_case shared-pool-forms
+  git -C "$OWNER" remote set-url origin git@GitHub.com:acme/widget.git
+  git -C "$PROJ" remote set-url origin https://github.com/acme/widget/
+  out=$(run_trust "$CONFIG" "$WT" "$PROJ")
+  expect_code 0 $? "scp-like and https forms of one remote must match: $out"
+  assert_trusted "$CONFIG/.claude.json" "$WT" "the slot was not trusted across equivalent remote URL forms"
+  pass "fm-claude-trust.sh: a shared pool slot matches equivalent forms of the same remote URL"
+}
+
+test_shared_pool_slot_of_a_different_remote_is_refused() {
+  local out
+  make_shared_pool_case shared-pool-other
+  git -C "$OWNER" remote set-url origin https://github.com/acme/widget.git
+  git -C "$PROJ" remote set-url origin https://github.com/acme/widget-fork.git
+  out=$(run_trust "$CONFIG" "$WT" "$PROJ")
+  expect_code 1 $? "a slot whose owner has a different origin must be refused: $out"
+  assert_contains "$out" "is not a worktree of project" "the refusal did not name the project mismatch"
+  assert_not_trusted "$CONFIG/.claude.json" "$WT" "a slot of a different remote was trusted"
+  pass "fm-claude-trust.sh: refuses a slot owned by a clone of a different remote"
+}
+
+# Two repositories with no origin at all share no remote: an absent URL on both
+# sides must never compare equal and widen the scope test to every repository.
+test_shared_pool_slot_without_an_origin_is_refused() {
+  local out
+  make_shared_pool_case shared-pool-no-origin
+  git -C "$OWNER" remote remove origin
+  git -C "$PROJ" remote remove origin
+  out=$(run_trust "$CONFIG" "$WT" "$PROJ")
+  expect_code 1 $? "a slot with no origin remote must be refused: $out"
+  assert_contains "$out" "is not a worktree of project" "the refusal did not name the project mismatch"
+  assert_not_trusted "$CONFIG/.claude.json" "$WT" "a slot with no origin remote was trusted"
+  pass "fm-claude-trust.sh: refuses a slot of a different clone when neither has an origin remote"
+}
+
 test_worktree_subdirectory_is_refused() {
   local rec out sub
   rec=$(make_case subdir)
@@ -860,6 +930,10 @@ test_relative_config_dir_is_refused
 test_non_git_directory_is_refused
 test_missing_directory_is_refused
 test_foreign_project_worktree_is_refused
+test_shared_pool_slot_owned_by_another_clone_is_trusted
+test_shared_pool_slot_matches_equivalent_remote_url_forms
+test_shared_pool_slot_of_a_different_remote_is_refused
+test_shared_pool_slot_without_an_origin_is_refused
 test_worktree_subdirectory_is_refused
 test_project_argument_that_is_itself_a_worktree_resolves_to_the_primary_checkout
 test_unrelated_store_content_is_preserved
