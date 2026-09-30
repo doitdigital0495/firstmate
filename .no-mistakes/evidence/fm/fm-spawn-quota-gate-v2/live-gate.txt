@@ -1,0 +1,61 @@
+$ fm-quota-intake.sh gate --harness claude --model opus
+quota-intake gate: PASS record=quota-1790768080-845756160-1340713.json age=8s account=default provider=claude model=opus plan=max (quota-axi) spendPriority=1.1345 runway=through_reset
+  scope=all_models status=known remaining=68% spendPriority=1.1345 runway=through_reset
+    window=five_hour remaining=68% resets=2026-09-30T11:40:00.393027+00:00 source=live
+    window=seven_day remaining=76% resets=2026-10-05T18:00:00.393047+00:00 source=live
+exit=0
+
+$ fm-quota-intake.sh gate --harness pi --model zai/glm-5.1
+quota-intake gate: PASS record=quota-1790768080-845756160-1340713.json age=8s account=default provider=zai model=zai/glm-5.1 plan=pro (quota-axi) spendPriority=0.3833 runway=through_reset
+  scope=all_models status=known remaining=90% spendPriority=0.3833 runway=through_reset
+    window=five_hour remaining=90% resets=2026-09-30T15:04:01.957Z source=live
+    window=weekly remaining=93% resets=2026-10-06T18:04:43.983Z source=live
+exit=0
+
+$ fm-quota-intake.sh gate --harness codex
+quota-intake gate: PASS record=quota-1790768080-845756160-1340713.json age=8s account=default provider=codex model=default plan=prolite (quota-axi) spendPriority=0.5931 runway=through_reset
+  scope=all_models status=known remaining=68% spendPriority=0.5931 runway=through_reset
+    window=weekly remaining=68% resets=2026-10-04T05:00:39.000Z source=live
+exit=0
+
+$ fm-quota-intake.sh gate --harness cursor
+quota intake gate: refusing - no quota evidence rows for provider cursor with model default; dispatch a candidate the intake can measure
+exit=3
+
+$ fm-quota-intake.sh gate --harness bogus
+quota intake gate: refusing - no quota provider family can be established for harness 'bogus' with model 'default'; declare the provider family in the dispatch profile or dispatch a measurable harness
+exit=3
+
+$ fm-quota-intake.sh gate --harness pi --model mystery/model
+quota intake gate: refusing - no quota provider family can be established for harness 'pi' with model 'mystery/model'; declare the provider family in the dispatch profile or dispatch a measurable harness
+exit=3
+
+$ fm-quota-intake.sh gate --harness claude --account geris
+quota intake gate: refusing - the record does not cover account 'geris' (covered: default); run bin/fm-quota-intake.sh for that account's stores
+exit=3
+
+$ fm-quota-intake.sh gate --harness claude --claude-store /tmp/not-a-recorded-store
+quota intake gate: refusing - the record's claude store /home/daan/.claude does not cover the chosen store /tmp/not-a-recorded-store; run bin/fm-quota-intake.sh against the store this launch will use
+exit=3
+
+--- stale: FM_QUOTA_INTAKE_MAX_AGE=0 after 2s
+$ FM_QUOTA_INTAKE_MAX_AGE=0 fm-quota-intake.sh gate --harness claude
+quota intake gate: refusing - the newest intake record is 10s old (max 0s); run bin/fm-quota-intake.sh now and re-check every usage limit
+exit=3
+
+--- one record = one launch
+$ fm-quota-intake.sh gate --harness pi --model zai/glm-5.1 --consume
+quota-intake gate: PASS record=quota-1790768080-845756160-1340713.json age=10s account=default provider=zai model=zai/glm-5.1 plan=pro (quota-axi) spendPriority=0.3833 runway=through_reset
+  scope=all_models status=known remaining=90% spendPriority=0.3833 runway=through_reset
+    window=five_hour remaining=90% resets=2026-09-30T15:04:01.957Z source=live
+    window=weekly remaining=93% resets=2026-10-06T18:04:43.983Z source=live
+exit=0
+
+$ fm-quota-intake.sh gate --harness claude --consume
+quota intake gate: refusing - the newest intake record quota-1790768080-845756160-1340713.json was already spent on a launch; every launch needs its own read, so run bin/fm-quota-intake.sh now and re-check every usage limit
+exit=3
+
+$ fm-quota-intake.sh gate --harness claude
+quota intake gate: refusing - the newest intake record quota-1790768080-845756160-1340713.json was already spent on a launch; every launch needs its own read, so run bin/fm-quota-intake.sh now and re-check every usage limit
+exit=3
+

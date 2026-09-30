@@ -1,0 +1,7 @@
+$ PATH=/usr/local/bin:/usr/bin:/bin fm-quota-intake.sh   (no quota-axi)
+(quota-axi absent)
+error: quota-axi not installed
+exit=2
+$ ...same PATH, gate --harness claude (record is spent)
+quota intake gate: refusing - the newest intake record quota-1790768080-845756160-1340713.json was already spent on a launch; every launch needs its own read, so run bin/fm-quota-intake.sh now and re-check every usage limit
+exit=3

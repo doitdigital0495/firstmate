@@ -1,0 +1,34 @@
+ok - real herdr: exit on a pane with no registered agent is idempotent success
+ok - real herdr 0.9.1: a gone session reads recoverable while a live pane and a malformed target do not
+warning: /tmp/fm-control-herdr.yzQf8Y/home/data/hsmoke/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+quota-intake gate: TEST BYPASS (FM_QUOTA_INTAKE_TEST_BYPASS=1); no record was checked
+ok - real herdr: a drifted agent-free shell returns to its worktree and reuses the same endpoint
+ok - real herdr: interrupt refuses when herdr's own agent registry reports no agent
+ok - real herdr: interrupt delivers the harness's key and proves the agent survived it
+ok - real herdr: no control verb removed the endpoint or the task's local copy
+ok - real herdr 0.9.1: a registration Herdr keeps after its agent exits reads stale-agent and recovers as dead
+ok - real herdr: exit on a pane with a stale registration is idempotent success
+=== LIVE QUOTA: relaunch with NO intake record, bypass off
+warning: /tmp/fm-control-herdr.yzQf8Y/home/data/hsmoke/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+quota intake gate: refusing - no intake record exists under /tmp/fm-control-herdr.yzQf8Y/home/state/quota-intake; run bin/fm-quota-intake.sh first and re-check every usage limit
+error: hsmoke was not launched; the quota intake gate refused it and nothing was created - run bin/fm-quota-intake.sh and re-check every usage limit before relaunching
+rc=1
+ok - LIVE QUOTA: real herdr relaunch refused without a record; pane intact, nothing launched
+=== LIVE QUOTA: real quota-axi record for this home
+quota-intake recordedAt=2026-09-30T11:36:15Z record=quota-1790768175-497952878-1510522.json
+account=default status=ok claude=/home/daan/.claude pi=/home/daan/.pi/agent codex=/home/daan/.codex
+  provider=claude status=ok plan=max (quota-axi) quota-axi=max spendPriority=1.5548 runway=through_reset
+    window=five_hour remaining=66% resets=2026-09-30T11:40:00.080886+00:00 source=live
+    window=seven_day remaining=76% resets=2026-10-05T18:00:00.080911+00:00 source=live
+    window=model:fable remaining=100% resets=2026-10-05T18:00:00+00:00 source=live
+  provider=codex status=ok plan=prolite (quota-axi) quota-axi=prolite spendPriority=0.5938 runway=through_reset
+    window=weekly remaining=68% resets=2026-10-04T05:00:38.000Z source=live
+=== LIVE QUOTA: relaunch on the fresh record, bypass off
+warning: /tmp/fm-control-herdr.yzQf8Y/home/data/hsmoke/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+quota-intake gate: PASS record=quota-1790768175-497952878-1510522.json age=1s account=default provider=codex model=default plan=prolite (quota-axi) spendPriority=0.5938 runway=through_reset
+  scope=all_models status=known remaining=68% spendPriority=0.5938 runway=through_reset
+    window=weekly remaining=68% resets=2026-10-04T05:00:38.000Z source=live
+spawned hsmoke harness=codex kind=ship mode=no-mistakes yolo=off window=fm-lab-control-smoke-1483175:w1:p2 worktree=/tmp/fm-control-herdr.yzQf8Y/wt
+ok - LIVE QUOTA: real herdr relaunch admitted on a fresh real record
+ok - real herdr: a stale registration no longer blocks relaunch, and the endpoint and local copy survive
+ok - real herdr: an agent behind an unproven composer fails closed instead of typing an exit command into it
