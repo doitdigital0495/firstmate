@@ -20,8 +20,9 @@
 #   4. gate refusals: no record, stale record, uncovered account, uncovered
 #      store, an exhausted account (window and reset time named), a 100%-used
 #      (0% remaining) window, a model-scoped window without evidence, an
-#      unmappable harness/model provider family, a missing 5h or 7d window,
-#      and a provider with no Notes entry.
+#      unmappable harness/model provider family, a missing 7d window (a 5h
+#      window is required only when the provider publishes one), and a
+#      provider with no Notes entry.
 #   5. gate passes print the chosen candidate's full window table (zai).
 #   6. the test bypass is explicit and prints that it bypassed.
 #   7. the cached-read exception: a fresh statusline cache converts USED
@@ -147,7 +148,7 @@ cat > "$TMP_ROOT/snap-codexonly.json" <<'EOF'
 EOF
 
 # Codex without its five-hour window: an otherwise healthy baseline whose
-# table simply lacks the codex 5h row the gate must demand.
+# codex provider publishes no 5h window, which the gate must accept.
 cat > "$TMP_ROOT/snap-nofive.json" <<'EOF'
 {"schemaVersion":5,"providers":[
  {"provider":"claude","label":"Max","plan":"max","state":{"status":"fresh"},
@@ -162,6 +163,28 @@ cat > "$TMP_ROOT/snap-nofive.json" <<'EOF'
   "quotaSemantics":{"status":"known","effectiveAvailability":[
    {"scope":"all_models","status":"known","effectivePercentRemaining":92,"boundedBy":["weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":1.1213}}]}}]}
 EOF
+
+# The live Codex ProLite shape: quota-axi reports only the weekly window,
+# with its used percent, reset time, and plan label (next to a healthy claude
+# read, so the cached-read exception stays out of the way).
+cat > "$TMP_ROOT/snap-prolite.json" <<'EOF'
+{"schemaVersion":5,"providers":[
+ {"provider":"claude","label":"Max","plan":"max","state":{"status":"fresh"},
+  "windows":[
+   {"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":10,"percentRemaining":90,"resetsAt":"2026-09-29T15:19:59Z"},
+   {"id":"seven_day","label":"7d","kind":"seven_day","percentUsed":7,"percentRemaining":93,"resetsAt":"2026-10-05T17:59:59Z"}],
+  "quotaSemantics":{"status":"known","effectiveAvailability":[
+   {"scope":"all_models","status":"known","effectivePercentRemaining":90,"boundedBy":["five_hour","seven_day"],"limitingWindowIds":["five_hour"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":0.4}}]}},
+ {"provider":"codex","label":"ProLite","plan":"prolite","state":{"status":"fresh"},
+  "windows":[
+   {"id":"weekly","label":"Weekly","kind":"weekly","percentUsed":44,"percentRemaining":56,"resetsAt":"2026-10-04T05:00:38.000Z","windowSeconds":604800}],
+  "quotaSemantics":{"status":"known","effectiveAvailability":[
+   {"scope":"all_models","status":"known","effectivePercentRemaining":56,"boundedBy":["weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":0.2341}}]}}]}
+EOF
+
+# Codex publishing no windows at all: nothing to launch against.
+jq '(.providers[] | select(.provider == "codex")) |= (.windows = [] | .quotaSemantics.effectiveAvailability[0].boundedBy = [] | .quotaSemantics.effectiveAvailability[0].limitingWindowIds = [])' \
+  "$TMP_ROOT/snap-prolite.json" > "$TMP_ROOT/snap-nowindows.json"
 
 # Claude without its seven-day window: an otherwise healthy baseline whose
 # table lacks the claude 7d row instead.
@@ -493,14 +516,36 @@ test_gate_zai_pass_prints_table() {
 test_gate_table_content() {
   local home out rc
 
-  # A codex provider without its five-hour window: the gate must demand the
-  # 5h row before any launch, exactly like a missing plan size.
+  # A codex provider that publishes no five-hour window: the 5h window is only
+  # required when published, so the gate passes and shows the 5h cell as not
+  # published instead of a number.
   home=$(make_home nofive)
   seed_record "$home" "$TMP_ROOT/snap-nofive.json"
   out=$(run_gate "$home" --harness codex); rc=$?
-  expect_code 3 "$rc" "gate: a provider missing its 5h window must refuse"
-  assert_contains "$out" "the five-hour usage window (used percent and reset time) is missing for provider codex on account default" \
-    "gate: the 5h refusal must name the provider and the missing window"
+  expect_code 0 "$rc" "gate: a provider that publishes no 5h window must pass: $out"
+  assert_contains "$out" "window=five_hour used=not published by provider" \
+    "gate: the pass must show the unpublished 5h cell"
+  assert_contains "$out" "window=weekly used=8% resets=2026-10-04T05:00:39.000Z source=live" \
+    "gate: the pass must show the weekly used percent and reset"
+
+  # The live Codex ProLite shape (weekly window only) passes the same way.
+  home=$(make_home prolite)
+  seed_record "$home" "$TMP_ROOT/snap-prolite.json"
+  out=$(run_gate "$home" --harness pi --model openai-codex/gpt-6-luna); rc=$?
+  expect_code 0 "$rc" "gate: the live Codex ProLite shape must pass: $out"
+  assert_contains "$out" "plan=prolite (quota-axi)" "gate: the ProLite pass must name the plan"
+  assert_contains "$out" "window=five_hour used=not published by provider" \
+    "gate: the ProLite pass must show the unpublished 5h cell"
+  assert_contains "$out" "window=weekly used=44% resets=2026-10-04T05:00:38.000Z source=live" \
+    "gate: the ProLite pass must show the weekly used percent and reset"
+
+  # A provider publishing no windows at all is still refused.
+  home=$(make_home nowindows)
+  seed_record "$home" "$TMP_ROOT/snap-nowindows.json"
+  out=$(run_gate "$home" --harness codex); rc=$?
+  expect_code 3 "$rc" "gate: a provider with no windows must refuse"
+  assert_contains "$out" "the seven-day usage window (used percent and reset time) is missing for provider codex" \
+    "gate: the no-windows refusal must name the missing seven-day window"
 
   # A claude provider without its seven-day window: same refusal, 7d named.
   home=$(make_home noseven)
@@ -542,7 +587,7 @@ test_gate_table_content() {
   expect_code 0 "$rc" "gate: a bare model string must find its harness-scoped note: $out"
   assert_contains "$out" "notes=luna line" "gate: the suffix-matched pass must print the model note"
 
-  pass "gate: a record missing its 5h window, 7d window, or Notes entry is refused like any other missing evidence"
+  pass "gate: an unpublished 5h window passes as not published; a missing 7d window or Notes entry is refused"
 }
 
 test_gate_test_bypass() {

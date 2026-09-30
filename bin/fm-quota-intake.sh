@@ -603,9 +603,6 @@ cmd_gate() {
          else null end);
       if ($rows | length) == 0 then
         {verdict: "refuse", reason: ("no quota evidence rows for provider \($provider) with model \($model); dispatch a candidate the intake can measure")}
-      elif $w5 == null then
-        {verdict: "refuse",
-         reason: ("the five-hour usage window (used percent and reset time) is missing for provider \($provider) on account \($account); the intake must read it before any launch; re-run bin/fm-quota-intake.sh")}
       elif $w7 == null then
         {verdict: "refuse",
          reason: ("the seven-day usage window (used percent and reset time) is missing for provider \($provider) on account \($account); the intake must read it before any launch; re-run bin/fm-quota-intake.sh")}
@@ -649,6 +646,7 @@ cmd_gate() {
            plan: $p.plan, planSource: $p.planSource,
            notes: ($p.notes // ""), modelNote: $mnote,
            spendPriority: ($p.spendPriority // "unknown"), runway: ($p.runway // "unknown"),
+           fiveHourPublished: ($w5 != null),
            scopes: [$rows[] | {scope, status, used: (if (.effectivePercentRemaining | type) == "number" then (100 - .effectivePercentRemaining) else null end),
                                spendPriority: (.spendPriority // null), runway: (.runway // null)}],
            windows: [$req[] | {id: ., used: used(.), resetsAt: win(.).resetsAt,
@@ -671,6 +669,7 @@ cmd_gate() {
       def pct($v): if ($v | type) == "number" then "\($v)%" else "unknown" end;
       (.scopes[]? | . as $s | ($s.spendPriority // "unknown") as $sp |
         "  scope=\($s.scope) status=\($s.status) used=\(pct($s.used)) spendPriority=\($sp) runway=\($s.runway // "unknown")"),
+      (select(.fiveHourPublished == false) | "    window=five_hour used=not published by provider"),
       (.windows[]? | "    window=\(.id) used=\(pct(.used)) resets=\(.resetsAt) source=\(.source)"),
       (select((.notes // "") != "" or (.modelNote // "") != "") |
         "  notes=" + ([.notes, .modelNote] | map(select(. != null and . != "")) | join(" | ")))' <<< "$verdict"
