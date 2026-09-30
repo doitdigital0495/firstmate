@@ -58,13 +58,14 @@ SH
 
 # Build the board from <underway-json> plus <charted-json> and return what the
 # renderer produced.
-render_board() {  # <home> <underway-json> <charted-json> [charted_more] [charted_warning_more]
+render_board() {  # <home> <underway-json> <charted-json> [charted_more] [charted_warning_more] [extra-json]
   local home=$1 underway=$2 charted=$3 more=${4:-0} warning_more=${5:-0} data="$1/payload.json"
+  local extra=${6:-\{\}}
   jq -n --argjson underway "$underway" --argjson charted "$charted" \
-    --argjson more "$more" --argjson warning_more "$warning_more" '{
+    --argjson extra "$extra" --argjson more "$more" --argjson warning_more "$warning_more" '{
     schema:"fm-bearings-board.v1", home:"render-home", generated:"2026-08-26T00:00Z",
     prs_live:false, captains_call:[], underway:$underway, landed:[],
-    charted:$charted, charted_more:$more, charted_warning_more:$warning_more}' > "$data"
+    charted:$charted, charted_more:$more, charted_warning_more:$warning_more} + $extra' > "$data"
   PATH="$home/fakebin:$PATH" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROCEVENT_CLAIM_ROOT="$home/procevent-claims" \
@@ -79,7 +80,7 @@ render() {  # <home> <charted-json> [charted_more] [charted_warning_more]
 }
 
 charted_next_count() {  # <render-json>
-  printf '%s' "$1" | jq -r '.stats[] | select(.label == "charted next") | .n'
+  printf '%s' "$1" | jq -r '.stats[] | select(.label == "waiting to start") | .n'
 }
 
 test_a_warning_row_reads_as_a_repair_not_as_queued_work() {
@@ -143,7 +144,7 @@ test_omitted_warnings_never_count_as_more_queued() {
     || fail "an omitted warning was counted as queued work: $out"
   printf '%s' "$out" | jq -e '
     (.empty | length) == 1 and (.empty[0] | test("Nothing is queued"))
-      and (.more == ["+1 more repair warning - ask firstmate for the full chart"])
+      and (.more == ["+1 more repair warning - ask for the complete status page"])
       and ([.more[] | select(test("more queued"))] | length) == 0
   ' >/dev/null || fail "an omitted warning was labeled as more queued: $out"
   pass "omitted warnings remain separate from omitted queued work"
@@ -177,7 +178,7 @@ test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status() {
       and (.underway[0]
         | .title == "Show task names on the board"
           and (.sub | test("no-mistakes: review round 2"))
-          and (.sub | test("ship")) and (.sub | test("firstmate"))
+          and (.sub | test("firstmate")) and (.sub | test("ship") | not)
           and [.badges[] | .text] == ["working"])
   ' >/dev/null || fail "an underway row did not lead with the task name: $out"
   pass "an underway row leads with the task name and still reports its run status"
@@ -194,7 +195,7 @@ test_an_underway_identifier_label_is_not_replaced_by_run_status() {
     (.underway | length) == 1
       and (.underway[0]
         | .title == "mate/child-1"
-          and (.sub | startswith("fixing the failing check · "))
+          and .sub == "fixing the failing check"
           and (.title != "fixing the failing check"))
   ' >/dev/null || fail "an identifier-labelled underway row rendered as status-only: $out"
   pass "an underway identifier label is not replaced by run status"
@@ -228,6 +229,42 @@ test_charted_rows_without_a_filed_date_follow_the_dated_rows_in_payload_order() 
   pass "charted rows with no filed date follow the dated rows in payload order"
 }
 
+test_status_page_shows_every_request_and_explained_cards() {
+  local home out extra
+  home=$(make_home all-requests)
+  extra=$(jq -n '{
+    requests:[
+      {id:"working",repo:"sample",title:"Speed up the portal",status:"Working",detail:"Measuring page load times."},
+      {id:"queued",repo:"sample",title:"Remove old tabs",status:"Waiting for another task",detail:"Starts after the portal check."},
+      {id:"held",repo:null,title:"Choose hosting",status:"Waiting on you",detail:"Choose whether to pay for dedicated hosting."},
+      {id:"done",repo:"sample",title:"Update domains",status:"Completed",detail:"The new domains work.",pr_url:"https://github.com/acme/repo/pull/1"},
+      {id:"unknown",repo:null,title:"Unconfirmed request",status:"Status not confirmed",detail:"Its worker could not be checked."}
+    ],
+    coverage:["One group could not be checked; its last known tasks are shown."],
+    captains_call:[
+      {key:"hosting",repo:"sample",type:"decision",title:"Choose hosting",about:"Keeps reports available during updates.",decide:"Choose the cost and outage tradeoff.",recommend_value:"dedicated",
+       options:[{value:"dedicated",label:"Dedicated hosting",hint:"Costs more but updates do not interrupt reports."}]},
+      {key:"merge.domains",repo:"sample",type:"merge",title:"Publish domains",about:"Uses the new report addresses.",decide:"Choose whether to publish these reviewed changes.",risk:"low",
+       options:[{value:"merge",label:"Publish now",hint:"Makes the approved addresses available."}]}
+    ]
+  }')
+  out=$(render_board "$home" '[]' '[]' 0 0 "$extra")
+  printf '%s' "$out" | jq -e '
+    .error == "" and (.requests | length) == 5
+    and [.requests[].status] == ["Working","Waiting for another task","Waiting on you","Completed","Status not confirmed"]
+    and .requests[3].href == "https://github.com/acme/repo/pull/1"
+    and (.cards | length) == 2 and ([.cards[].hidden] | all(. == false))
+    and (.cards[0].contexts[0] | startswith("What it is for"))
+    and (.cards[1].contexts[0] | startswith("What it is for"))
+    and (.cards[0].options[0] | contains("Costs more") and contains("recommended"))
+    and (.cards[0].options[1] | contains("Check whether this still needs an answer"))
+    and (.coverage | length) == 1
+    and (.stats | any(.label == "requests" and .n == 5))
+  ' >/dev/null || fail "status page lost requests or their explanations: $out"
+  pass "all-tasks page shows five statuses, explained options, both cards and coverage"
+}
+
+test_status_page_shows_every_request_and_explained_cards
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status
 test_an_underway_identifier_label_is_not_replaced_by_run_status
 test_charted_next_reads_newest_filed_first

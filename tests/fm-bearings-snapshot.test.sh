@@ -1485,7 +1485,7 @@ write_large_fixture() {  # <home> <count>
 }
 
 test_section_caps_and_expansion_flags() {
-  local home fakebin json expanded
+  local home fakebin json expanded inventory rc
   home=$(make_home caps); write_large_fixture "$home" 5
   fakebin=$(make_fakebin "$home")
   json=$(FM_BEARINGS_IN_FLIGHT=2 FM_BEARINGS_DECISIONS=2 FM_BEARINGS_GATES=2 \
@@ -1509,6 +1509,19 @@ test_section_caps_and_expansion_flags() {
     (.in_flight|length) == 5 and (.decisions_open|length) == 5 and (.gates|length) == 5
     and (.reports|length) == 5 and (.recorded_prs|length) == 5 and (.unhealthy_endpoints|length) == 5
   ' >/dev/null || fail "section expansion flags did not reveal full sets: $expanded"
+  printf '\n## Done\n- [x] finished-question - Hosting chosen (repo: sample) (kind: captain)\n' >> "$home/data/backlog.md"
+  inventory=$(FM_BEARINGS_IN_FLIGHT=1 FM_BEARINGS_DECISIONS=1 FM_BEARINGS_GATES=1 \
+    run "$home" "$fakebin" --json --fields tasks)
+  printf '%s' "$inventory" | jq -e '
+    (.gates | length) == 1 and (.decisions_open | length) == 1
+    and (.task_inventory.main | length) == 11
+    and (.task_inventory.main | any(.id == "finished-question" and .state == "done"))
+    and (.task_inventory.unfiled | length) == 5
+    and .task_inventory.present == true
+  ' >/dev/null || fail "full task inventory lost capped, answered or unfiled tasks: $inventory"
+  if run "$home" "$fakebin" --fields tasks > "$home/toon-inventory.out" 2>&1; then rc=0; else rc=$?; fi
+  [ "$rc" -eq 2 ] || fail "nested task inventory was silently flattened into TOON"
+  pass "task inventory includes all 11 backlog rows and five unfiled workers despite digest caps"
   pass "all fleet-sized sections are capped with counted opt-in expansion"
 }
 
@@ -2317,7 +2330,7 @@ EOF
       and ([.gates[] | select(.id == "working-aged" and .owner == "working-mate")] | length) == 1
   ' >/dev/null || fail "working captain holds did not surface in Underway and exactly one default decision bucket: $json"
 
-  expanded=$(FM_SNAPSHOT_SECONDMATE_DECISIONS=1 run "$home" "$fakebin" --json --all-decisions --all-queued)
+  expanded=$(FM_SNAPSHOT_SECONDMATE_DECISIONS=1 run "$home" "$fakebin" --json --fields tasks --all-decisions --all-queued)
   printf '%s' "$expanded" | jq -e '
     ([.in_flight[].id] | contains([
       "working-live", "working-live-two", "working-blocked", "working-dated", "working-aged",
@@ -2336,6 +2349,15 @@ EOF
       and ([.gates[] | select(.id == "working-live" or .id == "working-live-two" or .id == "working-blocked"
           or .id == "working-dated" or .id == "working-aged")] | length) == 0
   ' >/dev/null || fail "--all-decisions did not keep working holds Underway and reveal each gate-free: $expanded"
+  printf '%s' "$expanded" | jq -e '
+    .task_inventory.homes[0].id == "working-mate"
+    and (.task_inventory.homes[0].active_children | length) == 5
+    and (.task_inventory.homes[0].queued | length) == 5
+    and (.task_inventory.homes[0].queued | any(.id == "working-dated" and .hold_until == "2026-08-01"))
+    and (.task_inventory.homes[0].queued | any(.id == "working-blocked" and (.unresolved_blocker_ids | length) == 2))
+    and (.task_inventory.homes[0].counts.active_children == 5)
+  ' >/dev/null || fail "task inventory dropped delegated work or its structured waits: $expanded"
+  pass "task inventory preserves delegated children, holds, counts, dates and blockers"
   pass "working captain holds retain main and secondmate bucket surfaces"
 }
 

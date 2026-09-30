@@ -3,7 +3,8 @@ name: bearings
 description: >-
   Generate a "pick up where I left off" fleet digest from firstmate's live fleet state.
   Use when the captain invokes /bearings or asks for a bearings report, morning brief, status report, catch-up, "where did I leave off", or "what's in the works".
-  Plain /bearings is chat-only by default, /bearings file explicitly writes the dated data/status-report-<YYYY-MM-DD>.md artifact, and /bearings lavish additionally builds and arms the interactive fleet board; live PR enrichment remains opt-in and composes with the other modes.
+  Plain /bearings is chat-only by default, /bearings file explicitly writes the dated data/status-report-<YYYY-MM-DD>.md artifact, and /bearings lavish builds the all-tasks status page with Needs you cards and a requests table; live PR enrichment remains opt-in and composes with the other modes.
+  Use lavish mode when the captain explicitly asks for a Lavish status page or an all-tasks status board.
   Also use on a contributions check wake or when filing work linked to an upstream issue.
   Also load this skill's board-wake handling when a procevent lavish wake's source id matches the canonical source id of the stable bearings board path.
 user-invocable: true
@@ -27,7 +28,8 @@ Board answers are acted on later under the normal authority rules; this skill's 
 - `/bearings file` gathers a fresh bounded snapshot, replaces today's `data/status-report-<YYYY-MM-DD>.md` from scratch, and renders the four-section chat digest with a link or path to that report.
 - `/bearings lavish` gathers a fresh bounded snapshot, rebuilds and arms the interactive fleet board (the "Lavish board mode" section below), and renders the four-section chat digest with the board's URL inside it.
 - Treat `file` and `lavish` only as explicit invocation options in the slash command.
-- Do not treat natural-language requests such as "write a report", "save this", "persist it", "make a file", or "make a board" as file or lavish mode unless the invocation explicitly includes the standalone option.
+- An explicit request for a Lavish status page or an all-tasks status board selects lavish mode.
+- Other natural-language requests such as "write a report", "save this", "persist it", "make a file", or "make a board" do not select file or lavish mode.
 - When the captain asks to include PRs, pass the snapshot command's live-PR opt-in.
 - `/bearings include PRs` remains chat-only and makes the live-PR opt-in.
 - `/bearings file include PRs` and `/bearings lavish include PRs` compose the same way.
@@ -38,6 +40,8 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
 
 1. **Gather live fleet state with one deterministic command.**
    Run `snapshot=$(bin/fm-bearings-snapshot.sh --json)` at invocation time and read that compact output.
+   In lavish mode, use its full-inventory options instead: `snapshot=$(bin/fm-bearings-snapshot.sh --json --fields tasks --all-in-flight --all-decisions --all-secondmates --all-landed --all-queued --all-recorded-prs)`.
+   The opt-in `task_inventory` supplies every main backlog row, captured worker state, unfiled worker records, and sampled delegated inventories without the digest's presentation limits; it does not remove canonical collection bounds.
    It is the single bounded, deterministic fleet-state source for Bearings.
    Do not create or consult a second fleet-state reader, parser contract, status-event-tail interpretation, visible-session recap, ad-hoc project probe, or ad-hoc `gh-axi`/`gh` query.
    The command's header and `--help` output own its exact fields, bounds, opt-ins, and output contract.
@@ -93,10 +97,36 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
 
 ## Lavish board mode
 
-`/bearings lavish` adds one deliverable beside the unchanged chat digest: the interactive fleet board, a myfirstmate-styled Lavish page where the captain answers Captain's Call items directly instead of replying in chat.
+`/bearings lavish` adds one deliverable beside the unchanged chat digest: a self-contained dark status page with Needs you cards and a Your requests table, where the captain can answer directly.
+This capability is merged into bearings rather than a separate skill because the snapshot, decision bindings, stable page, and supervised Lavish polling already belong here; a second skill would duplicate those contracts.
+Plain bearings and file mode retain their existing chat/report formats.
 `bin/fm-bearings-board.sh` owns every board mechanic - the stable board path, fm-bearings-board.v1 payload validation, template injection, live Lavish session verification and ended-session reopening, the any-origin answer binding, and listener registration - so the per-invocation work is composing the payload and running its `build`.
 
 Compose the payload from the same snapshot with the same ranking judgment as the chat digest, plus these board rules:
+
+- Always include `requests` and `coverage` using the contract in `bin/fm-bearings-board.sh`.
+  Include one requests row for every `task_inventory.main` entry, every unfiled worker, and each distinct task in a sampled home's active, queued, held, and completed inventories.
+  Include program tasks, deferred questions, completed investigations, and backlog-only tasks even when they are absent from the digest's four lists.
+  Deduplicate within the owning home, not across homes; prefix delegated ids with the home id just as the snapshot does.
+  Unstructured backlog entries still get a row with a stable per-snapshot identity, their request explained plainly, and "Status not confirmed"; never invent a worker for them.
+  A backlog-only in-flight task that requires worker metadata says "Status not confirmed", not "Working".
+  Use captured worker state for live work, structured hold dates and unresolved blockers for waiting work, and durable completion for finished work.
+  An answered question is not proof that its implementation finished.
+- Put every unavailable, partial, omitted, cached, or inconsistent inventory fact in `coverage` in plain words, including a missing main backlog.
+  Use the inventories' counts, omitted fields, freshness, and snapshot disclosures; do not hide gaps or claim complete coverage when collection was bounded or failed.
+  Explain which group could not be checked and what is missing, without exposing flags, file paths, or internal classifications.
+- Every request has a human-readable title, a short plain status such as "Working", "In review", "Waiting on you", "Waiting until Friday", "Waiting for another task", "Completed", or "Status not confirmed", and a sentence explaining what has happened and what happens next.
+  Copy no raw worker status line into the page.
+  Describe proposed changes as a review link rather than an unexplained "PR".
+- Every Needs you card explains "What it is for" and "Your choice", including merge and sign-in cards.
+  Every option explains its consequence, cost or risk where known, and what choosing it would do; do not invent options, prices, recommendations, or authority absent from the task's structured question and accepted intent.
+  Never request passwords, tokens, or other secret values through the page.
+  Do not ask again for a recorded answer; show its current work status in the table instead.
+  Deferred questions disclose their wait date or blocking work rather than asking for an immediate answer.
+- Use plain words throughout the page: no "snag", "charted", "landed", "reconcile", "gate", "intake", worker kinds, task ids, process ids, or unexplained abbreviations in authored copy.
+  Name what is waiting and why instead of the internal mechanism.
+  Keep routing identities in JSON, not visible prose.
+  The shipped template owns the fixed wording and dark/mobile layout; never generate a replacement design at invocation time.
 
 - A Captain's Call decision key is the captain-held TASK ID from `decisions_open` (legacy `<origin>-decision-<key>` rows are already task ids); a merge card's key is `merge.<task-id>`; the Charted Next dispatch picker's key is `dispatch.charted`.
 - Before carding a hold, check that its SUBJECT has not already landed, and omit it when it has. `build` drops a card whose task or PR appears in the payload's own landed rows, and one whose task is no longer an open captain call. When a hold waits on one specific PR, put that PR in the card's `pr_url`. When it concerns a published version, put the artifact and numeric three-part version in the card's structured `subject`; landed rows for releases carry the same identity, and a matching or newer version drops the card. Identity matching is structured only, so verify any subject without one of these identities against current reality before carding it.

@@ -7,7 +7,8 @@
 # left off" read needs, and renders TOON at the output boundary. The internal data
 # model stays JSON (`--json` prints it verbatim); TOON is the default agent-facing
 # format per the AXI standard, and TOON/JSON are parity representations of the same
-# projected model. The projection is view-specific: it DROPS fields from the bearings
+# projected model, except the JSON-only full task inventory (--fields tasks).
+# The projection is view-specific: it DROPS fields from the bearings
 # output, it never removes them from - or otherwise weakens - the canonical snapshot,
 # which stays complete.
 #
@@ -77,7 +78,12 @@
 #   (default)        compact projection with bounded remote-ledger collection, TOON
 #   --json           the same projected model as JSON (machine/debug; parity form)
 #   --include-prs    ALSO do live GitHub open-PR discovery + checks
-#   --fields <list>  opt in to dropped surfaces: bodies,paths,actions,endpoints
+#   --fields <list>  opt in to dropped surfaces: bodies,paths,actions,endpoints,tasks
+#                    tasks adds task_inventory: every main backlog record with
+#                    its captured worker state, unfiled metadata records, and
+#                    each sampled home's structured inventories plus coverage.
+#                    Requires --json for nested heterogeneous records.
+#                    This bypasses digest limits, not canonical collection bounds.
 #   --all-in-flight  include every in-flight task
 #   --all-decisions  include every open decision and captain hold in the bounded snapshot
 #   --all-secondmates include every aggregated secondmate record
@@ -163,7 +169,12 @@ For every registered secondmate, readable structured facts from its own home are
   Parent events and bounded terminal reads are labeled fallback or contradiction
   evidence and never become current work. The provenance and freshness fields
   distinguish live and cached ledgers; a home without either is explicitly unreadable.
-Opt-in surfaces: --fields bodies|paths|actions|endpoints, --all-in-flight,
+Opt-in surfaces: --fields bodies|paths|actions|endpoints|tasks, --all-in-flight,
+  tasks requires --json and adds task_inventory{main[],unfiled[],homes[]} for all-tasks boards.
+  main preserves every backlog row and adds worker_state/worker_detail when known;
+  unfiled contains metadata without a backlog row; homes preserves the sampled
+  active_children/queued/holds/landed inventories and counts/omitted/freshness.
+  Digest limits do not apply to this inventory; canonical coverage bounds still do.
   --all-decisions (all open decisions and captain holds in the bounded snapshot),
   --all-secondmates, --all-landed, --all-reports, --all-queued, --all-recorded-prs,
   --all-unhealthy, --all-pr-repos, --include-prs (adds candidate_prs).
@@ -205,6 +216,11 @@ while [ $# -gt 0 ]; do
 done
 
 command -v jq >/dev/null 2>&1 || { echo "fm-bearings-snapshot: jq not found" >&2; exit 1; }
+if [ "$FORMAT" != json ] && jq -en --arg fields "$FIELDS" \
+  '$fields | split(",") | map(gsub("^\\s+|\\s+$"; "")) | index("tasks") != null' >/dev/null; then
+  echo "fm-bearings-snapshot: --fields tasks requires --json" >&2
+  exit 2
+fi
 
 # The shared read-only away-return owner is consulted, not obeyed. An active
 # away window still refuses here: the correct answer to a bearings request then
@@ -643,6 +659,19 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          else {} end)
   | . + (if $include_prs == 1 then {candidate_prs:$candidate_prs} else {} end)
   | . + (if $f_bodies then {bodies:[ $snap.backlog.records[] | select(.structured and (.state == "queued" or .state == "done")) | {id, body:((.body_excerpt // .raw // "-") | trunc(200))} ]} else {} end)
+  | . + (if ($fl | index("tasks")) != null then {task_inventory:{
+      main:[ $snap.backlog.records[] as $row
+        | ([$snap.tasks[] | select(.id == $row.id)][0] // {}) as $worker
+        | $row + {worker_state:($worker.current_state.state // null),
+                  worker_detail:($worker.current_state.detail // null)} ],
+      present:$snap.backlog.present,
+      unfiled:[ $snap.tasks[]
+        | select(.id as $id | any($snap.backlog.records[]; .id == $id) | not)
+        | {id,kind,state:.current_state.state,detail:.current_state.detail} ],
+      homes:[ ($snap.secondmate_current.records // [])[]
+        | {id,active_children,queued,holds,landed,counts,omitted,freshness,
+           current,invalidity,provenance} ]
+    }} else {} end)
   | . + (if $f_paths then {paths:[ $snap.tasks[] | {id, worktree:(.paths.worktree.path // "-"), home:(.paths.home.path // "-"), status:.paths.status_log.path, report:.paths.report.path} ]} else {} end)
   | . + (if $f_actions then {actions:[ $snap.tasks[] | {id, watch:(.actions.watch // .actions.send // "-"), steer:(.actions.steer // .actions.send // "-")} ]} else {} end)
   | . + (if $f_endpoints then {endpoints:[ $snap.tasks[] | {id, backend, target:(.endpoint.target // "-"), exists:.endpoint.exists, agent:.endpoint.agent_alive} ]} else {} end)
