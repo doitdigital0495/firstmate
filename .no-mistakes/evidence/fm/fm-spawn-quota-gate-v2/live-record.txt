@@ -1,26 +1,28 @@
-$ fm-quota-intake.sh   (bare, real quota-axi, throwaway FM_HOME)
-quota-intake recordedAt=2026-09-30T11:34:40Z record=quota-1790768080-845756160-1340713.json
+quota-intake recordedAt=2026-09-30T16:45:02Z record=quota-1790786702-643841039-2112571.json
 account=default status=ok claude=/home/daan/.claude pi=/home/daan/.pi/agent codex=/home/daan/.codex
-  provider=claude status=ok plan=max (quota-axi) quota-axi=max spendPriority=1.1345 runway=through_reset
-    window=five_hour remaining=68% resets=2026-09-30T11:40:00.393027+00:00 source=live
-    window=seven_day remaining=76% resets=2026-10-05T18:00:00.393047+00:00 source=live
-    window=model:fable remaining=100% resets=2026-10-05T18:00:00+00:00 source=live
-  provider=codex status=ok plan=prolite (quota-axi) quota-axi=prolite spendPriority=0.5931 runway=through_reset
-    window=weekly remaining=68% resets=2026-10-04T05:00:39.000Z source=live
-  provider=cursor status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown
-  provider=copilot status=ok plan=individual (quota-axi) quota-axi=individual spendPriority=unknown runway=unknown
-  provider=grok status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown
-  provider=kimi status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown
-  provider=zai status=ok plan=pro (quota-axi) quota-axi=pro spendPriority=0.3833 runway=through_reset
-    window=five_hour remaining=90% resets=2026-09-30T15:04:01.957Z source=live
-    window=weekly remaining=93% resets=2026-10-06T18:04:43.983Z source=live
-  provider=agy status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown
-  provider=alibaba status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown
-  provider=opencode-go status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown
-  provider=commandcode status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown
-  provider=minimax status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown
-  provider=mimo status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown
-  provider=deepseek status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown
-  provider=openrouter status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown
-  provider=elevenlabs status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown
-exit=0
+  provider=claude status=ok plan=Max 20x (accounts.json) quota-axi=max spendPriority=-0.0757 runway=projected_exhaustion notes=personal Max seat; Opus is the default
+    model=claude/opus notes=Opus 5.5 default rung
+    window=five_hour used=0% resets=2026-09-30T21:40:00.090980+00:00 source=live
+    window=seven_day used=30% resets=2026-10-05T18:00:00.091001+00:00 source=live
+    window=model:fable used=0% resets=2026-10-05T18:00:00+00:00 source=live
+  provider=codex status=ok plan=Pro (accounts.json) quota-axi=prolite spendPriority=0.2338 runway=through_reset notes=ChatGPT Pro, credits metered
+    model=pi/openai-codex/gpt-6-luna notes=Luna volume work
+    window=weekly used=44% resets=2026-10-04T05:00:38.000Z source=live
+  provider=cursor status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=copilot status=ok plan=individual (quota-axi) quota-axi=individual spendPriority=unknown runway=unknown notes=
+  provider=grok status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=kimi status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=zai status=ok plan=GLM Max (accounts.json) quota-axi=pro spendPriority=-0.0117 runway=projected_exhaustion notes=
+    model=pi/zai/glm-5.3 notes=GLM personal only
+    window=five_hour used=10% resets=2026-09-30T20:05:10.991Z source=live
+    window=weekly used=14% resets=2026-10-06T18:04:43.983Z source=live
+  provider=agy status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=alibaba status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=opencode-go status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=commandcode status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=minimax status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=mimo status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=deepseek status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=openrouter status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=elevenlabs status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+EXIT=0

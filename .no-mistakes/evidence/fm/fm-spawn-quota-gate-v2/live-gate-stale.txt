@@ -1,0 +1,9 @@
+$ FM_QUOTA_INTAKE_MAX_AGE=0 gate --harness claude --model opus  (record a few seconds old)
+quota intake gate: refusing - quota evidence is unknown at all_models for provider claude; wait for the measurement or re-run bin/fm-quota-intake.sh
+EXIT=3
+
+# live Claude read came back rate-limited (state.status=stale, scope status unknown); gate fails closed:
+
+$ FM_QUOTA_INTAKE_MAX_AGE=0 gate --harness pi --model zai/glm-5.3  (record older than 0s)
+quota intake gate: refusing - the newest intake record is 10s old (max 0s); run bin/fm-quota-intake.sh now and re-check every usage limit
+EXIT=3

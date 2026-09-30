@@ -1,0 +1,14 @@
+ok - record: every window with its used percent and reset, spendPriority, runway, plan size, and notes from every source, printed in full
+ok - record: private (0600) timestamped records with retention of the newest 50
+ok - record: a failed store read is recorded as failed, printed, and exits nonzero
+ok - gate: refuses on no record, stale record, uncovered account or store, an unmappable provider family, and a record already spent on a launch
+ok - gate: an exhausted account is refused naming the window and its reset time
+ok - gate: a 0% window is refused naming the window and its reset time
+ok - gate: a model-scoped window without percent or reset evidence is refused
+ok - gate: a record missing its 5h window, 7d window, or Notes entry is refused like any other missing evidence
+ok - gate: a passing candidate prints its full window table with used percents and notes
+ok - gate: the FM_QUOTA_INTAKE_TEST_BYPASS escape hatch is explicit and loud
+ok - cached read: a fresh statusline cache is recorded with its own used percents, marked cached, and gates
+ok - cached read: a statusline cache older than 30 minutes fails closed
+ok - fm-spawn: refuses without a record (nothing created), launches on a real seeded record, and refuses to reuse it
+ok - fm-control relaunch: the quota gate refuses before the agent is stopped and passes on a real record, named accounts included

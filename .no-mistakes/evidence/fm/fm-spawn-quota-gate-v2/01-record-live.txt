@@ -1,0 +1,87 @@
+quota-intake recordedAt=2026-09-30T17:02:33Z record=quota-1790787753-352249143-129923.json
+account=default status=ok claude=/home/daan/.claude pi=/home/daan/.pi/agent codex=/home/daan/.codex
+  provider=claude status=ok plan=Max 20x (accounts.json) quota-axi=max spendPriority=-0.134 runway=projected_exhaustion notes=Never opus:max or sonnet:max. Sonnet 5.5 only for whole sessions, never switched mid-session.
+    model=claude/haiku notes=Cheapest Claude rung. Simplistic, latency-sensitive work only: locate, grep, extract, format. AA 16.9, about $0.28 per task.
+    model=claude/opus notes=Opus 5.5 at 1M window, standard pricing. low = bounded edit (AA 42.3, about $0.55), medium = default coding (51.2, about $1.34), high = value champion (53.6, about $1.82), xhigh = ceiling (56.0, about $3.46). Never max. Shares the Claude weekly allowance with sonnet.
+    window=five_hour used=5% resets=2026-09-30T21:40:00.127813+00:00 source=live
+    window=seven_day used=31% resets=2026-10-05T18:00:00.127838+00:00 source=live
+    window=model:fable used=0% resets=2026-10-05T18:00:00+00:00 source=live
+  provider=codex status=ok plan=Pro 5x (accounts.json) quota-axi=prolite spendPriority=0.2407 runway=through_reset notes=Captain 2026-09-30: holds 2 Codex resets on Geris and 1 on personal. Standing rule: Codex-only workers until the Codex windows deplete, split by spendPriority; running workers stay.
+    model=pi/openai-codex/gpt-6.1-sol notes=ChatGPT subscription via Pi, credits metered per token. AA v4.3.2: low 42, medium 48, xhigh 51 at equal or lower cost per task than gpt-6-sol. Below Opus high on judgment work. Only candidate that can generate images. Captain standing rule 2026-09-30: Codex-only workers until the Codex windows deplete, split by spendPriority across personal and geris.
+    model=pi/openai-codex/gpt-6-luna notes=Volume model: xhigh scores about 33.9 for roughly 1 credit per task. Compacts early at 64K. Geris seat pool is its main use.
+    window=weekly used=44% resets=2026-10-04T05:00:38.000Z source=live
+  provider=cursor status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=copilot status=ok plan=individual (quota-axi) quota-axi=individual spendPriority=unknown runway=unknown notes=
+  provider=grok status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=kimi status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=zai status=ok plan=Pro 6x (accounts.json) quota-axi=pro spendPriority=-0.0754 runway=projected_exhaustion notes=GLM promo until 2026-10-07 (drop this note after): half rate all day from 2026-09-25. Normal rule: peak only Mon-Fri 14:00-18:00 Singapore time (08:00-12:00 CEST), half rate all other hours and weekends. glm-5.3-flash only: 23:00-09:00 Singapore time (17:00-03:00 CEST) doubles quota and is free in Z.ai's tool.
+    model=pi/zai/glm-5.3 notes=Z.ai is a SEPARATE pool from Claude and ChatGPT. PROMOTION until 2026-10-07 (dead after that date, remove then): half rate ALL DAY from 2026-09-25. Normal rule: peak only Mon-Fri 14:00-18:00 Singapore time (08:00-12:00 CEST summer, 07:00-11:00 winter), half rate every other hour incl. whole weekend. Flash overlay does not apply to glm-5.3. spendPriority is unmeasurable while the five_hour window blocks it.
+    model=pi/zai/glm-5.3-flash notes=Light GLM. Compacts early at 64K. PROMOTION until 2026-10-07: half rate all day, PLUS daily 23:00-09:00 Singapore time (17:00-03:00 CEST) doubles quota and is free in Z.ai's own tool. Prefer it on the investigation rung when spendPriority is close and this window is open. Never revives an allowance already at zero.
+    window=five_hour used=11% resets=2026-09-30T20:05:10.991Z source=live
+    window=weekly used=15% resets=2026-10-06T18:04:43.983Z source=live
+  provider=agy status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=alibaba status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=opencode-go status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=commandcode status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=minimax status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=mimo status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=deepseek status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=openrouter status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=elevenlabs status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+account=geris status=ok claude=/home/daan/.claude-geris pi=/home/daan/.pi-geris/agent codex=/home/daan/.codex-geris
+  provider=claude status=ok plan=Team (accounts.json:geris) quota-axi=team spendPriority=unknown runway=projected_exhaustion notes=Never opus:max or sonnet:max. Sonnet 5.5 only for whole sessions, never switched mid-session.
+    model=claude/haiku notes=Cheapest Claude rung. Simplistic, latency-sensitive work only: locate, grep, extract, format. AA 16.9, about $0.28 per task.
+    model=claude/opus notes=Opus 5.5 at 1M window, standard pricing. low = bounded edit (AA 42.3, about $0.55), medium = default coding (51.2, about $1.34), high = value champion (53.6, about $1.82), xhigh = ceiling (56.0, about $3.46). Never max. Shares the Claude weekly allowance with sonnet.
+    window=five_hour used=0% resets=unknown source=live
+    window=seven_day used=25% resets=2026-10-06T08:59:59.817032+00:00 source=live
+  provider=codex status=ok plan=Business (accounts.json:geris) quota-axi=team spendPriority=0.3083 runway=through_reset notes=Captain 2026-09-30: holds 2 Codex resets on Geris and 1 on personal. Standing rule: Codex-only workers until the Codex windows deplete, split by spendPriority; running workers stay.
+    model=pi/openai-codex/gpt-6.1-sol notes=ChatGPT subscription via Pi, credits metered per token. AA v4.3.2: low 42, medium 48, xhigh 51 at equal or lower cost per task than gpt-6-sol. Below Opus high on judgment work. Only candidate that can generate images. Captain standing rule 2026-09-30: Codex-only workers until the Codex windows deplete, split by spendPriority across personal and geris.
+    model=pi/openai-codex/gpt-6-luna notes=Volume model: xhigh scores about 33.9 for roughly 1 credit per task. Compacts early at 64K. Geris seat pool is its main use.
+    window=five_hour used=20% resets=2026-09-30T17:30:05.000Z source=live
+    window=weekly used=49% resets=2026-10-04T04:00:29.000Z source=live
+  provider=cursor status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=copilot status=ok plan=individual (quota-axi) quota-axi=individual spendPriority=unknown runway=unknown notes=
+  provider=grok status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=kimi status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=zai status=ok plan=Pro 6x (accounts.json) quota-axi=none spendPriority=unknown runway=unknown notes=GLM promo until 2026-10-07 (drop this note after): half rate all day from 2026-09-25. Normal rule: peak only Mon-Fri 14:00-18:00 Singapore time (08:00-12:00 CEST), half rate all other hours and weekends. glm-5.3-flash only: 23:00-09:00 Singapore time (17:00-03:00 CEST) doubles quota and is free in Z.ai's tool.
+    model=pi/zai/glm-5.3 notes=Z.ai is a SEPARATE pool from Claude and ChatGPT. PROMOTION until 2026-10-07 (dead after that date, remove then): half rate ALL DAY from 2026-09-25. Normal rule: peak only Mon-Fri 14:00-18:00 Singapore time (08:00-12:00 CEST summer, 07:00-11:00 winter), half rate every other hour incl. whole weekend. Flash overlay does not apply to glm-5.3. spendPriority is unmeasurable while the five_hour window blocks it.
+    model=pi/zai/glm-5.3-flash notes=Light GLM. Compacts early at 64K. PROMOTION until 2026-10-07: half rate all day, PLUS daily 23:00-09:00 Singapore time (17:00-03:00 CEST) doubles quota and is free in Z.ai's own tool. Prefer it on the investigation rung when spendPriority is close and this window is open. Never revives an allowance already at zero.
+  provider=agy status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=alibaba status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=opencode-go status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=commandcode status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=minimax status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=mimo status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=deepseek status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=openrouter status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=elevenlabs status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+account=personal status=ok claude=/home/daan/.claude pi=/home/daan/.pi/agent codex=/home/daan/.codex
+  provider=claude status=ok plan=Max 20x (accounts.json:personal) quota-axi=max spendPriority=-0.134 runway=projected_exhaustion notes=Never opus:max or sonnet:max. Sonnet 5.5 only for whole sessions, never switched mid-session.
+    model=claude/haiku notes=Cheapest Claude rung. Simplistic, latency-sensitive work only: locate, grep, extract, format. AA 16.9, about $0.28 per task.
+    model=claude/opus notes=Opus 5.5 at 1M window, standard pricing. low = bounded edit (AA 42.3, about $0.55), medium = default coding (51.2, about $1.34), high = value champion (53.6, about $1.82), xhigh = ceiling (56.0, about $3.46). Never max. Shares the Claude weekly allowance with sonnet.
+    window=five_hour used=5% resets=2026-09-30T21:40:00.127813+00:00 source=live
+    window=seven_day used=31% resets=2026-10-05T18:00:00.127838+00:00 source=live
+    window=model:fable used=0% resets=2026-10-05T18:00:00+00:00 source=live
+  provider=codex status=ok plan=Pro 5x (accounts.json:personal) quota-axi=prolite spendPriority=0.2407 runway=through_reset notes=Captain 2026-09-30: holds 2 Codex resets on Geris and 1 on personal. Standing rule: Codex-only workers until the Codex windows deplete, split by spendPriority; running workers stay.
+    model=pi/openai-codex/gpt-6.1-sol notes=ChatGPT subscription via Pi, credits metered per token. AA v4.3.2: low 42, medium 48, xhigh 51 at equal or lower cost per task than gpt-6-sol. Below Opus high on judgment work. Only candidate that can generate images. Captain standing rule 2026-09-30: Codex-only workers until the Codex windows deplete, split by spendPriority across personal and geris.
+    model=pi/openai-codex/gpt-6-luna notes=Volume model: xhigh scores about 33.9 for roughly 1 credit per task. Compacts early at 64K. Geris seat pool is its main use.
+    window=weekly used=44% resets=2026-10-04T05:00:38.000Z source=live
+  provider=cursor status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=copilot status=ok plan=individual (quota-axi) quota-axi=individual spendPriority=unknown runway=unknown notes=
+  provider=grok status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=kimi status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=zai status=ok plan=Pro 6x (accounts.json:personal) quota-axi=pro spendPriority=-0.0754 runway=projected_exhaustion notes=GLM promo until 2026-10-07 (drop this note after): half rate all day from 2026-09-25. Normal rule: peak only Mon-Fri 14:00-18:00 Singapore time (08:00-12:00 CEST), half rate all other hours and weekends. glm-5.3-flash only: 23:00-09:00 Singapore time (17:00-03:00 CEST) doubles quota and is free in Z.ai's tool.
+    model=pi/zai/glm-5.3 notes=Z.ai is a SEPARATE pool from Claude and ChatGPT. PROMOTION until 2026-10-07 (dead after that date, remove then): half rate ALL DAY from 2026-09-25. Normal rule: peak only Mon-Fri 14:00-18:00 Singapore time (08:00-12:00 CEST summer, 07:00-11:00 winter), half rate every other hour incl. whole weekend. Flash overlay does not apply to glm-5.3. spendPriority is unmeasurable while the five_hour window blocks it.
+    model=pi/zai/glm-5.3-flash notes=Light GLM. Compacts early at 64K. PROMOTION until 2026-10-07: half rate all day, PLUS daily 23:00-09:00 Singapore time (17:00-03:00 CEST) doubles quota and is free in Z.ai's own tool. Prefer it on the investigation rung when spendPriority is close and this window is open. Never revives an allowance already at zero.
+    window=five_hour used=11% resets=2026-09-30T20:05:10.991Z source=live
+    window=weekly used=15% resets=2026-10-06T18:04:43.983Z source=live
+  provider=agy status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=alibaba status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=opencode-go status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=commandcode status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=minimax status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=mimo status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=deepseek status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=openrouter status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=elevenlabs status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+EXIT=0

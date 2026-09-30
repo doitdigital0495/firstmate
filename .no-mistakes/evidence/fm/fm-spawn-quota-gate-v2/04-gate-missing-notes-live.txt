@@ -1,0 +1,22 @@
+# config copy: accounts.json top-level notes AND plans removed, crew-dispatch model_notes={}
+$ fm-quota-intake.sh record  (default account excerpt)
+quota-intake recordedAt=2026-09-30T17:03:03Z record=quota-1790787783-859410591-203806.json
+account=default status=ok claude=/home/daan/.claude pi=/home/daan/.pi/agent codex=/home/daan/.codex
+  provider=claude status=ok plan=max (quota-axi) quota-axi=max spendPriority=-0.1374 runway=projected_exhaustion notes=
+    window=five_hour used=6% resets=2026-09-30T21:40:00.494638+00:00 source=live
+    window=seven_day used=31% resets=2026-10-05T18:00:00.494659+00:00 source=live
+    window=model:fable used=0% resets=2026-10-05T18:00:00+00:00 source=live
+  provider=codex status=ok plan=prolite (quota-axi) quota-axi=prolite spendPriority=0.2409 runway=through_reset notes=
+    window=weekly used=44% resets=2026-10-04T05:00:38.000Z source=live
+  provider=cursor status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=copilot status=ok plan=individual (quota-axi) quota-axi=individual spendPriority=unknown runway=unknown notes=
+  provider=grok status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+  provider=kimi status=ok plan=unknown (unknown) quota-axi=none spendPriority=unknown runway=unknown notes=
+
+$ fm-quota-intake.sh gate --harness claude --model opus
+quota intake gate: refusing - no notes are recorded for provider claude on account default; declare them in config/accounts.json top-level notes or config/crew-dispatch.json model_notes and re-run bin/fm-quota-intake.sh
+EXIT=3
+
+$ fm-quota-intake.sh gate --harness pi --model openai-codex/gpt-6-luna
+quota intake gate: refusing - no notes are recorded for provider codex on account default; declare them in config/accounts.json top-level notes or config/crew-dispatch.json model_notes and re-run bin/fm-quota-intake.sh
+EXIT=3

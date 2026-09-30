@@ -1,0 +1,19 @@
+$ gate --harness claude --model opus (preview)
+quota-intake gate: PASS record=quota-1790786702-643841039-2112571.json age=0s account=default provider=claude model=opus plan=Max 20x (accounts.json) spendPriority=-0.0757 runway=projected_exhaustion
+  scope=all_models status=known used=30% spendPriority=-0.0757 runway=projected_exhaustion
+    window=five_hour used=0% resets=2026-09-30T21:40:00.090980+00:00 source=live
+    window=seven_day used=30% resets=2026-10-05T18:00:00.091001+00:00 source=live
+  notes=personal Max seat; Opus is the default | Opus 5.5 default rung
+EXIT=0
+
+$ gate --harness claude --model opus --consume
+quota-intake gate: PASS record=quota-1790786702-643841039-2112571.json age=0s account=default provider=claude model=opus plan=Max 20x (accounts.json) spendPriority=-0.0757 runway=projected_exhaustion
+  scope=all_models status=known used=30% spendPriority=-0.0757 runway=projected_exhaustion
+    window=five_hour used=0% resets=2026-09-30T21:40:00.090980+00:00 source=live
+    window=seven_day used=30% resets=2026-10-05T18:00:00.091001+00:00 source=live
+  notes=personal Max seat; Opus is the default | Opus 5.5 default rung
+EXIT=0
+
+$ gate --harness claude --model opus --consume  (same record, second launch)
+quota intake gate: refusing - the newest intake record quota-1790786702-643841039-2112571.json was already spent on a launch; every launch needs its own read, so run bin/fm-quota-intake.sh now and re-check every usage limit
+EXIT=3

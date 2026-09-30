@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 2,
+  "recordedAt": "2026-09-30T17:02:33Z",
+  "claude": {
+    "provider": "claude",
+    "readStatus": "ok",
+    "state": {
+      "status": "fresh",
+      "error": null,
+      "retryAfter": null
+    },
+    "plan": "Max 20x",
+    "planSource": "accounts.json",
+    "quotaAxiPlan": "max",
+    "spendPriority": -0.134,
+    "runway": "projected_exhaustion",
+    "notes": "Never opus:max or sonnet:max. Sonnet 5.5 only for whole sessions, never switched mid-session.",
+    "modelNotes": {
+      "claude/haiku": "Cheapest Claude rung. Simplistic, latency-sensitive work only: locate, grep, extract, format. AA 16.9, about $0.28 per task.",
+      "claude/opus": "Opus 5.5 at 1M window, standard pricing. low = bounded edit (AA 42.3, about $0.55), medium = default coding (51.2, about $1.34), high = value champion (53.6, about $1.82), xhigh = ceiling (56.0, about $3.46). Never max. Shares the Claude weekly allowance with sonnet."
+    },
+    "scopes": [
+      {
+        "scope": "all_models",
+        "status": "known",
+        "effectivePercentRemaining": 69,
+        "effectivePercentUsed": 31,
+        "spendPriority": -0.134,
+        "runway": "projected_exhaustion",
+        "boundedBy": [
+          "five_hour",
+          "seven_day"
+        ],
+        "limitingWindowIds": [
+          "seven_day"
+        ],
+        "unmeasurableWindowIds": []
+      },
+      {
+        "scope": "model:fable",
+        "status": "known",
+        "effectivePercentRemaining": 69,
+        "effectivePercentUsed": 31,
+        "spendPriority": 0.6163,
+        "runway": "projected_exhaustion",
+        "boundedBy": [
+          "five_hour",
+          "seven_day",
+          "model:fable"
+        ],
+        "limitingWindowIds": [
+          "seven_day"
+        ],
+        "unmeasurableWindowIds": []
+      }
+    ],
+    "windows": [
+      {
+        "id": "five_hour",
+        "kind": "session",
+        "percentRemaining": 95,
+        "percentUsed": 5,
+        "resetsAt": "2026-09-30T21:40:00.127813+00:00"
+      },
+      {
+        "id": "seven_day",
+        "kind": "weekly",
+        "percentRemaining": 69,
+        "percentUsed": 31,
+        "resetsAt": "2026-10-05T18:00:00.127838+00:00"
+      },
+      {
+        "id": "model:fable",
+        "kind": "model",
+        "percentRemaining": 100,
+        "percentUsed": 0,
+        "resetsAt": "2026-10-05T18:00:00+00:00"
+      }
+    ]
+  }
+}

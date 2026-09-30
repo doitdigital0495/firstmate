@@ -1,0 +1,28 @@
+$ gate --harness pi --model openai-codex/gpt-6-luna
+quota intake gate: refusing - the five-hour usage window (used percent and reset time) is missing for provider codex on account default; the intake must read it before any launch; re-run bin/fm-quota-intake.sh
+EXIT=3
+
+$ gate --harness pi --model zai/glm-5.3
+quota-intake gate: PASS record=quota-1790786709-330803419-2121398.json age=0s account=default provider=zai model=zai/glm-5.3 plan=GLM Max (accounts.json) spendPriority=-0.0115 runway=projected_exhaustion
+  scope=all_models status=known used=14% spendPriority=-0.0115 runway=projected_exhaustion
+    window=five_hour used=10% resets=2026-09-30T20:05:10.991Z source=live
+    window=weekly used=14% resets=2026-10-06T18:04:43.983Z source=live
+  notes=GLM personal only
+EXIT=0
+
+$ gate --harness cursor
+quota intake gate: refusing - no quota evidence rows for provider cursor with model default; dispatch a candidate the intake can measure
+EXIT=3
+
+$ gate --harness claude --model opus --account geris
+quota intake gate: refusing - the record does not cover account 'geris' (covered: default); run bin/fm-quota-intake.sh for that account's stores
+EXIT=3
+
+$ gate --harness claude --model opus --claude-store /tmp/not-recorded-store
+quota intake gate: refusing - the record's claude store /home/daan/.claude does not cover the chosen store /tmp/not-recorded-store; run bin/fm-quota-intake.sh against the store this launch will use
+EXIT=3
+
+$ gate --harness mystery
+quota intake gate: refusing - no quota provider family can be established for harness 'mystery' with model 'default'; declare the provider family in the dispatch profile or dispatch a measurable harness
+EXIT=3
+

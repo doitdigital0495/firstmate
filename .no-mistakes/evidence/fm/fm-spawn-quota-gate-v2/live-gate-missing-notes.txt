@@ -1,0 +1,5 @@
+# notes removed from accounts.json and crew-dispatch.json, fresh record
+  provider=claude status=ok plan=Max 20x (accounts.json) quota-axi=max spendPriority=-0.0754 runway=projected_exhaustion notes=
+$ gate --harness claude --model opus
+quota intake gate: refusing - no notes are recorded for provider claude on account default; declare them in config/accounts.json top-level notes or config/crew-dispatch.json model_notes and re-run bin/fm-quota-intake.sh
+EXIT=3
