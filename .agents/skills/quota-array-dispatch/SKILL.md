@@ -41,6 +41,7 @@ The opt-in `bin/fm-dispatch-resolve.sh` (`docs/configuration.md` "Typed dispatch
 
 ## Read the default TOON
 
+Every spawn and every relaunch or model-or-account move runs through `bin/fm-quota-intake.sh`: its gate refuses the launch unless a fresh record re-read every usage limit, reset time, and plan size, so on a refusal run `bin/fm-quota-intake.sh` and use that record's table as this intake's evidence instead of re-querying quota-axi ad hoc.
 Start each intake by running `quota-axi` with no `--json` for the home's default account.
 For each distinct named-account store triple referenced by a candidate, read that home's `config/accounts.json` and require `crossAccount.enabled == true` plus an allowlisted account; otherwise mark that candidate `not eligible: cross-account routing disabled` without probing its store.
 Read one additional `quota-axi` snapshot per eligible distinct store triple with `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, and `CODEX_HOME` pinned to that entry; use only that store's snapshot for its candidates, then rank the union with the same spendPriority procedure.
