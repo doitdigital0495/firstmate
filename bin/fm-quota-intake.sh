@@ -17,7 +17,7 @@
 #     plans map, else quota-axi's plan label, else unknown), and a Notes
 #     column joined from config/accounts.json top-level notes (keyed by
 #     provider) and config/crew-dispatch.json model_notes (provider- or
-#     model-keyed). The full table is printed so it lands in the transcript.
+#     harness/model-keyed, e.g. claude/opus). The full table is printed so it lands in the transcript.
 #     A store read that fails is recorded as readStatus=failed, still printed,
 #     and the script exits nonzero. The newest 50 records are kept.
 #
@@ -229,9 +229,9 @@ intake_build_cached_claude() { # <cache-file> <notes-map-json> - stdout: provide
       plan: "unknown", planSource: "unknown", quotaAxiPlan: "none",
       spendPriority: null, runway: null,
       notes: ($notes.providers.claude // ""),
-      modelNotes: ($notes.models | with_entries(select(.key != "claude"))),
+      modelNotes: ($notes.models.claude // {}),
       scopes: [{scope: "all_models", status: "known", effectivePercentRemaining: ($min | tonumber),
-                effectivePercentUsed: ($u5 | tonumber),
+                effectivePercentUsed: (100 - ($min | tonumber)),
                 spendPriority: null, runway: "unknown",
                 boundedBy: ["five_hour", "seven_day"], limitingWindowIds: [], unmeasurableWindowIds: []}],
       windows: [
@@ -256,10 +256,13 @@ intake_plan_map() { # stdout: {"default":{...},"<account>":{...}} or {}
 
 # Notes column sources: config/accounts.json top-level `notes` keyed by
 # provider, and config/crew-dispatch.json `model_notes` keyed by provider or
-# model id. Provider-keyed entries from both sources join into the provider's
-# Notes string; model-keyed entries ride along so the gate can append the
-# chosen model's own note. A missing or unreadable file contributes nothing.
-intake_notes_map() { # stdout: {"providers":{...},"models":{...}}
+# harness-scoped model string (claude/opus, pi/openai-codex/gpt-6-luna).
+# Bare provider keys from both sources join into the provider's Notes string;
+# every key containing "/" is a model note, grouped verbatim under the
+# provider its harness family names (a leading pi/ segment is skipped), so the
+# gate can append the chosen model's own note. A missing or unreadable file
+# contributes nothing.
+intake_notes_map() { # stdout: {"providers":{...},"models":{"<provider>":{...}}}
   local acct dispatch
   acct=$(jq -c '.notes // {}' "$CONFIG/accounts.json" 2>/dev/null) || acct=''
   dispatch=$(jq -c '.model_notes // {}' "$CONFIG/crew-dispatch.json" 2>/dev/null) || dispatch=''
@@ -269,12 +272,16 @@ intake_notes_map() { # stdout: {"providers":{...},"models":{...}}
     def txt($v): if ($v | type) == "string" and ($v | length) > 0 then $v else null end;
     ($a | with_entries(select(.value | txt(.) != null)) | map_values(txt(.))) as $a |
     ($d | with_entries(select(.value | txt(.) != null)) | map_values(txt(.))) as $d |
-    (($a | keys) + ($d | keys)
+    def family: split("/") | (if .[0] == "pi" then .[1:] else . end) |
+      ({"claude": "claude", "codex": "codex", "openai-codex": "codex", "zai": "zai"}[.[0] // ""] // null);
+    (($a | keys) + ($d | keys) | map(select(contains("/") | not))
       | reduce .[] as $k ([]; if (. | index($k)) then . else . + [$k] end)) as $prov |
     {providers: (reduce $prov[] as $k ({};
              . + {($k): ([($a[$k] // null), ($d[$k] // null)]
                    | map(select(. != null)) | join(" | "))})),
-     models: $d}'
+     models: (reduce (($a + $d) | to_entries[] | select(.key | contains("/"))) as $e ({};
+             ($e.key | family) as $f |
+             if $f == null then . else .[$f] += {($e.key): $e.value} end))}'
 }
 
 intake_build_entry() { # <account> <claude> <pi> <codex> <snapshot-file> <plan-lookup-json> <notes-map-json>
@@ -307,7 +314,7 @@ intake_build_entry() { # <account> <claude> <pi> <codex> <snapshot-file> <plan-l
           spendPriority: ($wide.selection.spendPriority // null),
           runway: ($wide.runway.status // null),
           notes: ($notes.providers[$p.provider] // ""),
-          modelNotes: ($notes.models | with_entries(select(.key != $p.provider))),
+          modelNotes: ($notes.models[$p.provider] // {}),
           scopes: [$p.quotaSemantics.effectiveAvailability[]? | {
             scope, status,
             effectivePercentRemaining: (.effectivePercentRemaining // null),
@@ -349,6 +356,7 @@ intake_print_record() { # <record-json> - full table to stdout
         ($p.spendPriority // "unknown") as $sp |
         ($p.runway // "unknown") as $rw |
         "  provider=\($p.provider) status=\($ps) plan=\($p.plan) (\($p.planSource)) quota-axi=\($p.quotaAxiPlan) spendPriority=\($sp) runway=\($rw) notes=\($p.notes // "")",
+        (($p.modelNotes // {}) | to_entries[] | "    model=\(.key) notes=\(.value)"),
         ($p.windows[]? | . as $w | ($w.resetsAt // "unknown") as $rs |
           (if $ps == "cached" then "cached" else "live" end) as $src |
           "    window=\($w.id) used=\(used($w.percentUsed)) resets=\($rs) source=\($src)")),
@@ -619,23 +627,24 @@ cmd_gate() {
       else
         [($req[] | select(win(.) == null or ((used(.) // "x") | type) != "number" or ((win(.).resetsAt // "") | length) == 0))] as $unknown_ids |
         (if ($unknown_ids | length) > 0 then ($unknown_ids | join(", ")) else "" end) as $miss |
+        (($p.modelNotes // {}) as $mn |
+         ($mn[$model] // $mn[($model | split("/") | .[0:2] | join("/"))]
+          // ([$mn | to_entries[] | select(.key | endswith("/" + $model)) | .value] | first) // "")) as $mnote |
         if ($miss != "") then
           {verdict: "refuse",
            reason: ("windows without a known used percent or reset time: \($miss)")}
-        elif any($req[]; win(.).percentRemaining == 0) then
-          ([$req[] | select(win(.).percentRemaining == 0)] | first) as $wid |
+        elif any($req[]; used(.) >= 100 or win(.).percentRemaining == 0) then
+          ([$req[] | select(used(.) >= 100 or win(.).percentRemaining == 0)] | first) as $wid |
           (reset($wid) // "an unknown time") as $rst |
           {verdict: "refuse", window: $wid,
            reason: ("window \($wid) is at 100% used (0% remaining) and resets at \($rst); wait for the reset or dispatch another candidate")}
         elif ($p.plan // "unknown") == "unknown" then
           {verdict: "refuse",
            reason: ("the plan size for provider \($provider) on account \($account) is unknown; declare it in config/accounts.json plans and re-run bin/fm-quota-intake.sh")}
-        elif (($p.notes // "") == "") then
+        elif (($p.notes // "") == "" and $mnote == "") then
           {verdict: "refuse",
            reason: ("no notes are recorded for provider \($provider) on account \($account); declare them in config/accounts.json top-level notes or config/crew-dispatch.json model_notes and re-run bin/fm-quota-intake.sh")}
         else
-          (($p.modelNotes // {}) as $mn |
-           ($mn[$model] // $mn[($model | split("/") | .[0:2] | join("/"))] // "")) as $mnote |
           {verdict: "pass", account: $account, provider: $provider, model: $model,
            plan: $p.plan, planSource: $p.planSource,
            notes: ($p.notes // ""), modelNote: $mnote,

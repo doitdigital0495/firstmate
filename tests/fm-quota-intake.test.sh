@@ -129,6 +129,11 @@ cat > "$TMP_ROOT/snap-zeropct.json" <<'EOF'
    {"scope":"all_models","status":"known","effectivePercentRemaining":0,"boundedBy":["five_hour","weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":0.2}}]}}]}
 EOF
 
+# The same spent zai weekly window, but recorded with only its used percent
+# (no percentRemaining): the gate must still see it as 100% used.
+jq '(.providers[] | select(.provider == "zai") | .windows[] | select(.id == "weekly")) |= del(.percentRemaining)' \
+  "$TMP_ROOT/snap-zeropct.json" > "$TMP_ROOT/snap-usedonly.json"
+
 # No claude provider at all: the live personal Claude read is missing, which
 # is the cached-read exception's trigger.
 cat > "$TMP_ROOT/snap-codexonly.json" <<'EOF'
@@ -254,6 +259,10 @@ test_record_shape() {
   home=$(make_home shape)
   geris=$home/geris-store
   mkdir -p "$geris/claude" "$geris/pi" "$geris/codex"
+  # The live model_notes shape: bare provider keys next to harness-scoped
+  # model keys, which must never become providers of their own.
+  printf '%s\n' '{"model_notes":{"claude":"personal max line","codex":"codex pool line","zai":"glm coding line","claude/opus":"opus line","pi/openai-codex/gpt-6-luna":"luna line","pi/zai/glm-5.3":"glm 5.3 line"}}' \
+    > "$home/config/crew-dispatch.json"
   seed_record "$home" "$TMP_ROOT/snap-base.json" \
     '{"crossAccount":{"enabled":true},"plans":{"codex":"pro"},"accounts":{"geris":{"claude":"'"$geris"'/claude","pi":"'"$geris"'/pi","codex":"'"$geris"'/codex","plans":{"claude":"geris-max"}}}}'
   rec=$(newest_record "$home") || fail "no intake record was written"
@@ -281,7 +290,9 @@ test_record_shape() {
     ([.accounts[0].providers[] | select(.provider == "claude") | .runway] == ["through_reset"]) and
     ([.accounts[0].providers[] | select(.provider == "claude") | .notes] == ["personal max line"]) and
     ([.accounts[0].providers[] | select(.provider == "codex") | .notes] == ["codex pool line"]) and
-    ([.accounts[0].providers[] | select(.provider == "claude") | .modelNotes | keys] | flatten | sort) == ["codex","zai"] and
+    ([.accounts[0].providers[] | select(.provider == "claude") | .modelNotes] == [{"claude/opus": "opus line"}]) and
+    ([.accounts[0].providers[] | select(.provider == "codex") | .modelNotes] == [{"pi/openai-codex/gpt-6-luna": "luna line"}]) and
+    ([.accounts[0].providers[] | select(.provider == "zai") | .modelNotes] == [{"pi/zai/glm-5.3": "glm 5.3 line"}]) and
     ([.accounts[1].providers[] | select(.provider == "claude") | .plan] == ["geris-max"]) and
     ([.accounts[1].providers[] | select(.provider == "claude") | .planSource] == ["accounts.json:geris"])
   ' "$rec" >/dev/null || fail "the record does not carry every window, used percent, reset, plan source, and notes"
@@ -293,6 +304,8 @@ test_record_shape() {
   assert_grep "account=geris status=ok" "$TMP_ROOT/shape-table.txt" "the table must list every enabled account"
   assert_grep "provider=claude status=ok plan=max (quota-axi) quota-axi=max spendPriority=0.4 runway=through_reset notes=personal max line" \
     "$TMP_ROOT/shape-table.txt" "the table must show the claude provider row with its notes"
+  assert_grep "model=claude/opus notes=opus line" \
+    "$TMP_ROOT/shape-table.txt" "the table must join the harness-scoped model note under its provider"
   assert_grep "window=five_hour used=10% resets=2026-09-29T15:19:59Z source=live" \
     "$TMP_ROOT/shape-table.txt" "the table must show the 5h window with used and reset"
   assert_grep "window=seven_day used=7% resets=2026-10-05T17:59:59Z source=live" \
@@ -429,6 +442,12 @@ test_gate_zero_percent_window() {
   expect_code 3 "$rc" "gate: a 0% window must refuse"
   assert_contains "$out" "window weekly is at 100% used (0% remaining) and resets at 2026-10-04T05:00:39.000Z" \
     "gate: the refusal must name the spent window and its reset time"
+  home=$(make_home usedonly)
+  seed_record "$home" "$TMP_ROOT/snap-usedonly.json"
+  out=$(run_gate "$home" --harness pi --model zai/glm-4.7); rc=$?
+  expect_code 3 "$rc" "gate: a window with only percentUsed 100 must refuse"
+  assert_contains "$out" "window weekly is at 100% used" \
+    "gate: the used-only refusal must name the spent window"
   pass "gate: a 0% window is refused naming the window and its reset time"
 }
 
@@ -506,6 +525,23 @@ test_gate_table_content() {
   expect_code 0 "$rc" "gate: a declared accounts.json note must admit the launch"
   assert_contains "$out" "notes=declared pool note" "gate: the pass must print the declared note"
 
+  # Notes only in harness-scoped model_notes keys: the chosen model's note
+  # admits the launch, by full key or by the bare model string.
+  home=$(make_home modelkeys)
+  printf '%s\n' '{"model_notes":{"claude/opus":"opus line","pi/openai-codex/gpt-6-luna":"luna line"}}' \
+    > "$home/config/crew-dispatch.json"
+  seed_record "$home" "$TMP_ROOT/snap-base.json" '{"plans":{},"accounts":{}}'
+  out=$(run_gate "$home" --harness claude --model sonnet); rc=$?
+  expect_code 3 "$rc" "gate: a model without any note must refuse"
+  assert_contains "$out" "no notes are recorded for provider claude" "gate: the refusal must name the provider"
+  out=$(run_gate "$home" --harness codex --model pi/openai-codex/gpt-6-luna); rc=$?
+  expect_code 0 "$rc" "gate: a harness-scoped model note must admit the launch: $out"
+  assert_contains "$out" "notes=luna line" "gate: the pass must print the model note"
+  seed_record "$home" "$TMP_ROOT/snap-base.json"
+  out=$(run_gate "$home" --harness pi --model openai-codex/gpt-6-luna); rc=$?
+  expect_code 0 "$rc" "gate: a bare model string must find its harness-scoped note: $out"
+  assert_contains "$out" "notes=luna line" "gate: the suffix-matched pass must print the model note"
+
   pass "gate: a record missing its 5h window, 7d window, or Notes entry is refused like any other missing evidence"
 }
 
@@ -544,6 +580,7 @@ test_cached_fallback_fresh() {
     ([.accounts[0].providers[] | select(.provider == "claude") | .plan] == ["max-20x"]) and
     ([.accounts[0].providers[] | select(.provider == "claude") | .windows[] | .percentRemaining] == [58, 39]) and
     ([.accounts[0].providers[] | select(.provider == "claude") | .windows[] | .percentUsed] == [42, 61]) and
+    ([.accounts[0].providers[] | select(.provider == "claude") | .scopes[] | .effectivePercentUsed] == [61]) and
     ([.accounts[0].providers[] | select(.provider == "claude") | .notes] == ["personal max line"]) and
     (all(.accounts[0].providers[] | select(.provider == "claude") | .windows[]; (.resetsAt | type) == "string"))' \
     "$rec" >/dev/null || fail "the cached entry must store the statusline USED percents with resets and notes"
