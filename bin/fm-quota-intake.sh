@@ -102,9 +102,14 @@ intake_list_records() { # one path per line, oldest first
 
 usage() { sed -n '2,72p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
+# jq parses the record in every mode; quota-axi is only the live reader the
+# record mode drives. The gate is a pure record consumer - demanding the live
+# tool there would refuse launches on hosts that hold a fresh record but no
+# installed quota-axi, and the cleared-environment remote second-mate launch
+# is exactly such a host.
 command -v jq >/dev/null 2>&1 || die "jq not installed"
-command -v quota-axi >/dev/null 2>&1 || die "quota-axi not installed"
 [ -n "${HOME:-}" ] || die "HOME must be set"
+[ "${1:-}" = record ] && { command -v quota-axi >/dev/null 2>&1 || die "quota-axi not installed"; }
 
 # The store a harness's gate checks when the caller passed no explicit store:
 # exactly the resolution the launching scripts use, kept in one place so the

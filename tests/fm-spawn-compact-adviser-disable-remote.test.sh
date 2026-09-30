@@ -163,9 +163,15 @@ $launch"
 # remote spawn runs the real quota intake gate against the route's stores. Seed
 # that state's record with the real recorder against a fake quota-axi whose one
 # codex provider has a known all_models scope and a weekly window, so the remote
-# second mate's launch has fresh usage windows to pass on.
+# second mate's launch has fresh usage windows to pass on. The seed must resolve
+# default stores under the same account home the remote entrypoint derives from
+# the password database (it unsets HOME before dispatch), or the gate would
+# rightly refuse a record covering different store paths.
 seed_remote_quota_record() {
   local fake="$TMP_ROOT/quota-fake"
+  local account_home
+  account_home=$(CDPATH='' env -u HOME bash -c 'cd -- ~ && pwd -P') \
+    || fail "cannot resolve the fake remote account home"
   mkdir -p "$fake"
   cat > "$fake/quota-axi" <<'SH'
 #!/usr/bin/env bash
@@ -175,7 +181,7 @@ cat <<'EOF'
 EOF
 SH
   chmod +x "$fake/quota-axi"
-  env -i HOME="$TMP_ROOT/pane-home" PATH="$fake:$PATH" \
+  env -i HOME="$account_home" PATH="$fake:$PATH" \
     FM_HOME="$REMOTE_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
     FM_STATE_OVERRIDE="$REMOTE_HOME/state/parent-route" \
     FM_CONFIG_OVERRIDE="$REMOTE_HOME/config" \
