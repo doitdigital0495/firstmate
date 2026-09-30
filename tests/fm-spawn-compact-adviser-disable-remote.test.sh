@@ -162,8 +162,11 @@ $launch"
 # so this suite's FM_QUOTA_INTAKE_TEST_BYPASS never survives the hop and the
 # remote spawn runs the real quota intake gate against the route's stores. Seed
 # that state's record with the real recorder against a fake quota-axi whose one
-# codex provider has a known all_models scope and a weekly window, so the remote
-# second mate's launch has fresh usage windows to pass on. The seed must resolve
+# codex provider has known all_models scopes and both the 5h and weekly
+# windows, so the remote second mate's launch has fresh usage windows to pass
+# on, and the remote config carries a Notes source (crew-dispatch.json
+# model_notes) because the gate refuses any launch whose record lacks a 5h
+# window or a Notes entry. The seed must resolve
 # default stores under the same account home the remote entrypoint derives from
 # the password database (it unsets HOME before dispatch), or the gate would
 # rightly refuse a record covering different store paths.
@@ -172,12 +175,14 @@ seed_remote_quota_record() {
   local account_home
   account_home=$(CDPATH='' env -u HOME bash -c 'cd -- ~ && pwd -P') \
     || fail "cannot resolve the fake remote account home"
-  mkdir -p "$fake"
+  mkdir -p "$fake" "$REMOTE_HOME/config"
+  printf '%s\n' '{"model_notes":{"claude":"personal max line","codex":"codex pool line"}}' \
+    > "$REMOTE_HOME/config/crew-dispatch.json"
   cat > "$fake/quota-axi" <<'SH'
 #!/usr/bin/env bash
 case "$1" in --version) echo "quota-axi 0.1.29"; exit 0 ;; esac
 cat <<'EOF'
-{"schemaVersion":5,"providers":[{"provider":"claude","label":"max","plan":"max","state":{"status":"fresh"},"windows":[{"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":10,"percentRemaining":90,"resetsAt":"2026-09-29T15:19:59Z"},{"id":"seven_day","label":"7d","kind":"seven_day","percentUsed":7,"percentRemaining":93,"resetsAt":"2026-10-05T17:59:59Z"}],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":90,"boundedBy":["five_hour","seven_day"],"limitingWindowIds":["five_hour"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":0.4}}]}},{"provider":"codex","label":"prolite","plan":"prolite","state":{"status":"fresh"},"windows":[{"id":"weekly","label":"week","kind":"weekly","percentUsed":8,"resetsAt":"2026-10-04T05:00:39.000Z","windowSeconds":604800,"percentRemaining":92}],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":92,"boundedBy":["weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":1.1213}}]}}]}
+{"schemaVersion":5,"providers":[{"provider":"claude","label":"max","plan":"max","state":{"status":"fresh"},"windows":[{"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":10,"percentRemaining":90,"resetsAt":"2026-09-29T15:19:59Z"},{"id":"seven_day","label":"7d","kind":"seven_day","percentUsed":7,"percentRemaining":93,"resetsAt":"2026-10-05T17:59:59Z"}],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":90,"boundedBy":["five_hour","seven_day"],"limitingWindowIds":["five_hour"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":0.4}}]}},{"provider":"codex","label":"prolite","plan":"prolite","state":{"status":"fresh"},"windows":[{"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":3,"percentRemaining":97,"resetsAt":"2026-09-29T19:00:00Z"},{"id":"weekly","label":"week","kind":"weekly","percentUsed":8,"resetsAt":"2026-10-04T05:00:39.000Z","windowSeconds":604800,"percentRemaining":92}],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":92,"boundedBy":["five_hour","weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":1.1213}}]}}]}
 EOF
 SH
   chmod +x "$fake/quota-axi"

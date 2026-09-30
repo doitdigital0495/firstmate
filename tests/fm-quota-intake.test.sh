@@ -6,17 +6,22 @@
 # choosing a worker": record captures quota-axi --full for the default store
 # and every enabled account store into one private timestamped record and
 # prints the full table, and gate refuses any launch unless that record is
-# fresh, covers the chosen account/store/provider, and knows every window of
-# the chosen candidate. These tests pin both halves hermetically (a fake
+# fresh, covers the chosen account/store/provider, and carries the whole
+# table content for that provider: plan size, the 5h and 7d windows (plus
+# every model-specific one) each as a USED percent with its reset time, and a
+# non-empty Notes entry. These tests pin both halves hermetically (a fake
 # quota-axi on PATH, no real credential store):
-#   1. record shape: every window with percent remaining and reset time,
-#      spendPriority, runway, and the plan size from every source.
+#   1. record shape: every window with its used percent and reset time,
+#      spendPriority, runway, the plan size from every source, and the Notes
+#      column joined from accounts.json notes and crew-dispatch.json
+#      model_notes.
 #   2. the record is private (0600) and retention keeps the newest 50.
 #   3. a failed store read is recorded as failed and still fails the run.
 #   4. gate refusals: no record, stale record, uncovered account, uncovered
-#      store, an exhausted account (window and reset time named), a 0%
-#      window, a model-scoped window without evidence, an unmappable
-#      harness/model provider family.
+#      store, an exhausted account (window and reset time named), a 100%-used
+#      (0% remaining) window, a model-scoped window without evidence, an
+#      unmappable harness/model provider family, a missing 5h or 7d window,
+#      and a provider with no Notes entry.
 #   5. gate passes print the chosen candidate's full window table (zai).
 #   6. the test bypass is explicit and prints that it bypassed.
 #   7. the cached-read exception: a fresh statusline cache converts USED
@@ -55,7 +60,7 @@ fm_git_identity fmtest fmtest@example.invalid
 
 # --- snapshots ---------------------------------------------------------------
 
-# The healthy baseline: claude 5h+7d, codex weekly, zai 5h+weekly, every
+# The healthy baseline: claude 5h+7d, codex 5h+weekly, zai 5h+weekly, every
 # window with a percent remaining and a reset time. Plan labels come from
 # quota-axi (claude=max, codex=prolite); zai carries none so its plan falls
 # through to unknown.
@@ -69,9 +74,10 @@ cat > "$TMP_ROOT/snap-base.json" <<'EOF'
    {"scope":"all_models","status":"known","effectivePercentRemaining":90,"boundedBy":["five_hour","seven_day"],"limitingWindowIds":["five_hour"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":0.4}}]}},
  {"provider":"codex","label":"ProLite","plan":"prolite","state":{"status":"fresh"},
   "windows":[
+   {"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":3,"percentRemaining":97,"resetsAt":"2026-09-29T19:00:00Z"},
    {"id":"weekly","label":"week","kind":"weekly","percentUsed":8,"percentRemaining":92,"resetsAt":"2026-10-04T05:00:39.000Z","windowSeconds":604800}],
   "quotaSemantics":{"status":"known","effectiveAvailability":[
-   {"scope":"all_models","status":"known","effectivePercentRemaining":92,"boundedBy":["weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":1.1213}}]}},
+   {"scope":"all_models","status":"known","effectivePercentRemaining":92,"boundedBy":["five_hour","weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":1.1213}}]}},
  {"provider":"zai","label":"GLM","state":{"status":"fresh"},
   "windows":[
    {"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":88,"percentRemaining":12,"resetsAt":"2026-09-29T18:00:00Z"},
@@ -129,9 +135,44 @@ cat > "$TMP_ROOT/snap-codexonly.json" <<'EOF'
 {"schemaVersion":5,"providers":[
  {"provider":"codex","label":"ProLite","plan":"prolite","state":{"status":"fresh"},
   "windows":[
+   {"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":3,"percentRemaining":97,"resetsAt":"2026-09-29T19:00:00Z"},
+   {"id":"weekly","label":"week","kind":"weekly","percentUsed":8,"percentRemaining":92,"resetsAt":"2026-10-04T05:00:39.000Z","windowSeconds":604800}],
+  "quotaSemantics":{"status":"known","effectiveAvailability":[
+   {"scope":"all_models","status":"known","effectivePercentRemaining":92,"boundedBy":["five_hour","weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":1.1213}}]}}]}
+EOF
+
+# Codex without its five-hour window: an otherwise healthy baseline whose
+# table simply lacks the codex 5h row the gate must demand.
+cat > "$TMP_ROOT/snap-nofive.json" <<'EOF'
+{"schemaVersion":5,"providers":[
+ {"provider":"claude","label":"Max","plan":"max","state":{"status":"fresh"},
+  "windows":[
+   {"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":10,"percentRemaining":90,"resetsAt":"2026-09-29T15:19:59Z"},
+   {"id":"seven_day","label":"7d","kind":"seven_day","percentUsed":7,"percentRemaining":93,"resetsAt":"2026-10-05T17:59:59Z"}],
+  "quotaSemantics":{"status":"known","effectiveAvailability":[
+   {"scope":"all_models","status":"known","effectivePercentRemaining":90,"boundedBy":["five_hour","seven_day"],"limitingWindowIds":["five_hour"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":0.4}}]}},
+ {"provider":"codex","label":"ProLite","plan":"prolite","state":{"status":"fresh"},
+  "windows":[
    {"id":"weekly","label":"week","kind":"weekly","percentUsed":8,"percentRemaining":92,"resetsAt":"2026-10-04T05:00:39.000Z","windowSeconds":604800}],
   "quotaSemantics":{"status":"known","effectiveAvailability":[
    {"scope":"all_models","status":"known","effectivePercentRemaining":92,"boundedBy":["weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":1.1213}}]}}]}
+EOF
+
+# Claude without its seven-day window: an otherwise healthy baseline whose
+# table lacks the claude 7d row instead.
+cat > "$TMP_ROOT/snap-noseven.json" <<'EOF'
+{"schemaVersion":5,"providers":[
+ {"provider":"claude","label":"Max","plan":"max","state":{"status":"fresh"},
+  "windows":[
+   {"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":10,"percentRemaining":90,"resetsAt":"2026-09-29T15:19:59Z"}],
+  "quotaSemantics":{"status":"known","effectiveAvailability":[
+   {"scope":"all_models","status":"known","effectivePercentRemaining":90,"boundedBy":["five_hour"],"limitingWindowIds":["five_hour"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":0.4}}]}},
+ {"provider":"codex","label":"ProLite","plan":"prolite","state":{"status":"fresh"},
+  "windows":[
+   {"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":3,"percentRemaining":97,"resetsAt":"2026-09-29T19:00:00Z"},
+   {"id":"weekly","label":"week","kind":"weekly","percentUsed":8,"percentRemaining":92,"resetsAt":"2026-10-04T05:00:39.000Z","windowSeconds":604800}],
+  "quotaSemantics":{"status":"known","effectiveAvailability":[
+   {"scope":"all_models","status":"known","effectivePercentRemaining":92,"boundedBy":["five_hour","weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":1.1213}}]}}]}
 EOF
 
 # --- fixture builders --------------------------------------------------------
@@ -153,6 +194,11 @@ make_fake_quota_axi() {
 make_home() {
   local home=$TMP_ROOT/$1
   mkdir -p "$home/state" "$home/config" "$home/user-home"
+  # The default Notes source every fixture home carries: crew-dispatch's
+  # model_notes keyed by provider. Tests that must prove the no-notes
+  # refusal remove or replace this file.
+  printf '%s\n' '{"model_notes":{"claude":"personal max line","codex":"codex pool line","zai":"glm coding line"}}' \
+    > "$home/config/crew-dispatch.json"
   printf '%s\n' "$home"
 }
 
@@ -212,14 +258,18 @@ test_record_shape() {
     '{"crossAccount":{"enabled":true},"plans":{"codex":"pro"},"accounts":{"geris":{"claude":"'"$geris"'/claude","pi":"'"$geris"'/pi","codex":"'"$geris"'/codex","plans":{"claude":"geris-max"}}}}'
   rec=$(newest_record "$home") || fail "no intake record was written"
 
-  # Every window of every provider of both accounts, with percent remaining
-  # and reset time, plus spendPriority, runway, and the plan size from each
-  # of its three sources.
+  # Every window of every provider of both accounts, with its used percent
+  # and reset time, plus spendPriority, runway, the plan size from each of its
+  # three sources, and the Notes column from both notes sources.
   jq -e '
+    .schemaVersion == 2 and
     .accounts[0].account == "default" and .accounts[1].account == "geris" and
     ([.accounts[] | .readStatus] | all(. == "ok")) and
     ([.accounts[0].providers[] | select(.provider == "claude") | .windows[] |
       (.percentRemaining | type) == "number" and (.resetsAt | type) == "string"] | length) == 2 and
+    ([.accounts[0].providers[] | select(.provider == "claude") | .windows[] | .percentUsed] == [10, 7]) and
+    ([.accounts[0].providers[] | select(.provider == "claude") | .scopes[] | .effectivePercentUsed] == [10]) and
+    ([.accounts[0].providers[] | select(.provider == "codex") | .windows[] | .percentUsed] == [3, 8]) and
     ([.accounts[0].providers[] | select(.provider == "zai") | .windows[] | .id] | sort) == ["five_hour","weekly"] and
     ([.accounts[0].providers[] | select(.provider == "codex") | .plan] == ["pro"]) and
     ([.accounts[0].providers[] | select(.provider == "codex") | .planSource] == ["accounts.json"]) and
@@ -229,24 +279,30 @@ test_record_shape() {
     ([.accounts[0].providers[] | select(.provider == "zai") | .planSource] == ["unknown"]) and
     ([.accounts[0].providers[] | select(.provider == "claude") | .spendPriority] == [0.4]) and
     ([.accounts[0].providers[] | select(.provider == "claude") | .runway] == ["through_reset"]) and
+    ([.accounts[0].providers[] | select(.provider == "claude") | .notes] == ["personal max line"]) and
+    ([.accounts[0].providers[] | select(.provider == "codex") | .notes] == ["codex pool line"]) and
+    ([.accounts[0].providers[] | select(.provider == "claude") | .modelNotes | keys] | flatten | sort) == ["codex","zai"] and
     ([.accounts[1].providers[] | select(.provider == "claude") | .plan] == ["geris-max"]) and
     ([.accounts[1].providers[] | select(.provider == "claude") | .planSource] == ["accounts.json:geris"])
-  ' "$rec" >/dev/null || fail "the record does not carry every window, reset, and plan source"
+  ' "$rec" >/dev/null || fail "the record does not carry every window, used percent, reset, plan source, and notes"
 
-  # The full table lands on stdout so it reaches the transcript.
+  # The full table lands on stdout so it reaches the transcript, with every
+  # window as a USED percent (remaining is never shown alone).
   run_record "$home" "$(make_fake_quota_axi "$home/quota-fake2" "$TMP_ROOT/snap-base.json")" > "$TMP_ROOT/shape-table.txt" || true
   assert_grep "account=default status=ok" "$TMP_ROOT/shape-table.txt" "the table must list the default account"
   assert_grep "account=geris status=ok" "$TMP_ROOT/shape-table.txt" "the table must list every enabled account"
-  assert_grep "provider=claude status=ok plan=max (quota-axi) quota-axi=max spendPriority=0.4 runway=through_reset" \
-    "$TMP_ROOT/shape-table.txt" "the table must show the claude provider row"
-  assert_grep "window=five_hour remaining=90% resets=2026-09-29T15:19:59Z source=live" \
-    "$TMP_ROOT/shape-table.txt" "the table must show the 5h window with remaining and reset"
-  assert_grep "window=seven_day remaining=93% resets=2026-10-05T17:59:59Z source=live" \
+  assert_grep "provider=claude status=ok plan=max (quota-axi) quota-axi=max spendPriority=0.4 runway=through_reset notes=personal max line" \
+    "$TMP_ROOT/shape-table.txt" "the table must show the claude provider row with its notes"
+  assert_grep "window=five_hour used=10% resets=2026-09-29T15:19:59Z source=live" \
+    "$TMP_ROOT/shape-table.txt" "the table must show the 5h window with used and reset"
+  assert_grep "window=seven_day used=7% resets=2026-10-05T17:59:59Z source=live" \
     "$TMP_ROOT/shape-table.txt" "the table must show the 7d window"
-  assert_grep "window=weekly remaining=92%" "$TMP_ROOT/shape-table.txt" "the table must show the codex weekly window"
+  assert_grep "window=weekly used=8%" "$TMP_ROOT/shape-table.txt" "the table must show the codex weekly window"
   assert_grep "provider=codex status=ok plan=pro (accounts.json)" \
     "$TMP_ROOT/shape-table.txt" "the table must show the declared plan size and its source"
-  pass "record: every window with remaining and reset, spendPriority, runway, and plan size from every source, printed in full"
+  ! grep -q 'remaining=' "$TMP_ROOT/shape-table.txt" \
+    || fail "the table must never show remaining alone; used percents only"
+  pass "record: every window with its used percent and reset, spendPriority, runway, plan size, and notes from every source, printed in full"
 }
 
 # --- 2. the record is private and retention keeps 50 ------------------------
@@ -371,7 +427,7 @@ test_gate_zero_percent_window() {
   seed_record "$home" "$TMP_ROOT/snap-zeropct.json"
   out=$(run_gate "$home" --harness pi --model zai/glm-4.7); rc=$?
   expect_code 3 "$rc" "gate: a 0% window must refuse"
-  assert_contains "$out" "window weekly is at 0% remaining and resets at 2026-10-04T05:00:39.000Z" \
+  assert_contains "$out" "window weekly is at 100% used (0% remaining) and resets at 2026-10-04T05:00:39.000Z" \
     "gate: the refusal must name the spent window and its reset time"
   pass "gate: a 0% window is refused naming the window and its reset time"
 }
@@ -382,7 +438,7 @@ test_gate_model_scoped_window() {
   seed_record "$home" "$TMP_ROOT/snap-modelscope.json"
   out=$(run_gate "$home" --harness claude --model opus-special); rc=$?
   expect_code 3 "$rc" "gate: a model-scoped window without evidence must refuse"
-  assert_contains "$out" "windows without a known percent or reset time: opus_weekly" \
+  assert_contains "$out" "windows without a known used percent or reset time: opus_weekly" \
     "gate: the refusal must name the missing model-scoped window"
   pass "gate: a model-scoped window without percent or reset evidence is refused"
 }
@@ -401,13 +457,56 @@ test_gate_zai_pass_prints_table() {
   assert_contains "$out" "PASS" "gate: the pass must be visible"
   assert_contains "$out" "plan=glm-coding-pro (accounts.json)" "gate: the pass must name the plan size"
   assert_contains "$out" "provider=zai" "gate: the pass must name the provider"
-  assert_contains "$out" "scope=all_models status=known remaining=12%" \
-    "gate: the pass must show the scope's remaining percent"
-  assert_contains "$out" "window=five_hour remaining=12% resets=2026-09-29T18:00:00Z source=live" \
-    "gate: the pass must print the 5h window row"
-  assert_contains "$out" "window=weekly remaining=71% resets=2026-10-04T05:00:39.000Z source=live" \
-    "gate: the pass must print the weekly window row"
-  pass "gate: a passing candidate prints its full window table"
+  assert_contains "$out" "notes=glm coding line" "gate: the pass must carry the Notes column"
+  assert_contains "$out" "scope=all_models status=known used=88%" \
+    "gate: the pass must show the scope's used percent"
+  assert_contains "$out" "window=five_hour used=88% resets=2026-09-29T18:00:00Z source=live" \
+    "gate: the pass must print the 5h window row as used"
+  assert_contains "$out" "window=weekly used=29% resets=2026-10-04T05:00:39.000Z source=live" \
+    "gate: the pass must print the weekly window row as used"
+  ! grep -q 'remaining=' <<<"$out" \
+    || fail "the gate pass table must never show remaining alone"
+  pass "gate: a passing candidate prints its full window table with used percents and notes"
+}
+
+# --- 5. gate refuses records missing table content ---------------------------
+
+test_gate_table_content() {
+  local home out rc
+
+  # A codex provider without its five-hour window: the gate must demand the
+  # 5h row before any launch, exactly like a missing plan size.
+  home=$(make_home nofive)
+  seed_record "$home" "$TMP_ROOT/snap-nofive.json"
+  out=$(run_gate "$home" --harness codex); rc=$?
+  expect_code 3 "$rc" "gate: a provider missing its 5h window must refuse"
+  assert_contains "$out" "the five-hour usage window (used percent and reset time) is missing for provider codex on account default" \
+    "gate: the 5h refusal must name the provider and the missing window"
+
+  # A claude provider without its seven-day window: same refusal, 7d named.
+  home=$(make_home noseven)
+  seed_record "$home" "$TMP_ROOT/snap-noseven.json"
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 3 "$rc" "gate: a provider missing its 7d window must refuse"
+  assert_contains "$out" "the seven-day usage window (used percent and reset time) is missing for provider claude on account default" \
+    "gate: the 7d refusal must name the provider and the missing window"
+
+  # No notes anywhere: both notes sources absent, so the Notes column would
+  # be empty and the gate refuses; declaring the note in accounts.json and
+  # re-reading the intake must admit the launch again.
+  home=$(make_home nonotes)
+  rm -f "$home/config/crew-dispatch.json"
+  seed_record "$home" "$TMP_ROOT/snap-base.json" '{"plans":{},"accounts":{}}'
+  out=$(run_gate "$home" --harness codex); rc=$?
+  expect_code 3 "$rc" "gate: a provider with no Notes entry must refuse"
+  assert_contains "$out" "no notes are recorded for provider codex on account default; declare them in config/accounts.json top-level notes or config/crew-dispatch.json model_notes" \
+    "gate: the no-notes refusal must point at both notes sources"
+  seed_record "$home" "$TMP_ROOT/snap-base.json" '{"notes":{"codex":"declared pool note"},"plans":{},"accounts":{}}'
+  out=$(run_gate "$home" --harness codex); rc=$?
+  expect_code 0 "$rc" "gate: a declared accounts.json note must admit the launch"
+  assert_contains "$out" "notes=declared pool note" "gate: the pass must print the declared note"
+
+  pass "gate: a record missing its 5h window, 7d window, or Notes entry is refused like any other missing evidence"
 }
 
 test_gate_test_bypass() {
@@ -444,15 +543,17 @@ test_cached_fallback_fresh() {
     ([.accounts[0].providers[] | select(.provider == "claude") | .readStatus] == ["cached"]) and
     ([.accounts[0].providers[] | select(.provider == "claude") | .plan] == ["max-20x"]) and
     ([.accounts[0].providers[] | select(.provider == "claude") | .windows[] | .percentRemaining] == [58, 39]) and
+    ([.accounts[0].providers[] | select(.provider == "claude") | .windows[] | .percentUsed] == [42, 61]) and
+    ([.accounts[0].providers[] | select(.provider == "claude") | .notes] == ["personal max line"]) and
     (all(.accounts[0].providers[] | select(.provider == "claude") | .windows[]; (.resetsAt | type) == "string"))' \
-    "$rec" >/dev/null || fail "the cached entry must convert USED percents to remaining with resets"
+    "$rec" >/dev/null || fail "the cached entry must store the statusline USED percents with resets and notes"
   assert_contains "$out" "provider=claude status=cached" "the table must mark the cached read"
-  assert_contains "$out" "window=five_hour remaining=58%" "the table must show the converted 5h remaining"
+  assert_contains "$out" "window=five_hour used=42%" "the table must show the statusline's own 5h used percent"
   assert_contains "$out" "source=cached" "the table must mark every cached window"
   out=$(run_gate "$home" --harness claude); rc=$?
   expect_code 0 "$rc" "gate: a fresh cached read must pass the gate"
   assert_contains "$out" "source=cached" "gate: the pass must mark the windows as cached"
-  pass "cached read: a fresh statusline cache is converted to remaining, marked cached, and gates"
+  pass "cached read: a fresh statusline cache is recorded with its own used percents, marked cached, and gates"
 }
 
 test_cached_fallback_stale() {
@@ -613,7 +714,10 @@ SH
 # task, mirroring tests/fm-control-relaunch.test.sh's proven fixture.
 new_relaunch_case() {
   local id=${2:-q1} dir="$TMP_ROOT/$1"
-  mkdir -p "$dir/home/state" "$dir/home/data" "$dir/home/user-home" "$dir/fake"
+  mkdir -p "$dir/home/state" "$dir/home/data" "$dir/home/user-home" "$dir/home/config" "$dir/fake"
+  # The relaunch gate needs a Notes source exactly like any other launch.
+  printf '%s\n' '{"model_notes":{"codex":"codex pool line","claude":"personal max line"}}' \
+    > "$dir/home/config/crew-dispatch.json"
   : > "$dir/fake/literal"
   : > "$dir/fake/keys"
   printf 'codex' > "$dir/fake/command"
@@ -721,6 +825,7 @@ test_gate_refusals
 test_gate_exhausted_account
 test_gate_zero_percent_window
 test_gate_model_scoped_window
+test_gate_table_content
 test_gate_zai_pass_prints_table
 test_gate_test_bypass
 test_cached_fallback_fresh

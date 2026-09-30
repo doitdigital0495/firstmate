@@ -11,12 +11,15 @@
 #     bin/fm-account-lib.sh), with CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR, and
 #     CODEX_HOME pinned to each entry's stores. One private (0600) timestamped
 #     record is written under state/quota-intake/ listing, per account and
-#     provider, EVERY window (5h, 7d, model-specific) with its percent
-#     remaining and reset time, plus spendPriority, runway, and the plan size
-#     (accounts.json plans map, else quota-axi's plan label, else unknown).
-#     The full table is printed so it lands in the transcript. A store read
-#     that fails is recorded as readStatus=failed, still printed, and the
-#     script exits nonzero. The newest 50 records are kept.
+#     provider, EVERY window (5h, 7d, model-specific) as a USED percent
+#     (100 minus percentRemaining; remaining is never shown alone), with its
+#     reset time, plus spendPriority, runway, the plan size (accounts.json
+#     plans map, else quota-axi's plan label, else unknown), and a Notes
+#     column joined from config/accounts.json top-level notes (keyed by
+#     provider) and config/crew-dispatch.json model_notes (provider- or
+#     model-keyed). The full table is printed so it lands in the transcript.
+#     A store read that fails is recorded as readStatus=failed, still printed,
+#     and the script exits nonzero. The newest 50 records are kept.
 #
 #   fm-quota-intake.sh gate --harness <harness> [--model <model>]
 #       [--account <id>] [--claude-store <path>] [--pi-store <path>]
@@ -24,22 +27,25 @@
 #     Refuses (exit 3, nothing else touched) unless the newest record is at
 #     most FM_QUOTA_INTAKE_MAX_AGE (default 600) seconds old, has not already
 #     been spent on a launch, covers the chosen account entry and store, maps
-#     the harness to a provider family present in that entry, knows the plan
-#     size of that provider, and knows every window that binds the chosen
-#     model: any exhausted_now runway or 0% window is refused naming the window
-#     and its reset time, as is any unknown or missing window. On pass (exit 0)
-#     the chosen candidate's full window table is printed. --consume (the
-#     launch itself, bin/fm-spawn.sh) atomically marks the record spent on
-#     pass, so every launch needs its own fresh intake; without it the gate is
-#     a preview that marks nothing. The gate reads only the record; it never
-#     re-queries quota-axi, which is exactly what forces the dispatching agent
-#     to re-run the intake instead of leaning on stale numbers.
+#     the harness to a provider family present in that entry, and carries the
+#     whole table content for that provider: plan size known, the 5h AND 7d
+#     windows (plus every model-specific window binding the chosen model)
+#     each with a USED percent and reset time, and a non-empty Notes entry.
+#     Any exhausted_now runway or 100%-used (0% remaining) window is refused
+#     naming the window and its reset time, as is any unknown or missing
+#     piece. On pass (exit 0) the chosen candidate's full window table with
+#     used percents and notes is printed. --consume (the launch itself,
+#     bin/fm-spawn.sh) atomically marks the record spent on pass, so every
+#     launch needs its own fresh intake; without it the gate is a preview
+#     that marks nothing. The gate reads only the record; it never re-queries
+#     quota-axi, which is exactly what forces the dispatching agent to re-run
+#     the intake instead of leaning on stale numbers.
 #
 # Cached-read exception: when the default store's live personal Claude usage
 #   is rate-limited or missing, the Claude statusline cache
 #   <claude store>/tmp/sl-quota.txt is used only when it is at most
 #   FM_QUOTA_INTAKE_CACHE_MAX_AGE (default 1800) seconds old. The statusline
-#   prints percentages USED, so they are converted to percent remaining, and
+#   prints percentages USED; they are stored as both used and remaining, and
 #   every window taken from it is marked source=cached in the record and
 #   table. An unparseable cache line yields no entry and the gate fails
 #   closed.
@@ -90,7 +96,7 @@ MAX_AGE=${FM_QUOTA_INTAKE_MAX_AGE:-600}
 CACHE_MAX_AGE=${FM_QUOTA_INTAKE_CACHE_MAX_AGE:-1800}
 READ_TIMEOUT=${FM_QUOTA_INTAKE_TIMEOUT:-180}
 KEEP=${FM_QUOTA_INTAKE_KEEP:-50}
-SCHEMA_VERSION=1
+SCHEMA_VERSION=2
 
 die() { printf 'error: %s\n' "$1" >&2; exit 2; }
 refuse() { printf '%s\n' "$1"; exit 3; }
@@ -103,7 +109,7 @@ intake_list_records() { # one path per line, oldest first
   done | LC_ALL=C sort
 }
 
-usage() { sed -n '2,75p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,80p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 # jq parses the record in every mode; quota-axi is only the live reader the
 # record mode drives. The gate is a pure record consumer - demanding the live
@@ -203,8 +209,8 @@ intake_claude_live_usable() { # <snapshot-file>
   ' "$1" >/dev/null 2>&1
 }
 
-intake_build_cached_claude() { # <cache-file> - stdout: provider JSON, rc 1 when unusable
-  local cache=$1 out used5 epoch5 used7 epoch7 rem5 rem7 rem
+intake_build_cached_claude() { # <cache-file> <notes-map-json> - stdout: provider JSON, rc 1 when unusable
+  local cache=$1 notes=$2 out used5 epoch5 used7 epoch7 rem5 rem7 rem
   out=$(intake_cache_line "$cache") || return 1
   read -r used5 epoch5 used7 epoch7 <<< "$out"
   rem5=$(( 100 - used5 ))
@@ -214,6 +220,7 @@ intake_build_cached_claude() { # <cache-file> - stdout: provider JSON, rc 1 when
   rem=$rem5
   [ "$rem7" -lt "$rem" ] && rem=$rem7
   jq -cn --arg r5 "$rem5" --arg r7 "$rem7" --arg min "$rem" \
+    --arg u5 "$used5" --arg u7 "$used7" --argjson notes "$notes" \
     --arg iso5 "$(intake_epoch_utc "$epoch5" '%Y-%m-%dT%H:%M:%SZ' || true)" \
     --arg iso7 "$(intake_epoch_utc "$epoch7" '%Y-%m-%dT%H:%M:%SZ' || true)" '{
       provider: "claude",
@@ -221,12 +228,15 @@ intake_build_cached_claude() { # <cache-file> - stdout: provider JSON, rc 1 when
       state: {status: "cached", error: "live snapshot rate-limited or missing; statusline cache used", retryAfter: null},
       plan: "unknown", planSource: "unknown", quotaAxiPlan: "none",
       spendPriority: null, runway: null,
+      notes: ($notes.providers.claude // ""),
+      modelNotes: ($notes.models | with_entries(select(.key != "claude"))),
       scopes: [{scope: "all_models", status: "known", effectivePercentRemaining: ($min | tonumber),
+                effectivePercentUsed: ($u5 | tonumber),
                 spendPriority: null, runway: "unknown",
                 boundedBy: ["five_hour", "seven_day"], limitingWindowIds: [], unmeasurableWindowIds: []}],
       windows: [
-        {id: "five_hour", kind: "session", percentRemaining: ($r5 | tonumber), resetsAt: $iso5},
-        {id: "seven_day", kind: "weekly", percentRemaining: ($r7 | tonumber), resetsAt: $iso7}
+        {id: "five_hour", kind: "session", percentUsed: ($u5 | tonumber), percentRemaining: ($r5 | tonumber), resetsAt: $iso5},
+        {id: "seven_day", kind: "weekly", percentUsed: ($u7 | tonumber), percentRemaining: ($r7 | tonumber), resetsAt: $iso7}
       ]
     }'
 }
@@ -244,12 +254,39 @@ intake_plan_map() { # stdout: {"default":{...},"<account>":{...}} or {}
   fi
 }
 
-intake_build_entry() { # <account> <claude> <pi> <codex> <snapshot-file> <plan-lookup-json>
-  local account=$1 claude=$2 pi=$3 codex=$4 snap=$5 planarg=$6
+# Notes column sources: config/accounts.json top-level `notes` keyed by
+# provider, and config/crew-dispatch.json `model_notes` keyed by provider or
+# model id. Provider-keyed entries from both sources join into the provider's
+# Notes string; model-keyed entries ride along so the gate can append the
+# chosen model's own note. A missing or unreadable file contributes nothing.
+intake_notes_map() { # stdout: {"providers":{...},"models":{...}}
+  local acct dispatch
+  acct=$(jq -c '.notes // {}' "$CONFIG/accounts.json" 2>/dev/null) || acct=''
+  dispatch=$(jq -c '.model_notes // {}' "$CONFIG/crew-dispatch.json" 2>/dev/null) || dispatch=''
+  case "${acct:-}" in ''|*[![:print:]]*) acct='{}' ;; esac
+  case "${dispatch:-}" in ''|*[![:print:]]*) dispatch='{}' ;; esac
+  jq -c -n --argjson a "$acct" --argjson d "$dispatch" '
+    def txt($v): if ($v | type) == "string" and ($v | length) > 0 then $v else null end;
+    ($a | with_entries(select(.value | txt(.) != null)) | map_values(txt(.))) as $a |
+    ($d | with_entries(select(.value | txt(.) != null)) | map_values(txt(.))) as $d |
+    (($a | keys) + ($d | keys)
+      | reduce .[] as $k ([]; if (. | index($k)) then . else . + [$k] end)) as $prov |
+    {providers: (reduce $prov[] as $k ({};
+             . + {($k): ([($a[$k] // null), ($d[$k] // null)]
+                   | map(select(. != null)) | join(" | "))})),
+     models: $d}'
+}
+
+intake_build_entry() { # <account> <claude> <pi> <codex> <snapshot-file> <plan-lookup-json> <notes-map-json>
+  local account=$1 claude=$2 pi=$3 codex=$4 snap=$5 planarg=$6 notesarg=$7
   jq -c -n --arg account "$account" --arg claude "$claude" --arg pi "$pi" --arg codex "$codex" \
-    --slurpfile snapshot "$snap" --argjson planarg "$planarg" '
+    --slurpfile snapshot "$snap" --argjson planarg "$planarg" --argjson notes "$notesarg" '
     ($snapshot[0]) as $s |
     def plan_label($v): if ($v | type) == "string" and ($v | length) > 0 and ($v | length) <= 80 and ($v | test("^[[:print:]]+$")) then $v else null end;
+    def used_of($rem; $u):
+      if ($rem | type) == "number" then (100 - $rem)
+      elif (($u // null) | type) == "number" then $u
+      else null end;
     {
       account: $account,
       readStatus: "ok",
@@ -269,17 +306,23 @@ intake_build_entry() { # <account> <claude> <pi> <codex> <snapshot-file> <plan-l
           quotaAxiPlan: ($qp // "none"),
           spendPriority: ($wide.selection.spendPriority // null),
           runway: ($wide.runway.status // null),
+          notes: ($notes.providers[$p.provider] // ""),
+          modelNotes: ($notes.models | with_entries(select(.key != $p.provider))),
           scopes: [$p.quotaSemantics.effectiveAvailability[]? | {
             scope, status,
             effectivePercentRemaining: (.effectivePercentRemaining // null),
+            effectivePercentUsed: (used_of(.effectivePercentRemaining // null; null)),
             spendPriority: (.selection.spendPriority // null),
             runway: (.runway.status // null),
             boundedBy: (.boundedBy // []),
             limitingWindowIds: (.limitingWindowIds // .runway.limitingWindowIds // []),
             unmeasurableWindowIds: (.selection.unmeasurableWindowIds // .runway.unmeasurableWindowIds // [])
           }],
-          windows: [$p.windows[]? | {id, kind: (.kind // ""),
-            percentRemaining: (.percentRemaining // null), resetsAt: (.resetsAt // null)}]
+          windows: [$p.windows[]? |
+            {id, kind: (.kind // ""),
+             percentRemaining: (.percentRemaining // null),
+             percentUsed: (used_of(.percentRemaining // null; .percentUsed // null)),
+             resetsAt: (.resetsAt // null)}]
         }
       ]
     }'
@@ -298,16 +341,17 @@ intake_plan_lookup() { # <plan-map-json> <account> <provider-ids-json>
 intake_print_record() { # <record-json> - full table to stdout
   jq -r '
     def pct($v): if ($v | type) == "number" then "\($v)%" else "unknown" end;
+    def used($v): if ($v | type) == "number" then "\($v)%" else "unknown" end;
     "quota-intake recordedAt=\(.recordedAt) record=\(.record)",
     (.accounts[] | . as $a |
       "account=\(.account) status=\(.readStatus) claude=\(.stores.claude) pi=\(.stores.pi) codex=\(.stores.codex)",
       (.providers[]? | . as $p | ($p.readStatus) as $ps |
         ($p.spendPriority // "unknown") as $sp |
         ($p.runway // "unknown") as $rw |
-        "  provider=\($p.provider) status=\($ps) plan=\($p.plan) (\($p.planSource)) quota-axi=\($p.quotaAxiPlan) spendPriority=\($sp) runway=\($rw)",
+        "  provider=\($p.provider) status=\($ps) plan=\($p.plan) (\($p.planSource)) quota-axi=\($p.quotaAxiPlan) spendPriority=\($sp) runway=\($rw) notes=\($p.notes // "")",
         ($p.windows[]? | . as $w | ($w.resetsAt // "unknown") as $rs |
           (if $ps == "cached" then "cached" else "live" end) as $src |
-          "    window=\($w.id) remaining=\(pct($w.percentRemaining)) resets=\($rs) source=\($src)")),
+          "    window=\($w.id) used=\(used($w.percentUsed)) resets=\($rs) source=\($src)")),
       (select($a.readStatus == "failed") | ($a.error // "unknown error") as $err |
         "  read failed: \($err)"))
   '
@@ -324,6 +368,7 @@ cmd_record() {
 
   default_stores=$(intake_default_store claude)$'\n'"$(intake_default_store pi)"$'\n'"$(intake_default_store codex)"
   plan_map=$(intake_plan_map)
+  notes_map=$(intake_notes_map)
 
   # Default store first, then every registered account store when this home's
   # cross-account routing is enabled; identical store triples read once.
@@ -370,12 +415,12 @@ cmd_record() {
     fi
     entry=$(intake_build_entry "$account" \
       "$(printf '%s\n' "$stores" | sed -n 1p)" "$(printf '%s\n' "$stores" | sed -n 2p)" "$(printf '%s\n' "$stores" | sed -n 3p)" \
-      "$snap" "$(intake_plan_lookup "$plan_map" "$account" "$(jq -c '[.providers[].provider]' "$snap")")")
+      "$snap" "$(intake_plan_lookup "$plan_map" "$account" "$(jq -c '[.providers[].provider]' "$snap")")" "$notes_map")
     # Cached-read exception: only the DEFAULT store's personal Claude line.
     if [ "$account" = default ] && ! intake_claude_live_usable "$snap"; then
       local cache cached_json
       cache="$(printf '%s\n' "$stores" | sed -n 1p)/tmp/sl-quota.txt"
-      cached_json=$(intake_build_cached_claude "$cache") || cached_json=
+      cached_json=$(intake_build_cached_claude "$cache" "$notes_map") || cached_json=
       if [ -n "$cached_json" ]; then
         entry=$(jq -c --argjson cached "$cached_json" \
           --argjson decl "$(intake_plan_lookup "$plan_map" "$account" '["claude"]')" '
@@ -389,6 +434,7 @@ cmd_record() {
           [{provider: "claude", readStatus: "failed",
             state: {status: "unknown", error: "live snapshot rate-limited or missing and the statusline cache is absent, stale, or unparseable", retryAfter: null},
             plan: "unknown", planSource: "unknown", quotaAxiPlan: "none",
+            notes: "", modelNotes: {},
             spendPriority: null, runway: null, scopes: [], windows: []}])' <<< "$entry")
         failed=1
       fi
@@ -535,10 +581,26 @@ cmd_gate() {
       (if ($bids | length) == 0
        then [$p.windows[] | select((.kind // "") != "model") | .id] | reduce .[] as $x ([]; if (. | index($x)) then . else . + [$x] end)
        else $bids end) as $ids |
+      ([$p.windows[] | select(.id == "five_hour" or .kind == "five_hour")] | first // null) as $w5 |
+      ([$p.windows[] | select(.id == "seven_day" or .kind == "weekly")] | first // null) as $w7 |
+      ([$w5, $w7] | map(select(. != null) | .id)) as $base |
+      (($ids + $base) | unique) as $req |
       def win($id): ([$p.windows[] | select(.id == $id)] | first) // null;
       def reset($id): (win($id).resetsAt // null);
+      def used($id):
+        (win($id) as $w |
+         if ($w == null) then null
+         elif ($w.percentUsed | type) == "number" then $w.percentUsed
+         elif ($w.percentRemaining | type) == "number" then (100 - $w.percentRemaining)
+         else null end);
       if ($rows | length) == 0 then
         {verdict: "refuse", reason: ("no quota evidence rows for provider \($provider) with model \($model); dispatch a candidate the intake can measure")}
+      elif $w5 == null then
+        {verdict: "refuse",
+         reason: ("the five-hour usage window (used percent and reset time) is missing for provider \($provider) on account \($account); the intake must read it before any launch; re-run bin/fm-quota-intake.sh")}
+      elif $w7 == null then
+        {verdict: "refuse",
+         reason: ("the seven-day usage window (used percent and reset time) is missing for provider \($provider) on account \($account); the intake must read it before any launch; re-run bin/fm-quota-intake.sh")}
       elif any($rows[]; (.runway // "") == "exhausted_now") then
         ([$rows[] | select((.runway // "") == "exhausted_now")] | first) as $bad |
         ($bad.limitingWindowIds // []) as $lims |
@@ -552,29 +614,35 @@ cmd_gate() {
         ([$rows[] | select(.status != "known")] | first) as $bad |
         {verdict: "refuse", scope: $bad.scope,
          reason: ("quota evidence is unknown at \($bad.scope) for provider \($provider); wait for the measurement or re-run bin/fm-quota-intake.sh")}
-      elif ($ids | length) == 0 then
+      elif ($req | length) == 0 then
         {verdict: "refuse", reason: ("no window reset evidence for provider \($provider); re-run bin/fm-quota-intake.sh")}
       else
-        [($ids[] | select(win(.) == null or (win(.).percentRemaining | type) != "number" or ((win(.).resetsAt // "") | length) == 0))] as $unknown_ids |
+        [($req[] | select(win(.) == null or ((used(.) // "x") | type) != "number" or ((win(.).resetsAt // "") | length) == 0))] as $unknown_ids |
         (if ($unknown_ids | length) > 0 then ($unknown_ids | join(", ")) else "" end) as $miss |
         if ($miss != "") then
           {verdict: "refuse",
-           reason: ("windows without a known percent or reset time: \($miss)")}
-        elif any($ids[]; win(.).percentRemaining == 0) then
-          ([$ids[] | select(win(.).percentRemaining == 0)] | first) as $wid |
+           reason: ("windows without a known used percent or reset time: \($miss)")}
+        elif any($req[]; win(.).percentRemaining == 0) then
+          ([$req[] | select(win(.).percentRemaining == 0)] | first) as $wid |
           (reset($wid) // "an unknown time") as $rst |
           {verdict: "refuse", window: $wid,
-           reason: ("window \($wid) is at 0% remaining and resets at \($rst); wait for the reset or dispatch another candidate")}
+           reason: ("window \($wid) is at 100% used (0% remaining) and resets at \($rst); wait for the reset or dispatch another candidate")}
         elif ($p.plan // "unknown") == "unknown" then
           {verdict: "refuse",
            reason: ("the plan size for provider \($provider) on account \($account) is unknown; declare it in config/accounts.json plans and re-run bin/fm-quota-intake.sh")}
+        elif (($p.notes // "") == "") then
+          {verdict: "refuse",
+           reason: ("no notes are recorded for provider \($provider) on account \($account); declare them in config/accounts.json top-level notes or config/crew-dispatch.json model_notes and re-run bin/fm-quota-intake.sh")}
         else
+          (($p.modelNotes // {}) as $mn |
+           ($mn[$model] // $mn[($model | split("/") | .[0:2] | join("/"))] // "")) as $mnote |
           {verdict: "pass", account: $account, provider: $provider, model: $model,
            plan: $p.plan, planSource: $p.planSource,
+           notes: ($p.notes // ""), modelNote: $mnote,
            spendPriority: ($p.spendPriority // "unknown"), runway: ($p.runway // "unknown"),
-           scopes: [$rows[] | {scope, status, pct: (.effectivePercentRemaining // null),
+           scopes: [$rows[] | {scope, status, used: (if (.effectivePercentRemaining | type) == "number" then (100 - .effectivePercentRemaining) else null end),
                                spendPriority: (.spendPriority // null), runway: (.runway // null)}],
-           windows: [$ids[] | {id: ., pct: win(.).percentRemaining, resetsAt: win(.).resetsAt,
+           windows: [$req[] | {id: ., used: used(.), resetsAt: win(.).resetsAt,
                                source: (if $p.readStatus == "cached" then "cached" else "live" end)}]}
         end
       end
@@ -593,8 +661,10 @@ cmd_gate() {
     jq -r '
       def pct($v): if ($v | type) == "number" then "\($v)%" else "unknown" end;
       (.scopes[]? | . as $s | ($s.spendPriority // "unknown") as $sp |
-        "  scope=\($s.scope) status=\($s.status) remaining=\(pct($s.pct)) spendPriority=\($sp) runway=\($s.runway // "unknown")"),
-      (.windows[]? | "    window=\(.id) remaining=\(pct(.pct)) resets=\(.resetsAt) source=\(.source)")' <<< "$verdict"
+        "  scope=\($s.scope) status=\($s.status) used=\(pct($s.used)) spendPriority=\($sp) runway=\($s.runway // "unknown")"),
+      (.windows[]? | "    window=\(.id) used=\(pct(.used)) resets=\(.resetsAt) source=\(.source)"),
+      (select((.notes // "") != "" or (.modelNote // "") != "") |
+        "  notes=" + ([.notes, .modelNote] | map(select(. != null and . != "")) | join(" | ")))' <<< "$verdict"
     exit 0
   fi
   refuse "quota intake gate: refusing - $(jq -r '.reason' <<< "$verdict")"
