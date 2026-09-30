@@ -28,13 +28,15 @@
 #     most FM_QUOTA_INTAKE_MAX_AGE (default 600) seconds old, has not already
 #     been spent on a launch, covers the chosen account entry and store, maps
 #     the harness to a provider family present in that entry, and carries the
-#     whole table content for that provider: plan size known, the 5h AND 7d
-#     windows (plus every model-specific window binding the chosen model)
-#     each with a USED percent and reset time, and a non-empty Notes entry.
+#     whole table content for that provider: plan size known, the 7d (or
+#     weekly) window, the 5h window when the provider publishes one, plus
+#     every model-specific window binding the chosen model, each with a USED
+#     percent and reset time, and a non-empty Notes entry.
 #     Any exhausted_now runway or 100%-used (0% remaining) window is refused
 #     naming the window and its reset time, as is any unknown or missing
 #     piece. On pass (exit 0) the chosen candidate's full window table with
-#     used percents and notes is printed. --consume (the launch itself,
+#     used percents and notes is printed; an unpublished 5h window shows as
+#     "not published by provider", never a number. --consume (the launch itself,
 #     bin/fm-spawn.sh) atomically marks the record spent on pass, so every
 #     launch needs its own fresh intake; without it the gate is a preview
 #     that marks nothing. The gate reads only the record; it never re-queries
