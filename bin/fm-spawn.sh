@@ -3307,6 +3307,29 @@ if [ -z "$SPAWN_CLAUDE_STORE" ] && [ "$HARNESS" = claude ]; then
   SPAWN_CLAUDE_STORE=$HOME_PIN_STORE
 fi
 
+# Phase 1.9: bin/fm-quota-intake.sh gate. Every worker, scout, and local
+# second-mate launch stops here until a fresh quota intake record proves this
+# exact harness, model, account, and credential store still has every usage
+# window known - no exhausted_now runway, no 0% window, nothing unknown - so no
+# dispatch can lean on numbers older than the last intake. The refusal leaves
+# nothing behind: no worktree, no meta, no pane. Remote second mates run this
+# same gate on their own host inside their own fm-spawn, which is where their
+# credential stores live.
+QUOTA_GATE_ARGS=(--harness "$HARNESS")
+[ -z "$MODEL" ] || QUOTA_GATE_ARGS+=(--model "$MODEL")
+[ "$ACCOUNT_SET" -eq 1 ] && [ -n "$ACCOUNT_ARG" ] && QUOTA_GATE_ARGS+=(--account "$ACCOUNT_ARG")
+[ -z "$SPAWN_CLAUDE_STORE" ] || QUOTA_GATE_ARGS+=(--claude-store "$SPAWN_CLAUDE_STORE")
+[ -z "$SPAWN_PI_STORE" ] || QUOTA_GATE_ARGS+=(--pi-store "$SPAWN_PI_STORE")
+[ -z "$SPAWN_CODEX_STORE" ] || QUOTA_GATE_ARGS+=(--codex-store "$SPAWN_CODEX_STORE")
+if ! QUOTA_GATE_OUT=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
+  FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+  "$SCRIPT_DIR/fm-quota-intake.sh" gate "${QUOTA_GATE_ARGS[@]}"); then
+  printf '%s\n' "$QUOTA_GATE_OUT" >&2
+  echo "error: $ID was not launched; the quota intake gate refused it and nothing was created - run bin/fm-quota-intake.sh and re-check every usage limit before relaunching" >&2
+  exit 1
+fi
+printf '%s\n' "$QUOTA_GATE_OUT" >&2
+
 # Phase 2. bin/fm-claude-admission.sh owns the whole decision, including which
 # stores this home shapes at all - a store the home does not shape takes no
 # state and returns admitted, which is what keeps an unshaped store's spawns

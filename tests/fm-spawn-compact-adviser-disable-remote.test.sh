@@ -158,6 +158,33 @@ replay_remote_launch() {  # <preamble|bare>
 $launch"
 }
 
+# The transport's relaunch re-execs bin/fm-spawn.sh on the remote host under a
+# cleared environment with FM_STATE_OVERRIDE pointing at the route's own state,
+# so this suite's FM_QUOTA_INTAKE_TEST_BYPASS never survives the hop and the
+# remote spawn runs the real quota intake gate against the route's stores. Seed
+# that state's record with the real recorder against a fake quota-axi whose one
+# codex provider has a known all_models scope and a weekly window, so the remote
+# second mate's launch has fresh usage windows to pass on.
+seed_remote_quota_record() {
+  local fake="$TMP_ROOT/quota-fake"
+  mkdir -p "$fake"
+  cat > "$fake/quota-axi" <<'SH'
+#!/usr/bin/env bash
+case "$1" in --version) echo "quota-axi 0.1.29"; exit 0 ;; esac
+cat <<'EOF'
+{"schemaVersion":5,"providers":[{"provider":"claude","label":"max","plan":"max","state":{"status":"fresh"},"windows":[{"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":10,"percentRemaining":90,"resetsAt":"2026-09-29T15:19:59Z"},{"id":"seven_day","label":"7d","kind":"seven_day","percentUsed":7,"percentRemaining":93,"resetsAt":"2026-10-05T17:59:59Z"}],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":90,"boundedBy":["five_hour","seven_day"],"limitingWindowIds":["five_hour"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":0.4}}]}},{"provider":"codex","label":"prolite","plan":"prolite","state":{"status":"fresh"},"windows":[{"id":"weekly","label":"week","kind":"weekly","percentUsed":8,"resetsAt":"2026-10-04T05:00:39.000Z","windowSeconds":604800,"percentRemaining":92}],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":92,"boundedBy":["weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":1.1213}}]}}]}
+EOF
+SH
+  chmod +x "$fake/quota-axi"
+  env -i HOME="$TMP_ROOT/pane-home" PATH="$fake:$PATH" \
+    FM_HOME="$REMOTE_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+    FM_STATE_OVERRIDE="$REMOTE_HOME/state/parent-route" \
+    FM_CONFIG_OVERRIDE="$REMOTE_HOME/config" \
+    "$REMOTE_ROOT/bin/fm-quota-intake.sh" >/dev/null \
+    || fail "seeding the remote route's quota intake record failed"
+}
+seed_remote_quota_record
+
 # --- the remote route delivers the switch, allowlist absent -----------------
 run_remote_launch 'allowlist absent'
 remote_pane_exports | grep -qx 'export COMPACT_ADVISER_DISABLE=1' \
