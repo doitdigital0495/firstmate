@@ -134,6 +134,7 @@ state/               runtime records and signals; gitignored
   .mail-seen .mail-woken .mail-retry .mail-retry-pos .mail-turn .mail-seen.lock  mail-plane poll cursor, emission journal, transient-fetch retry set, retry-scan position, contended-slot turn flag, and overlapping-poll lock; written only by bin/fm-mail.sh (mail schema: docs/configuration.md "Mail plane")
   pending-replies/   parent-owned secondmate pending-reply records (correlation id, delivery vs reply, recovery, escalation); fm-pending-reply-lib.sh
   claude-admission/  per-credential-store release-shaping records: the durable waiting queue, last release, armed-since, and report marker for each shaped Claude store; written only by bin/fm-claude-admission.sh
+  quota-intake/      private timestamped quota intake records and the .spent marker of each record a launch consumed; written only by bin/fm-quota-intake.sh
   procevent/         registered process-to-event sources, one private record per canonical source id; written only by bin/fm-procevent.sh, and their presence alone keeps supervision required (section 13)
   procevent-inbox/   private captured results and their durable handled-acknowledgement markers; source output lives here and never in an event line
   decision-bindings/ private records marking a captured-answer source as feeding the keyed-answer intake, with a legacy origin on pre-collapse records; written only by bin/fm-captain-hold.sh bind, dropped by unbind and by source retirement (section 13; docs/captain-hold-lifecycle.md)
