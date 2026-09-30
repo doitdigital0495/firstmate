@@ -196,6 +196,27 @@ fm_test_tmproot() {
   printf '%s\n' "$root"
 }
 
+# fm_test_copy_repo <destination> stages this repository's working tree into an
+# existing <destination> directory, the way the remote-fixture suites fake a
+# remote host's tracked code root. A streaming `tar -cf - .` piped into a
+# destination that sits inside this repository (TMPDIR pointed into the tree)
+# reads its own growing output back as source and recurses until the disk
+# fills, so whenever the destination resolves under ROOT its path is excluded
+# from the archive and the copy is structurally unable to feed on itself.
+fm_test_copy_repo() {
+  local dest=$1 rel
+  [ -d "$dest" ] || return 1
+  dest=$(cd -P -- "$dest" && pwd -P) || return 1
+  local excludes=(--exclude=.git --exclude=.no-mistakes --exclude=data --exclude=state --exclude=config)
+  case "$dest" in
+    "$ROOT"/*)
+      rel=${dest#"$ROOT"/}
+      excludes+=(--exclude="$rel" --exclude="./$rel")
+      ;;
+  esac
+  (cd "$ROOT" && tar "${excludes[@]}" -cf - .) | (cd "$dest" && tar -xf -)
+}
+
 trap fm_test_cleanup EXIT
 trap 'fm_test_cleanup; exit 130' INT
 trap 'fm_test_cleanup; exit 143' TERM

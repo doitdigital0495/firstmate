@@ -41,10 +41,9 @@ CONTRARY=0
 # The remote host's tracked code root is this branch, as a real git repository:
 # fm-on and the remote entrypoint both require the dispatched command to be
 # tracked there, and the remote side runs the real scripts under test.
-(
-  cd "$ROOT" || exit
-  tar --exclude=.git --exclude=.no-mistakes --exclude=data --exclude=state --exclude=config -cf - .
-) | (cd "$REMOTE_ROOT" && tar -xf -)
+# fm_test_copy_repo excludes the destination from the archive so the copy can
+# never recurse into itself when the tmp root lands inside this repo.
+fm_test_copy_repo "$REMOTE_ROOT"
 
 # The remote host's own non-second-mate tooling only has to stay resolvable;
 # the second mate itself always launches on Herdr, whose fixture logs every
