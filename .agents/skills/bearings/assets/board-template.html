@@ -569,7 +569,7 @@ __FM_BEARINGS_BOARD_DATA__
       top.appendChild(badge(item.risk === "low" ? "neutral" : "warn", "Risk if you approve: " + item.risk));
     } else {
       top.appendChild(badge("solid", "Needs your decision"));
-      top.appendChild(el("span", "bb-decision__repo", "Project: " + item.repo));
+      if (item.repo) top.appendChild(el("span", "bb-decision__repo", "Project: " + item.repo));
     }
     pad.appendChild(top);
 
