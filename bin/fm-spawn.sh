@@ -3315,9 +3315,9 @@ fi
 # nothing behind: no worktree, no meta, no pane. Remote second mates run this
 # same gate on their own host inside their own fm-spawn, which is where their
 # credential stores live.
-QUOTA_GATE_ARGS=(--harness "$HARNESS")
+QUOTA_GATE_ARGS=(--harness "$HARNESS" --consume)
 [ -z "$MODEL" ] || QUOTA_GATE_ARGS+=(--model "$MODEL")
-[ "$ACCOUNT_SET" -eq 1 ] && [ -n "$ACCOUNT_ARG" ] && QUOTA_GATE_ARGS+=(--account "$ACCOUNT_ARG")
+[ -z "$ACCOUNT_ARG" ] || QUOTA_GATE_ARGS+=(--account "$ACCOUNT_ARG")
 [ -z "$SPAWN_CLAUDE_STORE" ] || QUOTA_GATE_ARGS+=(--claude-store "$SPAWN_CLAUDE_STORE")
 [ -z "$SPAWN_PI_STORE" ] || QUOTA_GATE_ARGS+=(--pi-store "$SPAWN_PI_STORE")
 [ -z "$SPAWN_CODEX_STORE" ] || QUOTA_GATE_ARGS+=(--codex-store "$SPAWN_CODEX_STORE")

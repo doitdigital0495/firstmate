@@ -20,17 +20,20 @@
 #
 #   fm-quota-intake.sh gate --harness <harness> [--model <model>]
 #       [--account <id>] [--claude-store <path>] [--pi-store <path>]
-#       [--codex-store <path>]
+#       [--codex-store <path>] [--consume]
 #     Refuses (exit 3, nothing else touched) unless the newest record is at
-#     most FM_QUOTA_INTAKE_MAX_AGE (default 600) seconds old, covers the chosen
-#     account entry and store, maps the harness to a provider family present in
-#     that entry, and knows every window that binds the chosen model: any
-#     exhausted_now runway or 0% window is refused naming the window and its
-#     reset time, as is any unknown or missing window. On pass (exit 0) the
-#     chosen candidate's full window table is printed. The gate reads only the
-#     record; it never re-queries quota-axi, which is exactly what forces the
-#     dispatching agent to re-run the intake instead of leaning on stale
-#     numbers.
+#     most FM_QUOTA_INTAKE_MAX_AGE (default 600) seconds old, has not already
+#     been spent on a launch, covers the chosen account entry and store, maps
+#     the harness to a provider family present in that entry, knows the plan
+#     size of that provider, and knows every window that binds the chosen
+#     model: any exhausted_now runway or 0% window is refused naming the window
+#     and its reset time, as is any unknown or missing window. On pass (exit 0)
+#     the chosen candidate's full window table is printed. --consume (the
+#     launch itself, bin/fm-spawn.sh) atomically marks the record spent on
+#     pass, so every launch needs its own fresh intake; without it the gate is
+#     a preview that marks nothing. The gate reads only the record; it never
+#     re-queries quota-axi, which is exactly what forces the dispatching agent
+#     to re-run the intake instead of leaning on stale numbers.
 #
 # Cached-read exception: when the default store's live personal Claude usage
 #   is rate-limited or missing, the Claude statusline cache
@@ -100,7 +103,7 @@ intake_list_records() { # one path per line, oldest first
   done | LC_ALL=C sort
 }
 
-usage() { sed -n '2,72p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,75p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 # jq parses the record in every mode; quota-axi is only the live reader the
 # record mode drives. The gate is a pure record consumer - demanding the live
@@ -109,7 +112,7 @@ usage() { sed -n '2,72p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 # is exactly such a host.
 command -v jq >/dev/null 2>&1 || die "jq not installed"
 [ -n "${HOME:-}" ] || die "HOME must be set"
-[ "${1:-}" = record ] && { command -v quota-axi >/dev/null 2>&1 || die "quota-axi not installed"; }
+[ "${1:-record}" = record ] && { command -v quota-axi >/dev/null 2>&1 || die "quota-axi not installed"; }
 
 # The store a harness's gate checks when the caller passed no explicit store:
 # exactly the resolution the launching scripts use, kept in one place so the
@@ -314,7 +317,7 @@ cmd_record() {
   # tmp stays a global: the EXIT trap must still see it after this function
   # returns, and set -u would otherwise trip on the lost local.
   tmp=$(mktemp -d) || die "mktemp failed"
-  local entries default_stores plan_map account stores key snap entry failed=0 now name file
+  local entries default_stores plan_map account stores key snap entry failed=0 now ns name file
   local cache cached_json total sc sp sx
   local -a accounts=()
   trap 'rm -rf -- "$tmp"' EXIT
@@ -375,7 +378,12 @@ cmd_record() {
       cached_json=$(intake_build_cached_claude "$cache") || cached_json=
       if [ -n "$cached_json" ]; then
         entry=$(jq -c --argjson cached "$cached_json" \
-          '.providers = ([.providers[] | select(.provider != "claude")] + [$cached])' <<< "$entry")
+          --argjson decl "$(intake_plan_lookup "$plan_map" "$account" '["claude"]')" '
+          ([.providers[] | select(.provider == "claude")] | first) as $old |
+          .providers = ([.providers[] | select(.provider != "claude")] + [$cached +
+            (if $old != null then {plan: $old.plan, planSource: $old.planSource, quotaAxiPlan: $old.quotaAxiPlan}
+             elif $decl.claude.plan != null then {plan: $decl.claude.plan, planSource: $decl.claude.source}
+             else {} end)])' <<< "$entry")
       else
         entry=$(jq -c '.providers = ([.providers[] | select(.provider != "claude")] +
           [{provider: "claude", readStatus: "failed",
@@ -389,7 +397,9 @@ cmd_record() {
   done
 
   now=$(intake_epoch_now)
-  name=$(printf 'quota-%s-%s.json' "$now" "$$")
+  ns=$(date -u +%N)
+  case "$ns" in ''|*[!0-9]*) ns=000000000 ;; esac
+  name=$(printf 'quota-%s-%s-%s.json' "$now" "$ns" "$$")
   file=$INTAKE_DIR/$name
   mkdir -p -- "$INTAKE_DIR" || die "could not create $INTAKE_DIR"
   umask 077
@@ -401,7 +411,7 @@ cmd_record() {
   total=$(intake_list_records | wc -l)
   if [ "$total" -gt "$KEEP" ]; then
     intake_list_records | head -n $(( total - KEEP )) | while IFS= read -r old; do
-      rm -f -- "$old"
+      rm -f -- "$old" "$old.spent"
     done
   fi
 
@@ -438,11 +448,12 @@ gate_provider_for_harness() { # <harness> [model] - stdout: provider id; rc 1 un
 }
 
 cmd_gate() {
-  local harness='' model=default account='' claude_store='' pi_store='' codex_store='' arg
+  local harness='' model=default account='' claude_store='' pi_store='' codex_store='' consume=0 arg
   while [ $# -gt 0 ]; do
     arg=$1
     shift
     case "$arg" in
+      --consume) consume=1 ;;
       --harness) [ $# -gt 0 ] || die "--harness needs a value"; harness=$1; shift ;;
       --model) [ $# -gt 0 ] || die "--model needs a value"; model=${1:-default}; shift ;;
       --account) [ $# -gt 0 ] || die "--account needs a value"; account=$1; shift ;;
@@ -461,11 +472,13 @@ cmd_gate() {
     exit 0
   fi
 
-  local provider record now age covered entry store_field chosen expected
+  local provider record now age covered entry store_field chosen expected spent_msg
   provider=$(gate_provider_for_harness "$harness" "$model") ||
     refuse "quota intake gate: refusing - no quota provider family can be established for harness '$harness' with model '$model'; declare the provider family in the dispatch profile or dispatch a measurable harness"
   record=$(intake_list_records | tail -n 1)
   [ -n "$record" ] || refuse "quota intake gate: refusing - no intake record exists under $INTAKE_DIR; run bin/fm-quota-intake.sh first and re-check every usage limit"
+  spent_msg="quota intake gate: refusing - the newest intake record $(basename -- "$record") was already spent on a launch; every launch needs its own read, so run bin/fm-quota-intake.sh now and re-check every usage limit"
+  [ ! -e "$record.spent" ] || refuse "$spent_msg"
   now=$(intake_epoch_now)
   age=$(jq -r --argjson now "$now" '$now - (.recordedAtEpoch // 0)' "$record" 2>/dev/null)
   case "$age" in
@@ -552,6 +565,9 @@ cmd_gate() {
           (reset($wid) // "an unknown time") as $rst |
           {verdict: "refuse", window: $wid,
            reason: ("window \($wid) is at 0% remaining and resets at \($rst); wait for the reset or dispatch another candidate")}
+        elif ($p.plan // "unknown") == "unknown" then
+          {verdict: "refuse",
+           reason: ("the plan size for provider \($provider) on account \($account) is unknown; declare it in config/accounts.json plans and re-run bin/fm-quota-intake.sh")}
         else
           {verdict: "pass", account: $account, provider: $provider, model: $model,
            plan: $p.plan, planSource: $p.planSource,
@@ -565,6 +581,9 @@ cmd_gate() {
     end' <<< "$entry")
 
   if [ "$(jq -r '.verdict' <<< "$verdict")" = pass ]; then
+    if [ "$consume" -eq 1 ]; then
+      ( set -C; : > "$record.spent" ) 2>/dev/null || refuse "$spent_msg"
+    fi
     printf 'quota-intake gate: PASS record=%s age=%ss account=%s provider=%s model=%s plan=%s (%s) spendPriority=%s runway=%s\n' \
       "$(basename -- "$record")" "$age" \
       "$(jq -r '.account' <<< "$verdict")" "$(jq -r '.provider' <<< "$verdict")" \

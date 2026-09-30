@@ -209,6 +209,8 @@ pass "a remote-routed second mate starts with the compact adviser disabled, from
 # the remote launch under /usr/bin/env -i. The switch is a floor, so it has to
 # survive that host's cleared environment although nothing there ever set it.
 : > "$PARENT/config/launch-env-allowlist"
+# The first launch spent its intake record; this one needs its own read.
+seed_remote_quota_record
 run_remote_launch 'allowlist enabled'
 assert_present "$REMOTE_HOME/config/launch-env-allowlist" \
   "the remote launch did not inherit the launch-environment opt-in"

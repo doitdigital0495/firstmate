@@ -332,7 +332,22 @@ test_gate_refusals() {
   assert_contains "$out" "no quota provider family can be established" \
     "gate: the provider-mapping refusal must refuse to guess"
 
-  pass "gate: refuses on no record, stale record, uncovered account or store, and an unmappable provider family"
+  # One record, one launch: a preview marks nothing, the consuming launch
+  # spends the record, and every later launch or preview on it refuses.
+  out=$(run_gate "$home" --harness codex); rc=$?
+  expect_code 0 "$rc" "gate: a preview must not spend the record"
+  out=$(run_gate "$home" --harness codex --consume); rc=$?
+  expect_code 0 "$rc" "gate: the first consuming launch must pass"
+  out=$(run_gate "$home" --harness claude --consume); rc=$?
+  expect_code 3 "$rc" "gate: a second launch on a spent record must refuse"
+  assert_contains "$out" "was already spent on a launch" "gate: the spent refusal must say so"
+  out=$(run_gate "$home" --harness codex); rc=$?
+  expect_code 3 "$rc" "gate: a preview on a spent record must refuse too"
+  seed_record "$home" "$TMP_ROOT/snap-base.json"
+  out=$(run_gate "$home" --harness claude --consume); rc=$?
+  expect_code 0 "$rc" "gate: a new intake must admit the next launch"
+
+  pass "gate: refuses on no record, stale record, uncovered account or store, an unmappable provider family, and a record already spent on a launch"
 }
 
 test_gate_exhausted_account() {
@@ -377,8 +392,14 @@ test_gate_zai_pass_prints_table() {
   home=$(make_home zaipass)
   seed_record "$home" "$TMP_ROOT/snap-base.json"
   out=$(run_gate "$home" --harness pi --model zai/glm-4.7); rc=$?
+  expect_code 3 "$rc" "gate: a zai candidate with an unknown plan size must refuse"
+  assert_contains "$out" "the plan size for provider zai on account default is unknown" \
+    "gate: the refusal must name the unknown plan size"
+  seed_record "$home" "$TMP_ROOT/snap-base.json" '{"plans":{"zai":"glm-coding-pro"},"accounts":{}}'
+  out=$(run_gate "$home" --harness pi --model zai/glm-4.7); rc=$?
   expect_code 0 "$rc" "gate: a measured zai candidate must pass"
   assert_contains "$out" "PASS" "gate: the pass must be visible"
+  assert_contains "$out" "plan=glm-coding-pro (accounts.json)" "gate: the pass must name the plan size"
   assert_contains "$out" "provider=zai" "gate: the pass must name the provider"
   assert_contains "$out" "scope=all_models status=known remaining=12%" \
     "gate: the pass must show the scope's remaining percent"
@@ -415,11 +436,13 @@ test_cached_fallback_fresh() {
   home=$(make_home cachefresh)
   fakebin=$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-codexonly.json")
   write_statusline_cache "$home" 'cl personal 5h 42% (1h 12m) | 7d 61% (Wed 17:00)'
+  printf '%s\n' '{"plans":{"claude":"max-20x"},"accounts":{}}' > "$home/config/accounts.json"
   out=$(run_record "$home" "$fakebin"); rc=$?
   [ "$rc" -eq 0 ] || fail "a fresh usable cache must keep the record run green: $out"
   rec=$(newest_record "$home")
   jq -e '([.accounts[0].providers[] | select(.provider == "claude")] | length == 1) and
     ([.accounts[0].providers[] | select(.provider == "claude") | .readStatus] == ["cached"]) and
+    ([.accounts[0].providers[] | select(.provider == "claude") | .plan] == ["max-20x"]) and
     ([.accounts[0].providers[] | select(.provider == "claude") | .windows[] | .percentRemaining] == [58, 39]) and
     (all(.accounts[0].providers[] | select(.provider == "claude") | .windows[]; (.resetsAt | type) == "string"))' \
     "$rec" >/dev/null || fail "the cached entry must convert USED percents to remaining with resets"
@@ -479,13 +502,23 @@ test_real_spawn_gate() {
   fm_test_spawn_brief "$home" spawn-passed "quota gate pass intent"
   run_record "$home" "$fakebin" >/dev/null || fail "seeding the spawn home's record failed"
   out=$( unset FM_QUOTA_INTAKE_TEST_BYPASS
-    # shellcheck disable=SC2031 # The pin is deliberately local to this spawn run's subshell.
+    # shellcheck disable=SC2030,SC2031 # The pin is deliberately local to this spawn run's subshell.
     export CODEX_HOME=
     fm_test_run_spawn "$home" "$wt" "$fakebin" spawn-passed "$proj" codex --mode no-mistakes --yolo off ); rc=$?
   expect_code 0 "$rc" "fm-spawn: a fresh covering record must admit the launch"$'\n'"$out"
   assert_contains "$out" "spawned spawn-passed" "fm-spawn: the launch should succeed"
   assert_present "$home/state/spawn-passed.meta" "fm-spawn: the launch should record meta"
-  pass "fm-spawn: refuses without a record (nothing created) and launches on a real seeded record"
+
+  # The launch spent that record: the next spawn must re-read every limit.
+  fm_test_spawn_brief "$home" spawn-reused "quota gate reuse intent"
+  out=$( unset FM_QUOTA_INTAKE_TEST_BYPASS
+    # shellcheck disable=SC2031 # The pin is deliberately local to this spawn run's subshell.
+    export CODEX_HOME=
+    fm_test_run_spawn "$home" "$wt" "$fakebin" spawn-reused "$proj" codex --mode no-mistakes --yolo off ); rc=$?
+  [ "$rc" -ne 0 ] || fail "fm-spawn must refuse a second launch on an already spent record"
+  assert_contains "$out" "was already spent on a launch" "fm-spawn: the reuse refusal must be the quota gate's"
+  assert_absent "$home/state/spawn-reused.meta" "fm-spawn: a refused reuse must record no meta"
+  pass "fm-spawn: refuses without a record (nothing created), launches on a real seeded record, and refuses to reuse it"
 }
 
 # The same lifecycle-modelling tmux stub as tests/fm-control-relaunch.test.sh:
@@ -658,7 +691,27 @@ test_relaunch_pre_stop_gate() {
   assert_contains "$(cat "$dir/fake/literal")" "/quit" "relaunch: the agent must have been stopped on the pass path"
   [ "$(cat "$dir/fake/command")" = codex ] \
     || fail "relaunch: the replacement agent must be running after the pass path"
-  pass "fm-control relaunch: the quota gate refuses before the agent is stopped and passes on a real record"
+
+  # A task bound to a named account relaunches onto that account's stores
+  # without --account: both the pre-stop preview and fm-spawn's own gate must
+  # check the recorded account's entry, not the default one.
+  dir=$(new_relaunch_case relaunch-geris q3)
+  mkdir -p "$dir/geris/claude" "$dir/geris/pi" "$dir/geris/codex" "$dir/home/config"
+  {
+    echo "account=geris"
+    echo "claude_config_dir=$dir/geris/claude"
+    echo "pi_agent_dir=$dir/geris/pi"
+    echo "codex_home=$dir/geris/codex"
+  } >> "$dir/home/state/q3.meta"
+  printf '%s\n' '{"crossAccount":{"enabled":true},"accounts":{"geris":{"claude":"'"$dir"'/geris/claude","pi":"'"$dir"'/geris/pi","codex":"'"$dir"'/geris/codex"}}}' \
+    > "$dir/home/config/accounts.json"
+  rec=$(make_fake_quota_axi "$dir/quota-fake" "$TMP_ROOT/snap-base.json")
+  run_record "$dir/home" "$rec" >/dev/null || fail "seeding the named-account relaunch record failed"
+  out=$(run_relaunch_control "$dir" q3 relaunch --note "named account relaunch"); rc=$?
+  expect_code 0 "$rc" "relaunch: a named-account task must relaunch on a covering record"$'\n'"$out"
+  assert_contains "$out" "account=geris provider=codex" "relaunch: the gate must check the recorded account"
+  assert_contains "$out" "relaunched q3 harness=codex" "relaunch: the named-account transaction should complete"
+  pass "fm-control relaunch: the quota gate refuses before the agent is stopped and passes on a real record, named accounts included"
 }
 
 test_record_shape

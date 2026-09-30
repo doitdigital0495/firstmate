@@ -1007,12 +1007,14 @@ do_relaunch() {
   # bill), or the new seat's stores when this is a cross-account move.
   quota_gate_args=(--harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || quota_gate_args+=(--model "$TARGET_MODEL")
-  [ "$ACCOUNT_SET" = 0 ] || quota_gate_args+=(--account "$NEW_ACCOUNT")
   if [ "$ACCOUNT_SET" = 1 ]; then
-    quota_gate_args+=(--claude-store "${relaunch_account_stores[0]}" \
+    quota_gate_args+=(--account "$NEW_ACCOUNT" \
+                      --claude-store "${relaunch_account_stores[0]}" \
                       --pi-store "${relaunch_account_stores[1]}" \
                       --codex-store "${relaunch_account_stores[2]}")
   else
+    quota_gate_store=$(fm_meta_get "$META" account) || quota_gate_store=
+    [ -z "$quota_gate_store" ] || quota_gate_args+=(--account "$quota_gate_store")
     quota_gate_store=$(fm_meta_get "$META" claude_config_dir) || quota_gate_store=
     [ -z "$quota_gate_store" ] || quota_gate_args+=(--claude-store "$quota_gate_store")
     quota_gate_store=$(fm_meta_get "$META" pi_agent_dir) || quota_gate_store=
