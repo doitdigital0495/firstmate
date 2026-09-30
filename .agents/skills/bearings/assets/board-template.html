@@ -565,11 +565,11 @@ __FM_BEARINGS_BOARD_DATA__
 
     var top = el("div", "bb-decision__top");
     if (item.type === "merge") {
-      top.appendChild(badge("online", "checks green"));
-      top.appendChild(badge(item.risk === "low" ? "neutral" : "warn", "risk " + item.risk));
+      top.appendChild(badge("online", "Automatic checks passed"));
+      top.appendChild(badge(item.risk === "low" ? "neutral" : "warn", "Risk if you approve: " + item.risk));
     } else {
-      top.appendChild(badge("solid", "decision"));
-      top.appendChild(el("span", "bb-decision__repo", item.repo));
+      top.appendChild(badge("solid", "Needs your decision"));
+      top.appendChild(el("span", "bb-decision__repo", "Project: " + item.repo));
     }
     pad.appendChild(top);
 
@@ -582,7 +582,7 @@ __FM_BEARINGS_BOARD_DATA__
     if (item.type === "merge") {
       if (item.detail) pad.appendChild(el("p", "bb-decision__detail", item.detail));
       if (item.pr_url) {
-        var pr = el("a", "bb-decision__link", item.pr_url);
+        var pr = el("a", "bb-decision__link", "Review the proposed changes");
         pr.href = item.pr_url; pr.target = "_blank"; pr.rel = "noopener";
         pad.appendChild(pr);
       }
