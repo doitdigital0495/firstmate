@@ -1,0 +1,8 @@
+board: /tmp/fm-bb-r2.hPqn/.lavish/bearings-board.html
+session:
+  status: opened
+session: live
+served: /tmp/fm-bb-r2.hPqn/.lavish/bearings-board.html
+bound: lavish-cafb78fea28d823b
+armed: lavish-cafb78fea28d823b
+listening: live

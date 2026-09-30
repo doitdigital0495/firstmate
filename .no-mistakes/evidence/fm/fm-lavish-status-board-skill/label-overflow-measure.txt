@@ -1,0 +1,6 @@
+result: "\"{\\\"width\\\":1280,\\\"labels\\\":[{\\\"text\\\":\\\"What it is for\\\",\\\"colWidth\\\":78,\\\"textWidth\\\":91,\\\"overflows\\\":true},{\\\"text\\\":\\\"Your choice\\\",\\\"colWidth\\\":78,\\\"textWidth\\\":78,\\\"overflows\\\":false},{\\\"text\\\":\\\"What it is for\\\",\\\"colWidth\\\":78,\\\"textWidth\\\":91,\\\"overflows\\\":true},{\\\"text\\\":\\\"Your choice\\\",\\\"colWidth\\\":78,\\\"textWidth\\\":78,\\\"overflows\\\":false}]}\""
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+result: "\"{\\\"width\\\":500,\\\"labels\\\":[{\\\"text\\\":\\\"What it is for\\\",\\\"colWidth\\\":78,\\\"textWidth\\\":91,\\\"overflows\\\":true},{\\\"text\\\":\\\"Your choice\\\",\\\"colWidth\\\":78,\\\"textWidth\\\":78,\\\"overflows\\\":false},{\\\"text\\\":\\\"What it is for\\\",\\\"colWidth\\\":78,\\\"textWidth\\\":91,\\\"overflows\\\":true},{\\\"text\\\":\\\"Your choice\\\",\\\"colWidth\\\":78,\\\"textWidth\\\":78,\\\"overflows\\\":false}]}\""
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state

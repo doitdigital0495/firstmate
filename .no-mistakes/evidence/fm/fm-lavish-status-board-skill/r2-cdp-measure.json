@@ -1,0 +1,134 @@
+{
+ "390": {
+  "labels": [
+   {
+    "text": "What it is for",
+    "colWidth": 330,
+    "textWidth": 330,
+    "overflows": false
+   },
+   {
+    "text": "Your choice",
+    "colWidth": 330,
+    "textWidth": 330,
+    "overflows": false
+   },
+   {
+    "text": "What it is for",
+    "colWidth": 330,
+    "textWidth": 330,
+    "overflows": false
+   },
+   {
+    "text": "Your choice",
+    "colWidth": 330,
+    "textWidth": 330,
+    "overflows": false
+   },
+   {
+    "text": "What it is for",
+    "colWidth": 330,
+    "textWidth": 330,
+    "overflows": false
+   },
+   {
+    "text": "Your choice",
+    "colWidth": 330,
+    "textWidth": 330,
+    "overflows": false
+   },
+   {
+    "text": "What it is for",
+    "colWidth": 330,
+    "textWidth": 330,
+    "overflows": false
+   },
+   {
+    "text": "Your choice",
+    "colWidth": 330,
+    "textWidth": 330,
+    "overflows": false
+   }
+  ],
+  "cards": [
+   "AUTOMATIC CHECKS PASSED RISK IF YOU APPROVE: MEDIUM",
+   "NEEDS YOUR DECISION",
+   "NEEDS YOUR DECISION",
+   "NEEDS YOUR DECISION Project: reports"
+  ],
+  "links": [
+   {
+    "text": "Review the proposed changes",
+    "href": "https://github.com/acme/reports/pull/12"
+   }
+  ],
+  "hasNullText": false,
+  "jargon": []
+ },
+ "1280": {
+  "labels": [
+   {
+    "text": "What it is for",
+    "colWidth": 104,
+    "textWidth": 104,
+    "overflows": false
+   },
+   {
+    "text": "Your choice",
+    "colWidth": 104,
+    "textWidth": 104,
+    "overflows": false
+   },
+   {
+    "text": "What it is for",
+    "colWidth": 104,
+    "textWidth": 104,
+    "overflows": false
+   },
+   {
+    "text": "Your choice",
+    "colWidth": 104,
+    "textWidth": 104,
+    "overflows": false
+   },
+   {
+    "text": "What it is for",
+    "colWidth": 104,
+    "textWidth": 104,
+    "overflows": false
+   },
+   {
+    "text": "Your choice",
+    "colWidth": 104,
+    "textWidth": 104,
+    "overflows": false
+   },
+   {
+    "text": "What it is for",
+    "colWidth": 104,
+    "textWidth": 104,
+    "overflows": false
+   },
+   {
+    "text": "Your choice",
+    "colWidth": 104,
+    "textWidth": 104,
+    "overflows": false
+   }
+  ],
+  "cards": [
+   "AUTOMATIC CHECKS PASSED RISK IF YOU APPROVE: MEDIUM",
+   "NEEDS YOUR DECISION",
+   "NEEDS YOUR DECISION",
+   "NEEDS YOUR DECISION Project: reports"
+  ],
+  "links": [
+   {
+    "text": "Review the proposed changes",
+    "href": "https://github.com/acme/reports/pull/12"
+   }
+  ],
+  "hasNullText": false,
+  "jargon": []
+ }
+}
