@@ -1,0 +1,2 @@
+result: "\"{\\\"iframe\\\":true,\\\"hasProjects\\\":false,\\\"title\\\":\\\"Task status · Lavish\\\",\\\"len\\\":23442,\\\"snippet\\\":\\\"Lavish\\\\nAnnotate\\\\nConversation\\\\nAgent listening\\\\nYOU\\\\nThere is some things I still need to verify. Give me the preview urls for the features\\\\nYOU\\\\nAbout the SEO work - skip it for now - dont ask me about it, ill start when im ready. Also, clea up some worktrees, I things there is quite some stale ones. Wha\\\"}\""
+help[1]:

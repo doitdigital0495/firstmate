@@ -59,4 +59,3 @@ ok - revealed deferred holds display their deferral reason while live calls stay
 ok - live PR enrichment caps repositories with counted expansion
 ok - per-repository open-PR caps are disclosed with an expansion knob
 ok - projection and TOON rendering failures exit nonzero with diagnostics
-EXIT=0

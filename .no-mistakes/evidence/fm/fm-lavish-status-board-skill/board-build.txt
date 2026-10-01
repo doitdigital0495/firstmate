@@ -1,0 +1,9 @@
+board: /tmp/fm-lab-board.yAqH/.lavish/bearings-board.html
+session:
+  status: opened
+session: live
+served: /tmp/fm-lab-board.yAqH/.lavish/bearings-board.html
+bound: lavish-a6c9de750ffc4c84
+armed: lavish-a6c9de750ffc4c84
+listening: live
+exit=0

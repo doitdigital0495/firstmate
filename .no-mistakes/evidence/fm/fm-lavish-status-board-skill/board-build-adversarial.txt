@@ -1,0 +1,2 @@
+fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /tmp/fm-lab-board.yAqH/bad.json
+bad exit=1

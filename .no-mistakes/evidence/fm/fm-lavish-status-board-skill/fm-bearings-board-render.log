@@ -1,3 +1,4 @@
+ok - project board includes idle projects, shared leads, explained questions and unassigned people without routing ids
 ok - all-tasks page shows five statuses, explained options, both cards and coverage
 ok - an underway row leads with the task name and still reports its run status
 ok - an underway identifier label is not replaced by run status
@@ -8,4 +9,3 @@ ok - the charted next count counts queued work only, and still renders warnings
 ok - a warning-only board reports nothing queued and still shows the warning
 ok - omitted warnings remain separate from omitted queued work
 ok - an omitted kind renders exactly as queued work always did
-EXIT=0

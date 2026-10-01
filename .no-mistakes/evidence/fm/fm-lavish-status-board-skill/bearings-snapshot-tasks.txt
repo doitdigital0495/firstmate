@@ -1,0 +1,13 @@
+$ fm-bearings-snapshot.sh --fields tasks   (TOON, must refuse)
+fm-bearings-snapshot: --fields tasks requires --json
+exit=2
+
+$ fm-bearings-snapshot.sh --json --fields tasks | summary
+{"registry_present":true,"projects":10,"crew":24,"crew_roles":{"worker":24},"crew_no_project":0,"main_tasks":93,"unfiled":1,"homes":[]}
+exit=0
+
+$ default json has no task fields
+{"has_tasks":false,"has_crew":false,"has_registry":false,"keys":["contributions","decisions_open","gates","generated","home","in_flight","landed","omitted","prs","recorded_prs","reports","schema","secondmate_reconcile","secondmates"]}
+
+$ default TOON (first lines)
+exit=0 lines=115

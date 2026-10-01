@@ -1,0 +1,9 @@
+network:
+Emulating viewport: {"deviceScaleFactor":2,"isMobile":true,"hasTouch":true,"isLandscape":false,"width":390,"height":844}
+Emulating color scheme: light
+## Network requests
+Showing 1-1 of 1 (Page 1 of 1).
+reqid=4 GET file:///home/daan/.no-mistakes/evidence/01M3VNH3SERZHSS2H5J93DQ51W/rendered-status-board.html [200]
+help[2]:
+  Run `chrome-devtools-axi network-get <id>` to see request details
+  Run `chrome-devtools-axi network --type fetch` to filter by type

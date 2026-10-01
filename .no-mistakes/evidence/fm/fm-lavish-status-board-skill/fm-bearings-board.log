@@ -2,7 +2,7 @@ ok - path prints the stable home-scoped board location
 ok - build refuses malformed payloads before touching the board
 ok - charted kind is optional and accepts queued and warning
 ok - build injects the payload, binds any-origin, then arms the source
-not-autohandled: lavish-75fa1e306bb7ea01 (left for the handler; still unacknowledged)
+not-autohandled: lavish-ae3d790f18150253 (left for the handler; still unacknowledged)
 ok - registration can consume answers only after any-origin binding exists
 ok - build establishes the Lavish session before binding and arming
 ok - rebuild refreshes the board in place without double-arming
@@ -17,4 +17,3 @@ ok - build fails when reconcile cannot prove a live listener
 ok - every decision card carries exactly one reconcile choice
 ok - build refuses a payload that occupies the reserved reconcile value
 ok - build reserves reconcile across non-decision cards
-EXIT=0

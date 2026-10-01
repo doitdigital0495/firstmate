@@ -1,0 +1,52 @@
+$ fm-project-mode.sh --list-json  (sandbox registry with typo mode)
+- alpha [direct-PR] - Flat
+- beta - Legacy default
+- gamma [no-mistakez] - Typo
+- delta [no-mistakes-prod-only +yolo] - Prod
+{
+  "present": true,
+  "projects": [
+    {
+      "name": "alpha",
+      "mode": "direct-PR",
+      "yolo": "off",
+      "recognised": true
+    },
+    {
+      "name": "beta",
+      "mode": "no-mistakes",
+      "yolo": "off",
+      "recognised": true
+    },
+    {
+      "name": "gamma",
+      "mode": "no-mistakes",
+      "yolo": "off",
+      "recognised": false,
+      "annotation": "no-mistakez"
+    },
+    {
+      "name": "delta",
+      "mode": "no-mistakes-prod-only",
+      "yolo": "on",
+      "recognised": true
+    }
+  ]
+}
+exit=0
+
+$ fm-project-mode.sh gamma (mechanical fallback preserved)
+warn: unknown mode "no-mistakez" for gamma; defaulting to no-mistakes off
+no-mistakes off
+$ --raw gamma
+warn: unknown mode "no-mistakez" for gamma; defaulting to no-mistakes off
+no-mistakes off
+
+$ missing registry
+{"present":false,"projects":[]}
+$ --list-json extra arg
+usage: fm-project-mode.sh --list-json
+exit=2
+
+$ real fleet registry (read-only)
+{"present":true,"n":10,"unrecognised":[],"names":["cosmic-show-hub","agentic-setup","herdr","rentmax-ops","daeproductions","doitdigital-v2","hermes","fabric_monorepo","daan-profile","claims"]}
