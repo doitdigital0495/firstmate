@@ -291,6 +291,15 @@ a { color: inherit; text-decoration: none; }
 .bb-requests a { color: #8cc4ff; }
 .bb-requests .fm-badge { white-space: normal; line-height: 1.35; }
 .bb-coverage { color: var(--text-muted); margin: 8px 0; }
+.bb-projects { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 16px; }
+.bb-project, .bb-person, .bb-question { min-width: 0; overflow-wrap: anywhere; }
+.bb-project { padding: 20px; }
+.bb-project h3, .bb-person h4 { margin: 0 0 8px; }
+.bb-project p, .bb-person p { margin: 8px 0; }
+.bb-person { padding: 14px 0; border-top: 1px solid var(--border-soft); }
+.bb-person__role, .bb-project__delivery { color: var(--text-muted); }
+.bb-question { padding: 12px; margin: 12px 0; background: var(--surface-card-warm); border-radius: 8px; }
+.bb-question strong { display: block; }
 @media (max-width: 900px) {
   .bb-cols { grid-template-columns: 1fr; }
 }
@@ -397,6 +406,12 @@ a { color: inherit; text-decoration: none; }
       <div class="fm-card"><div class="bb-rows" id="bb-landed"></div></div>
     </section>
   </div>
+
+  <section class="bb-section" id="bb-projects-section" hidden>
+    <h2>Projects and people</h2>
+    <p>Delivery plans, current work and open questions, grouped by project.</p>
+    <div class="bb-projects" id="bb-projects"></div>
+  </section>
 
   <section class="bb-section" id="bb-requests-section" hidden>
     <h2>Your requests</h2>
@@ -530,6 +545,48 @@ __FM_BEARINGS_BOARD_DATA__
     document.getElementById("bb-coverage").appendChild(el("p", "bb-coverage", notice));
   });
 
+  function renderQuestions(parent, questions) {
+    if (!questions.length) {
+      parent.appendChild(el("p", "bb-coverage", "No unanswered question is recorded in the checked information."));
+      return;
+    }
+    questions.forEach(function (q) {
+      var block = el("div", "bb-question");
+      [["What it is", q.issue], ["Your choice", q.choice], ["Recommendation", q.recommendation]].forEach(function (part) {
+        var p = el("p"); p.appendChild(el("strong", "", part[0])); p.appendChild(el("span", "", part[1])); block.appendChild(p);
+      });
+      parent.appendChild(block);
+    });
+  }
+  if (Array.isArray(data.projects) && Array.isArray(data.crew)) {
+    document.getElementById("bb-projects-section").hidden = false;
+    var projects = document.getElementById("bb-projects");
+    function renderProject(project, people) {
+      var card = el("article", "fm-card bb-project");
+      card.appendChild(el("h3", "bb-project__name", project.name));
+      card.appendChild(el("p", "bb-project__delivery", project.delivery));
+      card.appendChild(badge("info", project.status));
+      card.appendChild(el("p", "bb-project__detail", project.detail));
+      renderQuestions(card, project.questions);
+      if (!people.length) card.appendChild(el("p", "bb-coverage", "No live worker is recorded for this project."));
+      people.forEach(function (person) {
+        var row = el("div", "bb-person");
+        row.appendChild(el("h4", "bb-person__name", person.name));
+        row.appendChild(el("p", "bb-person__role", person.role));
+        row.appendChild(badge("info", person.status));
+        row.appendChild(el("p", "bb-person__detail", person.detail));
+        renderQuestions(row, person.questions);
+        card.appendChild(row);
+      });
+      projects.appendChild(card);
+    }
+    data.projects.forEach(function (p) {
+      renderProject(p, data.crew.filter(function (person) { return person.projects.indexOf(p.name) !== -1; }));
+    });
+    var unassigned = data.crew.filter(function (person) { return !person.projects.length; });
+    if (unassigned.length) renderProject({name:"Project not confirmed", delivery:"Delivery plan not confirmed.", status:"Needs a check", detail:"These people are included, but their project could not be confirmed.", questions:[]}, unassigned);
+  }
+
   /* stat strip */
   var callTotal = data.captains_call.length;
   var stats = [
@@ -539,6 +596,7 @@ __FM_BEARINGS_BOARD_DATA__
     { n: chartedQueued(data.charted).length + chartedMoreQueued, l: "waiting to start" }
   ];
   if (statusPage) stats = [stats[0], { n: data.requests.length, l: "requests" }];
+  if (Array.isArray(data.projects)) stats.push({ n: data.projects.length, l: "projects" }, { n: data.crew.length, l: "people" });
   var strip = document.getElementById("bb-stats");
   stats.forEach(function (s) {
     var t = el("div", "bb-stat" + (s.call ? " bb-stat--call" : ""));

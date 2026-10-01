@@ -97,7 +97,7 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
 
 ## Lavish board mode
 
-`/bearings lavish` adds one deliverable beside the unchanged chat digest: a self-contained dark status page with Needs you cards and a Your requests table, where the captain can answer directly.
+`/bearings lavish` adds one deliverable beside the unchanged chat digest: a self-contained dark status page with Needs you cards, every managed project and present person grouped by project, and a Your requests table, where the captain can answer directly.
 This capability is merged into bearings rather than a separate skill because the snapshot, decision bindings, stable page, and supervised Lavish polling already belong here; a second skill would duplicate those contracts.
 Plain bearings and file mode retain their existing chat/report formats.
 `bin/fm-bearings-board.sh` owns every board mechanic - the stable board path, fm-bearings-board.v1 payload validation, template injection, live Lavish session verification and ended-session reopening, the any-origin answer binding, and listener registration - so the per-invocation work is composing the payload and running its `build`.
@@ -112,8 +112,19 @@ Compose the payload from the same snapshot with the same ranking judgment as the
   A backlog-only in-flight task that requires worker metadata says "Status not confirmed", not "Working".
   Use captured worker state for live work, structured hold dates and unresolved blockers for waiting work, and durable completion for finished work.
   An answered question is not proof that its implementation finished.
-- Put every unavailable, partial, omitted, cached, or inconsistent inventory fact in `coverage` in plain words, including a missing main backlog.
-  Use the inventories' counts, omitted fields, freshness, and snapshot disclosures; do not hide gaps or claim complete coverage when collection was bounded or failed.
+- Always include `projects` and `crew` using the board command's contract.
+  Include every `project_registry.projects` entry, even with no active people or tasks; describe its registered delivery posture and merge authority in plain words, without claiming it fixes every task's delivery route.
+  Preserve the conditional distinction between production-facing validation and individually classified other changes.
+  Include every snapshot `crew` row, including paused people, present people with unconfirmed progress, project leads, and sampled delegated children.
+  Group by captured project associations, resolving repository paths to known project names; do not infer associations from internal identifiers.
+  A lead responsible for several projects appears under each; a person whose project is unknown stays visible in the unassigned group.
+  Include work on Firstmate itself or other known non-registry work separately, not as invented registry entries.
+  Give every project and person a human-readable name, a one- or two-sentence status, and explained open questions: the issue, the actual choice, and a recommendation or an explicit statement that none is recorded.
+  Translate structured questions into plain copy; distinguish a composing recommendation from a recorded recommendation and never invent approval options.
+  Where no question is captured, say no unanswered question is recorded in the checked information, not that none exists anywhere.
+  Explain deferred questions and shared questions with unknown project ownership rather than silently dropping them.
+- Put every unavailable, partial, omitted, cached, or inconsistent inventory fact in `coverage` in plain words, including a missing main backlog or project registry.
+  Use the inventories' counts, omitted fields, freshness, and snapshot disclosures, and label the page as a point-in-time snapshot; do not hide gaps or claim complete coverage when collection was bounded or failed.
   Explain which group could not be checked and what is missing, without exposing flags, file paths, or internal classifications.
 - Every request has a human-readable title, a short plain status such as "Working", "In review", "Waiting on you", "Waiting until Friday", "Waiting for another task", "Completed", or "Status not confirmed", and a sentence explaining what has happened and what happens next.
   Copy no raw worker status line into the page.

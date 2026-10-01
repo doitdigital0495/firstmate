@@ -83,6 +83,11 @@
 #                    its captured worker state, unfiled metadata records, and
 #                    each sampled home's structured inventories plus coverage.
 #                    Requires --json for nested heterogeneous records.
+#                    Also adds project_registry from fm-project-mode.sh and crew:
+#                    every main worker with a present, not-known-dead endpoint,
+#                    every registered secondmate, and its sampled active children.
+#                    Crew rows preserve project associations, full titles, captured
+#                    states, endpoint confidence, and structured open questions.
 #                    This bypasses digest limits, not canonical collection bounds.
 #   --all-in-flight  include every in-flight task
 #   --all-decisions  include every open decision and captain hold in the bounded snapshot
@@ -170,7 +175,10 @@ For every registered secondmate, readable structured facts from its own home are
   evidence and never become current work. The provenance and freshness fields
   distinguish live and cached ledgers; a home without either is explicitly unreadable.
 Opt-in surfaces: --fields bodies|paths|actions|endpoints|tasks, --all-in-flight,
-  tasks requires --json and adds task_inventory{main[],unfiled[],homes[]} for all-tasks boards.
+  tasks requires --json and adds task_inventory{main[],unfiled[],homes[]},
+  project_registry{present,projects[]}, and crew[] for all-tasks boards.
+  Project posture comes from fm-project-mode.sh; crew includes present main workers,
+  registered secondmates and sampled active children, with structured project links.
   main preserves every backlog row and adds worker_state/worker_detail when known;
   unfiled contains metadata without a backlog row; homes preserves the sampled
   active_children/queued/holds/landed inventories and counts/omitted/freshness.
@@ -255,6 +263,10 @@ if [ "$ALL_LANDED" = 1 ] || [ "$ALL_SECONDMATES" = 1 ]; then
   fi
 else
   SNAP=$(FM_SNAPSHOT_NOW="$NOW" "$FLEET" --json) || exit $?
+fi
+PROJECT_REGISTRY='null'
+if jq -en --arg fields "$FIELDS" '$fields | split(",") | map(gsub("^\\s+|\\s+$"; "")) | index("tasks") != null' >/dev/null; then
+  PROJECT_REGISTRY=$("$SCRIPT_DIR/fm-project-mode.sh" --list-json) || exit $?
 fi
 HOME_LABEL=$(printf '%s' "$SNAP" | jq -er '.fm_home | strings | split("/") | (.[-2:] | join("/"))') \
   || { echo "fm-bearings-snapshot: invalid canonical snapshot" >&2; exit 1; }
@@ -385,6 +397,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson pr_rows_capped "$PR_ROWS_CAPPED" \
   --argjson pr_rows_min_total "$PR_ROWS_MIN_TOTAL" \
   --argjson return_catchup "$RETURN_CATCHUP" \
+  --argjson project_registry "$PROJECT_REGISTRY" \
   --argjson candidate_prs "$CANDIDATE_PRS" "$FM_LANDED_JQ_DEFS"'
   def trunc($n): if . == null then null else
     (tostring | gsub("\\s+"; " ") | if (length > $n) then (.[:$n] + "…") else . end) end;
@@ -659,7 +672,34 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          else {} end)
   | . + (if $include_prs == 1 then {candidate_prs:$candidate_prs} else {} end)
   | . + (if $f_bodies then {bodies:[ $snap.backlog.records[] | select(.structured and (.state == "queued" or .state == "done")) | {id, body:((.body_excerpt // .raw // "-") | trunc(200))} ]} else {} end)
-  | . + (if ($fl | index("tasks")) != null then {task_inventory:{
+  | . + (if ($fl | index("tasks")) != null then {
+      project_registry:$project_registry,
+      crew:([
+        $snap.tasks[]
+        | select(.kind != "secondmate" and .endpoint.exists != false and .endpoint.agent_alive != "dead")
+        | {id,role:"worker",owner:"(main)",projects:[(.backlog.repo // .project // null) | select(. != null and . != "")],
+           name:(.backlog.title // null),state:.current_state.state,detail:.current_state.detail,
+           endpoint:.endpoint,
+           questions:[(.backlog // {}) | select(.hold_bucket != null)],
+           open_decisions:.hints.open_decisions}
+      ] + [
+        ($snap.secondmate_current.records // [])[] as $mate
+        | ([$snap.tasks[] | select(.id == $mate.id and .kind == "secondmate")][0] // {}) as $parent
+        | {id:$mate.id,role:"secondmate",owner:$mate.id,
+           projects:(([$snap.secondmate_current.registry.records[]? | select(.id == $mate.id)][0].projects
+                      // $parent.secondmate_projects) // []),name:null,
+           state:$mate.current.state,detail:$mate.current.reason,
+           endpoint:($parent.endpoint // null),freshness:$mate.freshness,
+           questions:$mate.holds,open_decisions:$mate.decisions_open},
+          ($mate.active_children[]? as $child
+           | $child | {id:($mate.id + "/" + .id),role:"worker",owner:$mate.id,
+              projects:[(.repo // null) | select(. != null and . != "")],
+              name:(.name // null),state:.state,detail:.doing,
+              endpoint:([$mate.endpoints[]? | select(.id == $child.id)][0].endpoint // null),
+              freshness:$mate.freshness,
+              questions:([ $mate.holds[]? | select(.id == $child.id) ]),open_decisions:[]})
+      ]),
+      task_inventory:{
       main:[ $snap.backlog.records[] as $row
         | ([$snap.tasks[] | select(.id == $row.id)][0] // {}) as $worker
         | $row + {worker_state:($worker.current_state.state // null),

@@ -264,6 +264,35 @@ test_status_page_shows_every_request_and_explained_cards() {
   pass "all-tasks page shows five statuses, explained options, both cards and coverage"
 }
 
+test_projects_include_idle_work_shared_leads_and_unassigned_people() {
+  local home out extra
+  home=$(make_home projects-and-people)
+  extra=$(jq -n '{requests:[],coverage:[],projects:[
+    {name:"Idle project",delivery:"Changes stay local.",status:"No current work",detail:"Still managed.",questions:[]},
+    {name:"Reports",delivery:"Production changes need automated validation.",status:"Working",detail:"Two people are assigned.",questions:[]},
+    {name:"Portal",delivery:"You decide whether to publish.",status:"Working",detail:"One lead is assigned.",questions:[]}
+  ],crew:[
+    {id:"routing-only-worker",name:"Improve report loading",role:"Worker",status:"Paused",detail:"Waiting for an approved test refresh.",projects:["Reports"],questions:[{issue:"Report data is old.",choice:"Approve a test-only refresh or select another source.",recommendation:"Use the test-only refresh; do not change production."}]},
+    {id:"routing-only-lead",name:"Reporting and portal coordination",role:"Project lead",status:"Working",detail:"Coordinating both projects.",projects:["Reports","Portal"],questions:[]},
+    {id:"routing-only-unknown",name:"Assignment to confirm",role:"Worker",status:"Status not confirmed",detail:"Project ownership could not be verified.",projects:[],questions:[]}
+  ]}')
+  out=$(render_board "$home" '[]' '[]' 0 0 "$extra")
+  printf '%s' "$out" | jq -e '
+    .error == "" and [.projects[].name] == ["Idle project","Reports","Portal","Project not confirmed"]
+    and (.projects[0].text | contains("No live worker is recorded"))
+    and (.projects[0].people | length) == 0
+    and [.projects[1].people[].name] == ["Improve report loading","Reporting and portal coordination"]
+    and .projects[2].people[0].role == "Project lead"
+    and .projects[3].people[0].name == "Assignment to confirm"
+    and (.projects[1].people[0].questions[0] | contains("What it isReport data is old.") and contains("Your choiceApprove") and contains("RecommendationUse the test-only refresh"))
+    and (.projects | tostring | contains("routing-only") | not)
+    and (.stats | any(.label == "projects" and .n == 3))
+    and (.stats | any(.label == "people" and .n == 3))
+  ' >/dev/null || fail "project grouping dropped people, questions or idle projects: $out"
+  pass "project board includes idle projects, shared leads, explained questions and unassigned people without routing ids"
+}
+
+test_projects_include_idle_work_shared_leads_and_unassigned_people
 test_status_page_shows_every_request_and_explained_cards
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status
 test_an_underway_identifier_label_is_not_replaced_by_run_status

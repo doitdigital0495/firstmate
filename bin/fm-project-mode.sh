@@ -36,7 +36,10 @@
 #
 # An unknown/missing project or unknown mode falls back to "no-mistakes off" and warns
 # to stderr, so a typo never silently drops the gate.
-# Usage: fm-project-mode.sh [--raw] <project-name>
+# --list-json returns {present,projects:[{name,mode,yolo}]} for every registry
+# entry, resolving each annotation through this same parser in --raw mode.
+# Missing registries are explicitly absent, not an empty managed portfolio.
+# Usage: fm-project-mode.sh [--raw] <project-name> | --list-json
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,6 +48,25 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 REG="$DATA/projects.md"
 RAW=0
+if [ "${1:-}" = "--list-json" ]; then
+  [ "$#" -eq 1 ] || { echo 'usage: fm-project-mode.sh --list-json' >&2; exit 2; }
+  if [ ! -f "$REG" ]; then
+    printf '{"present":false,"projects":[]}\n'
+    exit 0
+  fi
+  names=$(awk '$1=="-" && $2!="" {print $2}' "$REG")
+  rows='[]'
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    posture=$("$0" --raw "$name") || exit $?
+    rows=$(printf '%s' "$rows" | jq --arg name "$name" --arg mode "${posture%% *}" --arg yolo "${posture##* }" \
+      '. + [{name:$name,mode:$mode,yolo:$yolo}]') || exit $?
+  done <<EOF
+$names
+EOF
+  printf '%s' "$rows" | jq '{present:true,projects:.}'
+  exit $?
+fi
 if [ "${1:-}" = "--raw" ]; then
   RAW=1
   shift

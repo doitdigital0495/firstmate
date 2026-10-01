@@ -1510,6 +1510,7 @@ test_section_caps_and_expansion_flags() {
     and (.reports|length) == 5 and (.recorded_prs|length) == 5 and (.unhealthy_endpoints|length) == 5
   ' >/dev/null || fail "section expansion flags did not reveal full sets: $expanded"
   printf '\n## Done\n- [x] finished-question - Hosting chosen (repo: sample) (kind: captain)\n' >> "$home/data/backlog.md"
+  printf -- '- idle [local-only +yolo] - No workers (added 2026-01-01)\n- sample [no-mistakes-prod-only] - Conditional policy (added 2026-01-01)\n' > "$home/data/projects.md"
   inventory=$(FM_BEARINGS_IN_FLIGHT=1 FM_BEARINGS_DECISIONS=1 FM_BEARINGS_GATES=1 \
     run "$home" "$fakebin" --json --fields tasks)
   printf '%s' "$inventory" | jq -e '
@@ -1518,6 +1519,10 @@ test_section_caps_and_expansion_flags() {
     and (.task_inventory.main | any(.id == "finished-question" and .state == "done"))
     and (.task_inventory.unfiled | length) == 5
     and .task_inventory.present == true
+    and .project_registry.present == true
+    and [.project_registry.projects[].name] == ["idle", "sample"]
+    and .project_registry.projects[1].mode == "no-mistakes-prod-only"
+    and .crew == []
   ' >/dev/null || fail "full task inventory lost capped, answered or unfiled tasks: $inventory"
   if run "$home" "$fakebin" --fields tasks > "$home/toon-inventory.out" 2>&1; then rc=0; else rc=$?; fi
   [ "$rc" -eq 2 ] || fail "nested task inventory was silently flattened into TOON"
@@ -2356,6 +2361,10 @@ EOF
     and (.task_inventory.homes[0].queued | any(.id == "working-dated" and .hold_until == "2026-08-01"))
     and (.task_inventory.homes[0].queued | any(.id == "working-blocked" and (.unresolved_blocker_ids | length) == 2))
     and (.task_inventory.homes[0].counts.active_children == 5)
+    and ([.crew[] | select(.owner == "working-mate")] | length) == 6
+    and (.crew | any(.id == "working-mate" and .role == "secondmate" and .projects == ["sample"]))
+    and all(.crew[] | select(.owner == "working-mate" and .role == "worker");
+      . as $child | all(.questions[]; .id == ($child.id | split("/") | last)))
   ' >/dev/null || fail "task inventory dropped delegated work or its structured waits: $expanded"
   pass "task inventory preserves delegated children, holds, counts, dates and blockers"
   pass "working captain holds retain main and secondmate bucket surfaces"

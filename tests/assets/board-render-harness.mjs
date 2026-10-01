@@ -141,5 +141,16 @@ const cards = (byId.get("bb-call")?.children || [])
     options: card.querySelectorAll(".bb-opt").map((n) => n.textContent),
   }));
 const coverage = (byId.get("bb-coverage")?.children || []).map((n) => n.textContent);
+const projects = (byId.get("bb-projects")?.children || []).map((card) => ({
+  name: card.querySelectorAll(".bb-project__name")[0]?.textContent,
+  delivery: card.querySelectorAll(".bb-project__delivery")[0]?.textContent,
+  text: card.textContent,
+  people: card.querySelectorAll(".bb-person").map((person) => ({
+    name: person.querySelectorAll(".bb-person__name")[0]?.textContent,
+    role: person.querySelectorAll(".bb-person__role")[0]?.textContent,
+    questions: person.querySelectorAll(".bb-question").map((q) => q.textContent),
+    text: person.textContent,
+  })),
+}));
 process.stdout.write(
-  JSON.stringify({ stats, underway, charted, empty, more, requests, cards, coverage, error: errorText }) + "\n");
+  JSON.stringify({ stats, underway, charted, empty, more, requests, cards, projects, coverage, error: errorText }) + "\n");
