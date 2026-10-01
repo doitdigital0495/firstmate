@@ -1,0 +1,8 @@
+board: /tmp/fm-lab-board.JTOq/.lavish/bearings-board.html
+session:
+  status: opened
+session: live
+served: /tmp/fm-lab-board.JTOq/.lavish/bearings-board.html
+bound: lavish-48f879d9421f6c26
+armed: lavish-48f879d9421f6c26
+listening: live

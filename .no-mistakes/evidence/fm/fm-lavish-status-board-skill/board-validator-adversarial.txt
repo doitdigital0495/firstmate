@@ -1,0 +1,7 @@
+http pr_url: fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /tmp/fm-lab-board.JTOq/bad.json exit=1
+javascript pr_url: fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /tmp/fm-lab-board.JTOq/bad.json exit=1
+duplicate request id: fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /tmp/fm-lab-board.JTOq/bad.json exit=1
+option without hint: fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /tmp/fm-lab-board.JTOq/bad.json exit=1
+call without about: fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /tmp/fm-lab-board.JTOq/bad.json exit=1
+empty coverage note: fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /tmp/fm-lab-board.JTOq/bad.json exit=1
+existing board untouched
