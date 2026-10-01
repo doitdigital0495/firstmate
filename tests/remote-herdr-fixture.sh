@@ -126,3 +126,14 @@ SH
 reset_remote_herdr_fixture() { # <state>
   printf '{"next":1,"workspaces":[],"tabs":[],"typed":{},"working":{}}\n' > "$1"
 }
+
+# bypass_remote_quota_gate <remote-root>: the remote hop re-execs fm-spawn under
+# a cleared environment, so tests/lib.sh's FM_QUOTA_INTAKE_TEST_BYPASS never
+# reaches the fake host's quota intake gate. Bake the same bypass into the fake
+# remote root's copy of bin/fm-quota-intake.sh instead; tests/fm-quota-intake.test.sh
+# owns the real gate's behavior.
+bypass_remote_quota_gate() { # <remote-root>
+  local gate="$1/bin/fm-quota-intake.sh"
+  { printf '#!/usr/bin/env bash\nexport FM_QUOTA_INTAKE_TEST_BYPASS=1\n'; tail -n +2 "$gate"; } > "$gate.tmp" \
+    && chmod +x "$gate.tmp" && mv "$gate.tmp" "$gate"
+}

@@ -12,6 +12,9 @@ set -u
 # tests/lib.sh and bin/fm-gate-refuse-lib.sh for why firstmate's own suite,
 # which the no-mistakes gate runs from a gate worktree, must be exempt).
 export FM_GATE_REFUSE_BYPASS=1
+# Same for the quota intake gate (bin/fm-quota-intake.sh): these suites launch
+# fake harnesses whose credential stores carry no usage windows to read.
+export FM_QUOTA_INTAKE_TEST_BYPASS=1
 
 HERDR_TEST_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null

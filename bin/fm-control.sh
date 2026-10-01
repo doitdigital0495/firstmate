@@ -936,7 +936,8 @@ record_note() {
 
 do_relaunch() {
   local exit_result state note_line admission_out admission_store
-  local -a spawn_args admission_args relaunch_account_stores
+  local quota_gate_out quota_gate_store
+  local -a spawn_args admission_args relaunch_account_stores quota_gate_args
 
   require_state_verified_backend relaunch
   resolve_relaunch_profile
@@ -997,6 +998,37 @@ do_relaunch() {
       die "relaunch of $ID is not released onto its Claude credential store yet; the running agent was left untouched and nothing changed"
     fi
   fi
+  # Quota intake preview, also BEFORE anything is stopped: a relaunch is a
+  # fresh launch against a fresh consumption reading, and bin/fm-spawn.sh runs
+  # this same gate at launch time - but only after the old agent is gone. The
+  # pre-stop side of the transaction is where the refusal belongs, so a
+  # withheld relaunch leaves the running agent untouched. The stores come from
+  # the task's OWN recorded bindings (the ones the replacement will actually
+  # bill), or the new seat's stores when this is a cross-account move.
+  quota_gate_args=(--harness "$TARGET_HARNESS")
+  [ "$TARGET_MODEL" = default ] || quota_gate_args+=(--model "$TARGET_MODEL")
+  if [ "$ACCOUNT_SET" = 1 ]; then
+    quota_gate_args+=(--account "$NEW_ACCOUNT" \
+                      --claude-store "${relaunch_account_stores[0]}" \
+                      --pi-store "${relaunch_account_stores[1]}" \
+                      --codex-store "${relaunch_account_stores[2]}")
+  else
+    quota_gate_store=$(fm_meta_get "$META" account) || quota_gate_store=
+    [ -z "$quota_gate_store" ] || quota_gate_args+=(--account "$quota_gate_store")
+    quota_gate_store=$(fm_meta_get "$META" claude_config_dir) || quota_gate_store=
+    [ -z "$quota_gate_store" ] || quota_gate_args+=(--claude-store "$quota_gate_store")
+    quota_gate_store=$(fm_meta_get "$META" pi_agent_dir) || quota_gate_store=
+    [ -z "$quota_gate_store" ] || quota_gate_args+=(--pi-store "$quota_gate_store")
+    quota_gate_store=$(fm_meta_get "$META" codex_home) || quota_gate_store=
+    [ -z "$quota_gate_store" ] || quota_gate_args+=(--codex-store "$quota_gate_store")
+  fi
+  if ! quota_gate_out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
+    FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+    "$SCRIPT_DIR/fm-quota-intake.sh" gate "${quota_gate_args[@]}"); then
+    printf '%s\n' "$quota_gate_out" >&2
+    die "relaunch of $ID is not released onto its quota windows yet; the running agent was left untouched and nothing changed"
+  fi
+  printf '%s\n' "$quota_gate_out" >&2
   safe_checkpoint
   cp -p "$META" "$META_PRIOR" || die "could not preserve task $ID's durable record before relaunching"
   RELAUNCH_ACTIVE=1

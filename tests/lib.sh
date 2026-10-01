@@ -47,6 +47,13 @@ umask 022
 # strips this to verify real refusal.
 export FM_GATE_REFUSE_BYPASS=1
 
+# Same contract for the quota intake gate (bin/fm-quota-intake.sh): this suite
+# spawns workers against fake harnesses, so no credential store ever carries
+# real usage windows to read. A spawn test that verifies the real gate seeds a
+# record with bin/fm-quota-intake.sh itself (tests/fm-quota-intake.test.sh)
+# after unsetting this bypass locally.
+export FM_QUOTA_INTAKE_TEST_BYPASS=1
+
 # Clear the task-worker marker bin/fm-spawn.sh exports into ship and scout
 # panes. This suite builds git-init fixture repositories whose primary checkout
 # it runs a copied bin/fm-test-run.sh in, and that runner refuses the primary
@@ -187,6 +194,27 @@ fm_test_tmproot() {
     return 1
   fi
   printf '%s\n' "$root"
+}
+
+# fm_test_copy_repo <destination> stages this repository's working tree into an
+# existing <destination> directory, the way the remote-fixture suites fake a
+# remote host's tracked code root. A streaming `tar -cf - .` piped into a
+# destination that sits inside this repository (TMPDIR pointed into the tree)
+# reads its own growing output back as source and recurses until the disk
+# fills, so whenever the destination resolves under ROOT its path is excluded
+# from the archive and the copy is structurally unable to feed on itself.
+fm_test_copy_repo() {
+  local dest=$1 rel
+  [ -d "$dest" ] || return 1
+  dest=$(cd -P -- "$dest" && pwd -P) || return 1
+  local excludes=(--exclude=.git --exclude=.no-mistakes --exclude=data --exclude=state --exclude=config)
+  case "$dest" in
+    "$ROOT"/*)
+      rel=${dest#"$ROOT"/}
+      excludes+=(--exclude="$rel" --exclude="./$rel")
+      ;;
+  esac
+  (cd "$ROOT" && tar "${excludes[@]}" -cf - .) | (cd "$dest" && tar -xf -)
 }
 
 trap fm_test_cleanup EXIT

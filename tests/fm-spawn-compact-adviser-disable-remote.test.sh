@@ -41,10 +41,9 @@ CONTRARY=0
 # The remote host's tracked code root is this branch, as a real git repository:
 # fm-on and the remote entrypoint both require the dispatched command to be
 # tracked there, and the remote side runs the real scripts under test.
-(
-  cd "$ROOT" || exit
-  tar --exclude=.git --exclude=.no-mistakes --exclude=data --exclude=state --exclude=config -cf - .
-) | (cd "$REMOTE_ROOT" && tar -xf -)
+# fm_test_copy_repo excludes the destination from the archive so the copy can
+# never recurse into itself when the tmp root lands inside this repo.
+fm_test_copy_repo "$REMOTE_ROOT"
 
 # The remote host's own non-second-mate tooling only has to stay resolvable;
 # the second mate itself always launches on Herdr, whose fixture logs every
@@ -158,6 +157,44 @@ replay_remote_launch() {  # <preamble|bare>
 $launch"
 }
 
+# The transport's relaunch re-execs bin/fm-spawn.sh on the remote host under a
+# cleared environment with FM_STATE_OVERRIDE pointing at the route's own state,
+# so this suite's FM_QUOTA_INTAKE_TEST_BYPASS never survives the hop and the
+# remote spawn runs the real quota intake gate against the route's stores. Seed
+# that state's record with the real recorder against a fake quota-axi whose one
+# codex provider has known all_models scopes and both the 5h and weekly
+# windows, so the remote second mate's launch has fresh usage windows to pass
+# on, and the remote config carries a Notes source (crew-dispatch.json
+# model_notes) because the gate refuses any launch whose record lacks a 5h
+# window or a Notes entry. The seed must resolve
+# default stores under the same account home the remote entrypoint derives from
+# the password database (it unsets HOME before dispatch), or the gate would
+# rightly refuse a record covering different store paths.
+seed_remote_quota_record() {
+  local fake="$TMP_ROOT/quota-fake"
+  local account_home
+  account_home=$(CDPATH='' env -u HOME bash -c 'cd -- ~ && pwd -P') \
+    || fail "cannot resolve the fake remote account home"
+  mkdir -p "$fake" "$REMOTE_HOME/config"
+  printf '%s\n' '{"model_notes":{"claude":"personal max line","codex":"codex pool line"}}' \
+    > "$REMOTE_HOME/config/crew-dispatch.json"
+  cat > "$fake/quota-axi" <<'SH'
+#!/usr/bin/env bash
+case "$1" in --version) echo "quota-axi 0.1.29"; exit 0 ;; esac
+cat <<'EOF'
+{"schemaVersion":5,"providers":[{"provider":"claude","label":"max","plan":"max","state":{"status":"fresh"},"windows":[{"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":10,"percentRemaining":90,"resetsAt":"2026-09-29T15:19:59Z"},{"id":"seven_day","label":"7d","kind":"seven_day","percentUsed":7,"percentRemaining":93,"resetsAt":"2026-10-05T17:59:59Z"}],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":90,"boundedBy":["five_hour","seven_day"],"limitingWindowIds":["five_hour"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":0.4}}]}},{"provider":"codex","label":"prolite","plan":"prolite","state":{"status":"fresh"},"windows":[{"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":3,"percentRemaining":97,"resetsAt":"2026-09-29T19:00:00Z"},{"id":"weekly","label":"week","kind":"weekly","percentUsed":8,"resetsAt":"2026-10-04T05:00:39.000Z","windowSeconds":604800,"percentRemaining":92}],"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":92,"boundedBy":["five_hour","weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":1.1213}}]}}]}
+EOF
+SH
+  chmod +x "$fake/quota-axi"
+  env -i HOME="$account_home" PATH="$fake:$PATH" \
+    FM_HOME="$REMOTE_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+    FM_STATE_OVERRIDE="$REMOTE_HOME/state/parent-route" \
+    FM_CONFIG_OVERRIDE="$REMOTE_HOME/config" \
+    "$REMOTE_ROOT/bin/fm-quota-intake.sh" >/dev/null \
+    || fail "seeding the remote route's quota intake record failed"
+}
+seed_remote_quota_record
+
 # --- the remote route delivers the switch, allowlist absent -----------------
 run_remote_launch 'allowlist absent'
 remote_pane_exports | grep -qx 'export COMPACT_ADVISER_DISABLE=1' \
@@ -177,6 +214,8 @@ pass "a remote-routed second mate starts with the compact adviser disabled, from
 # the remote launch under /usr/bin/env -i. The switch is a floor, so it has to
 # survive that host's cleared environment although nothing there ever set it.
 : > "$PARENT/config/launch-env-allowlist"
+# The first launch spent its intake record; this one needs its own read.
+seed_remote_quota_record
 run_remote_launch 'allowlist enabled'
 assert_present "$REMOTE_HOME/config/launch-env-allowlist" \
   "the remote launch did not inherit the launch-environment opt-in"
