@@ -1,0 +1,108 @@
+{
+ "before": {
+  "label": "collapsed",
+  "sectionOrder": [
+   "bb-call-section",
+   "bb-charted-section",
+   "bb-projects-section",
+   "bb-requests-section"
+  ],
+  "rows": [
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "warn",
+    "title": "Remove old tabs",
+    "sub": "gamma",
+    "badge": "waiting",
+    "borderColor": "rgb(236, 192, 104)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "neutral",
+    "title": "Add CSV export",
+    "sub": "gamma",
+    "badge": "queued",
+    "borderColor": "rgb(147, 163, 185)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "danger",
+    "title": "Repair inventory",
+    "sub": "delta",
+    "badge": "needs repair",
+    "borderColor": "rgb(241, 138, 120)",
+    "detailVisible": true,
+    "detail": ""
+   }
+  ],
+  "projects": [
+   "Reports",
+   "Portal"
+  ],
+  "idleMsgVisible": false,
+  "completed": null,
+  "bodyBg": "rgb(12, 18, 28)",
+  "colorScheme": "dark",
+  "errors": ""
+ },
+ "after": {
+  "label": "expanded-first-underway-and-charted",
+  "sectionOrder": [
+   "bb-call-section",
+   "bb-charted-section",
+   "bb-projects-section",
+   "bb-requests-section"
+  ],
+  "rows": [
+   {
+    "tag": "DETAILS",
+    "open": true,
+    "tone": "warn",
+    "title": "Remove old tabs",
+    "sub": "gamma",
+    "badge": "waiting",
+    "borderColor": "rgb(236, 192, 104)",
+    "detailVisible": true,
+    "detail": "Waiting for capacity"
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "neutral",
+    "title": "Add CSV export",
+    "sub": "gamma",
+    "badge": "queued",
+    "borderColor": "rgb(147, 163, 185)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "danger",
+    "title": "Repair inventory",
+    "sub": "delta",
+    "badge": "needs repair",
+    "borderColor": "rgb(241, 138, 120)",
+    "detailVisible": true,
+    "detail": ""
+   }
+  ],
+  "projects": [
+   "Reports",
+   "Portal"
+  ],
+  "idleMsgVisible": false,
+  "completed": null,
+  "bodyBg": "rgb(12, 18, 28)",
+  "colorScheme": "dark",
+  "errors": ""
+ }
+}

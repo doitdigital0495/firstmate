@@ -1,0 +1,104 @@
+{
+  "schema": "fm-bearings-board.v1",
+  "home": "fm-lab-bearings-redesign",
+  "generated": "2026-10-01T12:00Z",
+  "prs_live": false,
+  "captains_call": [
+    {
+      "key": "lab-hosting",
+      "type": "decision",
+      "repo": "portal",
+      "title": "Choose hosting",
+      "about": "Keeps reports available during updates.",
+      "decide": "Choose the cost and outage tradeoff.",
+      "recommend_value": "dedicated",
+      "allow_freeform": true,
+      "options": [
+        {
+          "value": "dedicated",
+          "label": "Dedicated hosting",
+          "hint": "Costs more, no outage."
+        },
+        {
+          "value": "shared",
+          "label": "Shared hosting"
+        }
+      ]
+    }
+  ],
+  "underway": [
+    {
+      "id": "a",
+      "name": "Speed up portal load",
+      "repo": "alpha",
+      "state": "working",
+      "doing": "Reviewing changes",
+      "kind": "ship"
+    },
+    {
+      "id": "b",
+      "name": "Fix export crash",
+      "repo": "beta",
+      "state": "blocked",
+      "doing": "Awaiting permission to reach staging",
+      "kind": "ship"
+    },
+    {
+      "id": "c",
+      "name": "Migrate invoices",
+      "repo": "alpha",
+      "state": "paused",
+      "doing": "Waiting for release window",
+      "kind": "ship"
+    },
+    {
+      "id": "d",
+      "name": "Audit dashboards",
+      "repo": "beta",
+      "state": "reviewing",
+      "doing": "Checking evidence",
+      "kind": "scout"
+    },
+    {
+      "id": "mate/child-1",
+      "name": "Unlabelled job",
+      "repo": null,
+      "state": "future-state",
+      "doing": "Unrecognized status remains visible",
+      "kind": "ship"
+    }
+  ],
+  "landed": [
+    {
+      "id": "l1",
+      "repo": "alpha",
+      "what": "Update domains",
+      "owner": "ship",
+      "pr_url": "https://github.com/acme/repo/pull/1"
+    }
+  ],
+  "charted": [
+    {
+      "id": "q",
+      "title": "Remove old tabs",
+      "repo": "gamma",
+      "reason": "Waiting for capacity",
+      "dispatchable": true
+    },
+    {
+      "id": "r",
+      "title": "Add CSV export",
+      "repo": "gamma",
+      "reason": "",
+      "dispatchable": true
+    },
+    {
+      "id": "w",
+      "title": "Repair inventory",
+      "repo": "delta",
+      "reason": "Inventory file corrupt",
+      "dispatchable": false,
+      "kind": "warning"
+    }
+  ]
+}

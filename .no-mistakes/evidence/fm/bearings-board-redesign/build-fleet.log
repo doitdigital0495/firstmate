@@ -1,0 +1,10 @@
+board: /tmp/fm-lab-bearings-redesign.SuRc/.lavish/bearings-board.html
+session:
+  file: /tmp/fm-lab-bearings-redesign.SuRc/.lavish/bearings-board.html
+  url: "https://desktop-agentic.tail1dbb2d.ts.net:8387/session/51030bb3717977cc"
+  status: opened
+session: live
+served: /tmp/fm-lab-bearings-redesign.SuRc/.lavish/bearings-board.html
+bound: lavish-51030bb3717977cc
+armed: lavish-51030bb3717977cc
+listening: live

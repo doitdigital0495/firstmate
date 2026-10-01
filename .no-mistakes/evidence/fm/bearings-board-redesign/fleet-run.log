@@ -1,0 +1,234 @@
+{
+ "before": {
+  "label": "collapsed",
+  "sectionOrder": [
+   "bb-call-section",
+   "bb-current-section",
+   "bb-charted-section",
+   "bb-landed-section"
+  ],
+  "rows": [
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "online",
+    "title": "Speed up portal load",
+    "sub": "alpha",
+    "badge": "working",
+    "borderColor": "rgb(136, 212, 173)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "danger",
+    "title": "Fix export crash",
+    "sub": "beta",
+    "badge": "blocked",
+    "borderColor": "rgb(241, 138, 120)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "warn",
+    "title": "Migrate invoices",
+    "sub": "alpha",
+    "badge": "paused",
+    "borderColor": "rgb(236, 192, 104)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "info",
+    "title": "Audit dashboards",
+    "sub": "beta",
+    "badge": "reviewing",
+    "borderColor": "rgb(139, 199, 240)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "neutral",
+    "title": "Unlabelled job",
+    "sub": "",
+    "badge": "future-state",
+    "borderColor": "rgb(147, 163, 185)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "warn",
+    "title": "Remove old tabs",
+    "sub": "gamma",
+    "badge": "waiting",
+    "borderColor": "rgb(236, 192, 104)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "neutral",
+    "title": "Add CSV export",
+    "sub": "gamma",
+    "badge": "queued",
+    "borderColor": "rgb(147, 163, 185)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "danger",
+    "title": "Repair inventory",
+    "sub": "delta",
+    "badge": "needs repair",
+    "borderColor": "rgb(241, 138, 120)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DIV",
+    "open": null,
+    "tone": "",
+    "title": "Update domains",
+    "sub": "alpha · ship",
+    "badge": "",
+    "borderColor": "rgb(212, 220, 232)",
+    "detailVisible": null,
+    "detail": ""
+   }
+  ],
+  "projects": [],
+  "idleMsgVisible": false,
+  "completed": null,
+  "bodyBg": "rgb(12, 18, 28)",
+  "colorScheme": "dark",
+  "errors": ""
+ },
+ "after": {
+  "label": "expanded-first-underway-and-charted",
+  "sectionOrder": [
+   "bb-call-section",
+   "bb-current-section",
+   "bb-charted-section",
+   "bb-landed-section"
+  ],
+  "rows": [
+   {
+    "tag": "DETAILS",
+    "open": true,
+    "tone": "online",
+    "title": "Speed up portal load",
+    "sub": "alpha",
+    "badge": "working",
+    "borderColor": "rgb(136, 212, 173)",
+    "detailVisible": true,
+    "detail": "Reviewing changes"
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "danger",
+    "title": "Fix export crash",
+    "sub": "beta",
+    "badge": "blocked",
+    "borderColor": "rgb(241, 138, 120)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "warn",
+    "title": "Migrate invoices",
+    "sub": "alpha",
+    "badge": "paused",
+    "borderColor": "rgb(236, 192, 104)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "info",
+    "title": "Audit dashboards",
+    "sub": "beta",
+    "badge": "reviewing",
+    "borderColor": "rgb(139, 199, 240)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "neutral",
+    "title": "Unlabelled job",
+    "sub": "",
+    "badge": "future-state",
+    "borderColor": "rgb(147, 163, 185)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": true,
+    "tone": "warn",
+    "title": "Remove old tabs",
+    "sub": "gamma",
+    "badge": "waiting",
+    "borderColor": "rgb(236, 192, 104)",
+    "detailVisible": true,
+    "detail": "Waiting for capacity"
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "neutral",
+    "title": "Add CSV export",
+    "sub": "gamma",
+    "badge": "queued",
+    "borderColor": "rgb(147, 163, 185)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DETAILS",
+    "open": false,
+    "tone": "danger",
+    "title": "Repair inventory",
+    "sub": "delta",
+    "badge": "needs repair",
+    "borderColor": "rgb(241, 138, 120)",
+    "detailVisible": true,
+    "detail": ""
+   },
+   {
+    "tag": "DIV",
+    "open": null,
+    "tone": "",
+    "title": "Update domains",
+    "sub": "alpha · ship",
+    "badge": "",
+    "borderColor": "rgb(212, 220, 232)",
+    "detailVisible": null,
+    "detail": ""
+   }
+  ],
+  "projects": [],
+  "idleMsgVisible": false,
+  "completed": null,
+  "bodyBg": "rgb(12, 18, 28)",
+  "colorScheme": "dark",
+  "errors": ""
+ }
+}

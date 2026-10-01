@@ -1,0 +1,24 @@
+{
+ "before": {
+  "label": "collapsed",
+  "sectionOrder": [],
+  "rows": [],
+  "projects": [],
+  "idleMsgVisible": true,
+  "completed": null,
+  "bodyBg": "rgb(12, 18, 28)",
+  "colorScheme": "dark",
+  "errors": ""
+ },
+ "after": {
+  "label": "expanded-first-underway-and-charted",
+  "sectionOrder": [],
+  "rows": [],
+  "projects": [],
+  "idleMsgVisible": true,
+  "completed": null,
+  "bodyBg": "rgb(12, 18, 28)",
+  "colorScheme": "dark",
+  "errors": ""
+ }
+}
