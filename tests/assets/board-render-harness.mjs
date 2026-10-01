@@ -167,6 +167,9 @@ const projects = (byId.get("bb-projects")?.children || []).map((card) => ({
 const sections = Object.fromEntries(["current", "call", "charted", "landed"].map((name) =>
   [name, { hidden: byId.get("bb-" + name + "-section")?.hidden ?? false }]));
 const idle = !(byId.get("bb-idle")?.hidden ?? true);
+const projectsHidden = byId.get("bb-projects-section")?.hidden ?? true;
+// Section order is static markup in the built page, so read it from that output.
+const order = [...html.matchAll(/id="bb-(\w+)-section"/g)].map((m) => m[1]);
 if (process.argv[3] === "answer") {
   const walk = (n) => n.children.flatMap((c) => [c, ...walk(c)]);
   const nodes = walk(byId.get("bb-call"));
@@ -178,4 +181,4 @@ if (process.argv[3] === "answer") {
   form.listeners.submit({ preventDefault() {} });
 }
 process.stdout.write(
-  JSON.stringify({ stats, underway, charted, sections, idle, queued, empty, more, requests, cards, projects, coverage, error: errorText }) + "\n");
+  JSON.stringify({ stats, underway, charted, sections, order, idle, projectsHidden, queued, empty, more, requests, cards, projects, coverage, error: errorText }) + "\n");

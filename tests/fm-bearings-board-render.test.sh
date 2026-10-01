@@ -162,10 +162,13 @@ test_an_omitted_kind_keeps_queued_status_even_without_a_reason() {
     || fail "an omitted kind changed the charted next tally: $out"
   printf '%s' "$out" | jq -e '
     ([.charted[0].badges[] | .text] == ["waiting"])
-      and ([.charted[1].badges[] | .text] == ["waiting"])
-      and (.charted[1].tone == "warn")
-  ' >/dev/null || fail "queued work lost its waiting badge or color: $out"
-  pass "queued work has a waiting badge and color even without a reason"
+      and (.charted[0].tone == "warn")
+      and ([.charted[1].badges[] | .text] == ["queued"])
+      and ([.charted[1].badges[] | .tone] == ["neutral"])
+      and (.charted[1].tone == "neutral")
+      and (.charted[1].detail == "Ready for dispatch.")
+  ' >/dev/null || fail "queued work without a reason was not neutral and queued: $out"
+  pass "queued work waits with a reason and reads as neutral queued without one"
 }
 
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status() {
@@ -181,7 +184,7 @@ test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status() {
         | .title == "Show task names on the board"
           and .sub == "firstmate"
           and (.detail | test("no-mistakes: review round 2"))
-          and (.detail | test("ship"))
+          and (.sub | test("ship") | not) and (.detail | test("ship") | not)
           and .disclosure == true and .cue == "Current status"
           and [.badges[] | .text] == ["working"])
   ' >/dev/null || fail "an underway row did not lead with the task name: $out"
@@ -199,8 +202,8 @@ test_an_underway_identifier_label_is_not_replaced_by_run_status() {
     (.underway | length) == 1
       and (.underway[0]
         | .title == "mate/child-1"
-          and .sub == "mate/child-1"
-          and (.detail | startswith("fixing the failing check"))
+          and .sub == ""
+          and .detail == "fixing the failing check"
           and (.title != "fixing the failing check"))
   ' >/dev/null || fail "an identifier-labelled underway row rendered as status-only: $out"
   pass "an underway identifier label is not replaced by run status"
@@ -269,7 +272,7 @@ test_status_page_shows_every_request_and_explained_cards() {
   pass "all-tasks page shows five statuses, explained options, both cards and coverage"
 }
 
-test_projects_include_idle_work_shared_leads_and_unassigned_people() {
+test_projects_drop_idle_work_and_keep_shared_leads_and_unassigned_people() {
   local home out extra
   home=$(make_home projects-and-people)
   extra=$(jq -n '{requests:[],coverage:[],projects:[
@@ -283,18 +286,42 @@ test_projects_include_idle_work_shared_leads_and_unassigned_people() {
   ]}')
   out=$(render_board "$home" '[]' '[]' 0 0 '[]' '[]' "$extra")
   printf '%s' "$out" | jq -e '
-    .error == "" and [.projects[].name] == ["Idle project","Reports","Portal","Project not confirmed"]
-    and (.projects[0].text | contains("No live worker is recorded"))
-    and (.projects[0].people | length) == 0
-    and [.projects[1].people[].name] == ["Improve report loading","Reporting and portal coordination"]
-    and .projects[2].people[0].role == "Project lead"
-    and .projects[3].people[0].name == "Assignment to confirm"
-    and (.projects[1].people[0].questions[0] | contains("What it isReport data is old.") and contains("Your choiceApprove") and contains("RecommendationUse the test-only refresh"))
+    .error == "" and .projectsHidden == false
+    and [.projects[].name] == ["Reports","Portal","Project not confirmed"]
+    and (.projects | tostring | contains("Idle project") | not)
+    and [.projects[0].people[].name] == ["Improve report loading","Reporting and portal coordination"]
+    and .projects[1].people[0].role == "Project lead"
+    and .projects[2].people[0].name == "Assignment to confirm"
+    and (.projects[0].people[0].questions[0] | contains("What it isReport data is old.") and contains("Your choiceApprove") and contains("RecommendationUse the test-only refresh"))
     and (.projects | tostring | contains("routing-only") | not)
     and (.stats | any(.label == "projects" and .n == 3))
     and (.stats | any(.label == "people" and .n == 3))
-  ' >/dev/null || fail "project grouping dropped people, questions or idle projects: $out"
-  pass "project board includes idle projects, shared leads, explained questions and unassigned people without routing ids"
+  ' >/dev/null || fail "project grouping showed an idle project or dropped people or questions: $out"
+  pass "project board drops idle projects and keeps shared leads, explained questions and unassigned people without routing ids"
+}
+
+test_a_status_page_of_only_idle_projects_has_no_project_panel() {
+  local home out extra
+  home=$(make_home projects-all-idle)
+  extra=$(jq -n '{requests:[],coverage:[],projects:[
+    {name:"Idle one",delivery:"Changes stay local.",status:"No current work",detail:"Still managed.",questions:[]},
+    {name:"Idle two",delivery:"You decide whether to publish.",status:"No current work",detail:"Still managed.",questions:[]}
+  ],crew:[]}')
+  out=$(render_board "$home" '[]' '[]' 0 0 '[]' '[]' "$extra")
+  printf '%s' "$out" | jq -e '
+    .error == "" and .projects == [] and .projectsHidden == true
+  ' >/dev/null || fail "idle projects still rendered a project panel: $out"
+  pass "a status page whose projects are all idle shows no project panel"
+}
+
+test_needs_you_comes_before_open_work_and_the_queue() {
+  local home out
+  home=$(make_home section-order)
+  out=$(render_board "$home" '[]' '[]')
+  printf '%s' "$out" | jq -e '
+    .order[0:3] == ["call", "current", "charted"]
+  ' >/dev/null || fail "Needs you is not the first board section: $out"
+  pass "Needs you renders above open work and the waiting queue"
 }
 
 test_empty_sections_and_idle_projects_do_not_take_up_space() {
@@ -352,7 +379,9 @@ test_captains_call_answer_contract_is_unchanged() {
 test_empty_sections_and_idle_projects_do_not_take_up_space
 test_mixed_projects_stay_in_one_list_with_status_colors_and_disclosures
 test_captains_call_answer_contract_is_unchanged
-test_projects_include_idle_work_shared_leads_and_unassigned_people
+test_projects_drop_idle_work_and_keep_shared_leads_and_unassigned_people
+test_a_status_page_of_only_idle_projects_has_no_project_panel
+test_needs_you_comes_before_open_work_and_the_queue
 test_status_page_shows_every_request_and_explained_cards
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status
 test_an_underway_identifier_label_is_not_replaced_by_run_status
