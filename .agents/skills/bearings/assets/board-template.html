@@ -774,8 +774,6 @@ __FM_BEARINGS_BOARD_DATA__
     !data.charted.length && !chartedMoreQueued && !chartedMoreWarnings;
   document.getElementById("bb-landed-section").hidden = !data.landed.length;
   document.getElementById("bb-landed-label").textContent = "Completed · " + data.landed.length;
-  document.getElementById("bb-idle").hidden = !!(data.underway.length || callTotal ||
-    data.charted.length || chartedMoreQueued || chartedMoreWarnings);
 
   function stateTone(state) {
     if (/^(blocked|failed|needs-decision|needs_decision)$/.test(state)) return "danger";
@@ -874,6 +872,8 @@ __FM_BEARINGS_BOARD_DATA__
   }
 
   if (statusPage && !anyPickable) document.getElementById("bb-charted-section").hidden = true;
+  document.getElementById("bb-idle").hidden = ["bb-current-section", "bb-call-section", "bb-charted-section"]
+    .some(function (id) { return !document.getElementById(id).hidden; });
   if (anyPickable) {
     bar.hidden = false;
     refreshBar();

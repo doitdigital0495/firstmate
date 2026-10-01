@@ -331,6 +331,18 @@ test_a_project_with_only_an_open_question_keeps_its_panel() {
   pass "a project with no worker but an open question still shows its question"
 }
 
+test_a_status_page_with_only_unpickable_queue_rows_says_no_open_work() {
+  local home out
+  home=$(make_home status-unpickable)
+  out=$(render_board "$home" '[]' '[
+    {"id":"held","repo":"sample","title":"Held work","reason":"held for review","dispatchable":false}
+  ]' 0 0 '[]' '[]' '{"requests":[],"coverage":[]}')
+  printf '%s' "$out" | jq -e '
+    .error == "" and .sections.charted.hidden == true and .idle == true
+  ' >/dev/null || fail "a status page hid its queue and showed no empty state: $out"
+  pass "a status page with only unpickable queue rows says there is no open work"
+}
+
 test_needs_you_comes_before_open_work_and_the_queue() {
   local home out
   home=$(make_home section-order)
@@ -399,6 +411,7 @@ test_captains_call_answer_contract_is_unchanged
 test_projects_drop_idle_work_and_keep_shared_leads_and_unassigned_people
 test_a_status_page_of_only_idle_projects_has_no_project_panel
 test_a_project_with_only_an_open_question_keeps_its_panel
+test_a_status_page_with_only_unpickable_queue_rows_says_no_open_work
 test_needs_you_comes_before_open_work_and_the_queue
 test_status_page_shows_every_request_and_explained_cards
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status
