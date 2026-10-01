@@ -591,7 +591,7 @@ __FM_BEARINGS_BOARD_DATA__
     }
     data.projects.forEach(function (p) {
       var people = data.crew.filter(function (person) { return person.projects.indexOf(p.name) !== -1; });
-      if (people.length) renderProject(p, people);
+      if (people.length || p.questions.length) renderProject(p, people);
     });
     var unassigned = data.crew.filter(function (person) { return !person.projects.length; });
     if (unassigned.length) renderProject({name:"Project not confirmed", delivery:"Delivery plan not confirmed.", status:"Needs a check", detail:"These people are included, but their project could not be confirmed.", questions:[]}, unassigned);

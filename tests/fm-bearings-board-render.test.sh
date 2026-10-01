@@ -314,6 +314,23 @@ test_a_status_page_of_only_idle_projects_has_no_project_panel() {
   pass "a status page whose projects are all idle shows no project panel"
 }
 
+test_a_project_with_only_an_open_question_keeps_its_panel() {
+  local home out extra
+  home=$(make_home projects-question-only)
+  extra=$(jq -n '{requests:[],coverage:[],projects:[
+    {name:"Portal",delivery:"You decide whether to publish.",status:"On hold",detail:"Waiting for a hosting choice.",
+     questions:[{issue:"Hosting is not chosen.",choice:"Pick shared or dedicated hosting.",recommendation:"Use dedicated hosting."}]},
+    {name:"Idle one",delivery:"Changes stay local.",status:"No current work",detail:"Still managed.",questions:[]}
+  ],crew:[]}')
+  out=$(render_board "$home" '[]' '[]' 0 0 '[]' '[]' "$extra")
+  printf '%s' "$out" | jq -e '
+    .error == "" and .projectsHidden == false
+    and [.projects[].name] == ["Portal"]
+    and (.projects[0].text | contains("Hosting is not chosen.") and contains("Use dedicated hosting."))
+  ' >/dev/null || fail "a project with an open question but no worker lost its panel: $out"
+  pass "a project with no worker but an open question still shows its question"
+}
+
 test_needs_you_comes_before_open_work_and_the_queue() {
   local home out
   home=$(make_home section-order)
@@ -381,6 +398,7 @@ test_mixed_projects_stay_in_one_list_with_status_colors_and_disclosures
 test_captains_call_answer_contract_is_unchanged
 test_projects_drop_idle_work_and_keep_shared_leads_and_unassigned_people
 test_a_status_page_of_only_idle_projects_has_no_project_panel
+test_a_project_with_only_an_open_question_keeps_its_panel
 test_needs_you_comes_before_open_work_and_the_queue
 test_status_page_shows_every_request_and_explained_cards
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status
