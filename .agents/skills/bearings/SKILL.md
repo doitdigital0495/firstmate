@@ -114,6 +114,7 @@ Compose the payload from the same snapshot with the same ranking judgment as the
   An answered question is not proof that its implementation finished.
 - Always include `projects` and `crew` using the board command's contract.
   Include every `project_registry.projects` entry, even with no active people or tasks; describe its registered delivery posture and merge authority in plain words, without claiming it fixes every task's delivery route.
+  An entry with `recognised: false` has an unrecognised registered mode (its `annotation`); describe it as "Delivery plan not confirmed" with that annotation, never as a registered no-mistakes policy or merge authority.
   Preserve the conditional distinction between production-facing validation and individually classified other changes.
   Include every snapshot `crew` row, including paused people, present people with unconfirmed progress, project leads, and sampled delegated children.
   Group by captured project associations, resolving repository paths to known project names; do not infer associations from internal identifiers.

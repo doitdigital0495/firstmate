@@ -881,8 +881,11 @@ EOF
     .present == true and (.projects | length) == 6
     and (.projects | any(.name == "prodproj" and .mode == "no-mistakes-prod-only" and .yolo == "off"))
     and (.projects | any(.name == "flatproj" and .mode == "direct-PR"))
-    and (.projects | any(.name == "typoproj" and .mode == "no-mistakes" and .yolo == "off"))
-    and (.projects | any(.name == "legacy" and .mode == "no-mistakes" and .yolo == "off"))
+    and (.projects | any(.name == "typoproj" and .mode == "no-mistakes" and .yolo == "off"
+      and .recognised == false and .annotation == "no-mistakez"))
+    and (.projects | any(.name == "legacy" and .mode == "no-mistakes" and .yolo == "off"
+      and .recognised == true and (has("annotation") | not)))
+    and (.projects | map(select(.name != "typoproj")) | all(.recognised == true))
     and (.projects | any(.name == "preview" and .mode == "no-mistakes-prod-only" and .yolo == "on"))
   ' >/dev/null || fail "project inventory lost names or raw registered postures: $out"
   out=$(FM_DATA_OVERRIDE="$home/absent" "$PROJECT_MODE" --list-json)
