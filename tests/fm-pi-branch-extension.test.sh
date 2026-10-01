@@ -4700,7 +4700,7 @@ if (actualCall !== undefined || actualResult !== undefined || stockCall !== unde
   throw new Error("stock export rendering did not delegate to Pi's structured fallback");
 }
 
-// Both outcomes tools must inherit the installed Pi's argument formatter,
+// Both outcomes tools must inherit the argument formatter of the installed Pi,
 // including narrow wrapping, expansion, argument updates, and result framing.
 pi.events.emit("firstmate:calm-presentation", { active: false, stockExportRendering: false });
 for (const [name, callArgs] of [["fm_branch_outcomes", { recent: 23 }], ["fm_branch_processed", { through: 123456789 }]]) {
