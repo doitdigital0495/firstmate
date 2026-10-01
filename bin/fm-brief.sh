@@ -261,6 +261,11 @@ shell_quote() {
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
 INBOX_DIR=$(shell_quote "$STATE/$ID.inbox")
 
+record_brief_milestone() {
+  mkdir -p "$STATE"
+  "$SCRIPT_DIR/fm-task-milestones.sh" stamp "$STATE/$ID.status" brief -- "$KIND brief scaffold created"
+}
+
 # The receive-and-ack half of the steering-inbox contract, included in every
 # scaffold kind. The record format, doorbell line, and re-ring ladder are
 # owned by bin/fm-task-inbox-lib.sh; the doorbell itself is self-describing,
@@ -500,6 +505,7 @@ Before reporting done, read and follow \`$FM_ROOT/.agents/skills/captain-hold-li
 When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}; asks <done>/<total>\` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
 EOF
+record_brief_milestone
 echo "scaffolded: $BRIEF (scout; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})"
 exit 0
 fi
@@ -526,7 +532,7 @@ LANE=
 [ "$FAST_LANE" -eq 0 ] || LANE=fast
 PREVIEW=
 [ "$PREVIEW_ON_PUSH" -eq 0 ] || PREVIEW=on-push
-DOD=$(fm_dod_block "$MODE" "$ID" "$DATA" "$LANE" "$PREVIEW") || exit 1
+DOD=$(fm_dod_block "$MODE" "$ID" "$DATA" "$LANE" "$PREVIEW" "$STATE") || exit 1
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
@@ -597,6 +603,8 @@ Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced 
 
 $DOD
 EOF
+# Record actual scaffold creation, not dispatch or the worker's first progress.
+record_brief_milestone
 if [ "$FAST_LANE" -eq 1 ]; then
   echo "scaffolded: $BRIEF (ship, mode=$MODE lane=fast; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})"
 else

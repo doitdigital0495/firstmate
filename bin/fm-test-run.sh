@@ -291,7 +291,7 @@ family_for_basename() {
     fm-harness-adapter-references.test.sh|\
     fm-send-popup-settle.test.sh|fm-send-settle.test.sh|\
     fm-subagent-pretool-check.test.sh|\
-    fm-supervision-instructions.test.sh|fm-task-delivery.test.sh|\
+    fm-supervision-instructions.test.sh|fm-task-delivery.test.sh|fm-task-milestones.test.sh|\
     fm-tmux-submit-busy.test.sh|fm-trace-context-lib.test.sh|\
     fm-transition-lib.test.sh|\
     fm-test-run.test.sh|fm-test-isolation-proof.test.sh)
@@ -1593,7 +1593,8 @@ families_for_changed_path() {
       ;;
     bin/fm-lint.sh|bin/fm-lint-workflows.sh|bin/fm-install-shellcheck.sh|\
     bin/fm-install-actionlint.sh|\
-    bin/fm-brief.sh|bin/fm-ensure-agents-md.sh|bin/fm-crew-state.sh|\
+    bin/fm-brief.sh|bin/fm-dod-lib.sh|bin/fm-task-milestones.sh|\
+    bin/fm-ensure-agents-md.sh|bin/fm-crew-state.sh|\
     bin/fm-captain-hold.sh|bin/fm-decision-hold.sh|bin/fm-supervision*|bin/fm-transition-lib.sh|\
     bin/fm-tmux-lib.sh|bin/fm-marker-lib.sh|bin/fm-operational-input.sh|bin/fm-tasks-axi-lib.sh|\
     bin/fm-vendor-auth-probe.sh|\

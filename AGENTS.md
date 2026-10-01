@@ -390,7 +390,7 @@ After an autonomous merge, give the captain a one-line full-URL or local-main ou
 
 ### Validate
 
-For a no-mistakes ship, trigger validation on the same worker after its implementation commit, using the harness invocation owned by `harness-adapters`.
+For ship milestone emission, prompt gate dispatch, stale-run escalation, coverage reporting and duration readback, follow `bin/fm-dod-lib.sh` and `bin/fm-task-milestones.sh --help`; harness invocation remains owned by `harness-adapters`.
 The task worker that starts a no-mistakes run drives the pipeline and owns every `no-mistakes axi run` and `no-mistakes axi respond` call through the next gate or outcome.
 Firstmate never invokes `no-mistakes axi respond` for a crew-owned run.
 When the captain adds or changes an ask mid-task, append the captain's words without added speaker labels or direct address to that brief's `## Captain's intent` and relay those words to the worker; Firstmate build constraints stay in `## Firstmate spec` or the steer.

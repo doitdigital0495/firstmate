@@ -62,6 +62,49 @@ fm_nm_field() {  # <toon-output> <key>
   printf '%s\n' "$1" | sed -n "s/^[[:space:]]*$2:[[:space:]]*\(.*\)/\1/p" | head -1
 }
 
+# Review coverage is positive only with an explicit covered verdict bound to
+# BOTH the requested run and the exact reviewed full head, not the current run
+# head alone or a completed review step/outcome. This fail-closed reader accepts
+# captured AXI scalar records `id`, `head_sha`, `review_coverage`,
+# `review_coverage_run`, and `review_coverage_head_sha`, each exactly once.
+# The captured run's identity must also match the requested current run/head.
+# Versions without these explicit
+# fields are unverified, never covered. No prose or completion inference.
+# Stamped status measurements are handled by status_milestone_record in the
+# status schema owner and use this same identity/verdict predicate.
+fm_nm_review_coverage_verdict() {  # <verdict> <reviewed-run> <reviewed-sha> <run> <sha>
+  if [ "$2" != "$4" ] || [ "$3" != "$5" ]; then
+    printf 'stale\n'
+  else
+    case "$1" in
+      covered|uncovered|stale) printf '%s\n' "$1" ;;
+      *) printf 'unverified\n' ;;
+    esac
+  fi
+}
+
+fm_nm_review_coverage() {  # <captured-status/outcome> <run> <full-head>
+  local key count value verdict='' reviewed_run='' reviewed_sha='' current_run='' current_sha=''
+  for key in id head_sha review_coverage review_coverage_run review_coverage_head_sha; do
+    count=$(printf '%s\n' "$1" | grep -Ec "^[[:space:]]*$key:") || :
+    [ "$count" = 1 ] || { printf 'unverified\n'; return; }
+    value=$(fm_nm_strip_quotes "$(fm_nm_field "$1" "$key")")
+    case "$key" in
+      id) current_run=$value ;;
+      head_sha) current_sha=$value ;;
+      review_coverage) verdict=$value ;;
+      review_coverage_run) reviewed_run=$value ;;
+      review_coverage_head_sha) reviewed_sha=$value ;;
+    esac
+  done
+  [[ "$reviewed_run" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] \
+    && [[ "$reviewed_sha" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] \
+    || { printf 'unverified\n'; return; }
+  [ "$current_run" = "$2" ] && [ "$current_sha" = "$3" ] \
+    || { printf 'stale\n'; return; }
+  fm_nm_review_coverage_verdict "$verdict" "$reviewed_run" "$reviewed_sha" "$2" "$3"
+}
+
 # Full commit sha for sha-ish $2 as seen from worktree $1's own object store;
 # empty when the object is absent or ambiguous. Read-only: never fetches,
 # never moves refs or custody.

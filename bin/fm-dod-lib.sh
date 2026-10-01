@@ -5,10 +5,14 @@
 # receives. Both paths must hand the worker the same contract: a promoted
 # no-mistakes worker that never received the ask-user escalation rule or the
 # `--yes` ban is the exact delivery hole this single owner exists to close.
-# fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> <data-dir> [lane] prints
+# fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> <data-dir> [lane]
+# [preview] [status-dir] prints
 # the block on stdout with no trailing blank line. The caller validates the mode;
 # an unknown mode is refused rather than silently rendered as the pipeline contract.
 # The optional lane is `fast` and is refused for any mode but no-mistakes.
+# Ordinary briefs and scout promotion both carry prompt-dispatch and milestone
+# instructions; state-dir is explicit so data/state overrides cannot misroute
+# the worker's evidence, with the conventional home/state fallback for callers.
 # The block opens with the fixed machine-readable "Delivery contract: mode=<mode>"
 # line that bin/fm-spawn.sh checks a ship brief against; a fast-lane block appends
 # ` lane=fast` to that line, and bin/fm-spawn.sh refuses a spawn whose --fast-lane
@@ -299,9 +303,26 @@ Every other gate - intent, test exceptions, document, lint, CI - follows the sta
 EOF
 }
 
-fm_dod_block() {  # <mode> <task-id> <data-dir> [lane] [preview]
-  local mode=$1 id=$2 data=$3 lane=${4:-} preview=${5:-}
-  local checklist fast preview_note
+# Shared worker instrumentation instructions, also rendered on scout promotion.
+# The status schema remains in fm-classify-lib.sh; the helper owns mechanics.
+fm_ship_milestone_contract() {  # <status-dir> <task-id>
+  local helper status root
+  root=${FM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
+  printf -v helper '%q' "$root/bin/fm-task-milestones.sh"
+  printf -v status '%q' "$1/$2.status"
+  cat <<EOF
+## Milestone evidence
+Use \`$helper --help\` for milestone stamp, coverage and duration mechanics; \`bin/fm-classify-lib.sh\` owns the strict status schema.
+Stamp each reached milestone in \`$status\` when it really occurs, including local proof, actual gate receipt and end with run id and round count, PR creation, merge, exact deployed SHA, data-ready snapshot, first live proof, DEV acceptance, and UAT merge/deploy/data/live/acceptance.
+Use an authoritative event epoch for a phase observed later; missing timestamps remain unknown, never observation time or an invented acceptance.
+Deployment alone and failed, partial or waived proof never count as acceptance.
+Do not merge or deploy without the task's existing authority; Firstmate or the authorized release/proof owner stamps phases after your delivery stop point using the same helper.
+EOF
+}
+
+fm_dod_block() {  # <mode> <task-id> <data-dir> [lane] [preview] [status-dir]
+  local mode=$1 id=$2 data=$3 lane=${4:-} preview=${5:-} state=${6:-${FM_STATE_OVERRIDE:-${FM_HOME:-${3%/data}}/state}}
+  local checklist fast preview_note milestones helper status root
   case "$lane" in
     '') ;;
     fast)
@@ -327,6 +348,10 @@ fm_dod_block() {  # <mode> <task-id> <data-dir> [lane] [preview]
       return 1 ;;
   esac
   checklist=$(fm_request_checklist_contract "$data" "$id")
+  milestones=$(fm_ship_milestone_contract "$state" "$id")
+  root=${FM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
+  printf -v helper '%q' "$root/bin/fm-task-milestones.sh"
+  printf -v status '%q' "$state/$id.status"
   fast=
   [ -z "$lane" ] || fast=$(fm_fast_lane_contract "$id")
   preview_note=
@@ -341,6 +366,7 @@ While previews build, note the push in your status line (working [at=<epoch>]: p
       cat <<EOF
 # Definition of done
 Delivery contract: mode=direct-PR
+$milestones
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
 $checklist
@@ -352,6 +378,7 @@ EOF
       cat <<EOF
 # Definition of done
 Delivery contract: mode=local-only
+$milestones
 This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`fm/$id\`. Do NOT push, do NOT open a PR, do NOT merge.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
@@ -364,9 +391,15 @@ EOF
       cat <<EOF
 # Definition of done
 Delivery contract: mode=no-mistakes${lane:+ lane=$lane}
+$milestones
 The task is complete only when committed on your branch.${preview_note}
-When you believe it is complete, append \`done [at=<epoch>]: {summary}; asks <done>/<total>\` to the status file and stop.
-Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
+After local proof and the implementation commit, start /no-mistakes yourself immediately to validate and ship a PR, targeting dispatch within 15 minutes of local proof; do not stop for an implementation-only done handoff.
+If dispatch cannot meet that target, escalate the reason to Firstmate rather than leaving proved work idle.
+Stamp gate start from the actual run receipt, not an intended launch, and gate end from its real outcome with the observed round count.
+On base drift or an obsolete run, stamp gate-obsolete when detected and escalate to Firstmate immediately, no later than 30 minutes after detection; this is not an overnight external-wait pause.
+Preserve every managed fix through an authorized custody transition using the installed no-mistakes guidance; never discard fixes or silently skip review coverage to restart a run.
+Before reporting review coverage, use \`$helper coverage $status <run> <full-sha> [captured-axi-file]\`; only an explicit covered result proves current coverage, while stale or unverified means not covered and must be reported to Firstmate, never silently waived.
+Keep browser runs in a task-owned named session and select only the owned tab; reserve a unique E2E port per concurrent run instead of reusing another task's port.
 
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
