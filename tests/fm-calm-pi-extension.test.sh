@@ -149,6 +149,46 @@ render_export_dom() {
   return 1
 }
 
+# Observe rendered visibility, not mere DOM presence: Pi can retain display:false
+# custom messages as CSS-hidden nodes so its export can reveal them on demand.
+prepare_export_dom_probe() {
+  node - "$1" "$2" <<'JS'
+const fs = require("node:fs");
+const html = fs.readFileSync(process.argv[2], "utf8");
+const probe = String.raw`<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const visible = (element) => {
+    for (let current = element; current; current = current.parentElement) {
+      const style = getComputedStyle(current);
+      if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
+    }
+    return element.getClientRects().length > 0;
+  };
+  const messages = document.getElementById("messages");
+  const tree = document.getElementById("tree-container");
+  const text = (selector) => Array.from(messages?.querySelectorAll(selector) ?? [])
+    .filter(visible).map((element) => element.textContent).join("\n");
+  const evidence = document.createElement("script");
+  evidence.id = "fm-calm-dom-evidence";
+  evidence.type = "application/json";
+  evidence.textContent = JSON.stringify({
+    messagesFound: !!messages,
+    treeFound: !!tree,
+    userText: text(".user-message"),
+    assistantText: text(".assistant-message"),
+    visibleHooks: text(".hook-message"),
+    visibleMessages: Array.from(messages?.children ?? []).filter(visible)
+      .map((element) => element.textContent).join("\n"),
+    treeText: tree?.textContent,
+  }).replace(/</g, "\\u003c");
+  document.body.appendChild(evidence);
+});
+</script>`;
+if (!/<\/body>\s*<\/html>/.test(html)) throw new Error("Pi export has no closing document body");
+fs.writeFileSync(process.argv[3], html.replace(/<\/body>\s*<\/html>/, `${probe}\n</body>\n</html>`));
+JS
+}
+
 test_home_resolution() {
   local fixture out status version
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
@@ -3387,8 +3427,39 @@ SH
   pass "the rendered-export-DOM guard renders in one pass, retries a bounded number of Chrome start-up failures, and reports the Chrome binary, Chrome version, Pi version, exit status, and Chrome diagnostic when every attempt fails"
 }
 
+test_export_visibility_probe() {
+  local chrome dir mode display report
+  if ! command -v node >/dev/null 2>&1 || ! chrome=$(find_chrome); then
+    echo "skip: node or Chrome not found for export visibility probe"
+    return 0
+  fi
+  dir="$TMP_ROOT/export-visibility-probe"
+  mkdir -p "$dir"
+  for mode in hidden visible; do
+    display=none
+    [ "$mode" = visible ] && display=block
+    printf '%s\n' "<!doctype html><html><head><style>.hook-message { display: $display; }</style></head><body><main><div id=\"messages\"><div class=\"user-message\">GENUINE_USER</div><div class=\"assistant-message\">GENUINE_REPLY</div><div class=\"hook-message\">RETAINED_HOOK</div><div style=\"display:none\"><div class=\"hook-message\">HIDDEN_ANCESTOR_HOOK</div></div></div></main><div id=\"tree-container\">RETAINED_PROVENANCE</div></body></html>" >"$dir/$mode.html"
+    prepare_export_dom_probe "$dir/$mode.html" "$dir/$mode-probed.html" \
+      || fail "could not prepare export visibility fixture"
+    report=$(render_export_dom "$chrome" "$dir/$mode-probed.html" "$dir/$mode-dom.html" visibility-probe) \
+      || fail "could not render export visibility fixture: $report"
+    node - "$dir/$mode-dom.html" "$mode" <<'JS' || fail "export visibility probe misclassified retained DOM nodes"
+const dom = require("node:fs").readFileSync(process.argv[2], "utf8");
+const encoded = dom.match(/<script id="fm-calm-dom-evidence" type="application\/json">([\s\S]*?)<\/script>/)?.[1];
+if (!encoded) throw new Error("browser did not produce visibility evidence");
+const evidence = JSON.parse(encoded);
+if (!dom.includes("RETAINED_HOOK") || !dom.includes("HIDDEN_ANCESTOR_HOOK")) throw new Error("fixture did not retain hidden nodes");
+if (!evidence.userText.includes("GENUINE_USER") || !evidence.assistantText.includes("GENUINE_REPLY")) throw new Error("probe hid genuine conversation");
+if (evidence.visibleHooks.includes("RETAINED_HOOK") !== (process.argv[3] === "visible")) throw new Error("probe ignored computed display");
+if (evidence.visibleHooks.includes("HIDDEN_ANCESTOR_HOOK")) throw new Error("probe ignored a hidden ancestor");
+if (evidence.treeText !== "RETAINED_PROVENANCE") throw new Error("probe lost tree provenance");
+JS
+  done
+  pass "export visibility probe accepts CSS-hidden retained nodes, detects their becoming visible, and checks hidden ancestors without hiding genuine conversation"
+}
+
 test_interactive_terminal_e2e() {
-  local project config home session_file export_file export_dom default_snapshot expanded_snapshot hidden_snapshot active_before_snapshot active_hidden_snapshot export_snapshot export_settled_snapshot restored_snapshot working_snapshot working_response_snapshot restarted_snapshot resumed_restored_snapshot hash_before hash_after now version chrome chrome_report active_wait active_screen_wait boat_frame_one boat_frame_two boat_resized_snapshot boat_focus_snapshot boat_cleared_snapshot boat_hull_line boat_sail_line boat_column_one boat_column_two boat_line boat_color_snapshot boat_color_line boat_water_snapshot boat_water_line boat_water_first boat_water_changed boat_narrow_snapshot boat_freeze_snapshot boat_resume_snapshot boat_freeze_column boat_freeze_sail boat_resume_column boat_resume_sail
+  local project config home session_file export_file export_dom export_probe default_snapshot expanded_snapshot hidden_snapshot active_before_snapshot active_hidden_snapshot export_snapshot export_settled_snapshot restored_snapshot working_snapshot working_response_snapshot restarted_snapshot resumed_restored_snapshot hash_before hash_after now version chrome chrome_report active_wait active_screen_wait boat_frame_one boat_frame_two boat_resized_snapshot boat_focus_snapshot boat_cleared_snapshot boat_hull_line boat_sail_line boat_column_one boat_column_two boat_line boat_color_snapshot boat_color_line boat_water_snapshot boat_water_line boat_water_first boat_water_changed boat_narrow_snapshot boat_freeze_snapshot boat_resume_snapshot boat_freeze_column boat_freeze_sail boat_resume_column boat_resume_sail
   if ! command -v pi >/dev/null 2>&1 || ! command -v tmux >/dev/null 2>&1; then
     echo "skip: pi or tmux not found for Pi calm interactive E2E"
     return 0
@@ -3402,6 +3473,7 @@ test_interactive_terminal_e2e() {
   session_file="$TMP_ROOT/calm-session.jsonl"
   export_file="$TMP_ROOT/calm-export.html"
   export_dom="$TMP_ROOT/calm-export-dom.html"
+  export_probe="$TMP_ROOT/calm-export-probed.html"
   default_snapshot="$TMP_ROOT/default.txt"
   expanded_snapshot="$TMP_ROOT/expanded.txt"
   hidden_snapshot="$TMP_ROOT/hidden.txt"
@@ -3839,21 +3911,27 @@ if (!synthetic || synthetic.display) process.exit(1);
 JS
   chrome=$(find_chrome) \
     || fail "Chrome or Chromium is required for rendered export DOM assertions; set FM_CHROME_BIN to one"
-  chrome_report=$(render_export_dom "$chrome" "$export_file" "$export_dom" "$version") \
+  prepare_export_dom_probe "$export_file" "$export_probe" \
+    || fail "could not prepare the rendered export visibility probe"
+  chrome_report=$(render_export_dom "$chrome" "$export_probe" "$export_dom" "$version") \
     || fail "could not render calm-mode HTML export DOM: $chrome_report"
-  node - "$export_dom" <<'JS' || fail "rendered export DOM violated the Calm conversation boundary"
+  node - "$export_dom" "$version" <<'JS' || fail "rendered export DOM violated the Calm conversation boundary"
 const dom = require("node:fs").readFileSync(process.argv[2], "utf8");
-const messages = dom.match(/<div id="messages">([\s\S]*?)<\/main>/)?.[1];
-const tree = dom.match(/<div[^>]*id="tree-container"[^>]*>([\s\S]*?)<div[^>]*id="tree-status"/)?.[1];
-if (!messages || !tree) process.exit(1);
-if (!/<div class="user-message"[^>]*>[\s\S]*Show a deterministic tool example\./.test(messages)) process.exit(1);
-if (!/<div class="assistant-message"[^>]*>[\s\S]*The deterministic tool example is complete\./.test(messages)) process.exit(1);
-if (messages.includes('<div class="hook-message"')) process.exit(1);
-if (messages.includes("[firstmate-synthetic-input]")) process.exit(1);
+const assert = (condition, reason) => {
+  if (!condition) throw new Error(`Pi ${process.argv[3]} export: ${reason}`);
+};
+const encoded = dom.match(/<script id="fm-calm-dom-evidence" type="application\/json">([\s\S]*?)<\/script>/)?.[1];
+assert(encoded, "browser did not produce visibility evidence");
+const evidence = JSON.parse(encoded);
+assert(evidence.messagesFound && evidence.treeFound, "conversation or session tree missing");
+assert(evidence.userText.includes("Show a deterministic tool example."), "genuine user prompt not visible");
+assert(evidence.assistantText.includes("The deterministic tool example is complete."), "genuine final reply not visible");
+assert(!evidence.visibleHooks, "hidden custom messages became visible");
+assert(!evidence.visibleMessages.includes("[firstmate-synthetic-input]"), "synthetic presentation became visible");
 for (const current of ["CURRENT_WATCHER_E2E", "CURRENT_TURN_END_E2E", "CURRENT_AWAY_E2E", "CURRENT_FROM_FIRSTMATE_E2E", "CURRENT_LAUNCH_BRIEF_E2E"]) {
-  if (!messages.includes(current)) process.exit(1);
+  assert(evidence.visibleMessages.includes(current), `operational transcript entry not visible: ${current}`);
 }
-if (!tree.includes("firstmate-synthetic-input") || !tree.includes("/tmp/probe.status")) process.exit(1);
+assert(evidence.treeText.includes("firstmate-synthetic-input") && evidence.treeText.includes("/tmp/probe.status"), "session tree lost synthetic provenance");
 JS
   # Calm returns the transcript to its own presentation once the export has been
   # rendered. That repaint runs on the macrotask right after Pi prints the export
@@ -4289,4 +4367,5 @@ test_operational_followup_turn_e2e
 test_hidden_block_geometry_e2e
 test_working_ship_geometry_and_lifecycle
 test_export_dom_render_guard
+test_export_visibility_probe
 test_interactive_terminal_e2e

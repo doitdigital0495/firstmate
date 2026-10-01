@@ -2217,6 +2217,35 @@ Every record read in those regressions ultimately goes through the real `bin/fm-
 Against the installed 0.81.1 package the typecheck reports a pre-existing `ModelsRefreshOptions.providers` mismatch in the branch's provider-registration path that this change does not touch; the option exists from the 0.84 line on, which is why the typecheck evidence uses the newer package as the earlier entries do.
 The real Pi/Herdr return guard (`FM_AFK_PI_HERDR_E2E=1 tests/fm-afk-pi-herdr-return-e2e.test.sh`) remains the owner of the live return-brief proof; it loads no supervision extension into its synthetic primary and does not yet exercise the parked-main scenario, which is a follow-up for a Herdr-lab-guarded task.
 
+### 2026-10-01 stock tool calls and export visibility
+
+The focused Pi Calm, branch-extension, and strict typecheck suites passed against Pi 0.99.2, Node v22.23.2, and TypeScript 5.9.3.
+The branch-extension suite also passed against the installed Pi 0.86.1 package.
+The real `ToolExecutionComponent` comparisons cover both outcomes tools, argument updates, collapsed and expanded calls, narrow wrapping, pending and partial results, and error backgrounds.
+The export guard observes computed visibility in Chrome rather than treating CSS-hidden nodes as visible conversation; its regression retains hidden nodes, reveals one deliberately, and checks a hidden ancestor and genuine conversation independently.
+The native Calm session guard used Windows Chrome 153 through a dump-DOM transport that preserves rendered nodes and browser-generated visibility evidence while omitting embedded script and style source from the transported copy, not from the live page.
+It made no model-provider requests and created and closed only its own Chrome tabs.
+
+```sh
+PATH="<Pi 0.99.2 CLI and TypeScript bin>:$PATH" \
+FM_PI_PACKAGE_DIR="<Pi 0.99.2 package>" \
+FM_CHROME_BIN="<Windows Chrome dump-DOM transport>" \
+FM_CHROME_RENDER_WAIT_TICKS=900 \
+bin/fm-test-run.sh tests/fm-calm-pi-extension.test.sh tests/fm-pi-branch-extension.test.sh tests/fm-pi-primary-types.test.sh
+# Installed global Pi package: 0.86.1
+bin/fm-test-run.sh tests/fm-pi-branch-extension.test.sh
+```
+
+```text
+ok - tracked Pi extensions pass strict no-emit typecheck against Pi 0.99.2
+ok - export visibility probe accepts CSS-hidden retained nodes, detects their becoming visible, and checks hidden ancestors without hiding genuine conversation
+FM_TEST_SUMMARY total=3 failed=0 skipped_gate=0 duration_ms=170190
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=80307
+```
+
+`tests/fm-calm-pi-extension.test.sh` and `tests/fm-pi-branch-extension.test.sh` are the token-free refresh entry points against an installed Pi and real Chrome executable.
+Their fixtures preserve the default export view and full session provenance without changing Calm's visibility policy or imposing a Pi version ceiling.
+
 ## Native Codex through Pi
 
 Verified on 2026-09-08 with Pi 0.85.1 and the installed `pi-codex-native` 0.2.1 adapter.

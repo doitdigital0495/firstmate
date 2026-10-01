@@ -27,6 +27,10 @@ class Node {
     this.classList = {
       add: (c) => { this.className = (this.className + " " + c).trim(); },
       contains: (c) => this.className.split(/\s+/).includes(c),
+      toggle: (c, on) => {
+        this.className = this.className.split(/\s+/).filter((v) => v !== c).join(" ");
+        if (on) this.classList.add(c);
+      },
     };
   }
   get textContent() {
@@ -122,5 +126,31 @@ const errorText = [...byId.entries()]
 const empty = ch.children.filter((c) => c.className.includes("bb-empty")).map((c) => c.textContent);
 const more = ch.children.filter((c) => c.className.includes("bb-morechip")).map((c) => c.textContent);
 
+const requests = (byId.get("bb-requests")?.children || []).map((row) => ({
+  title: row.children[0]?.textContent,
+  status: row.children[1]?.children[0]?.textContent,
+  detail: row.children[1]?.children[1]?.textContent,
+  href: row.children[1]?.children.find((c) => c.tagName === "a")?.href ?? "",
+}));
+const cards = (byId.get("bb-call")?.children || [])
+  .filter((c) => c.className.split(/\s+/).includes("bb-decision"))
+  .map((card) => ({
+    hidden: card.hidden,
+    title: card.querySelectorAll(".bb-decision__title")[0]?.textContent,
+    contexts: card.querySelectorAll(".bb-ctx__row").map((n) => n.textContent),
+    options: card.querySelectorAll(".bb-opt").map((n) => n.textContent),
+  }));
+const coverage = (byId.get("bb-coverage")?.children || []).map((n) => n.textContent);
+const projects = (byId.get("bb-projects")?.children || []).map((card) => ({
+  name: card.querySelectorAll(".bb-project__name")[0]?.textContent,
+  delivery: card.querySelectorAll(".bb-project__delivery")[0]?.textContent,
+  text: card.textContent,
+  people: card.querySelectorAll(".bb-person").map((person) => ({
+    name: person.querySelectorAll(".bb-person__name")[0]?.textContent,
+    role: person.querySelectorAll(".bb-person__role")[0]?.textContent,
+    questions: person.querySelectorAll(".bb-question").map((q) => q.textContent),
+    text: person.textContent,
+  })),
+}));
 process.stdout.write(
-  JSON.stringify({ stats, underway, charted, empty, more, error: errorText }) + "\n");
+  JSON.stringify({ stats, underway, charted, empty, more, requests, cards, projects, coverage, error: errorText }) + "\n");

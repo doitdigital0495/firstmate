@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Bearings - fleet board</title>
+<meta name="color-scheme" content="dark" />
+<title>Task status</title>
 <style>
 /* ============================================================
-   Bearings board - Firstmate Design System, inlined for portability.
-   Tokens copied verbatim from myfirstmate priv/static/assets/app.css
-   (the compiled adoption of .agents/skills/firstmate-design).
+   Bearings status board - local system fonts and dark surfaces.
+   Layout tokens retain the existing board's design vocabulary.
    ============================================================ */
-@import url("https://fonts.googleapis.com/css2?family=Chango&family=Jost:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+/* System fonts only: this artifact makes no external requests. */
 
 :root {
   --rust-700: #8f2f17; --rust-600: #a93a1f; --rust-500: #c0452a;
@@ -24,12 +24,18 @@
   --cream-line: #ddc89c;
   --ink-900: #241c14; --ink-700: #3f3224; --ink-500: #6f5e46; --ink-300: #9c8a6c;
   --white: #fffdf7;
-  --bg-page: var(--paper-100);
-  --surface-card: var(--white);
-  --surface-card-warm: var(--paper-000);
-  --text-strong: var(--ink-900); --text-body: var(--ink-700);
-  --text-muted: var(--ink-500); --text-faint: var(--ink-300);
-  --border-default: var(--cream-line); --border-soft: var(--paper-300);
+  color-scheme: dark;
+  --bg-page: #0e1116;
+  --surface-card: #171c24;
+  --surface-card-warm: #131820;
+  --text-strong: #e6e9ee; --text-body: #e6e9ee;
+  --text-muted: #b2bdcc; --text-faint: #a5b2c4;
+  --border-default: #3a4456; --border-soft: #2a3240;
+  --paper-000: #e6e9ee; --paper-100: #171c24;
+  --rust-050: #2b1b17; --rust-500: #c0452a; --rust-600: #f2a187;
+  --sea-050: #12351f; --sea-200: #285e3b; --sea-500: #7ee2a0; --sea-700: #7ee2a0;
+  --ocean-050: #12283f; --ocean-500: #8cc4ff; --ocean-600: #8cc4ff;
+  --gold-100: #3a2f10; --gold-600: #ffd06b;
   --status-online: var(--sea-500); --status-online-soft: var(--sea-050);
   --status-warn: var(--gold-600); --status-warn-soft: var(--gold-100);
   --status-danger: var(--rust-600); --status-danger-soft: var(--rust-050);
@@ -45,13 +51,14 @@
   --shadow-sm: 0 1px 2px rgba(36, 28, 20, 0.06), 0 4px 10px rgba(36, 28, 20, 0.06);
   --shadow-hard: 4px 4px 0 var(--ink-900);
   --shadow-hard-sm: 3px 3px 0 var(--ink-900);
-  --texture-paper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
+  --texture-paper: none;
   --focus-ring: 0 0 0 3px var(--gold-300);
   --container-app: 1180px;
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
+html, body { margin: 0; padding: 0; background: #0e1116; color: #e6e9ee; }
+[hidden] { display: none !important; }
 body {
   font-family: var(--font-sans);
   color: var(--text-body);
@@ -70,10 +77,10 @@ a { color: inherit; text-decoration: none; }
   border-radius: var(--radius-xs); border: 1.5px solid var(--ink-900);
   box-shadow: 2px 2px 0 var(--ink-900); white-space: nowrap;
 }
-.fm-badge--online  { background: var(--sea-500);  color: var(--paper-000); }
+.fm-badge--online  { background: var(--sea-050);  color: var(--sea-500); }
 .fm-badge--warn    { background: var(--gold-500); color: var(--navy-700); }
-.fm-badge--danger  { background: var(--rust-600); color: var(--paper-000); }
-.fm-badge--info    { background: var(--ocean-500); color: var(--paper-000); }
+.fm-badge--danger  { background: #3d1a1a; color: #ff9a9a; }
+.fm-badge--info    { background: var(--ocean-050); color: var(--ocean-500); }
 .fm-badge--neutral { background: var(--paper-000); color: var(--ink-900); }
 .fm-badge--solid   { background: var(--rust-500); color: var(--paper-000); }
 
@@ -88,9 +95,9 @@ a { color: inherit; text-decoration: none; }
 .fm-btn:active { transform: translateY(1px); }
 .fm-btn--sm { font-size: var(--fs-xs); padding: 8px 16px; }
 .fm-btn--primary { background: var(--rust-500); color: var(--white); border-color: var(--ink-900); box-shadow: var(--shadow-hard-sm); }
-.fm-btn--primary:hover { background: var(--rust-600); }
+.fm-btn--primary:hover { background: var(--rust-700); }
 .fm-btn--gold { background: var(--gold-500); color: var(--navy-700); border-color: var(--ink-900); box-shadow: var(--shadow-hard-sm); }
-.fm-btn--gold:hover { background: var(--gold-600); color: var(--white); }
+.fm-btn--gold:hover { background: var(--gold-600); color: var(--navy-700); }
 .fm-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 
 /* ---- fm-card ---- */
@@ -107,8 +114,8 @@ a { color: inherit; text-decoration: none; }
   text-transform: uppercase; letter-spacing: var(--ls-caps); font-size: var(--fs-xs);
   line-height: 1; white-space: nowrap;
 }
-.fm-sign--eyebrow { color: var(--rust-500); }
-.fm-sign--muted { color: var(--ink-500); }
+.fm-sign--eyebrow { color: #f2a187; }
+.fm-sign--muted { color: var(--text-muted); }
 .fm-sign svg { width: 14px; height: 14px; }
 .fm-ico { width: 1.15em; height: 1.15em; flex: none; vertical-align: -0.18em; }
 
@@ -194,7 +201,7 @@ a { color: inherit; text-decoration: none; }
 .bb-decision__detail { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.45; }
 /* about / decide / recommended - three scannable context rows */
 .bb-ctx { display: flex; flex-direction: column; gap: 6px; }
-.bb-ctx__row { display: grid; grid-template-columns: 78px minmax(0,1fr); gap: 8px; align-items: baseline; }
+.bb-ctx__row { display: grid; grid-template-columns: 104px minmax(0,1fr); gap: 8px; align-items: baseline; }
 .bb-ctx__k { font-family: var(--font-mono); font-size: var(--fs-2xs); letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--text-faint); white-space: nowrap; }
 .bb-ctx__v { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.4; min-width: 0; }
@@ -212,7 +219,7 @@ a { color: inherit; text-decoration: none; }
 }
 .bb-opt:hover { border-color: var(--ink-300); }
 .bb-opt input { accent-color: var(--rust-500); margin-top: 3px; flex: none; }
-.bb-opt__body { min-width: 0; flex: 1 1 auto; }
+.bb-opt__body { min-width: 0; flex: 1 1 0; }
 .bb-opt__label { display: block; font-size: var(--fs-sm); font-weight: 700; color: var(--text-strong); line-height: 1.3; }
 .bb-opt__hint { display: block; font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.35; margin-top: 1px; }
 .bb-opt__rec { flex: none; align-self: center; font-size: var(--fs-2xs); font-weight: 800; text-transform: uppercase;
@@ -272,8 +279,43 @@ a { color: inherit; text-decoration: none; }
 
 .bb-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--border-default); padding-top: 14px; }
 
+.bb-main--status .bb-cols { grid-template-columns: 1fr; }
+.bb-main--status [data-digest-section] { display: none; }
+.bb-main--status .bb-call { display: flex; flex-direction: column; gap: 16px; }
+.bb-main--status .bb-call::before, .bb-main--status .bb-call::after { display: none; }
+.bb-requests { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.bb-requests th, .bb-requests td { text-align: left; padding: 12px; vertical-align: top; overflow-wrap: anywhere; }
+.bb-requests th:first-child { width: 34%; }
+.bb-requests td { border-top: 1px solid var(--border-soft); }
+.bb-requests p { margin: 6px 0; }
+.bb-requests a { color: #8cc4ff; }
+.bb-requests .fm-badge { white-space: normal; line-height: 1.35; }
+.bb-coverage { color: var(--text-muted); margin: 8px 0; }
+.bb-projects { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 16px; }
+.bb-project, .bb-person, .bb-question { min-width: 0; overflow-wrap: anywhere; }
+.bb-project { padding: 20px; }
+.bb-project h3, .bb-person h4 { margin: 0 0 8px; }
+.bb-project p, .bb-person p { margin: 8px 0; }
+.bb-person { padding: 14px 0; border-top: 1px solid var(--border-soft); }
+.bb-person__role, .bb-project__delivery { color: var(--text-muted); }
+.bb-question { padding: 12px; margin: 12px 0; background: var(--surface-card-warm); border-radius: 8px; }
+.bb-question strong { display: block; }
 @media (max-width: 900px) {
   .bb-cols { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .bb-main { padding: 18px 14px 40px; }
+  .bb-nav__inner { padding: 0 14px; }
+  .bb-section__head, .bb-decision__top, .bb-decision__foot, .bb-foot { flex-wrap: wrap; }
+  .bb-decision__pad { padding: 14px; }
+  .bb-ctx__row { grid-template-columns: 1fr; gap: 2px; }
+  .bb-opt { flex-wrap: wrap; }
+  .bb-opt__rec { margin-left: 26px; }
+  .bb-row { flex-wrap: wrap; }
+  .bb-row__title, .bb-row__sub { white-space: normal; overflow-wrap: anywhere; }
+  .bb-decision__title, .bb-ctx__v, .bb-opt__body, .bb-meta-mono { overflow-wrap: anywhere; }
+  .bb-meta-mono, .bb-decision__repo { white-space: normal; }
+  .bb-requests th, .bb-requests td { padding: 9px; }
 }
 </style>
 </head>
@@ -287,7 +329,7 @@ a { color: inherit; text-decoration: none; }
           <path d="M12 6v16"/><path d="m19 13 2-1a9 9 0 0 1-18 0l2 1"/><path d="M9 11h6"/><circle cx="12" cy="4" r="2"/>
         </svg>
       </span>
-      <span class="bb-brand__wm">bearings</span>
+      <span class="bb-brand__wm">Task status</span>
     </span>
   </div>
 </header>
@@ -301,7 +343,7 @@ a { color: inherit; text-decoration: none; }
     <div class="bb-section__head">
       <span class="fm-sign fm-sign--eyebrow">
         <svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
-        Captain's Call
+        Needs you
       </span>
       <span class="fm-sign fm-sign--muted" id="bb-call-sub"></span>
     </div>
@@ -321,11 +363,11 @@ a { color: inherit; text-decoration: none; }
     </div>
   </section>
 
-  <section class="bb-section">
+  <section class="bb-section" id="bb-waiting-section">
     <div class="bb-section__head">
       <span class="fm-sign fm-sign--eyebrow">
         <svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
-        Charted Next
+        Waiting to start
       </span>
       <span class="fm-sign fm-sign--muted" id="bb-charted-sub"></span>
     </div>
@@ -337,18 +379,18 @@ a { color: inherit; text-decoration: none; }
           <svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
           queued
         </span>
-        <button type="button" class="fm-btn fm-btn--sm fm-btn--gold" id="bb-dispatch-btn">Queue dispatch order</button>
+        <button type="button" class="fm-btn fm-btn--sm fm-btn--gold" id="bb-dispatch-btn">Ask to start selected work</button>
       </div>
     </div>
   </section>
   </div>
 
-  <div class="bb-cols">
+  <div class="bb-cols" data-digest-section>
     <section class="bb-section">
       <div class="bb-section__head">
         <span class="fm-sign fm-sign--eyebrow">
           <svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10.189V14"/><path d="M12 2v3"/><path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6"/><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-8.188-3.639a2 2 0 0 0-1.624 0L3 14a11.6 11.6 0 0 0 2.81 7.76"/><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1s1.2 1 2.5 1c2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/></svg>
-          Underway
+          In progress
         </span>
       </div>
       <div class="fm-card"><div class="bb-rows" id="bb-underway"></div></div>
@@ -358,12 +400,29 @@ a { color: inherit; text-decoration: none; }
       <div class="bb-section__head">
         <span class="fm-sign fm-sign--eyebrow">
           <svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.801 10A10 10 0 1 1 17 3.335"/><path d="m9 11 3 3L22 4"/></svg>
-          Recently Landed
+          Completed
         </span>
       </div>
       <div class="fm-card"><div class="bb-rows" id="bb-landed"></div></div>
     </section>
   </div>
+
+  <section class="bb-section" id="bb-projects-section" hidden>
+    <h2>Projects and people</h2>
+    <p>Delivery plans, current work and open questions, grouped by project.</p>
+    <div class="bb-projects" id="bb-projects"></div>
+  </section>
+
+  <section class="bb-section" id="bb-requests-section" hidden>
+    <h2>Your requests</h2>
+    <div class="fm-card">
+      <table class="bb-requests">
+        <thead><tr><th scope="col">Request</th><th scope="col">Status and next step</th></tr></thead>
+        <tbody id="bb-requests"></tbody>
+      </table>
+    </div>
+    <div id="bb-coverage" role="status"></div>
+  </section>
 
   <footer class="bb-foot">
     <span class="bb-meta-mono" id="bb-provenance">-</span>
@@ -396,7 +455,7 @@ __FM_BEARINGS_BOARD_DATA__
     h.textContent = "This board could not load";
     var d = document.createElement("p");
     d.className = "bb-decision__detail";
-    d.textContent = msg + " - ask firstmate to rebuild the board.";
+    d.textContent = msg + " - ask for a fresh status page.";
     pad.appendChild(h);
     pad.appendChild(d);
     card.appendChild(pad);
@@ -407,11 +466,11 @@ __FM_BEARINGS_BOARD_DATA__
   try {
     data = JSON.parse(document.getElementById("bearings-data").textContent);
   } catch (e) {
-    renderBoardError("The board data is not valid JSON");
+    renderBoardError("The saved page information could not be read");
     return;
   }
   if (!data || data.schema !== "fm-bearings-board.v1") {
-    renderBoardError("Unsupported board data schema: " + (data && data.schema ? data.schema : "(none)"));
+    renderBoardError("This saved page format is not supported");
     return;
   }
   var fleetLists = [data.captains_call, data.underway, data.landed, data.charted];
@@ -423,7 +482,7 @@ __FM_BEARINGS_BOARD_DATA__
       Array.isArray(item.options);
   });
   if (!fleetLists.every(Array.isArray) || !callItemsValid) {
-    renderBoardError("The board data does not have the required structure");
+    renderBoardError("The saved page information is incomplete");
     return;
   }
 
@@ -455,16 +514,89 @@ __FM_BEARINGS_BOARD_DATA__
   function utf8ByteLength(text) { return new TextEncoder().encode(text).length; }
   var CHECK_SVG = '<svg class="fm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 
-  document.getElementById("bb-provenance").textContent = data.schema + " · " + data.generated;
+  document.getElementById("bb-provenance").textContent = "Updated " + data.generated;
+  var statusPage = Array.isArray(data.requests);
+  if (statusPage) {
+    document.querySelector(".bb-main").classList.add("bb-main--status");
+    document.getElementById("bb-requests-section").hidden = false;
+    var requests = document.getElementById("bb-requests");
+    data.requests.forEach(function (t) {
+      var row = el("tr");
+      var title = el("th", "", t.title);
+      title.setAttribute("scope", "row");
+      row.appendChild(title);
+      var detail = el("td");
+      detail.appendChild(badge("info", t.status));
+      detail.appendChild(el("p", "", t.detail));
+      if (t.pr_url) {
+        var link = el("a", "", "Review the proposed changes");
+        link.href = t.pr_url; link.target = "_blank"; link.rel = "noopener";
+        detail.appendChild(link);
+      }
+      row.appendChild(detail);
+      requests.appendChild(row);
+    });
+    if (!data.requests.length) {
+      var emptyRow = el("tr"), emptyCell = el("td", "bb-empty", "No requests are recorded.");
+      emptyCell.setAttribute("colspan", "2"); emptyRow.appendChild(emptyCell); requests.appendChild(emptyRow);
+    }
+  }
+  (data.coverage || []).forEach(function (notice) {
+    document.getElementById("bb-coverage").appendChild(el("p", "bb-coverage", notice));
+  });
+
+  function renderQuestions(parent, questions) {
+    if (!questions.length) {
+      parent.appendChild(el("p", "bb-coverage", "No unanswered question is recorded in the checked information."));
+      return;
+    }
+    questions.forEach(function (q) {
+      var block = el("div", "bb-question");
+      [["What it is", q.issue], ["Your choice", q.choice], ["Recommendation", q.recommendation]].forEach(function (part) {
+        var p = el("p"); p.appendChild(el("strong", "", part[0])); p.appendChild(el("span", "", part[1])); block.appendChild(p);
+      });
+      parent.appendChild(block);
+    });
+  }
+  if (Array.isArray(data.projects) && Array.isArray(data.crew)) {
+    document.getElementById("bb-projects-section").hidden = false;
+    var projects = document.getElementById("bb-projects");
+    function renderProject(project, people) {
+      var card = el("article", "fm-card bb-project");
+      card.appendChild(el("h3", "bb-project__name", project.name));
+      card.appendChild(el("p", "bb-project__delivery", project.delivery));
+      card.appendChild(badge("info", project.status));
+      card.appendChild(el("p", "bb-project__detail", project.detail));
+      renderQuestions(card, project.questions);
+      if (!people.length) card.appendChild(el("p", "bb-coverage", "No live worker is recorded for this project."));
+      people.forEach(function (person) {
+        var row = el("div", "bb-person");
+        row.appendChild(el("h4", "bb-person__name", person.name));
+        row.appendChild(el("p", "bb-person__role", person.role));
+        row.appendChild(badge("info", person.status));
+        row.appendChild(el("p", "bb-person__detail", person.detail));
+        renderQuestions(row, person.questions);
+        card.appendChild(row);
+      });
+      projects.appendChild(card);
+    }
+    data.projects.forEach(function (p) {
+      renderProject(p, data.crew.filter(function (person) { return person.projects.indexOf(p.name) !== -1; }));
+    });
+    var unassigned = data.crew.filter(function (person) { return !person.projects.length; });
+    if (unassigned.length) renderProject({name:"Project not confirmed", delivery:"Delivery plan not confirmed.", status:"Needs a check", detail:"These people are included, but their project could not be confirmed.", questions:[]}, unassigned);
+  }
 
   /* stat strip */
   var callTotal = data.captains_call.length;
   var stats = [
     { n: callTotal, l: "need you", call: true },
-    { n: data.underway.length, l: "underway" },
-    { n: data.landed.length, l: "landed recently" },
-    { n: chartedQueued(data.charted).length + chartedMoreQueued, l: "charted next" }
+    { n: data.underway.length, l: "in progress" },
+    { n: data.landed.length, l: "completed" },
+    { n: chartedQueued(data.charted).length + chartedMoreQueued, l: "waiting to start" }
   ];
+  if (statusPage) stats = [stats[0], { n: data.requests.length, l: "requests" }];
+  if (Array.isArray(data.projects)) stats.push({ n: data.projects.length, l: "projects" }, { n: data.crew.length, l: "people" });
   var strip = document.getElementById("bb-stats");
   stats.forEach(function (s) {
     var t = el("div", "bb-stat" + (s.call ? " bb-stat--call" : ""));
@@ -473,7 +605,8 @@ __FM_BEARINGS_BOARD_DATA__
     strip.appendChild(t);
   });
   document.getElementById("bb-call-sub").textContent =
-    callTotal ? callTotal + " item" + (callTotal === 1 ? "" : "s") + " wait on you, captain" : "nothing needs you, captain";
+    callTotal ? callTotal + " item" + (callTotal === 1 ? "" : "s") + " wait on you, captain" :
+      ((data.coverage || []).length ? "no answer requested in the checked tasks" : "nothing needs you, captain");
 
   /* Captain's Call deck: every item renders as the same full card */
   var deck = document.getElementById("bb-call");
@@ -490,29 +623,27 @@ __FM_BEARINGS_BOARD_DATA__
 
     var top = el("div", "bb-decision__top");
     if (item.type === "merge") {
-      top.appendChild(badge("online", "checks green"));
-      top.appendChild(badge(item.risk === "low" ? "neutral" : "warn", "risk " + item.risk));
+      top.appendChild(badge("online", "Automatic checks passed"));
+      top.appendChild(badge(item.risk === "low" ? "neutral" : "warn", "Risk if you approve: " + item.risk));
     } else {
-      top.appendChild(badge("solid", "decision"));
-      top.appendChild(el("span", "bb-decision__repo", item.repo));
+      top.appendChild(badge("solid", "Needs your decision"));
+      if (item.repo) top.appendChild(el("span", "bb-decision__repo", "Project: " + item.repo));
     }
     pad.appendChild(top);
 
     pad.appendChild(el("h3", "bb-decision__title", item.title));
 
+    var ctx = el("div", "bb-ctx");
+    if (item.about) ctx.appendChild(ctxRow("What it is for", item.about));
+    if (item.decide) ctx.appendChild(ctxRow("Your choice", item.decide));
+    pad.appendChild(ctx);
     if (item.type === "merge") {
       if (item.detail) pad.appendChild(el("p", "bb-decision__detail", item.detail));
       if (item.pr_url) {
-        var pr = el("a", "bb-decision__link", item.pr_url);
+        var pr = el("a", "bb-decision__link", "Review the proposed changes");
         pr.href = item.pr_url; pr.target = "_blank"; pr.rel = "noopener";
         pad.appendChild(pr);
       }
-    } else {
-      /* the rec marker on the option itself carries the recommendation */
-      var ctx = el("div", "bb-ctx");
-      if (item.about) ctx.appendChild(ctxRow("about", item.about));
-      if (item.decide) ctx.appendChild(ctxRow("decide", item.decide));
-      pad.appendChild(ctx);
     }
 
     var form = document.createElement("form");
@@ -528,7 +659,7 @@ __FM_BEARINGS_BOARD_DATA__
       if (o.hint) body.appendChild(el("span", "bb-opt__hint", o.hint));
       lab.appendChild(body);
       if (item.recommend_value && o.value === item.recommend_value) {
-        lab.appendChild(el("span", "bb-opt__rec", "rec"));
+        lab.appendChild(el("span", "bb-opt__rec", "recommended"));
       }
       opts.appendChild(lab);
     });
@@ -542,11 +673,11 @@ __FM_BEARINGS_BOARD_DATA__
     }
 
     var foot = el("div", "bb-decision__foot");
-    var btn = el("button", "fm-btn fm-btn--sm " + (item.type === "merge" ? "fm-btn--gold" : "fm-btn--primary"), "Queue answer");
+    var btn = el("button", "fm-btn fm-btn--sm " + (item.type === "merge" ? "fm-btn--gold" : "fm-btn--primary"), "Choose this answer");
     btn.type = "submit";
     foot.appendChild(btn);
     var q = el("span", "bb-queued");
-    q.innerHTML = CHECK_SVG + " queued";
+    q.innerHTML = CHECK_SVG + " ready to send";
     foot.appendChild(q);
     var answerLimit = el("span", "bb-limit");
     answerLimit.setAttribute("role", "alert");
@@ -584,7 +715,7 @@ __FM_BEARINGS_BOARD_DATA__
       }
       card.classList.add("is-queued");
       /* deal the next card once this one is answered */
-      setTimeout(function () { showCard(active < cards.length - 1 ? active + 1 : active); }, 450);
+      if (!statusPage) setTimeout(function () { showCard(active < cards.length - 1 ? active + 1 : active); }, 450);
     });
 
     pad.appendChild(form);
@@ -611,13 +742,17 @@ __FM_BEARINGS_BOARD_DATA__
     deck.classList.toggle("bb-call--penult", active === cards.length - 2);
     deck.classList.toggle("bb-call--last", active === cards.length - 1);
   }
-  if (cards.length) {
+  if (cards.length && statusPage) {
+    stackNav.hidden = true;
+  } else if (cards.length) {
     stackPrev.addEventListener("click", function () { showCard(active - 1); });
     stackNext.addEventListener("click", function () { showCard(active + 1); });
     showCard(0);
   } else {
     deck.classList.add("bb-call--empty");
-    deck.appendChild(el("div", "bb-empty", "Nothing needs your action right now."));
+    deck.appendChild(el("div", "bb-empty", (data.coverage || []).length ?
+      "No answer is requested in the checked tasks. Some task information is incomplete; see the notes below." :
+      "Nothing needs your action right now."));
     stackNav.hidden = true;
   }
 
@@ -631,10 +766,9 @@ __FM_BEARINGS_BOARD_DATA__
     /* the snapshot's durable name-or-id label leads the row so a scan says
        WHICH task this is; the run status keeps its place on the second line */
     main.appendChild(el("div", "bb-row__title", t.name));
-    /* captain-facing rows name the repo; the internal task id shows only when
-       no repo is known */
+    /* Keep the worker kind and routing identity out of the status line. */
     main.appendChild(el("div", "bb-row__sub",
-      t.doing + " · " + t.kind + " · " + (t.repo || t.id)));
+      t.doing + (t.repo ? " · " + t.repo : "")));
     row.appendChild(main);
     uw.appendChild(row);
   });
@@ -671,7 +805,7 @@ __FM_BEARINGS_BOARD_DATA__
   }
   function refreshBar(limitMessage) {
     var n = pickedIds().length;
-    barCount.textContent = limitMessage || (n ? n + " picked for dispatch" : "pick queued work to dispatch");
+    barCount.textContent = limitMessage || (n ? n + " selected to start" : "select work to start");
     barBtn.disabled = !n;
   }
 
@@ -684,7 +818,7 @@ __FM_BEARINGS_BOARD_DATA__
       anyPickable = true;
       var pick = document.createElement("input");
       pick.type = "checkbox"; pick.className = "bb-pick"; pick.value = t.id;
-      pick.setAttribute("aria-label", "Pick " + t.id + " for dispatch");
+      pick.setAttribute("aria-label", "Select " + t.title + " to start");
       pick.addEventListener("change", function () {
         if (pick.checked && utf8ByteLength(pickedIds().join(",")) > 512) {
           pick.checked = false;
@@ -700,8 +834,8 @@ __FM_BEARINGS_BOARD_DATA__
     var main = el("div", "bb-row__main");
     main.appendChild(el("div", "bb-row__title", t.title));
     /* second line keeps the title uncrowded in the half-width column */
-    var chSub = t.repo || t.id;
-    main.appendChild(el("div", "bb-row__sub", t.reason ? t.reason + " · " + chSub : chSub));
+    var chSub = t.repo || (statusPage ? "" : t.id);
+    main.appendChild(el("div", "bb-row__sub", t.reason ? t.reason + (chSub ? " · " + chSub : "") : chSub));
     row.appendChild(main);
     if (isWarning(t)) row.appendChild(badge("danger", "needs repair"));
     else if (t.reason) row.appendChild(badge("warn", "waiting"));
@@ -712,12 +846,13 @@ __FM_BEARINGS_BOARD_DATA__
   document.getElementById("bb-charted-sub").textContent =
     chartedMoreQueued ? "showing " + chartedShown + " of " + chartedTotal : "";
   if (chartedMoreQueued) {
-    ch.appendChild(el("span", "bb-morechip", "+" + chartedMoreQueued + " more queued - ask firstmate for the full chart"));
+    ch.appendChild(el("span", "bb-morechip", "+" + chartedMoreQueued + " more waiting - ask for the complete status page"));
   }
   if (chartedMoreWarnings) {
-    ch.appendChild(el("span", "bb-morechip", "+" + chartedMoreWarnings + " more repair warning" + (chartedMoreWarnings === 1 ? "" : "s") + " - ask firstmate for the full chart"));
+    ch.appendChild(el("span", "bb-morechip", "+" + chartedMoreWarnings + " more repair warning" + (chartedMoreWarnings === 1 ? "" : "s") + " - ask for the complete status page"));
   }
 
+  if (statusPage && !anyPickable) document.getElementById("bb-waiting-section").hidden = true;
   if (anyPickable) {
     bar.hidden = false;
     refreshBar();
@@ -741,7 +876,7 @@ __FM_BEARINGS_BOARD_DATA__
     });
   }
   } catch (e) {
-    renderBoardError("The board data could not be rendered");
+    renderBoardError("The saved page information could not be displayed");
   }
 })();
 </script>

@@ -81,10 +81,14 @@ export function keyHint(_keybinding, description) {
 }
 
 export class ToolExecutionComponent {
+  constructor(name) { this.name = name; }
+  setExpanded() {}
+  invalidate() {}
   updateResult(result) {
     this.result = result;
   }
   render() {
+    if (!this.result) return ["", this.name];
     return (this.result?.content ?? [])
       .filter((item) => item.type === "text")
       .flatMap((item) => item.text.split("\n"));
@@ -804,7 +808,7 @@ const calmOffResult = outcomesTool.renderResult(stockResult, { expanded: false, 
 if (calmOffCall.constructor.name !== "Box" || calmOffCall.paddingX !== 1 || calmOffCall.paddingY !== 1) {
   throw new Error("fm_branch_outcomes changed its ordinary shell rendering");
 }
-if (calmOffResult.constructor.name !== "Container" || calmOffCall.children[0]?.text !== "fm_branch_outcomes" || calmOffCall.children[1]?.text !== "OUTCOME_DUMP") {
+if (calmOffResult.constructor.name !== "Container" || calmOffCall.children[0]?.render(100).join("\n") !== "fm_branch_outcomes" || calmOffCall.children[1]?.text !== "OUTCOME_DUMP") {
   throw new Error("fm_branch_outcomes changed its ordinary call or result rendering");
 }
 const legacyStockResult = {
@@ -4658,7 +4662,7 @@ for (const row of [stockRow, actualRow]) {
 const collapsedStock = stockRow.render(100);
 const collapsedActual = actualRow.render(100);
 if (JSON.stringify(collapsedActual) !== JSON.stringify(collapsedStock)) {
-  throw new Error("Calm-off ToolExecutionComponent rendering differs from Pi stock");
+  throw new Error(`Calm-off ToolExecutionComponent rendering differs from Pi stock: ${JSON.stringify({ collapsedActual, collapsedStock })}`);
 }
 const collapsedText = collapsedStock.join("\n");
 if (collapsedText.includes("OUTCOME_TWELVE") || !collapsedText.includes("more lines") || !collapsedText.includes("to expand")) {
@@ -4669,7 +4673,7 @@ actualRow.setExpanded(true);
 const expandedStock = stockRow.render(100);
 const expandedActual = actualRow.render(100);
 if (JSON.stringify(expandedActual) !== JSON.stringify(expandedStock)) {
-  throw new Error("expanded Calm-off ToolExecutionComponent rendering differs from Pi stock");
+  throw new Error(`expanded Calm-off ToolExecutionComponent rendering differs from Pi stock: ${JSON.stringify({ expandedActual, expandedStock })}`);
 }
 if (!expandedStock.join("\n").includes("OUTCOME_TWELVE") || JSON.stringify(expandedStock) === JSON.stringify(collapsedStock)) {
   throw new Error("stock rendering fixture did not exercise expanded output");
@@ -4694,6 +4698,40 @@ const stockResult = stockHtml.renderResult("stock-html", "fm_branch_outcomes", r
 const actualResult = actualHtml.renderResult("actual-html", "fm_branch_outcomes", result.content, result.details, false);
 if (actualCall !== undefined || actualResult !== undefined || stockCall !== undefined || stockResult !== undefined) {
   throw new Error("stock export rendering did not delegate to Pi's structured fallback");
+}
+
+// Both outcomes tools must inherit the argument formatter of the installed Pi,
+// including narrow wrapping, expansion, argument updates, and result framing.
+pi.events.emit("firstmate:calm-presentation", { active: false, stockExportRendering: false });
+for (const [name, callArgs] of [["fm_branch_outcomes", { recent: 23 }], ["fm_branch_processed", { through: 123456789 }]]) {
+  const definition = tools.find((tool) => tool.name === name);
+  if (!definition) throw new Error(`${name} was not registered`);
+  const stock = { ...definition };
+  delete stock.renderShell;
+  delete stock.renderCall;
+  delete stock.renderResult;
+  for (const width of [40, 100]) {
+    for (const expanded of [false, true]) {
+      const rows = [stock, definition].map((tool) => new ToolExecutionComponent(name, name, {}, { showImages: false }, tool, ui, process.cwd()));
+      for (const row of rows) {
+        row.updateArgs(callArgs);
+        row.markExecutionStarted();
+        row.setArgsComplete();
+        row.setExpanded(expanded);
+      }
+      const assertParity = (phase) => {
+        const [expected, actual] = rows.map((row) => row.render(width));
+        if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+          throw new Error(`${name} stock parity failed (${phase}, width=${width}, expanded=${expanded}): ${JSON.stringify({ actual, expected })}`);
+        }
+      };
+      assertParity("pending");
+      for (const row of rows) row.updateResult({ content: [{ type: "text", text: "PARTIAL_OUTCOME" }], isError: false }, true);
+      assertParity("partial");
+      for (const row of rows) row.updateResult({ content: [{ type: "text", text: "OUTCOME_ERROR" }], isError: true }, false);
+      assertParity("error");
+    }
+  }
 }
 JS
   )
