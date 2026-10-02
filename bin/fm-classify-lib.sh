@@ -163,8 +163,11 @@ _fm_status_event_scan() {
   local line last='' prev='' fallback='' verb legacy_re unstamped
   legacy_re="^[[:space:]]*(${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT})"
   while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in *[![:space:]]*) fallback=$line ;; *) continue ;; esac
+    case "$line" in *[![:space:]]*) ;; *) continue ;; esac
     case "$line" in *:*) status_line_verb "$line" verb ;; *) verb='' ;; esac
+    # Measurement records never supersede a worker's state or a decision.
+    [ "$verb" != milestone ] || continue
+    fallback=$line
     case "$verb" in
       working|needs-decision|blocked|done|failed|note|\
       "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|\
@@ -215,7 +218,7 @@ status_is_captain_relevant() {
   [ -n "$line" ] || return 1
   status_line_verb "$line" verb
   case "$verb" in
-    working|resolved|captain-held|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}")
+    working|resolved|captain-held|milestone|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}")
       return 1
       ;;
   esac
@@ -408,6 +411,79 @@ status_event_recorded() {  # <status-file> <new-status-line>
     [ "$untimed" != "$wanted" ] || return 0
   done < "$1"
   return 1
+}
+
+# --- strict task milestones -------------------------------------------------
+# A measurement is `milestone [at=<epoch>] [name=<name>] [field=value]...: evidence`.
+# It is not a worker state or a decision, and never closes or hides either.
+# The epoch parser above is authoritative; all tags are unique, names and field
+# sets below are closed, and evidence is nonempty single-line text.
+# SHA is a full lowercase Git object id; run/snapshot are non-secret opaque ids.
+# Emit at the actual event, or supply its authoritative epoch, never file mtime,
+# observation time for an older event, a placeholder, or a guessed acceptance.
+# First live proof may fail, be partial or waived; only passed acceptance counts.
+# PR and merge evidence must include the full forge URL.
+# Public read returns name, epoch, sha, run, rounds, snapshot, result as TSV,
+# with '-' for absent fields; malformed records return nonzero with no output.
+status_milestone_record() {  # <line> -> strict TSV record
+  local line=$1 head token key value epoch name='' sha='' run='' rounds='' snapshot='' result=''
+  local seen=' ' fields=' ' allowed required field evidence sha_re='^([0-9a-f]{40}|[0-9a-f]{64})$'
+  _fm_status_at_epoch "$line" epoch || return 1
+  head=${line%%:*}
+  evidence=${line#*:}
+  case "$evidence" in *$'\n'*|*$'\r'*|*$'\t'*) return 1 ;; esac
+  [[ "$evidence" = *[![:space:]]* ]] || return 1
+  [ "${head%% *}" = milestone ] || return 1
+  head=${head#milestone }
+  while [ -n "$head" ]; do
+    head=${head#"${head%%[![:space:]]*}"}
+    [ -n "$head" ] || break
+    token=${head%%[[:space:]]*}
+    head=${head#"$token"}
+    [[ "$token" =~ ^\[([a-z]+)=([^][]+)\]$ ]] || return 1
+    key=${BASH_REMATCH[1]} value=${BASH_REMATCH[2]}
+    case "$seen" in *" $key "*) return 1 ;; esac
+    seen="$seen$key "
+    [ "$key" = at ] || fields="$fields$key "
+    case "$key" in
+      at) [ "$value" = "$epoch" ] || return 1 ;;
+      name) name=$value ;;
+      sha) [[ "$value" =~ $sha_re ]] || return 1; sha=$value ;;
+      run|snapshot)
+        [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || return 1
+        [ "${#value}" -le 200 ] || return 1
+        if [ "$key" = run ]; then run=$value; else snapshot=$value; fi ;;
+      rounds)
+        [[ "$value" =~ ^(0|[1-9][0-9]{0,5})$ ]] || return 1
+        rounds=$value ;;
+      result) result=$value ;;
+      *) return 1 ;;
+    esac
+  done
+  case "$name" in
+    brief) required='name' ;;
+    local-proof|dev-deploy|uat-deploy) required='name sha' ;;
+    gate-start|gate-obsolete) required='name sha run' ;;
+    gate-end) required='name sha run rounds result'
+      case "$result" in passed|failed|cancelled) ;; *) return 1 ;; esac ;;
+    pr-created|merge|uat-merge) required='name sha'
+      [[ "$evidence" =~ https://[^[:space:]]+ ]] || return 1 ;;
+    data-ready|uat-data-ready) required='name sha snapshot' ;;
+    first-live-proof|uat-live-proof) required='name sha snapshot result'
+      case "$result" in passed|failed|partial|waived) ;; *) return 1 ;; esac ;;
+    dev-accepted|uat-accepted) required='name sha snapshot result'
+      [ "$result" = passed ] || return 1 ;;
+    *) return 1 ;;
+  esac
+  allowed=" $required "
+  for field in $required; do
+    case "$fields" in *" $field "*) ;; *) return 1 ;; esac
+  done
+  for field in $fields; do
+    case "$allowed" in *" $field "*) ;; *) return 1 ;; esac
+  done
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$epoch" "${sha:--}" \
+    "${run:--}" "${rounds:--}" "${snapshot:--}" "${result:--}"
 }
 
 # --- durable keyed decisions ------------------------------------------------

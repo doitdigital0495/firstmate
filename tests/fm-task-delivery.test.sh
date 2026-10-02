@@ -406,7 +406,7 @@ EOF
     "local-only no longer stops the worker before the remote"
 
   brief=$(scaffold_brief "$home" delivery-stop-e3 no-mistakes 'Ordinary work.')
-  assert_grep 'run /no-mistakes to validate and ship a PR' "$brief" \
+  assert_grep 'start /no-mistakes yourself immediately to validate and ship a PR' "$brief" \
     "no-mistakes no longer ships its PR through the pipeline"
   assert_grep 'done [at=<epoch>]: PR {url} checks green' "$brief" \
     "no-mistakes no longer ends at a PR whose checks are green"
@@ -627,6 +627,11 @@ STUB
   done
 
   payload="$TMP_ROOT/promote-dod/payload-promote-dod-no-mistakes"
+  assert_grep "within 15 minutes of local proof" "$payload" "promotion lost prompt dispatch target"
+  assert_grep "no later than 30 minutes after detection" "$payload" "promotion lost obsolete-run escalation target"
+  assert_grep "fm-task-milestones.sh coverage" "$payload" "promotion lost fail-closed coverage reader"
+  assert_grep "round count" "$payload" "promotion lost milestone instrumentation"
+  assert_no_grep "Firstmate will then instruct you to run /no-mistakes" "$payload" "promotion retained dispatch handoff wait"
   assert_grep "ask-user findings are never yours to answer: escalate to firstmate" "$payload" \
     "promoted no-mistakes worker did not receive the ask-user escalation rule"
   assert_grep "write only the ask-user findings, verbatim and unparaphrased (id, severity, file, line, description, authority)" "$payload" \

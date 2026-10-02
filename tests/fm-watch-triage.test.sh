@@ -2138,6 +2138,83 @@ test_nonterminal_stale_not_working_surfaced() {
   pass "a not-provably-working non-terminal stale is surfaced immediately (never left to wait out the timer)"
 }
 
+# --- a missed gate-dispatch target wakes Firstmate once, idle worker or not ---
+test_milestone_deadline_surfaced_once() {
+  local dir state fakebin out drain_out capture_file window sig pid
+  dir=$(make_case milestone-deadline); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-dl"
+  printf 'idle prompt' > "$capture_file"
+  printf 'window=%s\nkind=ship\nmode=no-mistakes\n' "$window" > "$state/dl.meta"
+  printf 'working: proved locally\n' > "$state/dl.status"
+  "$ROOT/bin/fm-task-milestones.sh" stamp "$state/dl.status" local-proof \
+    "at=$(( $(date +%s) - 1000 ))" sha=1111111111111111111111111111111111111111 -- 'tests passed' \
+    || fail "could not stamp local proof"
+  sig=$(seen_sig "$state/dl.status"); printf '%s' "$sig" > "$state/.seen-dl_status"
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+  FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "watcher did not surface an overdue gate dispatch"
+  grep -F "check: dl gate dispatch overdue" "$out" >/dev/null || fail "watcher did not print the dispatch deadline: $(cat "$out")"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the deadline wake failed"
+  grep "$(printf '\tcheck\t')" "$drain_out" | grep -F "gate dispatch overdue" >/dev/null || fail "deadline wake was not queued"
+  ack_stopped_cycle "$state" >/dev/null 2>&1 || :
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" FM_STALE_ESCALATE_SECS=999 \
+    watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    fail "watcher re-woke an already surfaced deadline: $(cat "$out")"
+  fi
+  reap "$pid"
+  pass "an overdue gate dispatch wakes Firstmate from the watcher once, without the worker"
+}
+
+# --- obsolete-run escalation and unreadable records wake; fresh or ungated stay quiet ---
+test_milestone_deadline_cases() {
+  local case mode name at expect dir state fakebin out capture_file window sig pid now sha run
+  sha=1111111111111111111111111111111111111111
+  now=$(date +%s)
+  for case in obsolete:no-mistakes:gate-obsolete:1900:"obsolete gate escalation due: run gate1" \
+              malformed:no-mistakes:gate-obsolete:10:"gate deadlines unreadable" \
+              fresh:no-mistakes:local-proof:10: \
+              reordered:no-mistakes:gate-obsolete:1900:"obsolete gate escalation due: run gate1" \
+              ungated:direct-PR:local-proof:1900: \
+              localonly:local-only:local-proof:1900:; do
+    IFS=: read -r case mode name at expect <<< "$case"
+    run=; [ "$name" = local-proof ] || run=run=gate1
+    dir=$(make_case "milestone-$case"); state="$dir/state"; fakebin="$dir/fakebin"
+    out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-$case"
+    printf 'idle prompt' > "$capture_file"
+    printf 'window=%s\nkind=ship\nmode=%s\n' "$window" "$mode" > "$state/$case.meta"
+    printf 'working: gating\n' > "$state/$case.status"
+    if [ "$case" = reordered ]; then
+      printf 'milestone [at=%s] [run=gate1] [sha=%s] [name=gate-obsolete]: by hand\n' "$((now - at))" "$sha" >> "$state/$case.status"
+      "$ROOT/bin/fm-task-milestones.sh" records "$state/$case.status" >/dev/null || fail "reordered: schema refused a valid tag order"
+    else
+      "$ROOT/bin/fm-task-milestones.sh" stamp "$state/$case.status" "$name" \
+        "at=$((now - at))" sha="$sha" ${run:+"$run"} -- 'observed' || fail "$case: could not stamp $name"
+    fi
+    [ "$case" != malformed ] || printf 'milestone [name=gate-start] [sha=abc1234] [run=gate2] [at=1]: by hand\n' >> "$state/$case.status"
+    sig=$(seen_sig "$state/$case.status"); printf '%s' "$sig" > "$state/.seen-${case}_status"
+    if [ -n "$expect" ]; then
+      export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+      FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" watch_bg "$state" "$fakebin" "$out"
+      pid=$!
+      wait_for_exit "$pid" 100 || fail "$case: watcher did not surface the deadline"
+      grep -F "check: $case $expect" "$out" >/dev/null || fail "$case: wrong deadline wake: $(cat "$out")"
+    else
+      export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+      FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" FM_STALE_ESCALATE_SECS=999 \
+        watch_bg "$state" "$fakebin" "$out"
+      pid=$!
+      wait_poll_cycle "$state" "$pid" || fail "$case: watcher woke without a due gate deadline: $(cat "$out")"
+      reap "$pid"
+    fi
+  done
+  pass "obsolete runs and unreadable milestones wake Firstmate; fresh and non-gated tasks stay quiet, whatever the tag order"
+}
+
 # --- non-terminal stale, crew DECLARED a pause: absorbed, re-surfaced on a long
 #     cadence, never wedge-escalated ------------------------------------------
 # The live 2026-07-09/10 case: a crew intentionally held awaiting an upstream tool
@@ -5960,6 +6037,8 @@ test_secondmate_status_signal_never_absorbed_classifier
 test_provably_working_signal_absorbed
 test_turn_ended_provably_working_absorbed
 test_turn_ended_not_working_surfaced
+test_milestone_deadline_surfaced_once
+test_milestone_deadline_cases
 test_turn_ended_churning_pane_absorbed
 test_turn_ended_churn_resets_prior_stale_classification
 test_turn_ended_churn_resets_wedge_state_before_stale_poll
