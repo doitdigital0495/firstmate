@@ -355,7 +355,12 @@ a { color: inherit; text-decoration: none; }
   .bb-row__title, .bb-row__sub { white-space: normal; overflow-wrap: anywhere; }
   .bb-decision__title, .bb-ctx__v, .bb-opt__body, .bb-meta-mono { overflow-wrap: anywhere; }
   .bb-meta-mono, .bb-decision__repo { white-space: normal; }
-  .bb-requests th, .bb-requests td { padding: 9px; }
+  /* Three fixed columns leave each cell too narrow for a badge or a choice
+     label at phone width, so each request stacks its cells full width. */
+  .bb-requests thead { display: none; }
+  .bb-requests tbody, .bb-requests tr, .bb-requests th, .bb-requests td, .bb-requests th:first-child { display: block; width: auto; }
+  .bb-requests tr { border-top: 1px solid var(--border-soft); padding: 4px 0; }
+  .bb-requests th, .bb-requests td { padding: 5px 9px; border-top: 0; }
 }
 </style>
 </head>
