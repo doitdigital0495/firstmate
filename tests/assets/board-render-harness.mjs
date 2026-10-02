@@ -2,10 +2,10 @@
 // shim and print what the renderer actually produced, so board behavior is
 // asserted through the real template rather than by reading its source.
 //
-// Usage: node board-render-harness.mjs <built-board.html> [answer]
-// Prints rendered stats, task rows (including disclosures and status tones),
-// section visibility, queued answer context, empty/more labels and errors.
-// The optional answer mode submits the first card with its first radio and note.
+// Usage: node board-render-harness.mjs <built-board.html>
+// Prints one JSON document:
+//   { stats:[{n,label}], underway:[{title,sub,badges}],
+//     charted:[{title,sub,badges,pickable}], empty, more, error }
 import { readFileSync } from "node:fs";
 
 const html = readFileSync(process.argv[2], "utf8");
@@ -24,21 +24,20 @@ class Node {
     this.type = "";
     this.value = "";
     this.checked = false;
-    this.listeners = {};
     this.classList = {
       add: (c) => { this.className = (this.className + " " + c).trim(); },
-      remove: (c) => { this.className = this.className.split(/\s+/).filter((v) => v !== c).join(" "); },
       contains: (c) => this.className.split(/\s+/).includes(c),
-      toggle: (c, on) => { if (on) this.classList.add(c); else this.classList.remove(c); },
     };
   }
   get textContent() {
-    return this._text + this.children.map((c) => c.textContent).join("");
+    return this.children.length
+      ? this.children.map((c) => c.textContent).join("")
+      : this._text;
   }
   set textContent(v) { this._text = String(v); this.children = []; }
   appendChild(n) { n.parentNode = this; this.children.push(n); return n; }
   setAttribute(k, v) { this.attributes[k] = v; }
-  addEventListener(event, handler) { this.listeners[event] = handler; }
+  addEventListener() {}
   querySelectorAll(sel) {
     const want = sel.replace(/^\./, "").replace(/:checked$/, "");
     const checkedOnly = sel.endsWith(":checked");
@@ -79,16 +78,7 @@ globalThis.document = {
     return byId.get(id);
   },
 };
-const queued = [];
-globalThis.window = { lavish: { queuePrompt: (prompt, context) => queued.push({ prompt, data: context.data }) } };
-globalThis.FormData = class {
-  constructor(form) { this.form = form; }
-  get(name) {
-    const walk = (n) => n.children.flatMap((c) => [c, ...walk(c)]);
-    return walk(this.form).find((n) => n.name === name && (n.type !== "radio" || n.checked))?.value ?? null;
-  }
-};
-globalThis.setTimeout = (callback) => callback();
+globalThis.window = {};
 globalThis.TextEncoder = TextEncoder;
 
 const script = html.slice(html.indexOf("<script>") + "<script>".length, html.lastIndexOf("</script>"));
@@ -109,18 +99,12 @@ const rowsOf = (container) =>
   container.children
     .filter((r) => r.className.split(/\s+/).includes("bb-row"))
     .map((row) => {
-      const summary = row.children.find((c) => c.tagName === "summary");
-      const content = summary || row;
-      const main = content.children.find((c) => c.className.includes("bb-row__main"));
+      const main = row.children.find((c) => c.className.includes("bb-row__main"));
       return {
-        disclosure: row.tagName === "details" && summary?.tagName === "summary",
-        cue: summary?.children.find((c) => c.className.includes("bb-work__cue"))?.textContent ?? "",
-        detail: row.children.find((c) => c.className.includes("bb-work__detail"))?.textContent ?? "",
-        tone: row.className.match(/bb-work--(\w+)/)?.[1] ?? "",
         title: main?.children.find((c) => c.className.includes("bb-row__title"))?.textContent ?? "",
         sub: main?.children.find((c) => c.className.includes("bb-row__sub"))?.textContent ?? "",
-        badges: badgesOf(content),
-        pickable: content.children.some((c) => c.className.includes("bb-pick") && !c.className.includes("spacer")),
+        badges: badgesOf(row),
+        pickable: row.children.some((c) => c.className.includes("bb-pick") && !c.className.includes("spacer")),
       };
     });
 
@@ -138,47 +122,5 @@ const errorText = [...byId.entries()]
 const empty = ch.children.filter((c) => c.className.includes("bb-empty")).map((c) => c.textContent);
 const more = ch.children.filter((c) => c.className.includes("bb-morechip")).map((c) => c.textContent);
 
-const requests = (byId.get("bb-requests")?.children || []).map((row) => ({
-  title: row.children[0]?.textContent,
-  status: row.children[1]?.children[0]?.textContent,
-  detail: row.children[1]?.children[1]?.textContent,
-  href: row.children[1]?.children.find((c) => c.tagName === "a")?.href ?? "",
-}));
-const cards = (byId.get("bb-call")?.children || [])
-  .filter((c) => c.className.split(/\s+/).includes("bb-decision"))
-  .map((card) => ({
-    hidden: card.hidden,
-    title: card.querySelectorAll(".bb-decision__title")[0]?.textContent,
-    contexts: card.querySelectorAll(".bb-ctx__row").map((n) => n.textContent),
-    options: card.querySelectorAll(".bb-opt").map((n) => n.textContent),
-  }));
-const coverage = (byId.get("bb-coverage")?.children || []).map((n) => n.textContent);
-const projects = (byId.get("bb-projects")?.children || []).map((card) => ({
-  name: card.querySelectorAll(".bb-project__name")[0]?.textContent,
-  delivery: card.querySelectorAll(".bb-project__delivery")[0]?.textContent,
-  text: card.textContent,
-  people: card.querySelectorAll(".bb-person").map((person) => ({
-    name: person.querySelectorAll(".bb-person__name")[0]?.textContent,
-    role: person.querySelectorAll(".bb-person__role")[0]?.textContent,
-    questions: person.querySelectorAll(".bb-question").map((q) => q.textContent),
-    text: person.textContent,
-  })),
-}));
-const sections = Object.fromEntries(["current", "call", "charted", "landed"].map((name) =>
-  [name, { hidden: byId.get("bb-" + name + "-section")?.hidden ?? false }]));
-const idle = !(byId.get("bb-idle")?.hidden ?? true);
-const projectsHidden = byId.get("bb-projects-section")?.hidden ?? true;
-// Section order is static markup in the built page, so read it from that output.
-const order = [...html.matchAll(/id="bb-(\w+)-section"/g)].map((m) => m[1]);
-if (process.argv[3] === "answer") {
-  const walk = (n) => n.children.flatMap((c) => [c, ...walk(c)]);
-  const nodes = walk(byId.get("bb-call"));
-  const form = nodes.find((n) => n.tagName === "form");
-  const radio = nodes.find((n) => n.type === "radio");
-  const note = nodes.find((n) => n.name === "note");
-  radio.checked = true;
-  if (note) note.value = "a note";
-  form.listeners.submit({ preventDefault() {} });
-}
 process.stdout.write(
-  JSON.stringify({ stats, underway, charted, sections, order, idle, projectsHidden, queued, empty, more, requests, cards, projects, coverage, error: errorText }) + "\n");
+  JSON.stringify({ stats, underway, charted, empty, more, error: errorText }) + "\n");

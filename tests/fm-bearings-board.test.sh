@@ -301,48 +301,6 @@ test_build_refuses_malformed_payloads_before_touching_the_board() {
   set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
   [ "$rc" -ne 0 ] || fail "a non-HTTPS Landed PR URL was accepted"
 
-  for invalid_requests in \
-    '[{"id":"one","repo":null,"title":"Request","status":"Working","detail":""}]' \
-    '[{"id":"one","repo":null,"title":"Request","status":"Working","detail":"Progress","pr_url":"javascript:alert(1)"}]' \
-    '[{"id":"one","repo":null,"title":"Request","status":"Working","detail":"Progress"},{"id":"one","repo":null,"title":"Duplicate","status":"Working","detail":"Progress"}]'; do
-    write_valid_payload "$data"
-    jq --argjson requests "$invalid_requests" '.requests = $requests' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
-    set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
-    [ "$rc" -ne 0 ] || fail "invalid status-page requests were accepted"
-  done
-  write_valid_payload "$data"
-  jq '.requests = [] | .coverage = [42]' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
-  set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
-  [ "$rc" -ne 0 ] || fail "non-text coverage was accepted"
-
-  write_valid_payload "$data"
-  jq '.requests = [] | del(.captains_call[0].about)' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
-  set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
-  [ "$rc" -ne 0 ] || fail "a status card without its purpose was accepted"
-
-  write_valid_payload "$data"
-  jq '.requests = [] | .captains_call = [.captains_call[0]] | .captains_call[0].decide = "Choose" | del(.captains_call[0].options[0].hint)' "$data" > "$data.tmp" && mv "$data.tmp" "$data"
-  set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
-  [ "$rc" -ne 0 ] || fail "a status option without an explanation was accepted"
-
-  for invalid_projects in \
-    'del(.crew)' \
-    '.projects += .projects' \
-    '.crew += .crew' \
-    '.crew[0].projects = ["Missing project"]' \
-    '.crew[0].projects = ["sample", "sample"]' \
-    '.crew[0].questions = [{issue:"Issue",choice:"Choose",recommendation:""}]' \
-    '.projects[0].delivery = 42'; do
-    write_valid_payload "$data"
-    jq --arg filter "$invalid_projects" '.requests=[] | .captains_call=[] |
-      .projects=[{name:"sample",delivery:"Changes stay local.",status:"Working",detail:"Still managed.",questions:[]}] |
-      .crew=[{id:"one",name:"A person",role:"Worker",status:"Working",detail:"Checking the report.",projects:["sample"],questions:[]}]' \
-      "$data" > "$data.tmp" && mv "$data.tmp" "$data"
-    jq "$invalid_projects" "$data" > "$data.tmp" && mv "$data.tmp" "$data"
-    set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
-    [ "$rc" -ne 0 ] || fail "invalid project/crew payload was accepted: $invalid_projects"
-  done
-
   assert_absent "$board" "a refused payload still produced a board"
   pass "build refuses malformed payloads before touching the board"
 }

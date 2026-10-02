@@ -72,22 +72,6 @@
 # the template may display the routing id. Anything else refuses before the
 # existing board is touched.
 #
-# All-tasks status pages additionally carry requests[] with one row per task:
-# {id,title,status,detail,repo,pr_url?}. id is a routing identity, title describes
-# the request, status is plain wording, and detail explains the outcome or wait.
-# Ids must be unique; pr_url is HTTPS only. coverage[] is an optional array of
-# non-empty plain-language notices about unavailable, cached or omitted state.
-# When requests is present, every call requires non-empty about/decide and every
-# authored option requires a non-empty hint, including merge/credential cards.
-# Optional projects[] lists the entire registered portfolio, with additional
-# managed work allowed: {name,delivery,status,detail,questions:[]}.
-# Optional crew[] lists workers/leads: {id,name,role,status,detail,projects:[],questions:[]}.
-# Project names and crew ids are unique. Each crew project must name a projects
-# entry; an empty projects list is shown as unassigned, never silently dropped.
-# Every question is {issue,choice,recommendation}, all non-empty plain strings.
-# projects and crew must appear together and require a status-page requests array.
-# Older digest-only payloads may omit requests; no second board or listener is used.
-#
 # Every Underway row likewise carries a non-empty `name`: the durable task name
 # when known, otherwise its durable identifier.
 # A Charted Next row MAY carry `filed`, the durable filed date (YYYY-MM-DD, or
@@ -185,23 +169,6 @@ validate_payload() {  # <data.json>
             | ([.options[].value] | index($recommend) != null))))
       and ([.options[].value] | index("reconcile") == null)
       and (if .type == "merge" then (.risk | nonempty_string) else true end);
-    def request_item:
-      type == "object" and repo_marker and (.id | nonempty_string)
-      and (.title | nonempty_string) and (.status | nonempty_string)
-      and (.detail | nonempty_string) and optional_https_url("pr_url");
-    def question_item:
-      type == "object" and (.issue | nonempty_string)
-      and (.choice | nonempty_string) and (.recommendation | nonempty_string);
-    def questions: (.questions | type == "array") and ([.questions[] | question_item] | all);
-    def project_item:
-      type == "object" and (.name | nonempty_string) and (.delivery | nonempty_string)
-      and (.status | nonempty_string) and (.detail | nonempty_string) and questions;
-    def crew_item:
-      type == "object" and (.id | nonempty_string) and (.name | nonempty_string)
-      and (.role | nonempty_string) and (.status | nonempty_string)
-      and (.detail | nonempty_string) and questions
-      and (.projects | type == "array") and ([.projects[] | nonempty_string] | all)
-      and ((.projects | unique | length) == (.projects | length));
     def underway_item:
       type == "object" and repo_marker and name_marker and (.id | nonempty_string)
       and (.state | nonempty_string) and (.doing | nonempty_string) and (.kind | nonempty_string);
@@ -230,22 +197,6 @@ validate_payload() {  # <data.json>
       or ((.charted_more | type == "number") and (.charted_more >= 0) and (.charted_more | floor == .)))
     and ((has("charted_warning_more") | not)
       or ((.charted_warning_more | type == "number") and (.charted_warning_more >= 0) and (.charted_warning_more | floor == .)))
-    and ((has("coverage") | not)
-      or ((.coverage | type == "array") and ([.coverage[] | nonempty_string] | all)))
-    and ((has("requests") | not)
-      or ((.requests | type == "array")
-        and ([.requests[] | request_item] | all)
-        and (([.requests[].id] | unique | length) == (.requests | length))
-        and ([.captains_call[]
-          | (.about | nonempty_string) and (.decide | nonempty_string)
-            and ([.options[] | .hint | nonempty_string] | all)] | all)))
-    and (if has("projects") or has("crew") then
-      (.requests | type == "array") and (.projects | type == "array") and (.crew | type == "array")
-      and ([.projects[] | project_item] | all) and ([.crew[] | crew_item] | all)
-      and (([.projects[].name] | unique | length) == (.projects | length))
-      and (([.crew[].id] | unique | length) == (.crew | length))
-      and (([.crew[].projects[]] - [.projects[].name]) | length == 0)
-      else true end)
     and ([.captains_call[] | call_item] | all)
     and ([.underway[] | underway_item] | all)
     and ([.landed[] | landed_item] | all)
@@ -379,8 +330,8 @@ effective_payload() {  # <data.json> <dest.json>
       | if .type == "decision"
         then .options += [{
           value: "reconcile",
-          label: "Check whether this still needs an answer",
-          hint: "Check the latest facts first. If already settled, remove this question with proof; otherwise keep it open and explain why. This does not answer the question."
+          label: "Reconcile",
+          hint: "Re-check the latest state, then close this with evidence or keep it open with a note"
         }]
         else . end
     ]' "$data" > "$dest" || return 1
