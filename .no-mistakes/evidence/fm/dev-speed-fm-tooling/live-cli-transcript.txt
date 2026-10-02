@@ -1,0 +1,63 @@
+## 1. real fm-brief.sh scaffold in throwaway FM_HOME
+scaffolded: /tmp/fm-live-Xf42/data/live-demo/brief.md (ship, mode=no-mistakes; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})
+--- status file after scaffold:
+milestone [name=brief] [at=1790928898]: ship brief scaffold created
+--- records:
+brief	1790928898	-	-	-	-	-
+
+## 2. gate-dispatch and obsolete-run deadlines
+deadlines (local proof 1000s old, no gate-start):
+gate dispatch overdue: no gate-start 15 minutes after local proof at 1790927898
+deadlines at 899s (fresh):
+(empty=ok)
+deadlines after gate-start:
+(empty=ok)
+stamp exit=0 (obsolete at older ts than start)
+deadlines 850s after obsolete:
+(empty=ok)
+deadlines 1800s after obsolete:
+obsolete gate escalation due: run run-A obsolete 30 minutes since 1790928048
+deadlines after successor run-B:
+(empty=ok)
+adversarial: hand-written at-first tag order line + malformed short sha
+
+## 3. adversarial: strict schema rejects
+fm-task-milestones: invalid milestone; see --help
+exit=1
+fm-task-milestones: invalid milestone; see --help
+exit=1
+fm-task-milestones: invalid milestone; see --help
+exit=1
+fm-task-milestones: no status file or milestone archive for this task
+orphan stamp exit=1 exists=no
+
+## 4. merge, teardown archive, late DEV/UAT stamps, durations
+status file recreated after teardown? no
+--- durable archive data/live-demo/milestones.status:
+milestone [name=brief] [at=1790928898]: ship brief scaffold created
+milestone [name=local-proof] [at=1790927898] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f]: tests/fm-task-milestones.test.sh green
+milestone [name=gate-start] [at=1790927998] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [run=run-A]: gate dispatched
+milestone [name=gate-obsolete] [at=1790927048] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [run=run-A]: base moved
+milestone [name=gate-obsolete] [at=1790928048] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [run=run-A]: base moved
+milestone [name=gate-start] [at=1790928798] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [run=run-B]: successor run
+milestone [name=gate-end] [at=1790928848] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [run=run-B] [rounds=2] [result=passed]: passed
+milestone [name=pr-created] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [at=1790928899]: https://github.com/doitdigital0495/firstmate/pull/999
+milestone [name=merge] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [at=1790928899]: https://github.com/doitdigital0495/firstmate/pull/999
+milestone [name=dev-deploy] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [at=1790928899]: late phase observed
+milestone [name=data-ready] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [snapshot=snap1] [at=1790928899]: late phase observed
+milestone [name=first-live-proof] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [snapshot=snap1] [result=passed] [at=1790928899]: late phase observed
+milestone [name=dev-accepted] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [snapshot=snap1] [result=passed] [at=1790928899]: late phase observed
+milestone [name=uat-merge] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [at=1790928901]: https://github.com/doitdigital0495/firstmate/pull/1000
+milestone [name=uat-deploy] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [at=1790928901]: late phase observed
+milestone [name=uat-data-ready] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [snapshot=snap1] [at=1790928901]: late phase observed
+milestone [name=uat-live-proof] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [snapshot=snap1] [result=passed] [at=1790928901]: late phase observed
+milestone [name=uat-accepted] [sha=e317f47c51144db87b9dfe371ac2519b508e8c6f] [snapshot=snap1] [result=passed] [at=1790928901]: late phase observed
+--- durations:
+task	brief_to_accepted_dev_seconds	accepted_dev_to_accepted_uat_seconds	gate_runs	gate_rounds	rework_rounds	failed_gates
+live-demo	1	2	2	unknown	unknown	unknown
+
+## 5. review coverage from REAL no-mistakes daemon run record (read-only) for this run
+this run @ target e317f47c51144db87b9dfe371ac2519b508e8c6f: covered
+this run @ base sha: stale
+unknown run: unverified
+missing NM_HOME: unverified

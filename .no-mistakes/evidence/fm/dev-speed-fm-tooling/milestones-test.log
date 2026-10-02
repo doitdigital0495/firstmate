@@ -1,0 +1,9 @@
+ok - strict milestone schema refuses malformed epochs, duplicates, extra/missing fields and false acceptance without writing
+ok - readback distinguishes deploy/data/live/acceptance and deduplicates gate rounds and failures by run
+ok - missing, malformed, reversed, partial, waived and mismatched phase evidence stays unknown
+ok - milestone records never hide worker states, open decisions or terminal outcomes
+ok - review coverage is covered only when the run record reviewed its exact current head
+ok - teardown archive keeps milestones durable and late stamps append there without an orphan status log
+ok - dispatch and obsolete-run targets are readable at exact 15/30-minute boundaries
+ok - writers stamp actual clock and successful brief creation exactly once
+EXIT=0
