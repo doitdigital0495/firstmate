@@ -880,23 +880,7 @@ EOF
   [ "$out" = "no-mistakes off" ] || fail "a typo'd mode no longer falls back to the most rigorous default"
   err=$(FM_HOME="$home" "$PROJECT_MODE" typoproj 2>&1 >/dev/null)
   assert_contains "$err" "unknown mode" "a typo'd registry mode stopped warning"
-  printf -- '- legacy - Default posture (added 2026-01-01)\n- preview [no-mistakes-prod-only +yolo preview-on-push] - Preview posture (added 2026-01-01)\n' >> "$home/data/projects.md"
-  out=$(FM_HOME="$home" "$PROJECT_MODE" --list-json 2>/dev/null)
-  printf '%s' "$out" | jq -e '
-    .present == true and (.projects | length) == 6
-    and (.projects | any(.name == "prodproj" and .mode == "no-mistakes-prod-only" and .yolo == "off"))
-    and (.projects | any(.name == "flatproj" and .mode == "direct-PR"))
-    and (.projects | any(.name == "typoproj" and .mode == "no-mistakes" and .yolo == "off"
-      and .recognised == false and .annotation == "no-mistakez"))
-    and (.projects | any(.name == "legacy" and .mode == "no-mistakes" and .yolo == "off"
-      and .recognised == true and (has("annotation") | not)))
-    and (.projects | map(select(.name != "typoproj")) | all(.recognised == true))
-    and (.projects | any(.name == "preview" and .mode == "no-mistakes-prod-only" and .yolo == "on"))
-  ' >/dev/null || fail "project inventory lost names or raw registered postures: $out"
-  out=$(FM_DATA_OVERRIDE="$home/absent" "$PROJECT_MODE" --list-json)
-  printf '%s' "$out" | jq -e '.present == false and .projects == []' >/dev/null \
-    || fail "missing registry was presented as an empty managed portfolio"
-  pass "fm-project-mode: conditional policies, legacy defaults and the complete structured registry are preserved"
+  pass "fm-project-mode: the conditional policy is accepted, mapped for mechanical callers, and readable raw"
 }
 
 # Spawn and promotion refuse leftover Task-subsection placeholders through the
