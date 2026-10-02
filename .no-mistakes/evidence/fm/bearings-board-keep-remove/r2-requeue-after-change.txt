@@ -1,0 +1,29 @@
+        uid=g12:1_151 button "Send my choices" disableable disabled
+        uid=g12:1_152 status atomic live="polite" relevant="additions text"
+        uid=g12:1_153 StaticText "Updated 2026-10-02T10:00Z"
+  uid=g12:1_154 complementary
+    uid=g12:1_155 heading "Conversation" level="2"
+    uid=g12:10_3 StaticText "QUEUED"
+    uid=g12:10_4 button "Remove queued prompt"
+    uid=g12:10_5 StaticText "<choice>"
+    uid=g12:10_6 StaticText "“Approve DNS cutover -> Remove completely”"
+    uid=g12:10_7 StaticText "Keep, do or remove - Approve DNS cutover: Remove completely
+
+Context data:
+{
+  "schema": "fm-bearings-answer.v1",
+  "question": "triage.request.req-waiting-you",
+  "selection": "remove",
+  "note": ""
+}"
+    uid=g12:1_157 textbox "Write a message for the agent..." multiline
+    uid=g12:1_158 button "Attach images"
+    uid=g12:1_159 status atomic live="polite" relevant="additions text"
+    uid=g12:1_160 button "Send & End"
+    uid=g12:1_161 button "Send to Agent"
+help[5]:
+  Run `chrome-devtools-axi fill @g12:1_157 "text"` to fill the "Write a message for the agent..." field
+  Run `chrome-devtools-axi click @g12:1_3` to click the "Annotate" button
+  Run `chrome-devtools-axi click @g12:1_124` to click the "Review the proposed changes" link
+  Run `chrome-devtools-axi scroll down` to scroll down
+  Use `chrome-devtools-axi eval <expr>` for JS expressions. For multi-statement code, pass a function: `eval "() => { ...; return result }"`

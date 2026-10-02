@@ -1,0 +1,44 @@
+SESSION-ENDING MESSAGE: (none)
+
+declared_items: 5
+presented_items: 5
+malformed_items: 0
+complete: yes
+lifecycle: feedback
+session_ended: (unset)
+annotation_count: 5
+session_ending_message_count: 0
+
+ANNOTATIONS
+ANNOTATION 1 of 5
+element_uid: 1
+element_selector: tbody#bb-requests > tr:nth-of-type(1) > td:nth-of-type(2) > div
+tag: choice
+text:
+| Approve DNS cutover -> Remove completely
+ANNOTATION 2 of 5
+element_uid: 2
+element_selector: tbody#bb-requests > tr:nth-of-type(4) > td:nth-of-type(2) > div
+tag: choice
+text:
+| Fix login redirect -> Remove completely
+ANNOTATION 3 of 5
+element_uid: 3
+element_selector: div#bb-knowledge > div:nth-of-type(2) > div:nth-of-type(2)
+tag: choice
+text:
+| Old staging host -> Remove completely
+ANNOTATION 4 of 5
+element_uid: 4
+element_selector: div#bb-projects > article:nth-of-type(1) > div:nth-of-type(1) > div
+tag: choice
+text:
+| Invoices -> Leave on backlog
+ANNOTATION 5 of 5
+element_uid: 5
+element_selector: div#bb-projects > article:nth-of-type(2) > div:nth-of-type(2) > div > div
+tag: choice
+text:
+| Sam -> Remove completely
+END ANNOTATIONS
+END LAVISH RESULT (5 of 5)

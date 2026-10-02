@@ -1,0 +1,10 @@
+board: /tmp/fm-lab-triage.gkSbCr/.lavish/bearings-board.html
+session:
+  file: /tmp/fm-lab-triage.gkSbCr/.lavish/bearings-board.html
+  url: "https://desktop-agentic.tail1dbb2d.ts.net:8387/session/aebf0160229a54dd"
+  status: opened
+session: live
+served: /tmp/fm-lab-triage.gkSbCr/.lavish/bearings-board.html
+bound: lavish-aebf0160229a54dd
+armed: lavish-aebf0160229a54dd
+listening: live

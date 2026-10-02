@@ -1,0 +1,2 @@
+board: /tmp/fm-lab-old.BZLCU2/.lavish/bearings-board.html
+fm-bearings-board: cannot establish the board Lavish session

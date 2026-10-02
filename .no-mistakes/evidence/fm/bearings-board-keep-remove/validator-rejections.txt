@@ -1,0 +1,4 @@
+.knowledge[0].id="bad id!" => fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /tmp/fm-lab-bad.fb6B6q/p.json
+.knowledge[1].id="kn-rentman-api" => fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /tmp/fm-lab-bad.fb6B6q/p.json
+.projects[0].id="x/y" => fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /tmp/fm-lab-bad.fb6B6q/p.json
+.knowledge[0].id=("k"*120) => fm-bearings-board: board data does not satisfy fm-bearings-board.v1: /tmp/fm-lab-bad.fb6B6q/p.json

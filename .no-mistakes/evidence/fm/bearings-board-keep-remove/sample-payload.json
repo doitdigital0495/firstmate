@@ -1,0 +1,25 @@
+{
+  "schema": "fm-bearings-board.v1", "home": "fm-lab-triage-sample", "generated": "2026-10-02T10:00Z",
+  "prs_live": false, "captains_call": [], "underway": [], "landed": [], "charted": [],
+  "requests": [
+    {"id":"req-waiting-you","title":"Approve DNS cutover","status":"Waiting on you","detail":"Needs your yes before cutover.","repo":"sample"},
+    {"id":"req-working","title":"Refactor invoice export","status":"Working","detail":"Worker is on review round 2.","repo":"sample"},
+    {"id":"req-waiting","title":"Port staging config","status":"Waiting for another task","detail":"Blocked on DNS cutover.","repo":"sample"},
+    {"id":"req-done","title":"Fix login redirect","status":"Completed","detail":"Merged and deployed.","repo":"sample","pr_url":"https://github.com/acme/repo/pull/1"},
+    {"id":"req-unconfirmed","title":"Nightly backup check","status":"Unconfirmed","detail":"No progress reported in 2 days.","repo":"sample"},
+    {"id":"req-odd","title":"Mystery status row","status":"Something new","detail":"Unknown wording stays neutral.","repo":"sample"}
+  ],
+  "coverage": [],
+  "knowledge": [
+    {"id":"kn-rentman-api","title":"Rentman API pagination quirk","detail":"Page size above 300 silently truncates."},
+    {"id":"kn-old-host","title":"Old staging host","detail":"staging-2 was retired in August."}
+  ],
+  "projects": [
+    {"name":"Invoices","id":"proj-invoices","delivery":"PR","status":"Working","detail":"Export refactor in flight.","questions":[]},
+    {"name":"Infra","id":"proj-infra","delivery":"PR","status":"Waiting on you","detail":"DNS cutover pending.","questions":[]}
+  ],
+  "crew": [
+    {"id":"crew-alex","name":"Alex","role":"worker","status":"Working","detail":"On invoice export.","projects":["Invoices"],"questions":[]},
+    {"id":"crew-sam","name":"Sam","role":"lead","status":"Unconfirmed","detail":"No check-in today.","projects":["Infra"],"questions":[]}
+  ]
+}

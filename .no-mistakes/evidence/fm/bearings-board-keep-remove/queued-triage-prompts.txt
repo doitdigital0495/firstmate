@@ -1,0 +1,67 @@
+    uid=g30:1_155 heading "Conversation" level="2"
+    uid=g30:28_4 StaticText "QUEUED"
+    uid=g30:28_5 button "Remove queued prompt"
+    uid=g30:28_6 StaticText "<choice>"
+    uid=g30:28_7 StaticText "“Approve DNS cutover -> Remove completely”"
+    uid=g30:28_8 StaticText "Keep, do or remove - Approve DNS cutover: Remove completely
+
+Context data:
+{
+  "schema": "fm-bearings-answer.v1",
+  "question": "triage.request.req-waiting-you",
+  "selection": "remove",
+  "note": ""
+}"
+    uid=g30:28_9 StaticText "QUEUED"
+    uid=g30:28_10 button "Remove queued prompt"
+    uid=g30:28_11 StaticText "<choice>"
+    uid=g30:28_12 StaticText "“Fix login redirect -> Remove completely”"
+    uid=g30:28_13 StaticText "Keep, do or remove - Fix login redirect: Remove completely
+
+Context data:
+{
+  "schema": "fm-bearings-answer.v1",
+  "question": "triage.request.req-done",
+  "selection": "remove",
+  "note": ""
+}"
+    uid=g30:28_14 StaticText "QUEUED"
+    uid=g30:28_15 button "Remove queued prompt"
+    uid=g30:28_16 StaticText "<choice>"
+    uid=g30:28_17 StaticText "“Old staging host -> Remove completely”"
+    uid=g30:28_18 StaticText "Keep, do or remove - Old staging host: Remove completely
+
+Context data:
+{
+  "schema": "fm-bearings-answer.v1",
+  "question": "triage.knowledge.kn-old-host",
+  "selection": "remove",
+  "note": ""
+}"
+    uid=g30:28_19 StaticText "QUEUED"
+    uid=g30:28_20 button "Remove queued prompt"
+    uid=g30:28_21 StaticText "<choice>"
+    uid=g30:28_22 StaticText "“Invoices -> Leave on backlog”"
+    uid=g30:28_23 StaticText "Keep, do or remove - Invoices: Leave on backlog
+
+Context data:
+{
+  "schema": "fm-bearings-answer.v1",
+  "question": "triage.project.proj-invoices",
+  "selection": "backlog",
+  "note": ""
+}"
+    uid=g30:28_24 StaticText "QUEUED"
+    uid=g30:28_25 button "Remove queued prompt"
+    uid=g30:28_26 StaticText "<choice>"
+    uid=g30:28_27 StaticText "“Sam -> Remove completely”"
+    uid=g30:28_28 StaticText "Keep, do or remove - Sam: Remove completely
+
+Context data:
+{
+  "schema": "fm-bearings-answer.v1",
+  "question": "triage.crew.crew-sam",
+  "selection": "remove",
+  "note": ""
+}"
+    uid=g30:1_157 textbox "Write a message for the agent..." multiline
