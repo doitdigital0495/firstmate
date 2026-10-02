@@ -77,13 +77,13 @@ milestone_file() {  # <status-file>
 }
 
 records() {
-  local file line record
+  local file line line_verb
   file=$(milestone_file "$1")
   [ -f "$file" ] && [ -r "$file" ] && [ ! -L "$file" ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
-    [ "$(status_line_verb "$line")" = milestone ] || continue
-    record=$(status_milestone_record "$line") || return 1
-    printf '%s\n' "$record"
+    status_line_verb "$line" line_verb
+    [ "$line_verb" = milestone ] || continue
+    status_milestone_record "$line" || return 1
   done < "$file"
 }
 
@@ -120,7 +120,8 @@ case "${1:-}" in
     [ ! -e "$archive" ] && [ ! -L "$archive" ] || exit 0
     mkdir -p "$(dirname "$archive")"
     while IFS= read -r line || [ -n "$line" ]; do
-      [ "$(status_line_verb "$line")" != milestone ] || printf '%s\n' "$line"
+      status_line_verb "$line" line_verb
+      [ "$line_verb" != milestone ] || printf '%s\n' "$line"
     done < "$2" > "$archive.tmp.$$"
     mv -f "$archive.tmp.$$" "$archive"
     ;;

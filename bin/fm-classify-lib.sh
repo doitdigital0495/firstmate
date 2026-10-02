@@ -428,7 +428,7 @@ status_event_recorded() {  # <status-file> <new-status-line>
 status_milestone_record() {  # <line> -> strict TSV record
   local line=$1 head token key value epoch name='' sha='' run='' rounds='' snapshot='' result=''
   local seen=' ' fields=' ' allowed required field evidence sha_re='^([0-9a-f]{40}|[0-9a-f]{64})$'
-  epoch=$(status_line_at_epoch "$line") || return 1
+  _fm_status_at_epoch "$line" epoch || return 1
   head=${line%%:*}
   evidence=${line#*:}
   case "$evidence" in *$'\n'*|*$'\r'*|*$'\t'*) return 1 ;; esac
