@@ -6,6 +6,7 @@ set -eu
 # shellcheck source=bin/fm-classify-lib.sh
 . "$ROOT/bin/fm-classify-lib.sh"
 TMP_ROOT=$(fm_test_tmproot milestones)
+export FM_DATA_OVERRIDE="$TMP_ROOT/data"
 TOOL="$ROOT/bin/fm-task-milestones.sh"
 SHA=1111111111111111111111111111111111111111
 OTHER=2222222222222222222222222222222222222222
@@ -119,64 +120,65 @@ printf 'milestone [at=bad] [name=unknown]: merged PR ready\n' >> "$FILE"
 status_is_captain_relevant "$(tail -1 "$FILE")" && fail 'malformed measurement triggered terminal wake'
 pass 'milestone records never hide worker states, open decisions or terminal outcomes'
 
-FILE="$TMP_ROOT/coverage.status"
-printf 'working [at=100]: review completed and covered\n' > "$FILE"
-[ "$("$TOOL" coverage "$FILE" gate1 "$SHA")" = unverified ] || fail 'legacy prose claimed coverage'
-stamp review-coverage at=110 sha="$SHA" run=gate1 result=covered
-[ "$("$TOOL" coverage "$FILE" gate1 "$SHA")" = covered ] || fail 'current explicit coverage not reported'
-[ "$("$TOOL" coverage "$FILE" gate2 "$SHA")" = stale ] || fail 'different run coverage not stale'
-[ "$("$TOOL" coverage "$FILE" gate1 "$OTHER")" = stale ] || fail 'different head coverage not stale'
-stamp gate-obsolete at=111 sha="$SHA" run=gate1
-[ "$("$TOOL" coverage "$FILE" gate1 "$SHA")" = stale ] || fail 'obsolete run reported covered'
-stamp review-coverage at=112 sha="$SHA" run=gate1 result=covered
-[ "$("$TOOL" coverage "$FILE" gate1 "$SHA")" = stale ] || fail 'coverage rescued obsolete run'
-stamp gate-start at=113 sha="$SHA" run=gate2
-[ "$("$TOOL" coverage "$FILE" gate2 "$SHA")" = unverified ] || fail 'new run inherited old coverage'
-stamp review-coverage at=114 sha="$SHA" run=gate2 result=covered
-stamp gate-end at=115 sha="$OTHER" run=gate2 rounds=2 result=passed
-[ "$("$TOOL" coverage "$FILE" gate2 "$OTHER")" = stale ] || fail 'head-changing fix retained coverage'
-stamp review-coverage at=120 sha="$OTHER" run=gate1 result=stale
-[ "$("$TOOL" coverage "$FILE" gate1 "$SHA")" = stale ] || fail 'fell back to older covered verdict'
-[ "$("$TOOL" coverage "$FILE" gate1 "$SHA" "$ROOT/tests/captures/no-mistakes-v1.70.1/completed.toon")" = unverified ] || fail 'completed review/outcome claimed missing coverage'
-[ "$("$TOOL" coverage "$FILE" gate1 "$SHA" "$TMP_ROOT/missing.toon")" = unverified ] || fail 'missing outcome fell back to status coverage'
-cat > "$TMP_ROOT/coverage.toon" <<EOF
-run:
-  id: gate1
-  head_sha: $SHA
-  review_coverage: covered
-  review_coverage_run: gate1
-  review_coverage_head_sha: $SHA
-outcome: passed
-EOF
-[ "$("$TOOL" coverage "$FILE" gate1 "$SHA" "$TMP_ROOT/coverage.toon")" = covered ] || fail 'current explicit reviewed identity was not covered'
-[ "$("$TOOL" coverage "$FILE" gate1 "$OTHER" "$TMP_ROOT/coverage.toon")" = stale ] || fail 'old outcome rescued newer expected head'
-# A run can finish at a newer head without reviewing that newer head.
-cat > "$TMP_ROOT/stale.toon" <<EOF
-run:
-  id: gate1
-  head_sha: $OTHER
-  review_coverage: covered
-  review_coverage_run: gate1
-  review_coverage_head_sha: $SHA
-outcome: passed
-EOF
-[ "$("$TOOL" coverage "$FILE" gate1 "$OTHER" "$TMP_ROOT/stale.toon")" = stale ] || fail 'current run head rescued stale reviewed head'
-[ "$("$TOOL" coverage "$FILE" gate1 "$SHA" "$TMP_ROOT/stale.toon")" = stale ] || fail 'old reviewed head hid changed current outcome head'
-printf 'review_coverage: covered\n' >> "$TMP_ROOT/coverage.toon"
-[ "$("$TOOL" coverage "$FILE" gate1 "$SHA" "$TMP_ROOT/coverage.toon")" = unverified ] || fail 'duplicate coverage field accepted'
-printf 'milestone [at=broken] [name=review-coverage]: covered\n' >> "$FILE"
-[ "$("$TOOL" coverage "$FILE" gate1 "$SHA")" = unverified ] || fail 'malformed coverage fell back to covered'
-pass 'review coverage requires explicit unique current run and reviewed head; missing/stale outcome records never report covered'
+# The daemon's run record: head_sha is the run's current head and
+# review_approved_head_sha the head its review step approved.
+NM_HOME="$TMP_ROOT/nm"
+mkdir -p "$NM_HOME"
+python3 - "$NM_HOME/state.sqlite" "$SHA" "$OTHER" <<'PY'
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.execute("CREATE TABLE runs (id TEXT PRIMARY KEY, head_sha TEXT NOT NULL, review_approved_head_sha TEXT)")
+db.executemany("INSERT INTO runs VALUES (?, ?, ?)", [
+    ("covered", sys.argv[2], sys.argv[2]),
+    ("moved", sys.argv[3], sys.argv[2]),
+    ("unreviewed", sys.argv[2], None),
+])
+db.commit()
+PY
+coverage() { NM_HOME="$NM_HOME" "$TOOL" coverage "$@"; }
+[ "$(coverage covered "$SHA")" = covered ] || fail 'reviewed current head not covered'
+[ "$(coverage covered "$OTHER")" = stale ] || fail 'other head reported covered'
+[ "$(coverage moved "$OTHER")" = stale ] || fail 'fix after review reported covered'
+[ "$(coverage moved "$SHA")" = stale ] || fail 'superseded head reported covered'
+[ "$(coverage unreviewed "$SHA")" = unverified ] || fail 'unreviewed run reported covered'
+[ "$(coverage absent "$SHA")" = unverified ] || fail 'unknown run reported covered'
+[ "$(NM_HOME="$TMP_ROOT/missing" "$TOOL" coverage covered "$SHA")" = unverified ] || fail 'missing run record reported covered'
+if "$TOOL" coverage covered short 2>/dev/null; then fail 'accepted abbreviated sha'; fi
+pass 'review coverage is covered only when the run record reviewed its exact current head'
+
+FILE="$TMP_ROOT/torn.status"
+printf 'working [at=90]: building\n' > "$FILE"
+stamp brief at=100
+stamp gate-start at=110 sha="$SHA" run=gate1
+stamp gate-end at=120 sha="$SHA" run=gate1 rounds=1 result=passed
+"$TOOL" archive "$FILE"
+"$TOOL" archive "$FILE"
+rm -f "$FILE"
+"$TOOL" archive "$FILE"
+[ "$("$TOOL" records "$FILE" | wc -l | tr -d ' ')" = 3 ] || fail 'retried archive duplicated or lost milestones'
+stamp dev-deploy at=200 sha="$SHA"
+stamp data-ready at=210 sha="$SHA" snapshot=v1
+stamp first-live-proof at=220 sha="$SHA" snapshot=v1 result=passed
+stamp dev-accepted at=230 sha="$SHA" snapshot=v1 result=passed
+stamp uat-deploy at=300 sha="$SHA"
+stamp uat-data-ready at=310 sha="$SHA" snapshot=v1
+stamp uat-live-proof at=320 sha="$SHA" snapshot=v1 result=passed
+stamp uat-accepted at=330 sha="$SHA" snapshot=v1 result=passed
+[ ! -e "$FILE" ] || fail 'late stamp recreated an orphan status log'
+assert_contains "$("$TOOL" durations "$FILE")" $'torn\t130\t100\t1\t1\t0\t0' 'post-teardown phases lost the brief or gate history'
+grep -q '^working' "$FM_DATA_OVERRIDE/torn/milestones.status" && fail 'archive copied worker state lines'
+pass 'teardown archive keeps milestones durable and late stamps append there without an orphan status log'
 
 FILE="$TMP_ROOT/deadlines.status"
 stamp local-proof at=100 sha="$SHA"
 [ -z "$("$TOOL" deadlines "$FILE" 999)" ] || fail 'dispatch deadline fired early'
-assert_contains "$("$TOOL" deadlines "$FILE" 1000)" 'gate dispatch overdue: 900 seconds' '15-minute dispatch deadline missed'
+assert_contains "$("$TOOL" deadlines "$FILE" 1000)" 'gate dispatch overdue: no gate-start 15 minutes after local proof at 100' '15-minute dispatch deadline missed'
+[ "$("$TOOL" deadlines "$FILE" 1000)" = "$("$TOOL" deadlines "$FILE" 5000)" ] || fail 'deadline text changed with age and would re-wake'
 stamp gate-start at=1010 sha="$SHA" run=gate1
 [ -z "$("$TOOL" deadlines "$FILE" 1011)" ] || fail 'dispatched gate still overdue'
 stamp gate-obsolete at=1100 sha="$SHA" run=gate1
 [ -z "$("$TOOL" deadlines "$FILE" 2899)" ] || fail 'obsolete escalation deadline fired early'
-assert_contains "$("$TOOL" deadlines "$FILE" 2900)" 'obsolete gate escalation due: run gate1 age 1800 seconds' '30-minute obsolete escalation deadline missed'
+assert_contains "$("$TOOL" deadlines "$FILE" 2900)" 'obsolete gate escalation due: run gate1 obsolete 30 minutes since 1100' '30-minute obsolete escalation deadline missed'
 stamp gate-start at=2901 sha="$OTHER" run=gate2
 [ -z "$("$TOOL" deadlines "$FILE" 5000)" ] || fail 'successor run did not clear obsolete deadline'
 pass 'dispatch and obsolete-run targets are readable at exact 15/30-minute boundaries'

@@ -8,8 +8,16 @@
 #       [run=ID] [rounds=N] [snapshot=ID] [result=VALUE] -- EVIDENCE
 #   fm-task-milestones.sh records FILE
 #   fm-task-milestones.sh durations FILE [FILE...]
-#   fm-task-milestones.sh coverage FILE RUN FULL_SHA [AXI_STATUS_OR_OUTCOME_FILE]
+#   fm-task-milestones.sh coverage RUN FULL_SHA
 #   fm-task-milestones.sh deadlines FILE [NOW_EPOCH]
+#   fm-task-milestones.sh archive FILE
+#
+# FILE is the task's `<state>/<id>.status`. Teardown runs `archive` before it
+# retires that file, copying its milestone lines to the task's durable
+# `<data>/<id>/milestones.status` (data is FM_DATA_OVERRIDE, else
+# FM_HOME/data). Once the status file is gone, every subcommand given FILE
+# reads and appends that archive instead, so phases stamped after teardown
+# still measure against the brief and never recreate an orphan status log.
 #
 # stamp defaults to the real current epoch; at= is only for an authoritative
 # event timestamp (for example the forge's actual merge time), never a guess.
@@ -19,7 +27,6 @@
 #   local-proof, dev-deploy, uat-deploy: sha
 #   gate-start, gate-obsolete: sha run
 #   gate-end: sha run rounds result=passed|failed|cancelled
-#   review-coverage: sha run result=covered|uncovered|stale
 #   pr-created, merge, uat-merge: sha
 #   data-ready, uat-data-ready: sha snapshot
 #   first-live-proof, uat-live-proof: sha snapshot result=passed|failed|partial|waived
@@ -36,14 +43,13 @@
 # unknown, not zero. Duplicate run ends replace that run's earlier count.
 # Accepted DEV/UAT must match preceding deployment, data and passed live proof;
 # the first valid DEV acceptance and following UAT acceptance define duration.
-# coverage prefers a supplied captured AXI record over status measurements.
-# No completed review/green outcome/prose implies coverage. Missing explicit
-# reviewed identity or a malformed record is unverified; a different run/head
-# is stale. Older evidence cannot rescue a missing or stale current verdict.
+# coverage prints covered, stale or unverified for no-mistakes run RUN at
+# FULL_SHA from the daemon's run record; only covered is review coverage.
 # deadlines reports dispatch due at 15 minutes after the latest local proof
 # without a following gate-start and escalation due at 30 minutes after a
-# gate-obsolete observation without a successor gate-start. These are proposed
-# service targets, not savings measurements or authority to discard fixes.
+# gate-obsolete observation without a successor gate-start; the watcher wakes
+# Firstmate with these lines. They are proposed service targets, not savings
+# measurements or authority to discard fixes.
 set -eu
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-classify-lib.sh
@@ -54,8 +60,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 fail() { printf 'fm-task-milestones: %s\n' "$*" >&2; exit 1; }
 
+archive_for() {  # <status-file>
+  printf '%s/%s/milestones.status' \
+    "${FM_DATA_OVERRIDE:-${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}/data}" \
+    "$(basename "$1" .status)"
+}
+
+# The live status file while it exists, else the teardown archive if present.
+milestone_file() {  # <status-file>
+  local archive
+  archive=$(archive_for "$1")
+  if [ ! -e "$1" ] && [ ! -L "$1" ] && { [ -e "$archive" ] || [ -L "$archive" ]; }; then
+    printf '%s' "$archive"
+  else
+    printf '%s' "$1"
+  fi
+}
+
 records() {
-  local file=$1 line record
+  local file line record
+  file=$(milestone_file "$1")
   [ -f "$file" ] && [ -r "$file" ] && [ ! -L "$file" ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     [ "$(status_line_verb "$line")" = milestone ] || continue
@@ -68,7 +92,7 @@ case "${1:-}" in
   -h|--help) usage; exit 0 ;;
   stamp)
     [ "$#" -ge 5 ] || fail 'stamp requires FILE NAME [fields] -- EVIDENCE'
-    file=$2 name=$3; shift 3
+    file=$(milestone_file "$2") name=$3; shift 3
     line="milestone [name=$name]"; have_at=0
     while [ "$#" -gt 0 ] && [ "$1" != -- ]; do
       case "$1" in at=*) have_at=1 ;; esac
@@ -87,40 +111,23 @@ case "${1:-}" in
     [ "$#" = 2 ] || fail 'records requires FILE'
     records "$2" || fail 'unreadable file or malformed milestone'
     ;;
+  archive)
+    [ "$#" = 2 ] || fail 'archive requires FILE'
+    [ -f "$2" ] && [ ! -L "$2" ] || exit 0
+    archive=$(archive_for "$2")
+    # A retried teardown keeps the first complete copy.
+    [ ! -e "$archive" ] && [ ! -L "$archive" ] || exit 0
+    mkdir -p "$(dirname "$archive")"
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ "$(status_line_verb "$line")" != milestone ] || printf '%s\n' "$line"
+    done < "$2" > "$archive.tmp.$$"
+    mv -f "$archive.tmp.$$" "$archive"
+    ;;
   coverage)
-    [ "$#" = 4 ] || [ "$#" = 5 ] || fail 'coverage requires FILE RUN FULL_SHA [AXI_FILE]'
-    [[ "$4" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || fail 'coverage requires a full SHA'
-    [[ "$3" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || fail 'invalid run id'
-    if [ "$#" = 5 ]; then
-      if [ -f "$5" ] && [ -r "$5" ] && [ ! -L "$5" ]; then
-        outcome=$(< "$5")
-        fm_nm_review_coverage "$outcome" "$3" "$4"
-      else
-        printf 'unverified\n'
-      fi
-    elif data=$(records "$2"); then
-      latest=$(printf '%s\n' "$data" | awk -F '\t' '
-        $1 == "gate-start" { last=""; obsolete=0 }
-        $1 == "gate-obsolete" { last="stale"; obsolete=1 }
-        $1 == "review-coverage" && !obsolete { last=$0 }
-        $1 == "gate-end" && last != "" && last != "stale" {
-          split(last, coverage, "\t")
-          if ($3 != coverage[3] || $4 != coverage[4]) last="stale"
-        }
-        END { print last }')
-      if [ "$latest" = stale ]; then
-        printf 'stale\n'
-      elif [ -n "$latest" ]; then
-        IFS=$'\t' read -r name epoch sha run rounds snapshot result <<EOF
-$latest
-EOF
-        fm_nm_review_coverage_verdict "$result" "$run" "$sha" "$3" "$4"
-      else
-        printf 'unverified\n'
-      fi
-    else
-      printf 'unverified\n'
-    fi
+    [ "$#" = 3 ] || fail 'coverage requires RUN FULL_SHA'
+    [[ "$2" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || fail 'invalid run id'
+    [[ "$3" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || fail 'coverage requires a full SHA'
+    fm_nm_review_coverage "$2" "$3"
     ;;
   durations)
     [ "$#" -ge 2 ] || fail 'durations requires FILE [FILE...]'
@@ -177,9 +184,9 @@ EOF
       }
       END {
         if (localproof != "" && dispatched == "" && now-localproof >= 900)
-          print "gate dispatch overdue: " now-localproof " seconds since local proof"
+          print "gate dispatch overdue: no gate-start 15 minutes after local proof at " localproof
         if (obsolete != "" && now-obsolete >= 1800)
-          print "obsolete gate escalation due: run " run " age " now-obsolete " seconds"
+          print "obsolete gate escalation due: run " run " obsolete 30 minutes since " obsolete
       }'
     ;;
   *) usage >&2; exit 1 ;;

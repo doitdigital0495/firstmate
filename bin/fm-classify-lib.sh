@@ -466,8 +466,6 @@ status_milestone_record() {  # <line> -> strict TSV record
     gate-start|gate-obsolete) required='name sha run' ;;
     gate-end) required='name sha run rounds result'
       case "$result" in passed|failed|cancelled) ;; *) return 1 ;; esac ;;
-    review-coverage) required='name sha run result'
-      case "$result" in covered|uncovered|stale) ;; *) return 1 ;; esac ;;
     pr-created|merge|uat-merge) required='name sha'
       [[ "$evidence" =~ https://[^[:space:]]+ ]] || return 1 ;;
     data-ready|uat-data-ready) required='name sha snapshot' ;;

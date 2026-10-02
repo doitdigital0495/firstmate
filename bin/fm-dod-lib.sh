@@ -322,7 +322,7 @@ EOF
 
 fm_dod_block() {  # <mode> <task-id> <data-dir> [lane] [preview] [status-dir]
   local mode=$1 id=$2 data=$3 lane=${4:-} preview=${5:-} state=${6:-${FM_STATE_OVERRIDE:-${FM_HOME:-${3%/data}}/state}}
-  local checklist fast preview_note milestones helper status root
+  local checklist fast preview_note milestones helper root
   case "$lane" in
     '') ;;
     fast)
@@ -351,7 +351,6 @@ fm_dod_block() {  # <mode> <task-id> <data-dir> [lane] [preview] [status-dir]
   milestones=$(fm_ship_milestone_contract "$state" "$id")
   root=${FM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
   printf -v helper '%q' "$root/bin/fm-task-milestones.sh"
-  printf -v status '%q' "$state/$id.status"
   fast=
   [ -z "$lane" ] || fast=$(fm_fast_lane_contract "$id")
   preview_note=
@@ -398,7 +397,7 @@ If dispatch cannot meet that target, escalate the reason to Firstmate rather tha
 Stamp gate start from the actual run receipt, not an intended launch, and gate end from its real outcome with the observed round count.
 On base drift or an obsolete run, stamp gate-obsolete when detected and escalate to Firstmate immediately, no later than 30 minutes after detection; this is not an overnight external-wait pause.
 Preserve every managed fix through an authorized custody transition using the installed no-mistakes guidance; never discard fixes or silently skip review coverage to restart a run.
-Before reporting review coverage, use \`$helper coverage $status <run> <full-sha> [captured-axi-file]\`; only an explicit covered result proves current coverage, while stale or unverified means not covered and must be reported to Firstmate, never silently waived.
+Before reporting review coverage, use \`$helper coverage <run> <full-sha>\`; only a covered result proves the run's review covered that exact head, while stale or unverified means not covered and must be reported to Firstmate, never silently waived.
 Keep browser runs in a task-owned named session and select only the owned tab; reserve a unique E2E port per concurrent run instead of reusing another task's port.
 
 You drive no-mistakes by responding to its gates, not by implementing fixes.

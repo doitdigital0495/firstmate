@@ -62,47 +62,30 @@ fm_nm_field() {  # <toon-output> <key>
   printf '%s\n' "$1" | sed -n "s/^[[:space:]]*$2:[[:space:]]*\(.*\)/\1/p" | head -1
 }
 
-# Review coverage is positive only with an explicit covered verdict bound to
-# BOTH the requested run and the exact reviewed full head, not the current run
-# head alone or a completed review step/outcome. This fail-closed reader accepts
-# captured AXI scalar records `id`, `head_sha`, `review_coverage`,
-# `review_coverage_run`, and `review_coverage_head_sha`, each exactly once.
-# The captured run's identity must also match the requested current run/head.
-# Versions without these explicit
-# fields are unverified, never covered. No prose or completion inference.
-# Stamped status measurements are handled by status_milestone_record in the
-# status schema owner and use this same identity/verdict predicate.
-fm_nm_review_coverage_verdict() {  # <verdict> <reviewed-run> <reviewed-sha> <run> <sha>
-  if [ "$2" != "$4" ] || [ "$3" != "$5" ]; then
-    printf 'stale\n'
-  else
-    case "$1" in
-      covered|uncovered|stale) printf '%s\n' "$1" ;;
-      *) printf 'unverified\n' ;;
-    esac
-  fi
-}
-
-fm_nm_review_coverage() {  # <captured-status/outcome> <run> <full-head>
-  local key count value verdict='' reviewed_run='' reviewed_sha='' current_run='' current_sha=''
-  for key in id head_sha review_coverage review_coverage_run review_coverage_head_sha; do
-    count=$(printf '%s\n' "$1" | grep -Ec "^[[:space:]]*$key:") || :
-    [ "$count" = 1 ] || { printf 'unverified\n'; return; }
-    value=$(fm_nm_strip_quotes "$(fm_nm_field "$1" "$key")")
-    case "$key" in
-      id) current_run=$value ;;
-      head_sha) current_sha=$value ;;
-      review_coverage) verdict=$value ;;
-      review_coverage_run) reviewed_run=$value ;;
-      review_coverage_head_sha) reviewed_sha=$value ;;
-    esac
-  done
-  [[ "$reviewed_run" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] \
-    && [[ "$reviewed_sha" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] \
-    || { printf 'unverified\n'; return; }
-  [ "$current_run" = "$2" ] && [ "$current_sha" = "$3" ] \
-    || { printf 'stale\n'; return; }
-  fm_nm_review_coverage_verdict "$verdict" "$reviewed_run" "$reviewed_sha" "$2" "$3"
+# Review coverage of run $1 at full head $2, read from the daemon's own run
+# record: `axi status` shows `id`, `head_sha` and a review step row, but a
+# completed review step does not say WHICH head it reviewed, and later fix
+# rounds routinely move the run head past it. The run record's
+# review_approved_head_sha is that reviewed head. Prints covered only when the
+# record's head_sha and review_approved_head_sha both equal $2; stale when
+# either is a different head; unverified when the record, reviewed head or the
+# read-only reader (NM_HOME/state.sqlite, default ~/.no-mistakes) is missing.
+fm_nm_review_coverage() {  # <run> <full-head>
+  python3 - "$1" "$2" 2>/dev/null <<'PY' || printf 'unverified\n'
+import os, sqlite3, sys
+from contextlib import closing
+from pathlib import Path
+run, sha = sys.argv[1:]
+root = Path(os.environ.get("NM_HOME") or Path.home() / ".no-mistakes")
+with closing(sqlite3.connect((root / "state.sqlite").as_uri() + "?mode=ro", uri=True, timeout=1)) as db:
+    rows = db.execute("SELECT head_sha, review_approved_head_sha FROM runs WHERE id = ?", (run,)).fetchall()
+if len(rows) != 1 or not rows[0][1]:
+    print("unverified")
+elif rows[0][0] == sha and rows[0][1] == sha:
+    print("covered")
+else:
+    print("stale")
+PY
 }
 
 # Full commit sha for sha-ish $2 as seen from worktree $1's own object store;
