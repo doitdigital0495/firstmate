@@ -104,8 +104,9 @@ case "${1:-}" in
     [ -d "$(dirname "$file")" ] || fail 'status parent directory is missing'
     [ -e "$file" ] || [ -L "$file" ] || [ "$name" = brief ] \
       || fail 'no status file or milestone archive for this task'
-    [ ! -L "$file" ] && { [ ! -e "$file" ] || [ -f "$file" ]; } \
-      || fail 'status destination must be a regular file, not a symlink'
+    if [ -L "$file" ] || { [ -e "$file" ] && [ ! -f "$file" ]; }; then
+      fail 'status destination must be a regular file, not a symlink'
+    fi
     printf '%s\n' "$line" >> "$file"
     ;;
   records)
