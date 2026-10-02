@@ -97,7 +97,7 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
 
 ## Lavish board mode
 
-`/bearings lavish` adds one deliverable beside the unchanged chat digest: a self-contained dark status page with Needs you cards, every managed project and present person grouped by project, and a Your requests table, where the captain can answer directly.
+`/bearings lavish` adds one deliverable beside the unchanged chat digest: a self-contained dark status page with Needs you cards, present people grouped by project (a project with neither people nor open questions gets no panel), and a Your requests table, where the captain can answer directly.
 This capability is merged into bearings rather than a separate skill because the snapshot, decision bindings, stable page, and supervised Lavish polling already belong here; a second skill would duplicate those contracts.
 Plain bearings and file mode retain their existing chat/report formats.
 `bin/fm-bearings-board.sh` owns every board mechanic - the stable board path, fm-bearings-board.v1 payload validation, template injection, live Lavish session verification and ended-session reopening, the any-origin answer binding, and listener registration - so the per-invocation work is composing the payload and running its `build`.

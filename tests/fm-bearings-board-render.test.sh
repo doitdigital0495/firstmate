@@ -58,13 +58,14 @@ SH
 
 # Build the board from <underway-json> plus <charted-json> and return what the
 # renderer produced.
-render_board() {  # <home> <underway-json> <charted-json> [charted_more] [charted_warning_more] [extra-json]
+render_board() {  # <home> <underway-json> <charted-json> [charted_more] [charted_warning_more] [calls-json] [landed-json] [extra-json]
   local home=$1 underway=$2 charted=$3 more=${4:-0} warning_more=${5:-0} data="$1/payload.json"
-  local extra=${6:-\{\}}
+  local calls=${6:-'[]'} landed=${7:-'[]'} extra=${8:-\{\}}
   jq -n --argjson underway "$underway" --argjson charted "$charted" \
-    --argjson extra "$extra" --argjson more "$more" --argjson warning_more "$warning_more" '{
+    --argjson calls "$calls" --argjson landed "$landed" --argjson extra "$extra" \
+    --argjson more "$more" --argjson warning_more "$warning_more" '{
     schema:"fm-bearings-board.v1", home:"render-home", generated:"2026-08-26T00:00Z",
-    prs_live:false, captains_call:[], underway:$underway, landed:[],
+    prs_live:false, captains_call:$calls, underway:$underway, landed:$landed,
     charted:$charted, charted_more:$more, charted_warning_more:$warning_more} + $extra' > "$data"
   PATH="$home/fakebin:$PATH" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
@@ -128,10 +129,10 @@ test_a_board_of_only_warnings_still_reports_nothing_queued() {
   [ "$(charted_next_count "$out")" = 0 ] \
     || fail "a warning-only board claimed queued work: $out"
   printf '%s' "$out" | jq -e '
-    (.empty | length) == 1 and (.empty[0] | test("Nothing is queued"))
+    (.empty | length) == 0 and .sections.charted.hidden == false
       and (.charted | length) == 1
-  ' >/dev/null || fail "a warning-only board hid the warning or the empty state: $out"
-  pass "a warning-only board reports nothing queued and still shows the warning"
+  ' >/dev/null || fail "a warning-only board hid the warning or added empty-state noise: $out"
+  pass "a warning-only board counts zero queued and shows only the warning"
 }
 
 test_omitted_warnings_never_count_as_more_queued() {
@@ -143,14 +144,14 @@ test_omitted_warnings_never_count_as_more_queued() {
   [ "$(charted_next_count "$out")" = 0 ] \
     || fail "an omitted warning was counted as queued work: $out"
   printf '%s' "$out" | jq -e '
-    (.empty | length) == 1 and (.empty[0] | test("Nothing is queued"))
+    (.empty | length) == 0 and .sections.charted.hidden == false
       and (.more == ["+1 more repair warning - ask for the complete status page"])
       and ([.more[] | select(test("more queued"))] | length) == 0
   ' >/dev/null || fail "an omitted warning was labeled as more queued: $out"
   pass "omitted warnings remain separate from omitted queued work"
 }
 
-test_an_omitted_kind_keeps_the_existing_queued_rendering() {
+test_an_omitted_kind_keeps_queued_status_even_without_a_reason() {
   local home out
   home=$(make_home default-kind)
   out=$(render "$home" '[
@@ -161,9 +162,13 @@ test_an_omitted_kind_keeps_the_existing_queued_rendering() {
     || fail "an omitted kind changed the charted next tally: $out"
   printf '%s' "$out" | jq -e '
     ([.charted[0].badges[] | .text] == ["waiting"])
-      and (.charted[1].badges == [])
-  ' >/dev/null || fail "an omitted kind changed the existing queued badges: $out"
-  pass "an omitted kind renders exactly as queued work always did"
+      and (.charted[0].tone == "warn")
+      and ([.charted[1].badges[] | .text] == ["queued"])
+      and ([.charted[1].badges[] | .tone] == ["neutral"])
+      and (.charted[1].tone == "neutral")
+      and (.charted[1].detail == "Ready for dispatch.")
+  ' >/dev/null || fail "queued work without a reason was not neutral and queued: $out"
+  pass "queued work waits with a reason and reads as neutral queued without one"
 }
 
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status() {
@@ -177,8 +182,10 @@ test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status() {
     (.underway | length) == 1
       and (.underway[0]
         | .title == "Show task names on the board"
-          and (.sub | test("no-mistakes: review round 2"))
-          and (.sub | test("firstmate")) and (.sub | test("ship") | not)
+          and .sub == "firstmate"
+          and (.detail | test("no-mistakes: review round 2"))
+          and (.sub | test("ship") | not) and (.detail | test("ship") | not)
+          and .disclosure == true and .cue == "Current status"
           and [.badges[] | .text] == ["working"])
   ' >/dev/null || fail "an underway row did not lead with the task name: $out"
   pass "an underway row leads with the task name and still reports its run status"
@@ -195,7 +202,8 @@ test_an_underway_identifier_label_is_not_replaced_by_run_status() {
     (.underway | length) == 1
       and (.underway[0]
         | .title == "mate/child-1"
-          and .sub == "fixing the failing check"
+          and .sub == ""
+          and .detail == "fixing the failing check"
           and (.title != "fixing the failing check"))
   ' >/dev/null || fail "an identifier-labelled underway row rendered as status-only: $out"
   pass "an underway identifier label is not replaced by run status"
@@ -248,7 +256,7 @@ test_status_page_shows_every_request_and_explained_cards() {
        options:[{value:"merge",label:"Publish now",hint:"Makes the approved addresses available."}]}
     ]
   }')
-  out=$(render_board "$home" '[]' '[]' 0 0 "$extra")
+  out=$(render_board "$home" '[]' '[]' 0 0 '[]' '[]' "$extra")
   printf '%s' "$out" | jq -e '
     .error == "" and (.requests | length) == 5
     and [.requests[].status] == ["Working","Waiting for another task","Waiting on you","Completed","Status not confirmed"]
@@ -264,7 +272,7 @@ test_status_page_shows_every_request_and_explained_cards() {
   pass "all-tasks page shows five statuses, explained options, both cards and coverage"
 }
 
-test_projects_include_idle_work_shared_leads_and_unassigned_people() {
+test_projects_drop_idle_work_and_keep_shared_leads_and_unassigned_people() {
   local home out extra
   home=$(make_home projects-and-people)
   extra=$(jq -n '{requests:[],coverage:[],projects:[
@@ -276,23 +284,135 @@ test_projects_include_idle_work_shared_leads_and_unassigned_people() {
     {id:"routing-only-lead",name:"Reporting and portal coordination",role:"Project lead",status:"Working",detail:"Coordinating both projects.",projects:["Reports","Portal"],questions:[]},
     {id:"routing-only-unknown",name:"Assignment to confirm",role:"Worker",status:"Status not confirmed",detail:"Project ownership could not be verified.",projects:[],questions:[]}
   ]}')
-  out=$(render_board "$home" '[]' '[]' 0 0 "$extra")
+  out=$(render_board "$home" '[]' '[]' 0 0 '[]' '[]' "$extra")
   printf '%s' "$out" | jq -e '
-    .error == "" and [.projects[].name] == ["Idle project","Reports","Portal","Project not confirmed"]
-    and (.projects[0].text | contains("No live worker is recorded"))
-    and (.projects[0].people | length) == 0
-    and [.projects[1].people[].name] == ["Improve report loading","Reporting and portal coordination"]
-    and .projects[2].people[0].role == "Project lead"
-    and .projects[3].people[0].name == "Assignment to confirm"
-    and (.projects[1].people[0].questions[0] | contains("What it isReport data is old.") and contains("Your choiceApprove") and contains("RecommendationUse the test-only refresh"))
+    .error == "" and .projectsHidden == false
+    and [.projects[].name] == ["Reports","Portal","Project not confirmed"]
+    and (.projects | tostring | contains("Idle project") | not)
+    and [.projects[0].people[].name] == ["Improve report loading","Reporting and portal coordination"]
+    and .projects[1].people[0].role == "Project lead"
+    and .projects[2].people[0].name == "Assignment to confirm"
+    and (.projects[0].people[0].questions[0] | contains("What it isReport data is old.") and contains("Your choiceApprove") and contains("RecommendationUse the test-only refresh"))
     and (.projects | tostring | contains("routing-only") | not)
     and (.stats | any(.label == "projects" and .n == 3))
     and (.stats | any(.label == "people" and .n == 3))
-  ' >/dev/null || fail "project grouping dropped people, questions or idle projects: $out"
-  pass "project board includes idle projects, shared leads, explained questions and unassigned people without routing ids"
+  ' >/dev/null || fail "project grouping showed an idle project or dropped people or questions: $out"
+  pass "project board drops idle projects and keeps shared leads, explained questions and unassigned people without routing ids"
 }
 
-test_projects_include_idle_work_shared_leads_and_unassigned_people
+test_a_status_page_of_only_idle_projects_has_no_project_panel() {
+  local home out extra
+  home=$(make_home projects-all-idle)
+  extra=$(jq -n '{requests:[],coverage:[],projects:[
+    {name:"Idle one",delivery:"Changes stay local.",status:"No current work",detail:"Still managed.",questions:[]},
+    {name:"Idle two",delivery:"You decide whether to publish.",status:"No current work",detail:"Still managed.",questions:[]}
+  ],crew:[]}')
+  out=$(render_board "$home" '[]' '[]' 0 0 '[]' '[]' "$extra")
+  printf '%s' "$out" | jq -e '
+    .error == "" and .projects == [] and .projectsHidden == true
+  ' >/dev/null || fail "idle projects still rendered a project panel: $out"
+  pass "a status page whose projects are all idle shows no project panel"
+}
+
+test_a_project_with_only_an_open_question_keeps_its_panel() {
+  local home out extra
+  home=$(make_home projects-question-only)
+  extra=$(jq -n '{requests:[],coverage:[],projects:[
+    {name:"Portal",delivery:"You decide whether to publish.",status:"On hold",detail:"Waiting for a hosting choice.",
+     questions:[{issue:"Hosting is not chosen.",choice:"Pick shared or dedicated hosting.",recommendation:"Use dedicated hosting."}]},
+    {name:"Idle one",delivery:"Changes stay local.",status:"No current work",detail:"Still managed.",questions:[]}
+  ],crew:[]}')
+  out=$(render_board "$home" '[]' '[]' 0 0 '[]' '[]' "$extra")
+  printf '%s' "$out" | jq -e '
+    .error == "" and .projectsHidden == false
+    and [.projects[].name] == ["Portal"]
+    and (.projects[0].text | contains("Hosting is not chosen.") and contains("Use dedicated hosting."))
+  ' >/dev/null || fail "a project with an open question but no worker lost its panel: $out"
+  pass "a project with no worker but an open question still shows its question"
+}
+
+test_a_status_page_with_only_unpickable_queue_rows_says_no_open_work() {
+  local home out
+  home=$(make_home status-unpickable)
+  out=$(render_board "$home" '[]' '[
+    {"id":"held","repo":"sample","title":"Held work","reason":"held for review","dispatchable":false}
+  ]' 0 0 '[]' '[]' '{"requests":[],"coverage":[]}')
+  printf '%s' "$out" | jq -e '
+    .error == "" and .sections.charted.hidden == true and .idle == true
+  ' >/dev/null || fail "a status page hid its queue and showed no empty state: $out"
+  pass "a status page with only unpickable queue rows says there is no open work"
+}
+
+test_needs_you_comes_before_open_work_and_the_queue() {
+  local home out
+  home=$(make_home section-order)
+  out=$(render_board "$home" '[]' '[]')
+  printf '%s' "$out" | jq -e '
+    .order[0:3] == ["call", "current", "charted"]
+  ' >/dev/null || fail "Needs you is not the first board section: $out"
+  pass "Needs you renders above open work and the waiting queue"
+}
+
+test_empty_sections_and_idle_projects_do_not_take_up_space() {
+  local home out
+  home=$(make_home empty-sections)
+  out=$(render_board "$home" '[]' '[]')
+  printf '%s' "$out" | jq -e '
+    .error == "" and .idle == true
+    and ([.sections[].hidden] | all)
+    and (.underway | length) == 0 and (.charted | length) == 0
+  ' >/dev/null || fail "empty sections occupied the board: $out"
+  pass "idle projects have no panel; an empty fleet has one short empty state"
+}
+
+test_mixed_projects_stay_in_one_list_with_status_colors_and_disclosures() {
+  local home out
+  home=$(make_home mixed-projects)
+  out=$(render_board "$home" '[
+    {"id":"a","name":"Active task","repo":"alpha","state":"working","doing":"Reviewing changes","kind":"ship"},
+    {"id":"b","name":"Blocked task","repo":"beta","state":"blocked","doing":"Awaiting permission","kind":"ship"},
+    {"id":"c","name":"Paused task","repo":"alpha","state":"paused","doing":"Waiting for release","kind":"ship"},
+    {"id":"d","name":"Review task","repo":"beta","state":"reviewing","doing":"Checking evidence","kind":"ship"},
+    {"id":"e","name":"Unknown task","repo":null,"state":"future-state","doing":"Unrecognized status remains visible","kind":"ship"}
+  ]' '[
+    {"id":"q","title":"Queued task","repo":"gamma","reason":"Waiting for capacity","dispatchable":true},
+    {"id":"w","title":"Repair warning","repo":"delta","reason":"Repair inventory","dispatchable":false,"kind":"warning"}
+  ]')
+  printf '%s' "$out" | jq -e '
+    .error == "" and .idle == false
+    and [.underway[].title] == ["Active task", "Blocked task", "Paused task", "Review task", "Unknown task"]
+    and [.underway[].tone] == ["online", "danger", "warn", "info", "neutral"]
+    and ([.underway[], .charted[]] | all(.disclosure and .cue == "Current status" and (.detail | length > 0)))
+    and .sections.current.hidden == false and .sections.charted.hidden == false
+    and .sections.call.hidden == true and .sections.landed.hidden == true
+  ' >/dev/null || fail "the mixed-project open-work list lost color or disclosures: $out"
+  pass "all open work stays together across projects with colored status and expandable details"
+}
+
+test_captains_call_answer_contract_is_unchanged() {
+  local home out
+  home=$(make_home call-answer)
+  render_board "$home" '[]' '[]' 0 0 '[
+    {"key":"sample-call","repo":"sample","type":"credential","title":"Choose access",
+     "allow_freeform":true,"close":"release","options":[{"value":"yes","label":"Allow"}]}
+  ]' >/dev/null
+  out=$(node "$HARNESS" "$home/.lavish/bearings-board.html" answer)
+  printf '%s' "$out" | jq -e '
+    .error == "" and .sections.call.hidden == false
+    and (.queued | length) == 1
+    and .queued[0].data == {schema:"fm-bearings-answer.v1",question:"sample-call",selection:"yes",note:"a note",close:"release"}
+  ' >/dev/null || fail "Captain Call no longer emits the unchanged versioned answer: $out"
+  pass "Captain Call still queues fm-bearings-answer.v1 with selection, note and close"
+}
+
+test_empty_sections_and_idle_projects_do_not_take_up_space
+test_mixed_projects_stay_in_one_list_with_status_colors_and_disclosures
+test_captains_call_answer_contract_is_unchanged
+test_projects_drop_idle_work_and_keep_shared_leads_and_unassigned_people
+test_a_status_page_of_only_idle_projects_has_no_project_panel
+test_a_project_with_only_an_open_question_keeps_its_panel
+test_a_status_page_with_only_unpickable_queue_rows_says_no_open_work
+test_needs_you_comes_before_open_work_and_the_queue
 test_status_page_shows_every_request_and_explained_cards
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status
 test_an_underway_identifier_label_is_not_replaced_by_run_status
@@ -302,4 +422,4 @@ test_a_warning_row_reads_as_a_repair_not_as_queued_work
 test_warnings_are_excluded_from_the_charted_next_count
 test_a_board_of_only_warnings_still_reports_nothing_queued
 test_omitted_warnings_never_count_as_more_queued
-test_an_omitted_kind_keeps_the_existing_queued_rendering
+test_an_omitted_kind_keeps_queued_status_even_without_a_reason
