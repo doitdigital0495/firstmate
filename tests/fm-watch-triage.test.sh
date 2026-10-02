@@ -2178,7 +2178,9 @@ test_milestone_deadline_cases() {
   for case in obsolete:no-mistakes:gate-obsolete:1900:"obsolete gate escalation due: run gate1" \
               malformed:no-mistakes:gate-obsolete:10:"gate deadlines unreadable" \
               fresh:no-mistakes:local-proof:10: \
-              ungated:direct-pr:local-proof:1900:; do
+              reordered:no-mistakes:gate-obsolete:1900:"obsolete gate escalation due: run gate1" \
+              ungated:direct-PR:local-proof:1900: \
+              localonly:local-only:local-proof:1900:; do
     IFS=: read -r case mode name at expect <<< "$case"
     run=; [ "$name" = local-proof ] || run=run=gate1
     dir=$(make_case "milestone-$case"); state="$dir/state"; fakebin="$dir/fakebin"
@@ -2186,8 +2188,13 @@ test_milestone_deadline_cases() {
     printf 'idle prompt' > "$capture_file"
     printf 'window=%s\nkind=ship\nmode=%s\n' "$window" "$mode" > "$state/$case.meta"
     printf 'working: gating\n' > "$state/$case.status"
-    "$ROOT/bin/fm-task-milestones.sh" stamp "$state/$case.status" "$name" \
-      "at=$((now - at))" sha="$sha" ${run:+"$run"} -- 'observed' || fail "$case: could not stamp $name"
+    if [ "$case" = reordered ]; then
+      printf 'milestone [at=%s] [run=gate1] [sha=%s] [name=gate-obsolete]: by hand\n' "$((now - at))" "$sha" >> "$state/$case.status"
+      "$ROOT/bin/fm-task-milestones.sh" records "$state/$case.status" >/dev/null || fail "reordered: schema refused a valid tag order"
+    else
+      "$ROOT/bin/fm-task-milestones.sh" stamp "$state/$case.status" "$name" \
+        "at=$((now - at))" sha="$sha" ${run:+"$run"} -- 'observed' || fail "$case: could not stamp $name"
+    fi
     [ "$case" != malformed ] || printf 'milestone [name=gate-start] [sha=abc1234] [run=gate2] [at=1]: by hand\n' >> "$state/$case.status"
     sig=$(seen_sig "$state/$case.status"); printf '%s' "$sig" > "$state/.seen-${case}_status"
     if [ -n "$expect" ]; then
@@ -2205,7 +2212,7 @@ test_milestone_deadline_cases() {
       reap "$pid"
     fi
   done
-  pass "obsolete runs and unreadable milestones wake Firstmate; fresh and non-gated tasks stay quiet"
+  pass "obsolete runs and unreadable milestones wake Firstmate; fresh and non-gated tasks stay quiet, whatever the tag order"
 }
 
 # --- non-terminal stale, crew DECLARED a pause: absorbed, re-surfaced on a long
