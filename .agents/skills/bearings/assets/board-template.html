@@ -672,7 +672,13 @@ __FM_BEARINGS_BOARD_DATA__
       count.textContent = n ? n + " choice" + (n === 1 ? "" : "s") + " marked to send" : "no choice marked";
       btn.disabled = !n;
     }
-    Array.prototype.forEach.call(groups, function (g) { g.addEventListener("change", refresh); });
+    Array.prototype.forEach.call(groups, function (g) {
+      g.addEventListener("change", function () {
+        g.classList.remove("is-queued");
+        bar.classList.remove("is-queued");
+        refresh();
+      });
+    });
     btn.addEventListener("click", function () {
       var items = pendingGroups();
       if (!items.length) return;
