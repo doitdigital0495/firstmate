@@ -2693,8 +2693,10 @@ EOF
     [ -z "$task" ] || inbox_steer_check "$w" "$task"
     # Gate dispatch and obsolete-run escalation targets wake Firstmate even
     # while the worker that should have acted sits idle; once per deadline.
-    if [ -n "$task" ] && grep -qE '^milestone \[name=(local-proof|gate-obsolete)\]' "$STATE/$task.status" 2>/dev/null; then
-      due=$("$SCRIPT_DIR/fm-task-milestones.sh" deadlines "$STATE/$task.status" 2>/dev/null) || due=
+    if [ -n "$task" ] && [ "$(fm_meta_get "$STATE/$task.meta" mode)" = no-mistakes ] \
+      && grep -qE '^milestone \[name=(local-proof|gate-obsolete)\]' "$STATE/$task.status" 2>/dev/null; then
+      due=$("$SCRIPT_DIR/fm-task-milestones.sh" deadlines "$STATE/$task.status" 2>/dev/null) \
+        || due="gate deadlines unreadable: malformed milestone record in $task.status"
       df="$STATE/.milestone-deadline-$task"
       if [ -n "$due" ] && [ "$(cat "$df" 2>/dev/null || true)" != "$due" ]; then
         reason="check: $task $(printf '%s' "$due" | tr '\n' ';')"

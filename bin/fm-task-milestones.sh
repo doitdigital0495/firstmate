@@ -14,8 +14,8 @@
 #
 # FILE is the task's `<state>/<id>.status`. Teardown runs `archive` before it
 # retires that file, copying its milestone lines to the task's durable
-# `<data>/<id>/milestones.status` (data is FM_DATA_OVERRIDE, else
-# FM_HOME/data). Once the status file is gone, every subcommand given FILE
+# `<data>/<id>/milestones.status` (data is FM_DATA_OVERRIDE, else the data
+# directory beside FILE's state directory). Once the status file is gone, every subcommand given FILE
 # reads and appends that archive instead, so phases stamped after teardown
 # still measure against the brief and never recreate an orphan status log.
 #
@@ -62,8 +62,7 @@ fail() { printf 'fm-task-milestones: %s\n' "$*" >&2; exit 1; }
 
 archive_for() {  # <status-file>
   printf '%s/%s/milestones.status' \
-    "${FM_DATA_OVERRIDE:-${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}/data}" \
-    "$(basename "$1" .status)"
+    "${FM_DATA_OVERRIDE:-$(dirname "$1")/../data}" "$(basename "$1" .status)"
 }
 
 # The live status file while it exists, else the teardown archive if present.
@@ -103,6 +102,8 @@ case "${1:-}" in
     line="$line: $2"
     status_milestone_record "$line" >/dev/null || fail 'invalid milestone; see --help'
     [ -d "$(dirname "$file")" ] || fail 'status parent directory is missing'
+    [ -e "$file" ] || [ -L "$file" ] || [ "$name" = brief ] \
+      || fail 'no status file or milestone archive for this task'
     [ ! -L "$file" ] && { [ ! -e "$file" ] || [ -f "$file" ]; } \
       || fail 'status destination must be a regular file, not a symlink'
     printf '%s\n' "$line" >> "$file"

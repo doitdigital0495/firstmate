@@ -6,7 +6,8 @@ set -eu
 # shellcheck source=bin/fm-classify-lib.sh
 . "$ROOT/bin/fm-classify-lib.sh"
 TMP_ROOT=$(fm_test_tmproot milestones)
-export FM_DATA_OVERRIDE="$TMP_ROOT/data"
+unset FM_DATA_OVERRIDE
+export FM_HOME="$TMP_ROOT/other-home"
 TOOL="$ROOT/bin/fm-task-milestones.sh"
 SHA=1111111111111111111111111111111111111111
 OTHER=2222222222222222222222222222222222222222
@@ -146,7 +147,11 @@ coverage() { NM_HOME="$NM_HOME" "$TOOL" coverage "$@"; }
 if "$TOOL" coverage covered short 2>/dev/null; then fail 'accepted abbreviated sha'; fi
 pass 'review coverage is covered only when the run record reviewed its exact current head'
 
-FILE="$TMP_ROOT/torn.status"
+mkdir -p "$TMP_ROOT/torn-home/state"
+FILE="$TMP_ROOT/torn-home/state/never.status"
+if "$TOOL" stamp "$FILE" dev-deploy sha="$SHA" -- deployed 2>/dev/null; then fail 'late stamp without a task record succeeded'; fi
+[ ! -e "$FILE" ] || fail 'late stamp without a task record created an orphan status log'
+FILE="$TMP_ROOT/torn-home/state/torn.status"
 printf 'working [at=90]: building\n' > "$FILE"
 stamp brief at=100
 stamp gate-start at=110 sha="$SHA" run=gate1
@@ -155,6 +160,7 @@ stamp gate-end at=120 sha="$SHA" run=gate1 rounds=1 result=passed
 "$TOOL" archive "$FILE"
 rm -f "$FILE"
 "$TOOL" archive "$FILE"
+[ -f "$TMP_ROOT/torn-home/data/torn/milestones.status" ] || fail 'archive not beside the task state directory'
 [ "$("$TOOL" records "$FILE" | wc -l | tr -d ' ')" = 3 ] || fail 'retried archive duplicated or lost milestones'
 stamp dev-deploy at=200 sha="$SHA"
 stamp data-ready at=210 sha="$SHA" snapshot=v1
@@ -166,10 +172,11 @@ stamp uat-live-proof at=320 sha="$SHA" snapshot=v1 result=passed
 stamp uat-accepted at=330 sha="$SHA" snapshot=v1 result=passed
 [ ! -e "$FILE" ] || fail 'late stamp recreated an orphan status log'
 assert_contains "$("$TOOL" durations "$FILE")" $'torn\t130\t100\t1\t1\t0\t0' 'post-teardown phases lost the brief or gate history'
-grep -q '^working' "$FM_DATA_OVERRIDE/torn/milestones.status" && fail 'archive copied worker state lines'
+grep -q '^working' "$TMP_ROOT/torn-home/data/torn/milestones.status" && fail 'archive copied worker state lines'
 pass 'teardown archive keeps milestones durable and late stamps append there without an orphan status log'
 
 FILE="$TMP_ROOT/deadlines.status"
+stamp brief at=50
 stamp local-proof at=100 sha="$SHA"
 [ -z "$("$TOOL" deadlines "$FILE" 999)" ] || fail 'dispatch deadline fired early'
 assert_contains "$("$TOOL" deadlines "$FILE" 1000)" 'gate dispatch overdue: no gate-start 15 minutes after local proof at 100' '15-minute dispatch deadline missed'

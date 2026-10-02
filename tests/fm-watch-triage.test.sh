@@ -2145,7 +2145,7 @@ test_milestone_deadline_surfaced_once() {
   out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
   window="test:fm-dl"
   printf 'idle prompt' > "$capture_file"
-  printf 'window=%s\nkind=ship\n' "$window" > "$state/dl.meta"
+  printf 'window=%s\nkind=ship\nmode=no-mistakes\n' "$window" > "$state/dl.meta"
   printf 'working: proved locally\n' > "$state/dl.status"
   "$ROOT/bin/fm-task-milestones.sh" stamp "$state/dl.status" local-proof \
     "at=$(( $(date +%s) - 1000 ))" sha=1111111111111111111111111111111111111111 -- 'tests passed' \
@@ -2168,6 +2168,44 @@ test_milestone_deadline_surfaced_once() {
   fi
   reap "$pid"
   pass "an overdue gate dispatch wakes Firstmate from the watcher once, without the worker"
+}
+
+# --- obsolete-run escalation and unreadable records wake; fresh or ungated stay quiet ---
+test_milestone_deadline_cases() {
+  local case mode name at expect dir state fakebin out capture_file window sig pid now sha run
+  sha=1111111111111111111111111111111111111111
+  now=$(date +%s)
+  for case in obsolete:no-mistakes:gate-obsolete:1900:"obsolete gate escalation due: run gate1" \
+              malformed:no-mistakes:gate-obsolete:10:"gate deadlines unreadable" \
+              fresh:no-mistakes:local-proof:10: \
+              ungated:direct-pr:local-proof:1900:; do
+    IFS=: read -r case mode name at expect <<< "$case"
+    run=; [ "$name" = local-proof ] || run=run=gate1
+    dir=$(make_case "milestone-$case"); state="$dir/state"; fakebin="$dir/fakebin"
+    out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-$case"
+    printf 'idle prompt' > "$capture_file"
+    printf 'window=%s\nkind=ship\nmode=%s\n' "$window" "$mode" > "$state/$case.meta"
+    printf 'working: gating\n' > "$state/$case.status"
+    "$ROOT/bin/fm-task-milestones.sh" stamp "$state/$case.status" "$name" \
+      "at=$((now - at))" sha="$sha" ${run:+"$run"} -- 'observed' || fail "$case: could not stamp $name"
+    [ "$case" != malformed ] || printf 'milestone [name=gate-start] [sha=abc1234] [run=gate2] [at=1]: by hand\n' >> "$state/$case.status"
+    sig=$(seen_sig "$state/$case.status"); printf '%s' "$sig" > "$state/.seen-${case}_status"
+    if [ -n "$expect" ]; then
+      export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+      FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" watch_bg "$state" "$fakebin" "$out"
+      pid=$!
+      wait_for_exit "$pid" 100 || fail "$case: watcher did not surface the deadline"
+      grep -F "check: $case $expect" "$out" >/dev/null || fail "$case: wrong deadline wake: $(cat "$out")"
+    else
+      export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+      FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" FM_STALE_ESCALATE_SECS=999 \
+        watch_bg "$state" "$fakebin" "$out"
+      pid=$!
+      wait_poll_cycle "$state" "$pid" || fail "$case: watcher woke without a due gate deadline: $(cat "$out")"
+      reap "$pid"
+    fi
+  done
+  pass "obsolete runs and unreadable milestones wake Firstmate; fresh and non-gated tasks stay quiet"
 }
 
 # --- non-terminal stale, crew DECLARED a pause: absorbed, re-surfaced on a long
@@ -5993,6 +6031,7 @@ test_provably_working_signal_absorbed
 test_turn_ended_provably_working_absorbed
 test_turn_ended_not_working_surfaced
 test_milestone_deadline_surfaced_once
+test_milestone_deadline_cases
 test_turn_ended_churning_pane_absorbed
 test_turn_ended_churn_resets_prior_stale_classification
 test_turn_ended_churn_resets_wedge_state_before_stale_poll
