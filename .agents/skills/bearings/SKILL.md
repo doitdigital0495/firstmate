@@ -119,6 +119,7 @@ Compose the payload from the same snapshot with the same ranking judgment as the
   Include every snapshot `crew` row, including paused people, present people with unconfirmed progress, project leads, and sampled delegated children.
   Group by captured project associations, resolving repository paths to known project names; do not infer associations from internal identifiers.
   A lead responsible for several projects appears under each; a person whose project is unknown stays visible in the unassigned group.
+  Optionally give each `projects` entry an `id` and include the captain's remembered knowledge as a `knowledge` array, both using the board command's contract; the page then offers a keep / do now / remove choice for each routable row, answered through the board's normal answer path.
   Include work on Firstmate itself or other known non-registry work separately, not as invented registry entries.
   Give every project and person a human-readable name, a one- or two-sentence status, and explained open questions: the issue, the actual choice, and a recommendation or an explicit statement that none is recorded.
   Translate structured questions into plain copy; distinguish a composing recommendation from a recorded recommendation and never invent approval options.

@@ -74,19 +74,47 @@
 #
 # All-tasks status pages additionally carry requests[] with one row per task:
 # {id,title,status,detail,repo,pr_url?}. id is a routing identity, title describes
-# the request, status is plain wording, and detail explains the outcome or wait.
+# the request, status is plain wording the template colors by explicit map
+# (unknown wording stays neutral and the words always stay visible), and
+# detail explains the outcome or wait.
 # Ids must be unique; pr_url is HTTPS only. coverage[] is an optional array of
 # non-empty plain-language notices about unavailable, cached or omitted state.
 # When requests is present, every call requires non-empty about/decide and every
 # authored option requires a non-empty hint, including merge/credential cards.
 # Optional projects[] lists the entire registered portfolio, with additional
-# managed work allowed: {name,delivery,status,detail,questions:[]}.
-# Optional crew[] lists workers/leads: {id,name,role,status,detail,projects:[],questions:[]}.
+# managed work allowed: {name,id?,delivery,status,detail,questions:[]}; its
+# optional id is the triage routing id for that project. Optional crew[] lists
+# workers/leads: {id,name,role,status,detail,projects:[],questions:[]}.
 # Project names and crew ids are unique. Each crew project must name a projects
 # entry; an empty projects list is shown as unassigned, never silently dropped.
 # Every question is {issue,choice,recommendation}, all non-empty plain strings.
 # projects and crew must appear together and require a status-page requests array.
+# Optional knowledge[] lists remembered knowledge entries offered for triage:
+# {id,title,detail}, plain strings with unique ids, rendered as its own section
+# only when the array is present (digest-only payloads may carry it too).
 # Older digest-only payloads may omit requests; no second board or listener is used.
+#
+# KEEP / DO-NOW / REMOVE CHOICES. The template renders one three-choice group
+# with values backlog, now and remove beside every requests row, knowledge
+# entry, project and person whose routing id can route: requests rows and
+# knowledge entries route on their id, crew rows on their id, projects on the
+# optional project id. The three inputs are one radio group, so a row carries
+# exactly one choice or none, and an untouched row sends nothing. A triage id
+# must match [A-Za-z0-9._-] and keep its full triage key within 128 characters,
+# the keyed-answer key limit bin/fm-procevent-lavish.sh accepts; a row whose id
+# cannot route simply renders without choices. Each section's send bar queues
+# every marked row as its own fm-bearings-answer.v1 choice annotation through
+# the board's single Lavish answer path - the same window.lavish.queuePrompt
+# the option cards use; no second listener exists - with question
+# triage.<request|knowledge|project|crew>.<routing id> and the selection
+# backlog, now or remove. Firstmate reads such an answer from the board's
+# captured result like any other choice: bin/fm-procevent-lavish.sh read prints
+# each annotation ("<title> -> <label>"), while the keyed-answer intake
+# (bin/fm-captain-hold.sh answers) skips the triage.* key because it names a
+# triage row, not a captain-held task, so firstmate applies the choice itself
+# from the result read. backlog leaves the row as planned (a request stays on
+# the backlog untouched), now brings the work forward immediately, and remove
+# permanently deletes the backlog row or remembered knowledge entry.
 #
 # Every Underway row likewise carries a non-empty `name`: the durable task name
 # when known, otherwise its durable identifier.
@@ -193,9 +221,14 @@ validate_payload() {  # <data.json>
       type == "object" and (.issue | nonempty_string)
       and (.choice | nonempty_string) and (.recommendation | nonempty_string);
     def questions: (.questions | type == "array") and ([.questions[] | question_item] | all);
+    def triage_id($prefix): . | slug(128 - ($prefix | length));
+    def knowledge_item:
+      type == "object" and (.id | triage_id("triage.knowledge."))
+      and (.title | nonempty_string) and (.detail | nonempty_string);
     def project_item:
       type == "object" and (.name | nonempty_string) and (.delivery | nonempty_string)
-      and (.status | nonempty_string) and (.detail | nonempty_string) and questions;
+      and (.status | nonempty_string) and (.detail | nonempty_string) and questions
+      and ((has("id") | not) or (.id | triage_id("triage.project.")));
     def crew_item:
       type == "object" and (.id | nonempty_string) and (.name | nonempty_string)
       and (.role | nonempty_string) and (.status | nonempty_string)
@@ -246,6 +279,10 @@ validate_payload() {  # <data.json>
       and (([.crew[].id] | unique | length) == (.crew | length))
       and (([.crew[].projects[]] - [.projects[].name]) | length == 0)
       else true end)
+    and ((has("knowledge") | not)
+      or ((.knowledge | type == "array")
+        and ([.knowledge[] | knowledge_item] | all)
+        and (([.knowledge[].id] | unique | length) == (.knowledge | length))))
     and ([.captains_call[] | call_item] | all)
     and ([.underway[] | underway_item] | all)
     and ([.landed[] | landed_item] | all)

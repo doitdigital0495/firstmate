@@ -2,10 +2,13 @@
 // shim and print what the renderer actually produced, so board behavior is
 // asserted through the real template rather than by reading its source.
 //
-// Usage: node board-render-harness.mjs <built-board.html> [answer]
+// Usage: node board-render-harness.mjs <built-board.html> [answer|triage [choice [key-substring [mark]]]]
 // Prints rendered stats, task rows (including disclosures and status tones),
-// section visibility, queued answer context, empty/more labels and errors.
-// The optional answer mode submits the first card with its first radio and note.
+// section visibility, keep/do-now/remove triage groups, triage send bars,
+// queued answer context, empty/more labels and errors.
+// The answer mode submits the first card with its first radio and note. The
+// triage mode marks the given choice (default remove) on every matching group
+// and clicks every section's send bar, exercising the choice-answer path.
 import { readFileSync } from "node:fs";
 
 const html = readFileSync(process.argv[2], "utf8");
@@ -38,6 +41,7 @@ class Node {
   set textContent(v) { this._text = String(v); this.children = []; }
   appendChild(n) { n.parentNode = this; this.children.push(n); return n; }
   setAttribute(k, v) { this.attributes[k] = v; }
+  getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null; }
   addEventListener(event, handler) { this.listeners[event] = handler; }
   querySelectorAll(sel) {
     const want = sel.replace(/^\./, "").replace(/:checked$/, "");
@@ -99,6 +103,58 @@ const badgesOf = (row) =>
     .filter((c) => c.className.includes("fm-badge"))
     .map((c) => ({ tone: c.className.replace(/.*fm-badge--/, "").trim(), text: c.textContent }));
 
+const walkAll = (n) => n.children.flatMap((c) => [c, ...walkAll(c)]);
+const hasClass = (n, cls) => n.className.split(/\s+/).includes(cls);
+// Keep / do-now / remove: one three-radio group per listed row.
+const triageNodesOf = (node) => walkAll(node).filter((c) => hasClass(c, "bb-triage"));
+const triageOf = (node) => {
+  const group = triageNodesOf(node)[0];
+  if (!group) return null;
+  return {
+    key: group.attributes["data-triage-key"] ?? "",
+    title: group.attributes["data-triage-title"] ?? "",
+    choices: walkAll(group).filter((c) => hasClass(c, "bb-triage__pick")).map((i) => ({
+      value: i.value,
+      label: i.attributes["data-label"] ?? "",
+      name: i.name,
+    })),
+    sent: group.classList.contains("is-queued"),
+  };
+};
+
+// Answer modes run before extraction so printed state reflects the submitted
+// answer, not the pre-click page.
+if (process.argv[3] === "answer") {
+  const walk = (n) => n.children.flatMap((c) => [c, ...walk(c)]);
+  const nodes = walk(byId.get("bb-call"));
+  const form = nodes.find((n) => n.tagName === "form");
+  const radio = nodes.find((n) => n.type === "radio");
+  const note = nodes.find((n) => n.name === "note");
+  radio.checked = true;
+  if (note) note.value = "a note";
+  form.listeners.submit({ preventDefault() {} });
+}
+if (process.argv[3] === "triage") {
+  // Mark the given choice (default remove) on every group whose key contains
+  // the optional substring, fire the change listeners, then click every
+  // section's send bar. "mark" as a fourth argument stops before the click, so
+  // a test can assert the pending-count state the bar shows.
+  const want = process.argv[4] ?? "remove";
+  const only = process.argv[5] ?? "";
+  for (const g of ["bb-requests", "bb-knowledge", "bb-projects"].flatMap((id) => triageNodesOf(byId.get(id) ?? new Node("div")))) {
+    if (only && !(g.attributes["data-triage-key"] ?? "").includes(only)) continue;
+    const pick = walkAll(g).find((c) => hasClass(c, "bb-triage__pick") && c.value === want);
+    if (!pick) continue;
+    pick.checked = true;
+    g.listeners.change?.();
+  }
+  if (process.argv[6] !== "mark") {
+    for (const id of ["bb-requests-triage", "bb-knowledge-triage", "bb-projects-triage"]) {
+      byId.get(id + "-btn")?.listeners.click?.();
+    }
+  }
+}
+
 const strip = byId.get("bb-stats") || new Node("div");
 const stats = strip.children.map((t) => ({
   n: Number(t.children.find((c) => c.className.includes("bb-stat__num"))?.textContent),
@@ -141,8 +197,10 @@ const more = ch.children.filter((c) => c.className.includes("bb-morechip")).map(
 const requests = (byId.get("bb-requests")?.children || []).map((row) => ({
   title: row.children[0]?.textContent,
   status: row.children[1]?.children[0]?.textContent,
+  tone: badgesOf(row.children[1] ?? new Node("div"))[0]?.tone ?? "",
   detail: row.children[1]?.children[1]?.textContent,
   href: row.children[1]?.children.find((c) => c.tagName === "a")?.href ?? "",
+  triage: triageOf(row),
 }));
 const cards = (byId.get("bb-call")?.children || [])
   .filter((c) => c.className.split(/\s+/).includes("bb-decision"))
@@ -156,29 +214,48 @@ const coverage = (byId.get("bb-coverage")?.children || []).map((n) => n.textCont
 const projects = (byId.get("bb-projects")?.children || []).map((card) => ({
   name: card.querySelectorAll(".bb-project__name")[0]?.textContent,
   delivery: card.querySelectorAll(".bb-project__delivery")[0]?.textContent,
+  tone: badgesOf(card)[0]?.tone ?? "",
   text: card.textContent,
+  triageKeys: triageNodesOf(card).map((g) => g.attributes["data-triage-key"] ?? ""),
   people: card.querySelectorAll(".bb-person").map((person) => ({
     name: person.querySelectorAll(".bb-person__name")[0]?.textContent,
     role: person.querySelectorAll(".bb-person__role")[0]?.textContent,
+    tone: badgesOf(person)[0]?.tone ?? "",
     questions: person.querySelectorAll(".bb-question").map((q) => q.textContent),
+    triage: triageOf(person),
     text: person.textContent,
   })),
 }));
+const knowledge = (byId.get("bb-knowledge")?.children || []).map((row) => ({
+  title: walkAll(row).find((c) => hasClass(c, "bb-row__title"))?.textContent ?? "",
+  detail: walkAll(row).find((c) => hasClass(c, "bb-row__sub"))?.textContent ?? "",
+  triage: triageOf(row),
+}));
+const knowledgeHidden = byId.get("bb-knowledge-section")?.hidden ?? true;
+const triageGroups = ["bb-requests", "bb-knowledge", "bb-projects"]
+  .flatMap((id) => triageNodesOf(byId.get(id) ?? new Node("div")))
+  .map((g) => ({
+    key: g.attributes["data-triage-key"] ?? "",
+    title: g.attributes["data-triage-title"] ?? "",
+    choices: walkAll(g).filter((c) => hasClass(c, "bb-triage__pick")).map((i) => ({ value: i.value, name: i.name })),
+    sent: g.classList.contains("is-queued"),
+  }));
+const triageBars = ["bb-requests-triage", "bb-knowledge-triage", "bb-projects-triage"].map((id) => {
+  const bar = byId.get(id);
+  if (!bar) return { id, missing: true };
+  return {
+    id,
+    hidden: bar.hidden,
+    count: byId.get(id + "-count")?.textContent ?? "",
+    disabled: byId.get(id + "-btn")?.disabled ?? null,
+    queued: bar.classList.contains("is-queued"),
+  };
+});
 const sections = Object.fromEntries(["current", "call", "charted", "landed"].map((name) =>
   [name, { hidden: byId.get("bb-" + name + "-section")?.hidden ?? false }]));
 const idle = !(byId.get("bb-idle")?.hidden ?? true);
 const projectsHidden = byId.get("bb-projects-section")?.hidden ?? true;
 // Section order is static markup in the built page, so read it from that output.
 const order = [...html.matchAll(/id="bb-(\w+)-section"/g)].map((m) => m[1]);
-if (process.argv[3] === "answer") {
-  const walk = (n) => n.children.flatMap((c) => [c, ...walk(c)]);
-  const nodes = walk(byId.get("bb-call"));
-  const form = nodes.find((n) => n.tagName === "form");
-  const radio = nodes.find((n) => n.type === "radio");
-  const note = nodes.find((n) => n.name === "note");
-  radio.checked = true;
-  if (note) note.value = "a note";
-  form.listeners.submit({ preventDefault() {} });
-}
 process.stdout.write(
-  JSON.stringify({ stats, underway, charted, sections, order, idle, projectsHidden, queued, empty, more, requests, cards, projects, coverage, error: errorText }) + "\n");
+  JSON.stringify({ stats, underway, charted, sections, order, idle, projectsHidden, knowledgeHidden, queued, empty, more, requests, cards, projects, knowledge, triageGroups, triageBars, coverage, error: errorText }) + "\n");

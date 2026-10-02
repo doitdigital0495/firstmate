@@ -343,8 +343,64 @@ test_build_refuses_malformed_payloads_before_touching_the_board() {
     [ "$rc" -ne 0 ] || fail "invalid project/crew payload was accepted: $invalid_projects"
   done
 
+  # knowledge[] is optional, but a present array must carry routable ids and
+  # readable text; project ids are optional but must route when present.
+  for invalid_knowledge in \
+    '"not-an-array"' \
+    '[{"id":"k1","title":"Title","detail":""}]' \
+    '[{"id":"k1","title":"Title","detail":"Detail"},{"id":"k1","title":"Again","detail":"Detail"}]' \
+    '[{"id":"bad id","title":"Title","detail":"Detail"}]' \
+    '[{"id":42,"title":"Title","detail":"Detail"}]' \
+    '[{"id":"k1","title":"","detail":"Detail"}]'; do
+    write_valid_payload "$data"
+    jq --argjson knowledge "$invalid_knowledge" '.knowledge = $knowledge' "$data" > "$data.tmp" \
+      && mv "$data.tmp" "$data"
+    set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+    [ "$rc" -ne 0 ] || fail "invalid knowledge payload was accepted: $invalid_knowledge"
+  done
+
+  # A triage id must keep its full triage key within the 128-character keyed-answer
+  # key limit: triage.knowledge.<id> leaves 111 characters for the id.
+  write_valid_payload "$data"
+  jq --arg id "$(printf 'k%.0s' $(seq 1 112))" '.knowledge = [{id:$id,title:"Title",detail:"Detail"}]' "$data" > "$data.tmp" \
+    && mv "$data.tmp" "$data"
+  set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+  [ "$rc" -ne 0 ] || fail "a knowledge id that breaks the triage key limit was accepted"
+
+  for invalid_project_id in 'bad id' "$(printf 'p%.0s' $(seq 1 114))"; do
+    write_valid_payload "$data"
+    jq --arg id "$invalid_project_id" '.requests=[] | .captains_call=[] |
+      .projects=[{name:"sample",id:$id,delivery:"Changes stay local.",status:"Working",detail:"Still managed.",questions:[]}] |
+      .crew=[{id:"one",name:"A person",role:"Worker",status:"Working",detail:"Checking the report.",projects:["sample"],questions:[]}]' \
+      "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+    set +e; out=$(run_board "$home" build "$data" 2>&1); rc=$?; set -e
+    [ "$rc" -ne 0 ] || fail "an invalid project triage id was accepted: $invalid_project_id"
+  done
+
   assert_absent "$board" "a refused payload still produced a board"
   pass "build refuses malformed payloads before touching the board"
+}
+
+test_build_accepts_optional_knowledge_and_triage_ids_at_their_limits() {
+  local home data board out
+  home=$(make_home triage-limits)
+  data="$home/payload.json"
+  board="$home/.lavish/bearings-board.html"
+  write_valid_payload "$data"
+  # 111 id characters keep triage.knowledge.<id> exactly at the 128-character
+  # keyed-answer key limit; a project id rides along on a minimal portfolio.
+  jq --arg kid "$(printf 'k%.0s' $(seq 1 111))" --arg pid "p-one" '
+    .requests=[] | .captains_call=[] | .coverage=[]
+    | .knowledge=[{id:$kid,title:"Deploys run through the canary pipeline",detail:"Never push straight to production."}]
+    | .projects=[{name:"sample",id:$pid,delivery:"Changes stay local.",status:"Working",detail:"Still managed.",questions:[]}]
+    | .crew=[{id:"one",name:"A person",role:"Worker",status:"Working",detail:"Checking the report.",projects:["sample"],questions:[]}]' \
+    "$data" > "$data.tmp" && mv "$data.tmp" "$data"
+  out=$(run_board "$home" build "$data") || fail "a payload with optional knowledge and triage ids did not build: $out"
+  assert_present "$board" "an accepted optional-fields payload produced no board"
+  extract_payload "$board" | jq -e --arg kid "$(printf 'k%.0s' $(seq 1 111))" '
+    .knowledge[0].id == $kid and .projects[0].id == "p-one" and .crew[0].id == "one"
+  ' >/dev/null || fail "the built board did not carry the optional knowledge and triage ids"
+  pass "build accepts optional knowledge and triage ids up to the key limit"
 }
 
 test_build_injects_binds_then_arms() {
@@ -821,6 +877,7 @@ test_build_refuses_a_nondecision_reconcile_value() {
 
 test_path_is_stable_and_home_scoped
 test_build_refuses_malformed_payloads_before_touching_the_board
+test_build_accepts_optional_knowledge_and_triage_ids_at_their_limits
 test_charted_kind_is_optional_and_accepts_both_values
 test_build_injects_binds_then_arms
 test_registration_cannot_consume_before_any_origin_binding
