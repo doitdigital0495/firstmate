@@ -1,0 +1,58 @@
+{
+  "schema": "fm-bearings-board.v1",
+  "home": "lab-home",
+  "generated": "2026-10-02T09:00Z",
+  "prs_live": false,
+  "captains_call": [
+    {
+      "key": "merge.sample-task",
+      "type": "merge",
+      "repo": "sample",
+      "title": "Merge: sample change",
+      "detail": "validation green",
+      "task_id": "sample-task",
+      "pr_url": "https://github.com/example/sample/pull/1",
+      "checks": "green",
+      "risk": "low",
+      "options": [
+        {
+          "value": "merge",
+          "label": "Merge now"
+        },
+        {
+          "value": "hold",
+          "label": "Not yet"
+        }
+      ],
+      "allow_freeform": true
+    }
+  ],
+  "underway": [
+    {
+      "id": "fix-login",
+      "repo": "sample",
+      "name": "Fix login redirect",
+      "state": "working",
+      "kind": "ship",
+      "doing": "no-mistakes: review round 2"
+    }
+  ],
+  "landed": [
+    {
+      "id": "docs-tidy",
+      "repo": "sample",
+      "what": "Docs tidy",
+      "pr_url": "https://github.com/example/sample/pull/2"
+    }
+  ],
+  "charted": [
+    {
+      "id": "sample-queued",
+      "repo": "sample",
+      "title": "Queued work",
+      "reason": "",
+      "dispatchable": true
+    }
+  ],
+  "charted_more": 0
+}

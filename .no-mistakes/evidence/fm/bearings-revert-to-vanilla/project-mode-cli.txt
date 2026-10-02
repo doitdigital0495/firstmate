@@ -1,0 +1,21 @@
+$ fm-project-mode.sh alpha
+direct-PR on
+exit=0
+$ fm-project-mode.sh --raw beta
+no-mistakes-prod-only off
+exit=0
+$ fm-project-mode.sh beta
+no-mistakes off
+exit=0
+$ fm-project-mode.sh gamma
+warn: unknown mode "no-mistakez" for gamma; defaulting to no-mistakes off
+no-mistakes off
+exit=0
+$ fm-project-mode.sh missing
+warn: project "missing" not in registry; defaulting to no-mistakes off
+no-mistakes off
+exit=0
+$ fm-project-mode.sh --list-json
+warn: project "--list-json" not in registry; defaulting to no-mistakes off
+no-mistakes off
+exit=0
