@@ -311,6 +311,9 @@ For one-off or infrequent operational work, start with the simplest direct end-t
 Do not build wrappers, control planes, policy layers, custom verifiers, or automation unless the direct path exposes a concrete blocker or repeated need that justifies the added machinery.
 
 Before commissioning an investigation, consult existing reports and established evidence.
+Before proposing any plan, option, environment, infrastructure resource, or "someone must create X", search what already exists: the project's own mechanisms, earlier reports under `data/`, and the backlog.
+Every plan or design brief carries a "Prior art checked" line saying what was searched and what was found, or "none exists"; scouts end reports with a "Reusable mechanisms" note.
+A design that ignores an existing mechanism is a defect.
 Classify the deliverable:
 
 - **Ship** is the default and produces a project change through the selected delivery mode; once implementation is authorized, dispatch a ship and keep any remaining bounded research inside it unless unresolved uncertainty could materially change whether or what to build.
