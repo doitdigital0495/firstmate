@@ -83,8 +83,10 @@
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
-# There is no --yolo flag here. The worker never owns merge decisions, so yolo is
-# a spawn-time and firstmate-side input only (AGENTS.md section 7).
+# There is no --yolo flag here; yolo is a spawn-time and firstmate-side input
+# only (AGENTS.md section 7).
+# docs/configuration.md "Operational home layout and state" owns the optional
+# home-private project brief addendum mechanism.
 # Every scaffold's status protocol distinguishes the configured
 # declared-external-wait verb (FM_CLASSIFY_PAUSED_VERB, default "paused") from
 # "blocked:": pause for a known external wait expected to clear on its own,
@@ -378,6 +380,16 @@ exit 0
 fi
 
 REPO=${POS[1]}
+PROJECT_SECTION=
+case "$REPO" in
+  ''|.|..|*[!a-zA-Z0-9_.-]*) ;; # Caller-supplied paths cannot select addenda.
+  *)
+    PROJECT_ADDENDUM="$FM_HOME/config/brief-addenda/$REPO.md"
+    if [ -f "$PROJECT_ADDENDUM" ]; then
+      PROJECT_SECTION=$(<"$PROJECT_ADDENDUM")
+    fi
+    ;;
+esac
 
 if [ "$HERDR_LAB" -eq 1 ]; then
 HERDR_LAB_HELPER=$(shell_quote "$FM_ROOT/bin/fm-herdr-lab.sh")
@@ -421,6 +433,7 @@ IFS= read -r -d '' TASK_SECTION <<'EOF' || true
 
 ## Firstmate spec
 {FIRSTMATE_SPEC}
+For standing answers and captain-facing report questions, route to firstmate, which applies `ask-user-authority`.
 EOF
 TASK_SECTION=${TASK_SECTION%$'\n'}
 
@@ -444,6 +457,8 @@ cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
 $TASK_SECTION
+
+$PROJECT_SECTION
 
 $HERDR_SECTION
 
@@ -538,6 +553,8 @@ cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
 $TASK_SECTION
+
+$PROJECT_SECTION
 
 $HERDR_SECTION
 
