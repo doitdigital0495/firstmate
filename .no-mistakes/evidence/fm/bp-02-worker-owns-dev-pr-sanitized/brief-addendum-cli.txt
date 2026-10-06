@@ -1,0 +1,57 @@
+== ship brief (no-mistakes) with addendum ==
+scaffolded: /tmp/tmp.jh9EH4mqu4/data/t-ship/brief.md (ship, mode=no-mistakes; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})
+rc=0
+# Task
+## Captain's intent
+{TASK}
+
+## Request checklist
+{ASKS}
+
+## Firstmate spec
+{FIRSTMATE_SPEC}
+
+# Project standing instructions
+Turn on auto-complete for your own PR to the named branches, then continue to the live check.
+## Portal steps
+Hand over portal steps instead of asking for access.
+
+
+== heading order ==
+3:# Task
+13:# Project standing instructions
+18:# Herdr lifecycle declaration - NOT ENABLED
+23:# Work economy
+28:# Setup
+38:# Rules
+81:# Firstmate instruction inbox
+86:# Project memory
+93:# Definition of done
+
+== rule 6 routing line ==
+62:   For standing answers and captain-facing report questions, route to firstmate, which applies `ask-user-authority`.
+
+== scout with addendum ==
+scaffolded: /tmp/tmp.jh9EH4mqu4/data/t-scout/brief.md (scout; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})
+rc=0
+3:# Task
+13:# Project standing instructions
+14:Turn on auto-complete for your own PR to the named branches, then continue to the live check.
+18:# Herdr lifecycle declaration - NOT ENABLED
+23:# Work economy
+28:# Setup
+34:# Rules
+73:# Firstmate instruction inbox
+78:# Definition of done
+
+== traversal / nonmatching repo args ==
+repo=other rc=0 addendum_hits=0
+repo=../config/brief-addenda/demo-proj rc=0 addendum_hits=0
+repo=demo-proj/ rc=0 addendum_hits=0
+repo=. rc=0 addendum_hits=0
+
+== empty addendum ==
+rc=0 heading_count=0
+
+== secondmate charter ==
+rc=0 addendum_hits=0

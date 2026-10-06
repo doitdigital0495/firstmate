@@ -1,0 +1,2 @@
+previous-commit e7128be brief, only {FIRSTMATE_SPEC} unfilled -> ACCEPTED (placeholder missed)
+target 8c0db97 brief, only {FIRSTMATE_SPEC} unfilled -> REFUSED (placeholder detected)
