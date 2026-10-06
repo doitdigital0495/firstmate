@@ -241,6 +241,7 @@ test_project_brief_addendum() {
     brief="$home/data/addendum-$mode/brief.md"
     assert_grep '# Synthetic home addendum' "$brief" "home addendum missing from emitted brief"
     assert_grep 'Home-local fixture marker.' "$brief" "home addendum body lost"
+    grep -qx '# Project standing instructions' "$brief" || fail "addendum rendered without its own top-level heading"
     grep -qx "Delivery contract: mode=$mode" "$brief" || fail "addendum changed the selected mode"
     intent=$(awk '/^## Captain.s intent$/ { active=1; next } active && /^## / { exit } active { print }' "$brief")
     if printf '%s\n' "$intent" | grep -F 'Home-local fixture marker.' >/dev/null; then

@@ -45,7 +45,7 @@ A new product or access guarantee still uses the escalation criteria above; a fa
 | --- | --- |
 | Small documentation correction outside the anticipated file list | Fix it in the same PR through the active gate, without a new captain ask, when it keeps documentation accurate for already accepted behavior rather than adding a new requirement. |
 | Machine-limit Test failure | Approve the gate with the limitation recorded and leave the affected test to CI when the failure is attributable to local resource limits, not an unexplained assertion or product failure, and CI will run the affected test. |
-| UAT is missing its configured test script | Run the targeted tests available on UAT instead and return that evidence through the gate when the configured script is absent on that release branch and the replacement tests exercise the changed behavior, recording any coverage that remains unavailable. |
+| A non-production environment is missing its configured test script | Run the targeted tests available in that environment instead and return that evidence through the gate when the configured script is absent on the branch under test, in any non-production environment, and the replacement tests exercise the changed behavior, recording any coverage that remains unavailable; this is never a skip or waiver of testing. |
 | Stale generated file | Include the regenerated file in the same PR through the gate when the repository's generator produces it from the accepted change or current authoritative inputs, with no unrelated semantic expansion. |
 
 Record the matched kind, relevant evidence, and returned answer in the task's decision record.

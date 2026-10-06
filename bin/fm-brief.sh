@@ -387,6 +387,8 @@ case "$REPO" in
     PROJECT_ADDENDUM="$FM_HOME/config/brief-addenda/$REPO.md"
     if [ -f "$PROJECT_ADDENDUM" ]; then
       PROJECT_SECTION=$(<"$PROJECT_ADDENDUM")
+      [ -z "$PROJECT_SECTION" ] || PROJECT_SECTION="# Project standing instructions
+$PROJECT_SECTION"
     fi
     ;;
 esac
@@ -433,7 +435,6 @@ IFS= read -r -d '' TASK_SECTION <<'EOF' || true
 
 ## Firstmate spec
 {FIRSTMATE_SPEC}
-For standing answers and captain-facing report questions, route to firstmate, which applies `ask-user-authority`.
 EOF
 TASK_SECTION=${TASK_SECTION%$'\n'}
 
@@ -493,6 +494,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   For standing answers and captain-facing report questions, route to firstmate, which applies \`ask-user-authority\`.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
@@ -593,6 +595,7 @@ $RULE1
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   For standing answers and captain-facing report questions, route to firstmate, which applies \`ask-user-authority\`.
 $ASK_USER_BLOCK
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
