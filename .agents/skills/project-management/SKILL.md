@@ -23,6 +23,7 @@ Projects live flat under `projects/`, and `data/projects.md` is the private flee
 Use the registry format and parser contract owned by the header of `bin/fm-project-mode.sh`.
 Keep each registry description useful for identifying the project, but keep delivery posture, captain-private state, and detailed project knowledge in their existing designated homes.
 Do not turn the registry into project documentation.
+For home-private worker standing instructions, use the `config/brief-addenda/` mechanism owned by [Configuration](../../../docs/configuration.md#operational-home-layout-and-state).
 
 Before adding, cloning, creating, or registering any project in the main home, inspect the authoritative `data/secondmates.md` routing table and judge every existing natural-language `scope:` against the proposed project or domain.
 Apply `AGENTS.md` section 7's authoritative secondmate routing rules; if an existing scope owns that domain, route the new-project operation or work there instead of creating or registering a duplicate main-home clone.

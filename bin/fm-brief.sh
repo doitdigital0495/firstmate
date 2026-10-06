@@ -83,8 +83,10 @@
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
-# There is no --yolo flag here. The worker never owns merge decisions, so yolo is
-# a spawn-time and firstmate-side input only (AGENTS.md section 7).
+# There is no --yolo flag here; yolo is a spawn-time and firstmate-side input
+# only (AGENTS.md section 7).
+# docs/configuration.md "Operational home layout and state" owns the optional
+# home-private project brief addendum mechanism.
 # Every scaffold's status protocol distinguishes the configured
 # declared-external-wait verb (FM_CLASSIFY_PAUSED_VERB, default "paused") from
 # "blocked:": pause for a known external wait expected to clear on its own,
@@ -378,6 +380,18 @@ exit 0
 fi
 
 REPO=${POS[1]}
+PROJECT_SECTION=
+case "$REPO" in
+  ''|.|..|*[!a-zA-Z0-9_.-]*) ;; # Caller-supplied paths cannot select addenda.
+  *)
+    PROJECT_ADDENDUM="$FM_HOME/config/brief-addenda/$REPO.md"
+    if [ -f "$PROJECT_ADDENDUM" ]; then
+      PROJECT_SECTION=$(<"$PROJECT_ADDENDUM")
+      [ -z "$PROJECT_SECTION" ] || PROJECT_SECTION="# Project standing instructions
+$PROJECT_SECTION"
+    fi
+    ;;
+esac
 
 if [ "$HERDR_LAB" -eq 1 ]; then
 HERDR_LAB_HELPER=$(shell_quote "$FM_ROOT/bin/fm-herdr-lab.sh")
@@ -445,6 +459,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 
 $TASK_SECTION
 
+$PROJECT_SECTION
+
 $HERDR_SECTION
 
 $WORK_ECONOMY_SECTION
@@ -478,6 +494,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   For standing answers and captain-facing report questions, route to firstmate, which applies \`ask-user-authority\`.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
@@ -539,6 +556,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 
 $TASK_SECTION
 
+$PROJECT_SECTION
+
 $HERDR_SECTION
 
 $WORK_ECONOMY_SECTION
@@ -576,6 +595,7 @@ $RULE1
 5. If you hit the same obstacle twice, append \`blocked [at=<epoch>]: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
+   For standing answers and captain-facing report questions, route to firstmate, which applies \`ask-user-authority\`.
 $ASK_USER_BLOCK
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.

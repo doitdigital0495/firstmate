@@ -226,6 +226,61 @@ test_ship_modes_generate_clean_briefs() {
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 
+# Project addenda are rendered instructions, not a new delivery mode or a
+# transfer of supervisor authority to workers in unrelated repositories.
+test_project_brief_addendum() {
+  local home other mode brief kind repo rc intent
+  home="$TMP_ROOT/addendum-home"
+  other="$TMP_ROOT/no-addendum-home"
+  mkdir -p "$home/data" "$home/config/brief-addenda" "$other/data"
+  printf '%s\n' '# Synthetic home addendum' 'Home-local fixture marker.' > "$home/config/brief-addenda/sample-project.md"
+  for mode in no-mistakes direct-PR local-only; do
+    FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+      "$ROOT/bin/fm-brief.sh" "addendum-$mode" sample-project --mode "$mode" >/dev/null 2>&1; rc=$?
+    expect_code 0 "$rc" "$mode scaffold with home addendum failed"
+    brief="$home/data/addendum-$mode/brief.md"
+    assert_grep '# Synthetic home addendum' "$brief" "home addendum missing from emitted brief"
+    assert_grep 'Home-local fixture marker.' "$brief" "home addendum body lost"
+    grep -qx '# Project standing instructions' "$brief" || fail "addendum rendered without its own top-level heading"
+    grep -qx "Delivery contract: mode=$mode" "$brief" || fail "addendum changed the selected mode"
+    intent=$(awk '/^## Captain.s intent$/ { active=1; next } active && /^## / { exit } active { print }' "$brief")
+    if printf '%s\n' "$intent" | grep -F 'Home-local fixture marker.' >/dev/null; then
+      fail "private addendum contaminated captain intent"
+    fi
+    if [ "$mode" = local-only ]; then
+      assert_grep 'Never push to any remote and never open a PR' "$brief" "local-only rule lost"
+    fi
+  done
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" addendum-scout sample-project --scout >/dev/null 2>&1; rc=$?
+  expect_code 0 "$rc" "scout with home addendum failed"
+  brief="$home/data/addendum-scout/brief.md"
+  assert_grep '# Synthetic home addendum' "$brief" "scout addendum missing"
+  assert_grep 'Never push to any remote and never open a PR' "$brief" "scout gained a PR contract"
+
+  kind=0
+  for repo in unrelated sample-project.git ../brief-addenda/sample-project; do
+    kind=$((kind + 1))
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "no-addendum-$kind" "$repo" --mode direct-PR >/dev/null 2>&1; rc=$?
+    expect_code 0 "$rc" "nonmatching project scaffold failed"
+    brief="$home/data/no-addendum-$kind/brief.md"
+    assert_no_grep '# Synthetic home addendum' "$brief" "addendum selected for a different name or traversal"
+    assert_grep 'Never merge a PR' "$brief" "generic merge prohibition lost"
+  done
+
+  FM_HOME="$other" FM_ROOT_OVERRIDE="$ROOT" \
+    "$ROOT/bin/fm-brief.sh" other-home sample-project --mode direct-PR > "$other/scaffold.out" 2> "$other/scaffold.err"; rc=$?
+  expect_code 0 "$rc" "missing home addendum should be optional"
+  [ ! -s "$other/scaffold.err" ] || fail "missing addendum was not silent"
+  assert_no_grep '# Synthetic home addendum' "$other/data/other-home/brief.md" "addendum leaked across operational homes"
+
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise sample tasks.' \
+    "$ROOT/bin/fm-brief.sh" addendum-mate --secondmate sample-project >/dev/null 2>&1; rc=$?
+  expect_code 0 "$rc" "secondmate scaffold failed"
+  assert_no_grep '# Synthetic home addendum' "$home/data/addendum-mate/brief.md" "worker addendum leaked into a supervisor charter"
+  pass "fm-brief.sh: private addenda render for exact projects and homes, outside intent, preserving mode and role limits"
+}
+
 # Work economy must reach every worker brief regardless of mode or safety gate,
 # without placing execution instructions in a secondmate supervisor charter.
 test_work_economy_in_all_worker_briefs() {
@@ -1181,6 +1236,7 @@ test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_project_brief_addendum
 test_work_economy_in_all_worker_briefs
 test_fast_lane_scaffold_and_refusals
 test_preview_on_push_scaffold_and_refusals

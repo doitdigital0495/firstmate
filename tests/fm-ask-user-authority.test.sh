@@ -27,6 +27,12 @@ test_primary_and_secondmate_instruction_generation() {
     "generated implementation brief does not explain the ask-user authority bypass"
   assert_no_grep 'the captain, not you, owns the ask-user decisions' "$ship" \
     "generated implementation brief retained conflicting captain-only wording"
+  assert_grep 'standing answers and captain-facing report questions' "$ship" \
+    "generated worker brief does not point recurring questions at the policy owner"
+  assert_no_grep 'Machine-limit Test failure' "$ship" \
+    "generated worker brief duplicated the supervisor standing-answer table"
+  assert_no_grep 'Record the matched kind' "$ship" \
+    "generated worker brief transferred repeat-question decisions to the worker"
 
   FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" FM_SECONDMATE_CHARTER='Handle sample work.' \
     "$BRIEF" authority-mate --secondmate --no-projects >/dev/null 2>&1

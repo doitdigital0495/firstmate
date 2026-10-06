@@ -905,6 +905,26 @@ EOF
     "unfilled ship spawn did not name the intent subsection to fill"
   assert_absent "$home/state/$id.meta" "unfilled ship spawn wrote task metadata"
 
+  id=delivery-unfilled-spec-ship
+  mkdir -p "$home/config/brief-addenda"
+  printf '%s\n' 'Plain standing instruction.' '## Standing subsection' 'More text.' \
+    > "$home/config/brief-addenda/proj.md"
+  FM_HOME="$home" "$BRIEF" "$id" proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "spec-unfilled ship brief should still scaffold"
+  brief="$home/data/$id/brief.md"
+  awk '
+    $0 == "{TASK}" { print "Fix the widget."; next }
+    $0 == "{ASKS}" { print "1. [ ] Fix the widget."; next }
+    { print }
+  ' "$brief" > "$brief.filled" && mv "$brief.filled" "$brief"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
+  status=$?
+  rm -f "$home/config/brief-addenda/proj.md"
+  [ "$status" -ne 0 ] || fail "spawn of a brief with only the spec unfilled should exit non-zero"
+  assert_contains "$out" "still contains {TASK}, {ASKS}, or {FIRSTMATE_SPEC}" \
+    "spec-only unfilled ship spawn was not refused"
+  assert_absent "$home/state/$id.meta" "spec-only unfilled ship spawn wrote task metadata"
+
   id=delivery-filled-ship
   FM_HOME="$home" "$BRIEF" "$id" proj --mode direct-PR >/dev/null 2>&1 \
     || fail "filled-ship brief should scaffold"
