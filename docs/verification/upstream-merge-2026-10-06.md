@@ -1,118 +1,169 @@
-# Upstream integration verification - 2026-10-06
+# Upstream integration verification — 2026-10-06 task
 
-Reconciliation checkpoint, not a merge-ready or deployment claim. The initial
-ancestry integration joins upstream `e06a46fec726071618da0460f0de552d4d078ef1`
-and fork `524e4105fbd46343c68c0048b2e331c428788097`. A fresh fetch on
-2026-10-07 found four more upstream commits, through
-`237e1cf3b035e20c151e8233a0ab842bd1e94e2d`; those require a subsequent real
-merge and final validation. Fork main is unchanged.
+Local reconciliation evidence, not a CI-ready, landing, or deployment claim.
+The frozen 49-suite aggregate, strict Pi types and single real-agent tmux E2E
+are green through captured `53b5bc11`. Three newer upstream commits through
+`47aff866` require integration and fresh validation before no-mistakes review.
 
-## Verified at this checkpoint
+## Source snapshots and ancestry
 
-All suites below ran through `bin/fm-test-run.sh --jobs 1` in the isolated task
-worktree. No live Herdr lifecycle or authenticated live harness was driven.
+- Fork main: `524e4105fbd46343c68c0048b2e331c428788097`, unchanged on fresh fetches.
+- Initial upstream target: `e06a46fec726071618da0460f0de552d4d078ef1`.
+- Initial real merge: `78adb3c05ca668a3a2459e4f09464eaa59d6805d`; parents are the fork and initial upstream above.
+- Four subsequent upstream commits through `237e1cf3b035e20c151e8233a0ab842bd1e94e2d` were merged in `5f30cb817083fb8e87f2296d2c2cf5622315f2a8`, whose parents are the initial merge and that upstream target.
+- Latest captured upstream: `53b5bc11035877d1eb0e675d37414815d5d485f2`, a shared Calm working-widget fix. Its real merge applied cleanly and awaits final proof/commit.
+- No rebase or squash was used. The [per-file conflict decisions](upstream-merge-2026-10-06-conflicts.md) cover the initial 124 conflicts; both later integrations applied without conflicts.
 
-| Check | Observed result | What it establishes |
-| --- | --- | --- |
-| `tests/fm-brief.test.sh` | exit 0, 2026-10-06 | Combined branch/base/forge contracts, fork request accounting, home-private addenda/include, and generated-worker instructions |
-| `tests/fm-dispatch-resolve.test.sh` | exit 0; 50,448 ms; 2026-10-06T19:38:40Z | OpenRouter/default and direct fallback, batched Choices, per-rule floors and low-confidence runner-up-pool isolation, minimized brief text, never-send checks, per-seat snapshots, completeness/retry gates, schema-5/6 joins, and quota-tier profile preference |
-| `tests/fm-worker-account.test.sh` | exit 0, 2026-10-06 | Claude/Pi pins, sign-in refusals, credential shedding, lean Pi provider/model flags, raw-command protections, and local secondmate pinning |
-| `tests/fm-worker-account-precedence.test.sh` | exit 0; 8,379 ms | Conflicting registered seats refuse before quota/trust/metadata/launch; matching seats use the same recorded/launched store; legacy relaunch bindings, absent pins, and ordinary Claude identity |
-| `tests/fm-backend-tmux-smoke.test.sh` | exit 0; 219 ms | Real create/send/capture/list/kill and missing-endpoint classification on a task-owned private tmux socket with disposable `HOME` |
-| `bin/fm-lint.sh` | exit 0 | ShellCheck 0.11.0 and actionlint 1.7.12; three workflow files valid |
-| `bin/fm-doc-audience-check.sh` | exit 0 | Audience and local-link check: 122 surfaces, 744 links at the preceding checkpoint |
-| `bin/fm-test-run.sh --check-coverage` | exit 0 | 262 scripts; complete/disjoint portable partition; nine serial shards; maximum hinted serial weight 1,088,067 ms within 1,200,000 ms |
+## Recovered test environment
 
-The serial weights conservatively retain the larger prior fork/upstream sample
-for each overlapping script. The new precedence suite uses the local measured
-8,379 ms sample above; it is a scheduling hint, not a CI performance claim.
+All tests use `bin/fm-test-run.sh --jobs 1`. The final invocation has a disposable
+HOME and an empty inherited environment, with only explicit non-secret runtime
+paths/settings supplied. The aggregate drives no live Herdr lifecycle,
+authenticated model or operational home monitoring. The separately authorized
+single real-agent tmux E2E below uses actual Claude authentication.
 
-## Root causes corrected during reconciliation
-
-- `bin/fm-worker-account-lib.sh` owns the effective-store rule. A configured
-  worker pin is authoritative; conflicting explicit or recorded bindings refuse.
-  Spawn resolves it before consuming gates; control reconciles before stop.
-- Resolver evidence construction now binds the complete evidence object before
-  consulting profile preference. Binding only the added fallback object silently
-  lost the preference even though it still appeared in rendered output.
-- Schema-6 plan labels use the same provider/account join as quota eligibility,
-  not the first row for a provider.
-- Schema-6 fixtures carry measured reset evidence. A missing account remains
-  incomplete and never permits selecting around it; it is not weakened into an
-  eligible, unranked alternative.
-
-## Broad integration run
-
-The serial run completed all 26 requested scripts: 17 reported exit 0 and nine
-reported exit 1. These are per-script log receipts, **not a green aggregate**.
-The driver then reported a final parsing error and did not produce its planned
-JSON artifact. Its file had been edited while it was running; current
-`bash -n bin/fm-test-run.sh` succeeds. Freeze the runner before a clean rerun.
-
-Passing scripts included controller relaunch (including changed-pin pre-stop
-refusal), Claude lean/settings, Pi trust, local/remote compact-adviser controls,
-endpoint-safe teardown, quota intake/choice, home identity, fake tmux/Herdr/cmux
-backend contracts, busy-adapter wiring, AI-trailer stripping, and both lint
-contract suites. The Herdr suite uses a fake CLI, not live lifecycle.
-
-Failures requiring environment help:
-
-- Installed `tasks-axi` is 0.2.5; `bin/fm-tasks-axi-lib.sh` requires 0.2.6 plus
-  update and atomic multi-ID move features. This blocked teardown, Orca/Zellij
-  scout teardown, and secondmate lifecycle handoff.
-- Pi export rendering found a Chrome wrapper but no working user-owned browser.
-  No browser installation or shared dependency update was attempted.
-
-Failures requiring further semantic reconciliation:
-
-- Spawn-dispatch-profile secondmate environment assertions failed.
-- Pi-skill exact launch expectations omit the combined inbox and Git-hook wiring.
-- Claude-admission command equality includes different generated operational
-  inbox record paths; validate semantics rather than weakening shaping checks.
-- Devin hook configuration failed to compile a jq expression using `$end`.
-
-No EXIT=143/OOM result was observed. The missing aggregate remains a failure,
-not a waiver.
-
-## Dependency recovery and regression receipts - 2026-10-07
-
-Firstmate authorized an isolated `tasks-axi@0.2.6` installation. The exact tool
-used is
+Firstmate authorized isolated `tasks-axi@0.2.6`. The exact test tool is
 `/home/daan/.treehouse/.firstmate-500bef/3/.firstmate/.no-mistakes/merge-prep/tools/node_modules/.bin/tasks-axi`.
-Its bin directory is prepended to `PATH` only for test invocations. The shared
-`~/.npm-global` installation and production compatibility requirement are
-unchanged. Pi export uses
-`FM_CHROME_BIN=/home/daan/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome`
-and `LD_LIBRARY_PATH=/home/daan/.local/share/agentic-chrome/lib` only for the test
-process; no browser installation or existing profile modification was needed.
+Its bin directory is prepended to PATH only for tests. The global installation
+and production compatibility/features gate are unchanged.
 
-The recovery run produced a valid JSON receipt: nine suites, eight passes and
-one dispatch-profile expectation failure. After correcting that expectation,
-the complete dispatch-profile suite passed (230,296 ms, ending
-2026-10-07T06:32:49Z). Thus all nine formerly failing suites now have individual
-passing receipts; a fresh complete aggregate is still required.
+Kimi requires `tomllib`; an existing Python 3.12.14 at
+`/home/daan/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/bin/python3`
+is selected through test-only PATH. No interpreter or dependency was installed.
 
-| Corrected owner | Root cause and proof |
+Pi export uses the existing Chromium at
+`/home/daan/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome`, with
+`LD_LIBRARY_PATH=/home/daan/.local/share/agentic-chrome/lib` for the test process.
+No browser installation or existing profile modification was needed.
+
+## Executable root-cause regressions
+
+| Owner | Correction and observed proof |
 | --- | --- |
-| `bin/fm-spawn.sh` | Secondmate home assignments must be exports across a compound launch, not assignments affecting only its first command. Dispatch-profile now executes captured launches under available sh/bash/zsh with an explicit Codex store and verifies child home, filtering, cleared state override, and preserved store. |
-| `tests/fm-spawn-dispatch-profile.test.sh` | Parse Claude argument carriers with `shlex`, not by slicing at semicolons inside the system prompt; preserve required `--add-dir` grants and correct shell quoting in the exact launch expectation. Complete suite exit 0. |
-| `tests/fm-spawn-pi-skill.test.sh` | Exact launch expectation retains both task-inbox and Git-hook wiring. Exit 0. |
-| `tests/fm-claude-admission.test.sh` | Use an isolated user home. Validate each typed home-local launch-brief record and its exact body, then normalize only the nonce-bearing record path before command-byte comparison. Exit 0; shaping assertions remain. |
-| `bin/fm-devin-config.sh` | Rename jq's reserved `$end` variable to `$session_end`. Devin contracts exit 0. |
-| Dependency-blocked suites | Teardown, Orca, Zellij, and secondmate lifecycle all exit 0 with the isolated compatible tool. |
-| Pi rendering | Calm/export suite exit 0 with the selected browser; no authenticated live model or live Herdr claim. |
+| `bin/fm-worker-account-lib.sh` | One effective-store rule makes configured pins authoritative; conflicting explicit or recorded seats refuse before consumers. Account/precedence and pre-stop relaunch suites pass. |
+| `bin/fm-dispatch-resolve.sh` | Bind complete jq evidence before preference; join plan labels by provider/account; use the fallback rule's own candidate pool. Complete resolver suite passes, with measured schema-6 fixtures and no selection around missing evidence. |
+| `bin/fm-spawn.sh` | Export secondmate child-home context across compound launches, rather than applying assignments only to their first command. Captured launches execute under available sh/bash/zsh with an explicit Codex store and prove filtering, child home, cleared state override, and retained store. |
+| `tests/fm-spawn-dispatch-profile.test.sh` | Parse carriers with `shlex`, not semicolon slicing inside quoted prompts; retain mandatory directory grants and correct exact shell quoting. Complete suite passes. |
+| `tests/fm-spawn-pi-skill.test.sh` | Exact command retains inbox and Git-hook wiring; suite passes. |
+| `tests/fm-claude-admission.test.sh` | Use an isolated fixture user home; validate each typed home-local launch-brief record and its exact body, then normalize only the nonce path before byte comparison. Shaping assertions pass unchanged. |
+| `bin/fm-devin-config.sh` | Replace reserved jq `$end` with `$session_end`; Devin contracts pass. |
+| `tests/fm-backend.test.sh` | Negative-backend cases now explicitly select disposable user and Firstmate homes. Their previous empty overrides resolved the operator home and hit identity refusal before backend validation. The identity protection is not weakened; the complete suite passes. |
+| `tests/fm-contributions.test.sh` | Serialize expected task names through jq positional args; jq 1.6 NUL splitting otherwise removed the final real name. Complete contribution suite passes. |
+| `tests/fm-pi-branch-extension.test.sh` | Vendor-owned call components are tested through `render()`, not a private Text carrier; the SDK stub models versioned call headers. Complete suite passes, including installed SDK, native execution, and HTML export comparisons. |
 
-Canonical lint passed again after these corrections. Recovery receipts are
-retained as `recovery-tests-1.json`, `dispatch-profile-recovery-2.json`, and
-`lint-recovery.log` in the ignored preparation directory. The earlier invalid
-26-script aggregate remains historical failed evidence and is not reclassified.
+## Frozen aggregate receipts
 
-## Still pending
+The earlier 26-script run is historical failed evidence: 17 per-script passes,
+nine failures, a final parsing error, and no JSON artifact. Source had changed
+while the driver ran; it is not reclassified as green.
 
-- Frozen-runner complete aggregate and remaining harness/backend review,
-  notification retirement, standing-answer, and newly fetched upstream
-  regressions.
-- Final marker/diff/document checks, real merge commit and ancestry proof,
-  no-mistakes exact-head review, fork PR, and CI-green receipt.
-- Captain-approved merge-commit landing and installation update belong to
-  Firstmate after delivery; this checkpoint claims neither.
+After tooling and implementation corrections, the first fresh expanded run
+produced valid JSON (`integration-tests-3.json`):
+
+```text
+FM_TEST_SUMMARY total=49 failed=4 skipped_gate=0 duration_ms=3592068
+runner_exit=1
+```
+
+It ended `2026-10-07T08:00:29Z`. The frozen runner's SHA-256 before and after was
+`3baddc9e7aacffb39ef87dea41dc35e4c423d6326be1bf4d50be538ed0d61eda`.
+The four failures were backend fixture isolation, missing default-interpreter
+`tomllib`, Pi mock/header carrier expectations, and jq-1.6 fixture serialization.
+All now have complete individual passing receipts:
+
+- Backend: 28,789 ms; Kimi: 68,873 ms; contributions: 177,453 ms, in `extended-recovery-1.json`.
+- Pi branch: 76,926 ms, ending `2026-10-07T08:42:04Z`, in `pi-branch-recovery-2.json`.
+
+These individual receipts do not substitute for the final frozen aggregate.
+`integration-tests-4.json` reran all 49 against the latest captured upstream,
+existing compatible Python, and corrected fixtures:
+
+```text
+FM_TEST_SUMMARY total=49 failed=0 skipped_gate=0 duration_ms=3954895
+runner_exit=0
+```
+
+It ended `2026-10-07T10:29:11Z`. Before/after tracked-tree hashes matched
+`4c706a3e0c76b4900b0d0df1b80eaf6e5d2eabdd`; runner hashes also matched.
+Additional installed-SDK account-display coverage passed (5,223 ms). The first
+strict types run skipped for missing `tsc`; that receipt remains partial.
+After isolated tooling authorization, TypeScript 5.9.3 was installed only in
+`.no-mistakes/merge-prep/typescript/`, without top-level package/lock changes.
+`final-pi-account-types-2.json` passed both suites without skips in 8,964 ms,
+ending `2026-10-07T10:43:24Z`, including:
+
+```text
+ok - tracked Pi extensions pass strict no-emit typecheck against Pi 0.86.1
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=8964
+```
+
+Passing expanded coverage includes every supported launch family represented
+by the dispatch matrix and additional Agy, Cursor, Gemini, Grok, Kimi, Muse,
+OMP, Rovo and Devin contracts; secondmate account/home/PID ancestry; mocked
+runtime backends; Git-2.34 landed-content and project-settings dirt checks;
+legacy endpoint authorization; notification retirement; standing-answer
+routing/private brief addenda; new busy-generation, remote continuity, startup
+growth and contribution regressions; and real private-socket tmux E2E.
+
+No EXIT=143/OOM was observed. Herdr tests use a fake CLI, not live lifecycle.
+The latest standalone-Calm slot comparison additionally discloses when the
+optional separate extension is absent; shared-slot replacement/disposal behavior
+is still exercised, not claimed as a live dual-install proof.
+
+## Single authorized real-agent E2E
+
+After captain authorization for normal trust/CLI session bookkeeping, one real
+Claude `opus low` scout launched with explicit `--backend tmux`, fresh quota
+record (240 seconds old at spawn) and a trivial no-op brief. HOME, Firstmate
+home, scratch Git repository, local origin, Treehouse pool and tmux socket were
+fixture-owned. No credential copying, private-store edits by the worker,
+guard bypass or live Herdr was used.
+
+The real agent confirmed its physical isolated worktree and matching Git
+top-level, left the repository clean, wrote `E2E_NOOP_PROCESSED` and a report,
+and appended a done status accounting `asks 1/1`. First teardown correctly
+refused a missing completion inventory: the fixture's restrictive tool list
+had prevented the agent from running that step. After reviewing the full
+report, the owner recorded the empty inventory through `complete --none`;
+teardown passed, the worker endpoint was absent, and only the private fixture
+server was stopped. One agent launch; no second E2E. Finished
+`2026-10-07T13:57:23Z`.
+
+Ignored receipts: `run-live-e2e.log` retains the initial cleanup refusal;
+`live-e2e-1/cleanup-result.log`, `inventory.log`, `teardown-2.log`, the owned
+agent report/status and endpoint capture record final proof. No production
+safety gate was weakened, and the first driver exit is not claimed as green.
+
+## Pipeline ancestry protection
+
+Installed no-mistakes is `v1.79.0 (fc540ac)`; its official tag resolves to
+`fc540aca86bd1ab35daad31c2a2fb20b652f82ab`. Version-matched
+[repository configuration documentation](https://github.com/kunchenguid/no-mistakes/blob/v1.79.0/docs/src/content/docs/reference/repo-config.md)
+provides the relevant evidence:
+
+> Set to `0` to disable the follow-up auto-fix loop for a step (findings require manual approval).
+
+> `auto_fix.ci` covers the CI step's CI failure and merge-conflict auto-fix attempts.
+
+> A CI merge-conflict repair is the exception: it rebases onto the base branch whichever strategy is set.
+
+Accordingly the configuration used by this integration sets `auto_fix.ci: 0`;
+the driver also skips startup rebase with `--skip rebase`. This disables
+automatic CI repairs, including non-conflict CI repairs, **not CI validation**.
+Review, Test, Document and Lint remain required. The repository override is
+visible in the proposed change; global/private daemon configuration is untouched.
+Firstmate explicitly authorized aborting this assigned run if it proposes or
+performs any rebase/history-rewriting conflict repair. A merge-strategy field
+alone is not protection, and its trusted-default-branch setting is not changed.
+
+## Canonical checks and remaining proof
+
+- Canonical lint passed after the original recovery; it must pass again at the final checkpoint.
+- Documentation audience inventory now explicitly classifies both dated evidence files as maintainer verification.
+- Coverage before final corrections: 263 scripts, 24 parallel, 223 portable serial, nine serial shards, 16 separately gated Herdr scripts; maximum hinted serial weight 1,093,063 ms below the 1,200,000 ms budget.
+- Scheduling hints retain the larger previous fork/upstream sample. Local durations are evidence, not CI performance claims.
+- Final aggregate passed without skips. Canonical pre-aggregate lint passed; audience/link checks passed with 124 surfaces and 746 local links.
+- Strict installed-SDK types and credential-safe account display both pass with the authorized test-only compiler.
+- `AGENTS.md:453-455` real-agent lifecycle proof passed once with the captain-authorized `opus low` tmux fixture, fresh quota intake, endpoint confirmation, empty captain-call inventory and guarded teardown.
+- Final checks, final real merge/current-target ancestry proof, no-mistakes exact-head coverage, fork PR and CI-green receipt remain pending.
+- Captain-approved merge-commit landing and installation update belong to Firstmate after delivery; none is claimed here.

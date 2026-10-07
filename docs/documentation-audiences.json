@@ -549,6 +549,14 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/verification/upstream-merge-2026-10-06.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/upstream-merge-2026-10-06-conflicts.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/voice-relay.md",
       "audience": "operator-current"
     },
