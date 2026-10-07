@@ -1,11 +1,12 @@
 # Upstream integration verification — 2026-10-06 task
 
 Local reconciliation evidence, not a CI-ready, landing, or deployment claim.
-The frozen expanded aggregate passed 53/53 without skips through captured
-`47aff866`, including strict Pi types and watcher continuity. The separately
-authorized single real-agent tmux E2E passed through `53b5bc11`. A subsequent
-fresh fetch found project-capacity commit `ac0811c4`; integration and fresh
-validation of that newer target remain required before no-mistakes review.
+The final frozen expanded aggregate passed 54/54 without skips through captured
+`ac0811c4`, including strict Pi types, watcher continuity and project capacity.
+Fresh remotes still report that upstream target and unchanged fork main.
+The separately authorized single real-agent tmux E2E passed through `53b5bc11`;
+it is not claimed as a repeat against the later tree. No-mistakes exact-head
+review, fork PR and CI readiness remain pending.
 
 ## Source snapshots and ancestry
 
@@ -15,7 +16,8 @@ validation of that newer target remain required before no-mistakes review.
 - Four subsequent upstream commits through `237e1cf3b035e20c151e8233a0ab842bd1e94e2d` were merged in `5f30cb817083fb8e87f2296d2c2cf5622315f2a8`, whose parents are the initial merge and that upstream target.
 - Shared Calm working-widget target `53b5bc11035877d1eb0e675d37414815d5d485f2` was integrated in real checkpoint `5a529c6231698c34043ca5c1caf5519f4ba7fbf4`, parents `5f30cb817083fb8e87f2296d2c2cf5622315f2a8 53b5bc11035877d1eb0e675d37414815d5d485f2`.
 - Validated target `47aff866dbe0612bd43df66d8fa76576e06a2b3e` adds resume-lock opt-in, watcher TERM and worker-tool exclusions. Its real merge had three conflicts, all resolved. The captain explicitly approved replacing fork commit `17c15625`'s intentional always-wait default with upstream bounded/refuse behavior plus `--herdr-resume-lock-wait`. A portable production-code regression covers default contention, opt-in wait and failed-wait refusal without contacting Herdr. The frozen 53-suite aggregate passed.
-- Latest captured upstream is `ac0811c4c820d82009d7a3b8f09555cbf38340c8`, adding opt-in machine-local project capacity. Its complete 11-file diff was reviewed; no operational capacity setting was created. That integration is not yet validated.
+- Fourth real merge checkpoint `f87be8ba632c5520da102bbf8e53715b9d59f5b4` has parents `5a529c6231698c34043ca5c1caf5519f4ba7fbf4 47aff866dbe0612bd43df66d8fa76576e06a2b3e` and records the 53-suite passing receipt.
+- Latest captured upstream is `ac0811c4c820d82009d7a3b8f09555cbf38340c8`, adding opt-in machine-local project capacity. Its complete 11-file diff was reviewed and applied in a clean real merge with parents `f87be8ba632c5520da102bbf8e53715b9d59f5b4 ac0811c4c820d82009d7a3b8f09555cbf38340c8`. The identical contribution-clock fixture fix was deduplicated; fork quota/account/teardown protection remains unchanged. The new capacity preflight passed all 16 cases in 58,626 ms, ending `2026-10-07T16:44:02Z`, without skips. No operational capacity setting was created. The final frozen 54-suite aggregate passed.
 - No rebase or squash was used. The [per-file conflict decisions](upstream-merge-2026-10-06-conflicts.md) cover the initial 124 conflicts and the latest three-path reconciliation; the two intervening integrations applied without conflicts.
 
 ## Recovered test environment
@@ -48,6 +50,7 @@ No browser installation or existing profile modification was needed.
 | `bin/fm-dispatch-resolve.sh` | Bind complete jq evidence before preference; join plan labels by provider/account; use the fallback rule's own candidate pool. Complete resolver suite passes, with measured schema-6 fixtures and no selection around missing evidence. |
 | `bin/fm-spawn.sh` | Export secondmate child-home context across compound launches, rather than applying assignments only to their first command. Captured launches execute under available sh/bash/zsh with an explicit Codex store and prove filtering, child home, cleared state override, and retained store. |
 | `tests/fm-spawn-dispatch-profile.test.sh` | Parse carriers with `shlex`, not semicolon slicing inside quoted prompts; retain mandatory directory grants and correct exact shell quoting. Complete suite passes. |
+| `tests/fm-control-relaunch.test.sh` | A trace fixture's 500-poll launch wait was not the synchronization contract. Keep bounded 3,000-poll waits, report failed launch output, and exercise a deliberately delayed fake launch. The actual trace handshake and serialized metadata assertions pass; recovery reached prepare after 844 polls, beyond the old limit. |
 | `tests/fm-spawn-pi-skill.test.sh` | Exact command retains inbox and Git-hook wiring; suite passes. |
 | `tests/fm-claude-admission.test.sh` | Use an isolated fixture user home; validate each typed home-local launch-brief record and its exact body, then normalize only the nonce path before byte comparison. Shaping assertions pass unchanged. |
 | `bin/fm-devin-config.sh` | Replace reserved jq `$end` with `$session_end`; Devin contracts pass. |
@@ -118,6 +121,39 @@ All 53 script exits were independently checked as zero. No implementation,
 runner or driver inputs changed during this aggregate. This receipt does not
 claim proof of the later `ac0811c4` capacity change.
 
+`integration-tests-6.json` then reran 54 suites through `ac0811c4`: 53 passed,
+one control-relaunch trace wait failed, zero skips; 5,551,536 ms, ending
+`2026-10-07T18:21:15Z`, exit 1. Tree
+`12767c993ddc5926237cfde5d23f5e3fc3dc8f3c`, runner SHA-256
+`806c50d558d4ad018243999419d270e858671e12511a7891585af69d5a7786f6` and driver
+SHA-256 `6e232982a5f73003eed63a0dd72edb40b1ec27f7eb6c8ba2c6a0ac09a6d48020`
+were unchanged. This complete receipt remains failed evidence.
+
+The test-only handshake correction adds bounded host headroom and failure
+output, not a production bypass. A six-second fake launch delay executes the
+same real control/spawn path and serialized publication checks.
+`control-recovery-4.json` passed the complete control-relaunch suite in
+258,496 ms, ending `2026-10-07T18:33:54Z`, zero skips; its trace fixture needed
+844 polling attempts, exceeding the former 500-poll guard. That individual
+receipt alone did not establish a green fresh aggregate.
+
+`integration-tests-7.json` then reran every one of the 54 suites:
+
+```text
+FM_TEST_SUMMARY total=54 failed=0 skipped_gate=0 duration_ms=5744080
+runner_exit=0
+```
+
+It ended `2026-10-07T20:16:48Z`. Before/after tracked tree
+`2ca7224d182acb37f41ef65abb731fd0934f9986`, runner SHA-256
+`806c50d558d4ad018243999419d270e858671e12511a7891585af69d5a7786f6` and driver
+SHA-256 `21b30d37a50d5e7fca332efdc5a4a69eea82e163361bddc3d0c2b98e61dc2bf3`
+matched. Every script exit and zero skips were independently verified. The
+delayed trace fixture prepared after 835 polls and retained the actual trace
+handshake/serialized publication assertions. Only this dated evidence was
+refreshed after the frozen run; no implementation, test or runner input changed.
+Fresh upstream/fork refs remained `ac0811c4`/`524e4105`.
+
 Passing expanded coverage includes every supported launch family represented
 by the dispatch matrix and additional Agy, Cursor, Gemini, Grok, Kimi, Muse,
 OMP, Rovo and Devin contracts; secondmate account/home/PID ancestry; mocked
@@ -183,8 +219,9 @@ alone is not protection, and its trusted-default-branch setting is not changed.
 - Documentation audience inventory now explicitly classifies both dated evidence files as maintainer verification.
 - Coverage before final corrections: 263 scripts, 24 parallel, 223 portable serial, nine serial shards, 16 separately gated Herdr scripts; maximum hinted serial weight 1,093,063 ms below the 1,200,000 ms budget.
 - Scheduling hints retain the larger previous fork/upstream sample. Local durations are evidence, not CI performance claims.
-- Expanded aggregate passed 53/53 without skips through `47aff866`. Canonical pre-aggregate lint passed; audience/link checks passed with 124 surfaces and 750 local links.
+- Final aggregate passed 54/54 without skips through `ac0811c4`. Canonical pre-aggregate lint, syntax/diff, documentation audience/link and coverage checks passed.
 - Strict installed-SDK types and credential-safe account display both pass with the authorized test-only compiler.
 - `AGENTS.md:453-455` real-agent lifecycle proof passed once with the captain-authorized `opus low` tmux fixture, fresh quota intake, endpoint confirmation, empty captain-call inventory and guarded teardown.
-- Fresh `ac0811c4` integration proof, final checks/current-target ancestry, no-mistakes exact-head coverage, fork PR and CI-green receipt remain pending.
+- Current fork guarantees were reviewed at their production owners and exercised by the final aggregate: generated Claude settings and release shaping, authoritative account/home/session identity, quota completeness, Git-2.34 containment, locked legacy endpoint recovery, contradiction checks, notification retirement, Pi account display, dual URL instructions, isolated Herdr safeguards, host/CI hardening, private brief addenda and standing answers. Only the captain-approved resume-lock default is intentionally replaced.
+- Final checks/current-target ancestry are recorded by the integration commit and external milestone/report; no-mistakes exact-head coverage, fork PR and CI-green receipt remain pending.
 - Captain-approved merge-commit landing and installation update belong to Firstmate after delivery; none is claimed here.

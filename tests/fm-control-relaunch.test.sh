@@ -91,6 +91,7 @@ case "${1:-}" in
       case "$payload" in
         'export GOTMPDIR='*)
           if [ -n "${FM_FAKE_TRACE_PREPARE:-}" ]; then
+            [ -z "${FM_FAKE_TRACE_PREPARE_DELAY:-}" ] || /bin/sleep "$FM_FAKE_TRACE_PREPARE_DELAY"
             : > "$FM_FAKE_TRACE_PREPARE"
             while [ ! -e "$FM_FAKE_TRACE_RELEASE" ]; do /bin/sleep 0.01; done
           fi
@@ -249,6 +250,7 @@ run_control() {  # <case-dir> <args...>
     FM_REAL_MV="${FM_REAL_MV:-}" FM_FAKE_COMPLETE_JOURNAL_MV_FAIL="${FM_FAKE_COMPLETE_JOURNAL_MV_FAIL:-}" \
     FM_FAKE_META_PUBLISH_MV_FAIL="${FM_FAKE_META_PUBLISH_MV_FAIL:-}" \
     FM_FAKE_TRACE_PREPARE="${FM_FAKE_TRACE_PREPARE:-}" \
+    FM_FAKE_TRACE_PREPARE_DELAY="${FM_FAKE_TRACE_PREPARE_DELAY:-}" \
     FM_FAKE_TRACE_RELEASE="${FM_FAKE_TRACE_RELEASE:-}" \
     FM_FAKE_META_WRITER_READY="${FM_FAKE_META_WRITER_READY:-}" \
     FM_FAKE_TRACE_EXPORTED="${FM_FAKE_TRACE_EXPORTED:-}" \
@@ -509,20 +511,25 @@ test_relaunch_serializes_concurrent_durable_metadata_publication() {
   waiting="$dir/meta-writer-waiting"
   ready="$dir/meta-writer-ready"
   release="$dir/meta-writer-release"
+  # Exercise a valid delayed launch beyond the former five-second wait budget.
   FM_REAL_MV=$(command -v mv) \
     FM_FAKE_TRACE_PREPARE="$prepare" \
+    FM_FAKE_TRACE_PREPARE_DELAY=6 \
     FM_FAKE_TRACE_RELEASE="$launch_release" \
     run_control "$dir" rl28 relaunch --note "continue after publication" > "$dir/control.out" &
   control_pid=$!
-  while [ ! -e "$prepare" ] && [ "$i" -lt 500 ]; do
+  # Launch preflights are not the synchronization contract. Allow bounded
+  # host headroom while still requiring the real prepare/release ordering.
+  while [ ! -e "$prepare" ] && [ "$i" -lt 3000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
   [ -e "$prepare" ] || {
     kill "$control_pid" 2>/dev/null || true
     wait "$control_pid" 2>/dev/null || true
-    fail "relaunch did not reach trace delivery"
+    fail "relaunch did not reach trace delivery"$'\n'"$(cat "$dir/control.out")"
   }
+  printf 'trace fixture prepared after %s polling attempts\n' "$i"
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
     FM_REAL_MV="$(command -v mv)" \
     FM_FAKE_LOCK_WAITING="$waiting" \
@@ -533,7 +540,7 @@ test_relaunch_serializes_concurrent_durable_metadata_publication() {
       --carry-platform x --carry-max 280 > "$dir/link.out" 2>&1 &
   link_pid=$!
   i=0
-  while [ ! -e "$waiting" ] && [ "$i" -lt 500 ]; do
+  while [ ! -e "$waiting" ] && [ "$i" -lt 3000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
@@ -546,7 +553,7 @@ test_relaunch_serializes_concurrent_durable_metadata_publication() {
   }
   : > "$launch_release"
   i=0
-  while [ ! -e "$ready" ] && [ "$i" -lt 500 ]; do
+  while [ ! -e "$ready" ] && [ "$i" -lt 3000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
