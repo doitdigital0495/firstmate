@@ -13,6 +13,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
+# shellcheck source=bin/fm-operational-input.sh
+. "$ROOT/bin/fm-operational-input.sh"
 
 ADMISSION="$ROOT/bin/fm-claude-admission.sh"
 SPAWN="$ROOT/bin/fm-spawn.sh"
@@ -794,7 +796,8 @@ run_claude_spawn() {  # <home> <wt> <fakebin> <launchlog> <store> <spawn args...
   local home=$1 wt=$2 fakebin=$3 launchlog=$4 store=$5
   shift 5
   : > "$launchlog"
-  FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+  mkdir -p "$home/user-home"
+  HOME="$home/user-home" FM_ROOT_OVERRIDE='' FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
@@ -812,6 +815,23 @@ captured_launch() { # <launchlog>
   source=${source%"'"}
   [ -f "$source" ] || fail 'the Claude launch file was not staged'
   printf '%s\n' "$(<"$source")"
+}
+
+stable_claude_launch() { # <launch> <home> <expected launch-brief body>
+  local launch=$1 home=$2 expected_body=$3 doorbell op_record op_kind body
+  # Tokenize trusted fixture command text without executing its substitutions.
+  doorbell=$(python3 -c 'import shlex, sys; print(shlex.split(sys.argv[1])[-1])' "$launch") \
+    || fail 'cannot parse the generated Claude launch'
+  fm_operational_doorbell_path "$doorbell" op_record \
+    && fm_operational_doorbell_kind "$doorbell" "$home/state" op_kind \
+    && [ "$op_kind" = launch-brief ] \
+    || fail 'the launch prompt must name a typed record in this home'
+  body=$("$ROOT/bin/fm-operational-input.sh" body < "$op_record") \
+    || fail 'the launch record has no current operational body'
+  [ "$body" = "$expected_body" ] || fail 'shaping changed the delivered launch-brief body'
+  # Only the independently verified carrier path varies per spawn. Keep every
+  # flag, store, guard, and hook byte in the launch-command comparison.
+  printf '%s\n' "${launch//"$op_record"/<launch-record>}"
 }
 
 test_spawn_withholds_before_creating_anything() {
@@ -909,7 +929,7 @@ test_a_refusal_after_the_gate_never_spends_the_slot() {
 }
 
 test_spawn_on_unshaped_store_is_unchanged() {
-  local home wt fakebin launchlog proj store baseline shaped_elsewhere with_config
+  local home wt fakebin launchlog proj store baseline baseline_body shaped_elsewhere with_config
   IFS='|' read -r home wt fakebin launchlog proj <<< "$(spawn_case spawn-unshaped ship-one)"
   store=$(make_store "$TMP_ROOT/spawn-unshaped/store")
   add_turn_then_park "$store" parked-1 60 100000
@@ -919,6 +939,8 @@ test_spawn_on_unshaped_store_is_unchanged() {
     || fail "a spawn with no shaped-store list must succeed"
   baseline=$(captured_launch "$launchlog")
   [ -n "$baseline" ] || fail "the baseline spawn must record a launch command"
+  baseline_body=$(<"$home/data/ship-one/launch-brief.md")
+  baseline=$(stable_claude_launch "$baseline" "$home" "$baseline_body") || fail 'cannot verify the baseline launch record'
   rm -f "$home/state/ship-one.meta"
 
   # A list that names a DIFFERENT store, with parked demand present on the store
@@ -928,11 +950,12 @@ test_spawn_on_unshaped_store_is_unchanged() {
   run_claude_spawn "$home" "$wt" "$fakebin" "$launchlog" "$store" ship-one "$proj" >/dev/null \
     || fail "a spawn onto an unlisted store must succeed unchanged"
   with_config=$(captured_launch "$launchlog")
+  with_config=$(stable_claude_launch "$with_config" "$home" "$baseline_body") || fail 'cannot verify the unshaped launch record'
   [ "$with_config" = "$baseline" ] \
     || fail "an unshaped store's launch command changed:"$'\n'"--- baseline ---"$'\n'"$baseline"$'\n'"--- with config ---"$'\n'"$with_config"
   assert_absent "$home/state/claude-admission" \
     "an unshaped store must leave no release-shaping state behind"
-  pass "a Claude spawn onto an unshaped store is byte-for-byte unchanged"
+  pass "an unshaped Claude launch preserves command bytes and record body, apart from its verified nonce-bearing carrier path"
 }
 
 test_unshaped_store_takes_no_state
