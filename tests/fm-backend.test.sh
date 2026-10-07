@@ -1102,7 +1102,7 @@ test_spawn_refuses_unknown_backend_flag() {
   local out status
   # bogus names a backend with no adapter at all; zellij and orca both
   # graduated to real adapters and have their own spawn tests.
-  out=$(FM_ROOT_OVERRIDE='' FM_HOME='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
+  out=$(HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' FM_ROOT_OVERRIDE='' FM_HOME="$SPAWN_FM_HOME" FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
     FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
     "$ROOT/bin/fm-spawn.sh" nope-backend-z1 projects/none claude --mode no-mistakes --yolo off --backend bogus 2>&1)
   status=$?
@@ -1113,7 +1113,7 @@ test_spawn_refuses_unknown_backend_flag() {
 
 test_spawn_refuses_codex_app_backend_flag() {
   local out status
-  out=$(FM_ROOT_OVERRIDE='' FM_HOME='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
+  out=$(HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' FM_ROOT_OVERRIDE='' FM_HOME="$SPAWN_FM_HOME" FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
     FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
     "$ROOT/bin/fm-spawn.sh" nope-codex-app-z1 projects/none claude --mode no-mistakes --yolo off --backend codex-app 2>&1)
   status=$?
@@ -1124,7 +1124,7 @@ test_spawn_refuses_codex_app_backend_flag() {
 
 test_spawn_refuses_unknown_fm_backend_env() {
   local out status
-  out=$(FM_ROOT_OVERRIDE='' FM_HOME='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
+  out=$(HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' FM_ROOT_OVERRIDE='' FM_HOME="$SPAWN_FM_HOME" FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
     FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 FM_BACKEND=bogus \
     "$ROOT/bin/fm-spawn.sh" nope-backend-z2 projects/none claude --mode no-mistakes --yolo off 2>&1)
   status=$?

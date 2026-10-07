@@ -9,6 +9,13 @@
 # HEAD-continuity guard; see docs/architecture.md "No-mistakes gate authority boundary."
 disable_project_settings: true
 
+# Preserve the upstream-merge ancestry: v1.79 CI conflict repair always rebases,
+# even with rebase.strategy=merge. Zero disables automatic CI repair, not CI
+# validation; a conflict must reach the operator rather than rewrite history.
+# Startup integration is separately skipped for this task's pipeline run.
+auto_fix:
+  ci: 0
+
 # Trusted documentation placement policy for the Document step.
 # The audience inventory and coding guideline own the detail; keep this as a
 # pointer so gate instructions cannot become a second prose policy.

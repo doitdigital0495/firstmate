@@ -83,14 +83,23 @@ export function keyHint(_keybinding, description) {
 }
 
 export class ToolExecutionComponent {
-  constructor(name) { this.name = name; }
-  setExpanded() {}
+  constructor(name, _toolCallId, args = {}) { this.name = name; this.args = args; }
+  setExpanded(expanded) { this.expanded = expanded; }
   invalidate() {}
   updateResult(result) {
     this.result = result;
   }
   render() {
-    if (!this.result) return ["", this.name];
+    if (!this.result) {
+      const title = `<toolTitle>**${this.name}**</toolTitle>`;
+      const [major, minor] = VERSION.split(".").map(Number);
+      if (major === 0 && minor < 99) return ["", title];
+      const args = Object.entries(this.args);
+      const header = this.expanded
+        ? [title, ...args.map(([key, value]) => `<muted>  ${key}: ${JSON.stringify(value)}</muted>`)].join("\n")
+        : `${title}${args.length ? ` <muted>${args.map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(" ")}</muted>` : ""}`;
+      return ["", ...header.split("\n")];
+    }
     return (this.result?.content ?? [])
       .filter((item) => item.type === "text")
       .flatMap((item) => item.text.split("\n"));
@@ -814,7 +823,7 @@ const calmOffResult = outcomesTool.renderResult(stockResult, { expanded: false, 
 if (calmOffCall.constructor.name !== "Box" || calmOffCall.paddingX !== 1 || calmOffCall.paddingY !== 1) {
   throw new Error("fm_branch_outcomes changed its ordinary shell rendering");
 }
-if (calmOffResult.constructor.name !== "Container" || calmOffCall.children[0]?.render(100).join("\n") !== "fm_branch_outcomes" || calmOffCall.children[1]?.text !== "OUTCOME_DUMP") {
+if (calmOffResult.constructor.name !== "Container" || calmOffCall.children[0]?.render(100).join("\n") !== "<toolTitle>**fm_branch_outcomes**</toolTitle>" || calmOffCall.children[1]?.text !== "OUTCOME_DUMP") {
   throw new Error("fm_branch_outcomes changed its ordinary call or result rendering");
 }
 const legacyStockResult = {
@@ -5194,7 +5203,9 @@ for (const [name, key, value] of [["fm_branch_outcomes", "recent", 2], ["fm_bran
         ? `${title}\n<muted>  ${key}: ${value}</muted>`
         : `${title} <muted>${key}=${value}</muted>`;
     const shell = tool.renderCall({ [key]: value }, theme, { state: {}, expanded, isError: false, isPartial: false });
-    const header = shell.children[0]?.text;
+    // The call slot is a vendor-owned component, not necessarily Text.
+    // Exercise its public rendering contract instead of its private carrier.
+    const header = shell.children[0]?.render(4096).join("\n");
     if (header !== stock) {
       throw new Error(`Pi ${version} ${expanded ? "expanded" : "collapsed"} ${name} header ${JSON.stringify(header)} is not stock ${JSON.stringify(stock)}`);
     }

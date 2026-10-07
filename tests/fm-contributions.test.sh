@@ -588,7 +588,9 @@ test_record_task_identity_matches_dirname_basename() {
           pending:[{token:$token}],seen:[],verdict:null,observation:null}]}' > "$file"
       tasks+=("$want")
     done
-    expected=$(printf '%s\0' "${tasks[@]}" | jq -Rs 'split("\u0000")[:-1] | sort')
+    # jq 1.6 omits the trailing empty NUL-split element; slicing it off
+    # would discard the last real task. Pass the exact names as argv instead.
+    expected=$(jq -n --args '$ARGS.positional | sort' -- "${tasks[@]}")
     actual=$(with_home "$home" env FM_DATA_OVERRIDE="$data" "$ROOT/bin/fm-contributions.sh" pending | jq '[.[].task] | sort') \
       || fail "records under data root '$data' were refused"
     [ "$actual" = "$expected" ] || fail "data root '$data' named tasks $actual, expected $expected"
@@ -1020,6 +1022,9 @@ test_arm_plumbs_a_configured_budget_into_the_check_shim() {
     wrap_forge "$home"
     mutate_record "$home" delivery '.records[0].checked_at="2026-09-15T08:00:00Z"'
     cp "$home/data/delivery/contributions.json" "$home/prior.json"
+    # Freeze the clock: an unfrozen one can tick past the one-second budget
+    # before the first forge call, so nothing is ever observed.
+    /bin/date +%s > "$home/forge/clock"
     printf 'hang\n' > "$home/forge/fault"
     if [ "$mode" = configured ]; then
       with_home "$home" env FM_CONTRIBUTIONS_BUDGET=1 "$ROOT/bin/fm-contributions.sh" arm >/dev/null \
