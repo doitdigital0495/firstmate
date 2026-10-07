@@ -1,9 +1,11 @@
 # Upstream integration verification — 2026-10-06 task
 
 Local reconciliation evidence, not a CI-ready, landing, or deployment claim.
-The frozen 49-suite aggregate, strict Pi types and single real-agent tmux E2E
-are green through captured `53b5bc11`. Three newer upstream commits through
-`47aff866` require integration and fresh validation before no-mistakes review.
+The frozen expanded aggregate passed 53/53 without skips through captured
+`47aff866`, including strict Pi types and watcher continuity. The separately
+authorized single real-agent tmux E2E passed through `53b5bc11`. A subsequent
+fresh fetch found project-capacity commit `ac0811c4`; integration and fresh
+validation of that newer target remain required before no-mistakes review.
 
 ## Source snapshots and ancestry
 
@@ -11,8 +13,10 @@ are green through captured `53b5bc11`. Three newer upstream commits through
 - Initial upstream target: `e06a46fec726071618da0460f0de552d4d078ef1`.
 - Initial real merge: `78adb3c05ca668a3a2459e4f09464eaa59d6805d`; parents are the fork and initial upstream above.
 - Four subsequent upstream commits through `237e1cf3b035e20c151e8233a0ab842bd1e94e2d` were merged in `5f30cb817083fb8e87f2296d2c2cf5622315f2a8`, whose parents are the initial merge and that upstream target.
-- Latest captured upstream: `53b5bc11035877d1eb0e675d37414815d5d485f2`, a shared Calm working-widget fix. Its real merge applied cleanly and awaits final proof/commit.
-- No rebase or squash was used. The [per-file conflict decisions](upstream-merge-2026-10-06-conflicts.md) cover the initial 124 conflicts; both later integrations applied without conflicts.
+- Shared Calm working-widget target `53b5bc11035877d1eb0e675d37414815d5d485f2` was integrated in real checkpoint `5a529c6231698c34043ca5c1caf5519f4ba7fbf4`, parents `5f30cb817083fb8e87f2296d2c2cf5622315f2a8 53b5bc11035877d1eb0e675d37414815d5d485f2`.
+- Validated target `47aff866dbe0612bd43df66d8fa76576e06a2b3e` adds resume-lock opt-in, watcher TERM and worker-tool exclusions. Its real merge had three conflicts, all resolved. The captain explicitly approved replacing fork commit `17c15625`'s intentional always-wait default with upstream bounded/refuse behavior plus `--herdr-resume-lock-wait`. A portable production-code regression covers default contention, opt-in wait and failed-wait refusal without contacting Herdr. The frozen 53-suite aggregate passed.
+- Latest captured upstream is `ac0811c4c820d82009d7a3b8f09555cbf38340c8`, adding opt-in machine-local project capacity. Its complete 11-file diff was reviewed; no operational capacity setting was created. That integration is not yet validated.
+- No rebase or squash was used. The [per-file conflict decisions](upstream-merge-2026-10-06-conflicts.md) cover the initial 124 conflicts and the latest three-path reconciliation; the two intervening integrations applied without conflicts.
 
 ## Recovered test environment
 
@@ -97,6 +101,23 @@ ok - tracked Pi extensions pass strict no-emit typecheck against Pi 0.86.1
 FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=8964
 ```
 
+After the captain's resume-lock decision, `integration-tests-5.json` reran the
+49 suites plus installed-SDK Pi account/types and watcher triage/wake-queue:
+
+```text
+FM_TEST_SUMMARY total=53 failed=0 skipped_gate=0 duration_ms=6125269
+runner_exit=0
+```
+
+It ended `2026-10-07T16:29:19Z`, covering captured upstream `47aff866`.
+Before/after tracked-tree hashes matched
+`9868e6a4a32791510ec032b8b401557c37d10d5e`; runner SHA-256 matched the prior
+runner hash above, and driver SHA-256 matched
+`47f9ded41304ebbba02e8fbdc17e3ec60c08aa6fa6d743647448a12eaa94731c`.
+All 53 script exits were independently checked as zero. No implementation,
+runner or driver inputs changed during this aggregate. This receipt does not
+claim proof of the later `ac0811c4` capacity change.
+
 Passing expanded coverage includes every supported launch family represented
 by the dispatch matrix and additional Agy, Cursor, Gemini, Grok, Kimi, Muse,
 OMP, Rovo and Devin contracts; secondmate account/home/PID ancestry; mocked
@@ -162,8 +183,8 @@ alone is not protection, and its trusted-default-branch setting is not changed.
 - Documentation audience inventory now explicitly classifies both dated evidence files as maintainer verification.
 - Coverage before final corrections: 263 scripts, 24 parallel, 223 portable serial, nine serial shards, 16 separately gated Herdr scripts; maximum hinted serial weight 1,093,063 ms below the 1,200,000 ms budget.
 - Scheduling hints retain the larger previous fork/upstream sample. Local durations are evidence, not CI performance claims.
-- Final aggregate passed without skips. Canonical pre-aggregate lint passed; audience/link checks passed with 124 surfaces and 746 local links.
+- Expanded aggregate passed 53/53 without skips through `47aff866`. Canonical pre-aggregate lint passed; audience/link checks passed with 124 surfaces and 750 local links.
 - Strict installed-SDK types and credential-safe account display both pass with the authorized test-only compiler.
 - `AGENTS.md:453-455` real-agent lifecycle proof passed once with the captain-authorized `opus low` tmux fixture, fresh quota intake, endpoint confirmation, empty captain-call inventory and guarded teardown.
-- Final checks, final real merge/current-target ancestry proof, no-mistakes exact-head coverage, fork PR and CI-green receipt remain pending.
+- Fresh `ac0811c4` integration proof, final checks/current-target ancestry, no-mistakes exact-head coverage, fork PR and CI-green receipt remain pending.
 - Captain-approved merge-commit landing and installation update belong to Firstmate after delivery; none is claimed here.

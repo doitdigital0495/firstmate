@@ -1,6 +1,14 @@
 # Upstream merge conflict decisions — 2026-10-06 task
 
-The initial real ancestry merge had 124 conflicts. Classification used the already-integrated content baseline `a09090d1` only for comparison; merge parents and upstream commit identities were not rewritten. Initial classes: 50 upstream-equivalent, three fork-only, 18 independent unions, and 53 substantive reconciliations. Later merges through `237e1cf3` and `53b5bc11` applied cleanly.
+The initial real ancestry merge had 124 conflicts. Classification used the already-integrated content baseline `a09090d1` only for comparison; merge parents and upstream commit identities were not rewritten. Initial classes: 50 upstream-equivalent, three fork-only, 18 independent unions, and 53 substantive reconciliations. Later merges through `237e1cf3` and `53b5bc11` applied cleanly. A subsequent real merge through `47aff866` introduced three additional conflict events in paths already present in the initial set. The captain explicitly selected upstream's bounded/refuse default plus opt-in waiting, replacing fork commit `17c15625`'s intentional always-wait default. These conflicts are resolved as follows and the frozen 53-suite aggregate passed through `47aff866`. A fresh fetch then found opt-in project-capacity commit `ac0811c4`; its integration and validation remain pending.
+
+| Latest conflict | Side retained | Resolution and reason |
+| --- | --- | --- |
+| `bin/fm-control.sh` | Both | Keep the selected worker-account binding and add upstream tool-exclusion refusal before stopping an agent. |
+| `bin/fm-spawn.sh` | Both / captain decision | Add upstream opt-in resume waiting and exclusions; retain fork account/priority/fast-lane parsing, shaped Pi worker launch, Herdr reporting, and failed-lock refusal. Default resume contention now refuses as the captain authorized. |
+| `docs/herdr-backend.md` | Upstream / captain decision | Replace always-wait wording with truthful bounded/refuse default and explicit wait-flag scope; retain isolated lifecycle protections. |
+
+The following table records the completed initial 124-conflict reconciliation.
 
 “Both” means retaining complementary upstream and intentional fork contracts, not choosing one implementation wholesale. The side column compares final content against the original fork and the latest captured upstream; task-specific safety/test fixes may make it differ from both.
 
