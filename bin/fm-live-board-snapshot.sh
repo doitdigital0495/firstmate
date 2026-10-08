@@ -18,8 +18,12 @@
 # with open backlog is finished-awaiting-processing, not merged or landed.
 # Current state/source and last meaningful history remain distinct. History uses
 # the canonical reader's strict generation-bound event/milestone projection.
-# Every open captain hold across all buckets is a question, read-only in this
-# slice. Unregistered keyed status decisions remain owner-registration warnings.
+# Every open captain hold across all buckets is a question. Valid owner-authored
+# context supplies lifecycle, explicit close mode and labelled options; its
+# storage/guard contract belongs to fm-captain-hold.sh. Missing/invalid/stale
+# context and ambiguous identity stay visible but not answerable, with owner
+# review warnings. This projection starts no listener or answer delivery.
+# Unregistered keyed status decisions remain owner-registration warnings.
 # Question order: numeric priority (unset as 5), then oldest hold_set or since
 # (unknown last), id and row key. Projects: urgent calls, other calls,
 # active work, queued work, idle; ties by label/key. Tasks: blocked/parked,
@@ -56,6 +60,6 @@ if [ -n "$input" ]; then cp -- "$input" "$tmp/input.json"
 else "$SCRIPT_DIR/fm-fleet-snapshot.sh" --live-board-input > "$tmp/input.json"; fi
 home=$(jq -er 'select(.schema == "fm-live-board-input.v1") | .fm_home | select(type == "string" and length > 0)' "$tmp/input.json")
 home_hash=$(printf '%s' "$home" | hash)
-jq -S --arg home_key "home-$home_hash" -f "$SCRIPT_DIR/fm-live-board-snapshot.jq" "$tmp/input.json" > "$tmp/board.json"
+jq -S -L "$SCRIPT_DIR" --arg home_key "home-$home_hash" -f "$SCRIPT_DIR/fm-live-board-snapshot.jq" "$tmp/input.json" > "$tmp/board.json"
 revision=$(hash < "$tmp/board.json")
 jq --arg revision "$revision" '. + {revision:$revision}' "$tmp/board.json"
