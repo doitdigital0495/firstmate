@@ -412,12 +412,12 @@ test_preview_on_push_scaffold_and_refusals() {
 # a leftover placeholder exactly like {TASK}, an empty checklist body must fail
 # content validation, and a brief without the subsection must stay legacy-valid.
 test_request_checklist_placeholder_and_content_rules() {
-  local home id brief
-  home="$TMP_ROOT/checklist-rules-home"
-  mkdir -p "$home/data"
+  local checklist_home id brief
+  checklist_home="$TMP_ROOT/checklist-rules-home"
+  mkdir -p "$checklist_home/data"
   id="brief-checklist-c1"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
-  brief="$home/data/$id/brief.md"
+  FM_HOME="$checklist_home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+  brief="$checklist_home/data/$id/brief.md"
   (
     # shellcheck source=bin/fm-dod-lib.sh
     . "$ROOT/bin/fm-dod-lib.sh"
@@ -447,8 +447,8 @@ test_request_checklist_placeholder_and_content_rules() {
     fm_brief_task_content_valid "$brief" \
       || fail "a fully filled brief failed content validation"
     id="brief-checklist-c2"
-    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
-    brief="$home/data/$id/brief.md"
+    FM_HOME="$checklist_home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
+    brief="$checklist_home/data/$id/brief.md"
     fill_partially "$brief"
     fm_brief_task_placeholders_present "$brief" \
       || fail "a brief with {TASK} and {FIRSTMATE_SPEC} filled but {ASKS} left behind was not reported as placeholder-carrying"
@@ -461,15 +461,15 @@ test_request_checklist_placeholder_and_content_rules() {
   ) || exit 1
   # A legacy two-subsection brief without the checklist heading stays valid.
   id="brief-checklist-c3"
-  mkdir -p "$home/data/$id"
+  mkdir -p "$checklist_home/data/$id"
   printf "# Task\n## Captain's intent\nFix it.\n\n## Firstmate spec\nBuild it.\n\n# Definition of done\nDelivery contract: mode=no-mistakes\n" \
-    > "$home/data/$id/brief.md"
+    > "$checklist_home/data/$id/brief.md"
   (
     # shellcheck source=bin/fm-dod-lib.sh
     . "$ROOT/bin/fm-dod-lib.sh"
-    fm_brief_task_placeholders_present "$home/data/$id/brief.md" \
+    fm_brief_task_placeholders_present "$checklist_home/data/$id/brief.md" \
       && fail "a legacy brief without a checklist was reported as placeholder-carrying"
-    fm_brief_task_content_valid "$home/data/$id/brief.md" \
+    fm_brief_task_content_valid "$checklist_home/data/$id/brief.md" \
       || fail "a legacy brief without a checklist failed content validation"
   ) || exit 1
   pass "fm-dod-lib: {ASKS} placeholders and empty checklist bodies are refused; briefs without the subsection stay legacy-valid"

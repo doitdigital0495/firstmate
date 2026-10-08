@@ -65,7 +65,7 @@ in_home() {  # <command...>: run one real script against the case home
 # Spawn, write status lines, poll once, land locally, clean up.
 run_lifecycle() {
   local out
-  out=$(in_home "$ROOT/bin/fm-spawn.sh" "$TASK" "$PROJ_DIR" --mode local-only --yolo off 2>&1) \
+  out=$(in_home "$ROOT/bin/fm-spawn.sh" "$TASK" "$PROJ_DIR" --mode local-only --model opus --yolo off 2>&1) \
     || fail "spawn failed: $out"
   {
     printf 'working [at=1790000000]: setup done\n'
@@ -100,7 +100,7 @@ test_flag_on_records_the_task_lifecycle() {
     || fail "every record must carry v, ts, event, and task: $(cat "$HOME_DIR/state/fleet-ledger.jsonl")"
   rows=$(ledger_rows '[.event, .task] + (del(.v, .ts, .event, .task) | to_entries | map(.value))')
   assert_equals "$(cat <<EOF
-["task.dispatched","$TASK","ship","sample","claude",null]
+["task.dispatched","$TASK","ship","sample","claude","opus"]
 ["task.status","$TASK","working",null," setup done"]
 ["task.status","$TASK","needs-decision","pick-one"," choose \"a\"\\\\b or c"]
 ["task.status","$TASK","resolved","pick-one"," [key=pick-one]  chose a"]
@@ -165,12 +165,16 @@ EOF
 # Optional arguments are the scaffold's state and config overrides; the
 # scaffold runs from the home, so a relative config override names its config/.
 worker_status_command() {  # <state> <note> [<state-dir> [<config-dir>]]
-  local cmd
+  local cmd state_dir="${3:-$HOME_DIR/state}"
   rm -rf "${HOME_DIR:?}/data/$TASK"
   (cd "$HOME_DIR" && in_home env FM_STATE_OVERRIDE="${3:-$HOME_DIR/state}" \
     FM_CONFIG_OVERRIDE="${4:-$HOME_DIR/config}" \
     "$ROOT/bin/fm-brief.sh" "$TASK" sample --mode no-mistakes >/dev/null) \
     || fail "brief scaffold failed"
+  # The fork scaffold emits a brief milestone. These cases isolate the later
+  # worker append, not that separate telemetry; leave the deliberate directory
+  # obstruction in the failed-append case intact.
+  [ ! -f "$state_dir/$TASK.status" ] || : > "$state_dir/$TASK.status"
   # shellcheck disable=SC2016 # Match literal backticks in the generated brief.
   cmd=$(sed -n '/`echo "{state}/s/.*`\(echo .*\)`.*/\1/p' "$HOME_DIR/data/$TASK/brief.md" | head -1)
   [ -n "$cmd" ] || fail "the brief carries no status command"
@@ -228,10 +232,14 @@ test_worker_status_line_is_recorded_under_a_relative_config_override() {
 }
 
 test_worker_status_command_fails_when_the_append_fails() {
-  local out rc=0
+  local out cmd rc=0
   make_case on-append-fails on
-  mkdir -p "$HOME_DIR/data" "$HOME_DIR/state/$TASK.status"
-  out=$(run_worker_command "$(worker_status_command failed 'tests broke')" 2>&1) || rc=$?
+  mkdir -p "$HOME_DIR/data"
+  cmd=$(worker_status_command failed 'tests broke') || fail "could not prepare the worker status command"
+  # Inject failure after the real scaffold has recorded its required milestone.
+  rm -f "$HOME_DIR/state/$TASK.status"
+  mkdir "$HOME_DIR/state/$TASK.status"
+  out=$(run_worker_command "$cmd" 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "the worker status command succeeded although its append failed: $out"
   [ ! -e "$HOME_DIR/state/fleet-ledger.jsonl" ] || fail "a failed append still wrote a ledger record"
   pass "append failing: the worker's status command exits nonzero and records nothing"
