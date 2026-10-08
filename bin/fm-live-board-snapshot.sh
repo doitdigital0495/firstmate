@@ -20,8 +20,8 @@
 # the canonical reader's strict generation-bound event/milestone projection.
 # Every open captain hold across all buckets is a question, read-only in this
 # slice. Unregistered keyed status decisions remain owner-registration warnings.
-# Question order: priorities 0/1 first, then oldest hold_set or since (unknown
-# last), numeric priority, id and row key. Projects: urgent calls, other calls,
+# Question order: numeric priority (unset as 5), then oldest hold_set or since
+# (unknown last), id and row key. Projects: urgent calls, other calls,
 # active work, queued work, idle; ties by label/key. Tasks: blocked/parked,
 # working, finished, paused, queued, unknown; ties by since/id/key.
 # No Bearings caps apply; counts are exact for the local structured inventory.

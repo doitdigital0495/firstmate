@@ -115,8 +115,9 @@ h=$(home holds)
 collect "$h" "$TMP_ROOT/holds-input.json"
 render "$TMP_ROOT/holds-input.json" "$TMP_ROOT/holds.json"
 check "$TMP_ROOT/holds.json" '.counts.questions == 31 and .counts.open_tasks == 31
-  and .projects[0].name == "alpha" and .projects[0].questions[0].id == "urgent-old"
-  and .projects[0].questions[1].id == "urgent-new"
+  and .projects[0].name == "alpha" and .projects[0].questions[0].id == "urgent-new"
+  and .projects[0].questions[1].id == "urgent-old"
+  and .projects[0].questions[2].id == "call-01"
   and any(.projects[].questions[]; .id == "aged" and .hold.bucket == "aged")
   and any(.projects[].questions[]; .id == "deferred" and .hold.bucket == "dated")
   and any(.projects[].questions[]; .id == "blocked" and .hold.bucket == "blocked" and .unresolved_blockers == ["missing"])

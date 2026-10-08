@@ -93,8 +93,7 @@ if valid_input then . else error("unsupported or malformed fm-live-board-input.v
    | ([$tasks[] | select(.project == $name)]
       | sort_by([task_band,(.since | date_key) // 1e30,.id,.key])) as $rows
    | ([$questions[] | select(.project == $name)]
-      | sort_by([(if .urgent then 0 else 1 end),
-          ((.hold.set // .since) | date_key) // 1e30,.priority // 5,.id,.key])) as $calls
+      | sort_by([.priority // 5,((.hold.set // .since) | date_key) // 1e30,.id,.key])) as $calls
    | {key:([$home_key,$name] | tojson),name:$name,label:($name // "Unassigned"),
       registration:([$input.registry.projects[] | select(.name == $name) | {name,mode,yolo,recognised,annotation}][0] // null),
       counts:counts($rows;$calls),tasks:$rows,questions:$calls}]

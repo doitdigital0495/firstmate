@@ -830,7 +830,7 @@ task_json_lines() {
     }
     board_fields='{}'
     if [ "$OUTPUT_MODE" = live-board-input ]; then
-      board_fields=$(set -o pipefail; board_status_event_json "$status_log" | jq '{last_meaningful_event:.}') || return 1
+      board_fields=$(set -o pipefail; board_status_event_json "$status_log" | jq '{last_meaningful_event:.}') || { snapshot_task_cleanup; return 1; }
     fi
     event_json=$(status_event_json "$status_log" "$STATE/$id.status")
     last_event_raw=$(printf '%s' "$event_json" | jq -r '.last_event.raw // ""')
