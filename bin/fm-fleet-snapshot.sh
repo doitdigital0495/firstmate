@@ -2064,10 +2064,12 @@ if [ "$OUTPUT_MODE" = live-board-input ]; then
     --slurpfile registry "$JSON_TRANSPORT_DIR/registry.json" \
     --slurpfile backlog "$BACKLOG_JSON_FILE" --slurpfile tasks "$TASKS_JSON_FILE" \
     --slurpfile inventory "$MAIN_INVENTORY_JSON_FILE" '
-    {schema:"fm-live-board-input.v1",generated:$generated,generated_epoch:$epoch,
+    [$backlog[0].records[] | select(.state != "done")] as $open
+    | {schema:"fm-live-board-input.v1",generated:$generated,generated_epoch:$epoch,
      fm_home:$fm_home,collection_duration_seconds:$duration,registry:$registry[0],
      backlog:$backlog[0],tasks:$tasks[0],main_inventory:$inventory[0],
-     coverage:{local:{complete:true,total_open:([$backlog[0].records[] | select(.state != "done")] | length)},
+     coverage:{local:{complete:($backlog[0].present and all($open[]; .structured != false)),
+       total_open:($open | length)},
        registered_homes:{complete:false,reason:"home-local input; registered-home board exports not collected"}}}'
   exit $?
 fi

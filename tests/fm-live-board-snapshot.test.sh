@@ -25,7 +25,8 @@ check "$TMP_ROOT/empty.json" '.schema == "fm-live-board.v1" and .counts.open_tas
   and (.projects|length == 0) and .coverage.local.shown == 0
   and any(.omissions[]; .kind == "registry-unavailable")
   and any(.omissions[]; .kind == "backlog-unavailable")
-  and any(.omissions[]; .kind == "registered-homes-uncollected")' 'empty board must disclose unavailable sources'
+  and any(.omissions[]; .kind == "registered-homes-uncollected")
+  and .coverage.local.complete == false' 'empty board must disclose unavailable sources'
 pass 'empty home is explicit, not an all-fleet clear verdict'
 
 h=$(home registry)
@@ -78,7 +79,7 @@ check "$TMP_ROOT/inventory.json" '.counts.open_tasks == 8
   and any(.warnings[]; .kind == "missing-worker-metadata" and .id == "missing")
   and any(.warnings[]; .kind == "metadata-without-backlog" and .id == "metadata-only")
   and any(.omissions[]; .kind == "unstructured-open-work" and .count == 1)
-  and (.coverage.local.trustworthy | not)
+  and (.coverage.local.trustworthy | not) and .coverage.local.complete == false
   and any(.projects[].tasks[]; .id == "queue" and .state == "queued" and .current_state == null)
   and any(.projects[].tasks[]; .id == "rollup" and .role == "program" and .current_state == null)
   and any(.projects[].tasks[]; .id == "stale" and .project == "alpha"
@@ -122,7 +123,8 @@ check "$TMP_ROOT/holds.json" '.counts.questions == 31 and .counts.open_tasks == 
   and any(.projects[].questions[]; .id == "deferred" and .hold.bucket == "dated")
   and any(.projects[].questions[]; .id == "blocked" and .hold.bucket == "blocked" and .unresolved_blockers == ["missing"])
   and all(.projects[].questions[]; .answerable == false)
-  and .coverage.local.shown == 31 and .coverage.local.truncated == false' 'questions were capped, prose-ranked, hidden or auto-answerable'
+  and .coverage.local.shown == 31 and .coverage.local.truncated == false
+  and .coverage.local.complete == true' 'questions were capped, prose-ranked, hidden or auto-answerable'
 pass 'more than twenty holds retain all buckets with structured priority and oldest-first order'
 
 h=$(home events)
