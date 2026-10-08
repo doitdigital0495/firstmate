@@ -728,6 +728,15 @@ test_worker_pin_record_covers_the_pinned_store() {
   expect_code 0 "$rc" "a pinned Claude launch must pass on the home's own record"$'\n'"$out"
   out=$(run_gate "$home" --harness pi --model zai/glm-5.3 --pi-store "$pi_pin"); rc=$?
   expect_code 0 "$rc" "a pinned Pi launch must pass on the home's own record"$'\n'"$out"
+  # The gate's own default-store path, with ambient CLAUDE_CONFIG_DIR still A.
+  out=$(env -u FM_QUOTA_INTAKE_TEST_BYPASS HOME="$home/user-home" CLAUDE_CONFIG_DIR="$ambient" PI_CODING_AGENT_DIR= CODEX_HOME= \
+    FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_STATE_OVERRIDE="$home/state" FM_CONFIG_OVERRIDE="$home/config" \
+    "$INTAKE" gate --harness claude 2>&1); rc=$?
+  expect_code 0 "$rc" "a storeless Claude gate under a pin must resolve the pinned root"$'\n'"$out"
+  out=$(run_gate "$home" --harness claude --claude-store default); rc=$?
+  expect_code 0 "$rc" "a 'default' Claude store under a pin must resolve the pinned root"$'\n'"$out"
+  out=$(run_gate "$home" --harness pi --model zai/glm-5.3); rc=$?
+  expect_code 0 "$rc" "a storeless Pi gate under a pin must resolve the pinned root"$'\n'"$out"
   out=$(run_gate "$home" --harness claude --claude-store "$ambient"); rc=$?
   expect_code 3 "$rc" "the ambient store the pin overrides must stay uncovered"
   assert_contains "$out" "does not cover the chosen store $ambient" "the refusal must name the uncovered store"

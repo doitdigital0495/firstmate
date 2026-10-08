@@ -18,6 +18,10 @@
 # already uses when it first records a remote route - and republishes this
 # home's own metadata to match. A failed or refused relaunch leaves this
 # parent's record untouched.
+#
+# Exit 3 means the host relaunched the mate but its route confirmation was
+# missing or carried no harness: the relaunch happened, this parent's record
+# was left as it was, and the caller must re-check the route itself.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,7 +35,7 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-warn_unrecorded() { printf 'warning: %s; state/%s.meta was not updated\n' "$1" "$ID" >&2; exit 0; }
+unconfirmed() { printf 'error: %s; state/%s.meta was not updated\n' "$1" "$ID" >&2; exit 3; }
 usage() { sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 [ "$#" -eq 4 ] || usage
@@ -62,11 +66,11 @@ printf '%s\n' "$RELAUNCH_OUT"
 # field for "no explicit pin".
 [ "$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^schema=//p' | tail -1)" \
   = fm-remote-secondmate-control.v1 ] \
-  || warn_unrecorded "the host relaunched $ID but reported no route confirmation to record"
+  || unconfirmed "the host relaunched $ID but reported no route confirmation to record"
 NEW_HARNESS=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^harness=//p' | tail -1)
 NEW_MODEL=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^model=//p' | tail -1)
 NEW_EFFORT=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^effort=//p' | tail -1)
-[ -n "$NEW_HARNESS" ] || warn_unrecorded "the host's route confirmation carried no harness to record"
+[ -n "$NEW_HARNESS" ] || unconfirmed "the host's route confirmation carried no harness to record"
 
 META_LOCK=$(fm_meta_lock_path "$META") || die "metadata lock path is invalid for $ID"
 fm_lock_acquire_wait "$META_LOCK"

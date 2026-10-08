@@ -90,7 +90,7 @@ printf 'schema=fm-remote-secondmate-control.v1\n'
 printf 'backend=herdr\n'
 printf 'target=fm-remote:w1:p1\n'
 printf 'herdr_session=fm-remote\n'
-printf 'harness=%s\n' "$harness"
+[ "$FM_FAKE_RELAUNCH_MODE" = no-harness ] || printf 'harness=%s\n' "$harness"
 printf 'model=%s\n' "$model"
 printf 'effort=%s\n' "$effort"
 SH
@@ -151,20 +151,24 @@ cmp -s "$TMP/ios-before-refusal.meta" "$HOME_DIR/state/ios.meta" \
   || fail "a refused relaunch must not touch the parent's record"
 pass "a refused remote relaunch leaves the parent's record untouched"
 
-# --- an older host without a route block still reports the relaunch ---------
-reset_meta
-cp "$HOME_DIR/state/ios.meta" "$TMP/ios-before-no-route.meta"
-FM_FAKE_RELAUNCH_MODE=no-route
-OUT=$(run_relaunch ios claude claude-opus-5-5 medium); RC=$?
-unset FM_FAKE_RELAUNCH_MODE
-expect_code 0 "$RC" "a relaunch the host performed must not fail for a missing route block"$'\n'"$OUT"
-assert_contains "$OUT" "relaunched ios harness=claude" \
-  "the host's confirmation line should still reach the caller"
-assert_contains "$OUT" "warning: the host relaunched ios but reported no route confirmation" \
-  "a missing route block should be surfaced as a warning"
-cmp -s "$TMP/ios-before-no-route.meta" "$HOME_DIR/state/ios.meta" \
-  || fail "an unconfirmed route must not be written into the parent's record"
-pass "a relaunch on a host without a route block warns instead of failing"
+# --- an unconfirmed route is a distinct failure that leaves the record -------
+for mode in no-route no-harness; do
+  reset_meta
+  cp "$HOME_DIR/state/ios.meta" "$TMP/ios-before-$mode.meta"
+  FM_FAKE_RELAUNCH_MODE=$mode
+  OUT=$(run_relaunch ios claude claude-opus-5-5 medium); RC=$?
+  unset FM_FAKE_RELAUNCH_MODE
+  expect_code 3 "$RC" "$mode: a relaunch the host performed but did not confirm must exit 3"$'\n'"$OUT"
+  assert_contains "$OUT" "relaunched ios harness=claude" \
+    "$mode: the host's relaunch line should still reach the caller"
+  assert_contains "$OUT" "state/ios.meta was not updated" \
+    "$mode: the caller must be told the parent record was left as it was"
+  cmp -s "$TMP/ios-before-$mode.meta" "$HOME_DIR/state/ios.meta" \
+    || fail "$mode: an unconfirmed route must not be written into the parent's record"
+  [ -z "$(find "$HOME_DIR/state" -name '.fm-remote-relaunch-meta.*')" ] \
+    || fail "$mode: no staged record may be left behind"
+done
+pass "a relaunch without a confirmed route or harness exits 3 and leaves the parent's record untouched"
 
 # --- a local (non-remote) secondmate is refused, not silently mishandled ----
 fm_write_meta "$HOME_DIR/state/local1.meta" \

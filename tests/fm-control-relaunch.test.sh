@@ -858,31 +858,61 @@ print(json.dumps({"type": "system", "subtype": "informational", "level": "notice
 }
 
 test_pinned_relaunch_shapes_only_the_pinned_store() {
-  local dir out rc id=rl-acct-shaped dirs
+  local dir out rc id=rl-acct-shaped adm a_dir b_dir rec
   dir=$(new_case acct-shaped "$id")
   add_ship_task "$dir" "$id" claude
   make_claude_auth_stub "$dir"
-  mkdir -p "$dir/home/config" "$dir/ambient" "$dir/pinned"
+  mkdir -p "$dir/home/config" "$dir/ambient" "$dir/pinned" "$dir/quota-fake" "$dir/user-home"
   : > "$dir/pinned/.credentials.json"
   park_claude_session "$dir/ambient" parked-a
   park_claude_session "$dir/pinned" parked-b
   printf '%s\n%s\n' "$dir/ambient" "$dir/pinned" > "$dir/home/config/claude-shaped-store"
   printf '%s\n' "$dir/pinned" > "$dir/home/config/claude-account"
-  printf 'worker_account=%s\nclaude_config_dir=%s\n' "$dir/pinned" "$dir/pinned" >> "$dir/home/state/$id.meta"
+  adm=$dir/home/state/claude-admission
 
-  out=$(FM_TEST_CLAUDE_CONFIG_DIR="$dir/ambient" run_control "$dir" "$id" relaunch --note "pinned shaped store"); rc=$?
-  expect_code 0 "$rc" "a pinned relaunch with an ambient store elsewhere must be released"$'\n'"$out"
+  # Ambient store A already released a task: a preview or gate that read A
+  # instead of the pin would be withheld by A's release interval.
+  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    FM_CLAUDE_RELEASE_INTERVAL=600 "$ROOT/bin/fm-claude-admission.sh" gate seed-a --store "$dir/ambient" >/dev/null 2>&1 \
+    || fail "seeding the ambient store's release failed"
+  a_dir=$(find "$adm" -mindepth 1 -maxdepth 1 -type d -name 'ambient-*')
+  [ -n "$a_dir" ] || fail "the ambient seed must take admission state"
+  cp "$a_dir/last-release" "$dir/ambient-release-before"
+
+  # A real intake record taken with ambient CLAUDE_CONFIG_DIR=A, so the
+  # pre-stop preview and fm-spawn's consuming gate both run unbypassed.
+  printf '%s\n' '{"model_notes":{"claude":"personal max line"}}' > "$dir/home/config/crew-dispatch.json"
+  cat > "$dir/quota-snap.json" <<'EOF'
+{"schemaVersion":5,"providers":[
+ {"provider":"claude","label":"Max","plan":"max","state":{"status":"fresh"},
+  "windows":[
+   {"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":10,"percentRemaining":90,"resetsAt":"2099-09-29T15:19:59Z"},
+   {"id":"seven_day","label":"7d","kind":"seven_day","percentUsed":7,"percentRemaining":93,"resetsAt":"2099-10-05T17:59:59Z"}],
+  "quotaSemantics":{"status":"known","effectiveAvailability":[
+   {"scope":"all_models","status":"known","effectivePercentRemaining":90,"boundedBy":["five_hour","seven_day"],"limitingWindowIds":["five_hour"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":0.4}}]}}]}
+EOF
+  printf '#!/usr/bin/env bash\ncat -- %q\n' "$dir/quota-snap.json" > "$dir/quota-fake/quota-axi"
+  chmod +x "$dir/quota-fake/quota-axi"
+  env HOME="$dir/user-home" CLAUDE_CONFIG_DIR="$dir/ambient" PI_CODING_AGENT_DIR= CODEX_HOME= \
+    FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    PATH="$dir/quota-fake:$PATH" "$ROOT/bin/fm-quota-intake.sh" record >/dev/null 2>&1 || true
+  rec=$(find "$dir/home/state/quota-intake" -maxdepth 1 -name 'quota-*.json' 2>/dev/null)
+  [ -n "$rec" ] || fail "no intake record was written for the pinned home"
+
+  out=$( unset FM_QUOTA_INTAKE_TEST_BYPASS
+    FM_TEST_CLAUDE_CONFIG_DIR="$dir/ambient" run_control "$dir" "$id" relaunch --note "pinned shaped store" ); rc=$?
+  expect_code 0 "$rc" "a pinned relaunch with an unbound task and ambient store A must be released onto the pin"$'\n'"$out"
+  assert_contains "$out" "quota-intake gate: PASS" "the relaunch must pass the real quota gate"
+  assert_present "$rec.spent" "the relaunch must consume the pinned home's intake record"
   assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$dir/pinned'" \
     "the replacement must launch under the pinned root"
-  dirs=$(find "$dir/home/state/claude-admission" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
-  case "$dirs" in
-    pinned-*) ;;
-    *) fail "relaunch admission state must exist only under the pinned store, got: $dirs" ;;
-  esac
-  [ "$(printf '%s\n' "$dirs" | wc -l)" -eq 1 ] || fail "the ambient store must take no admission state: $dirs"
-  assert_grep "$id" "$dir/home/state/claude-admission/$dirs/last-release" \
-    "the relaunch release must be recorded against the pinned store"
-  pass "fm-control relaunch: a pinned task's admission preview and consuming gate land only on the pinned store"
+  [ "$(meta_field "$dir" "$id" claude_config_dir)" = "$dir/pinned" ] || fail "the relaunched record must bind the pinned store"
+  b_dir=$(find "$adm" -mindepth 1 -maxdepth 1 -type d -name 'pinned-*')
+  [ -n "$b_dir" ] || fail "the relaunch must take admission state under the pinned store"
+  assert_grep "$id" "$b_dir/last-release" "the relaunch release must be recorded against the pinned store"
+  cmp -s "$dir/ambient-release-before" "$a_dir/last-release" \
+    || fail "the ambient store's release state must stay unchanged by a pinned relaunch"
+  pass "fm-control relaunch: an unbound task under pin B previews, gates quota and takes admission only on B, leaving ambient A unchanged"
 }
 
 test_pi_exclude_tools_follow_the_relaunch() {

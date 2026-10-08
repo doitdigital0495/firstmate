@@ -959,7 +959,7 @@ test_spawn_on_unshaped_store_is_unchanged() {
 }
 
 test_pinned_spawn_shapes_only_the_pinned_store() {
-  local home wt fakebin launchlog proj ambient pinned out dirs
+  local home wt fakebin launchlog proj ambient pinned out dirs a_dir
   IFS='|' read -r home wt fakebin launchlog proj <<< "$(spawn_case spawn-pinned ship-one)"
   ambient=$(make_store "$TMP_ROOT/spawn-pinned/ambient")
   pinned=$(make_store "$TMP_ROOT/spawn-pinned/pinned")
@@ -967,6 +967,10 @@ test_pinned_spawn_shapes_only_the_pinned_store() {
   add_turn_then_park "$pinned" parked-b 60 100000
   : > "$pinned/.credentials.json"
   printf '%s\n%s\n' "$ambient" "$pinned" > "$home/config/claude-shaped-store"
+  out=$(FM_TEST_INTERVAL=600 admission "$home" "$ambient" gate seed-a) || fail "seeding the ambient store's release failed: $out"
+  a_dir=$(find "$home/state/claude-admission" -mindepth 1 -maxdepth 1 -type d -name 'ambient-*')
+  [ -n "$a_dir" ] || fail "the ambient seed must take admission state"
+  cp "$a_dir/last-release" "$TMP_ROOT/spawn-pinned/ambient-release-before"
   printf '%s\n' "$pinned" > "$home/config/claude-account"
   # shellcheck disable=SC2016  # Expanded by the stub at run time.
   printf '#!/usr/bin/env bash\n[ "${1:-}" = auth ] || exit 0\n[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json" ]\n' > "$fakebin/claude"
@@ -976,17 +980,12 @@ test_pinned_spawn_shapes_only_the_pinned_store() {
   out=$(run_claude_spawn "$home" "$wt" "$fakebin" "$launchlog" "$ambient" ship-one "$proj") \
     || fail "a pinned Claude spawn with an ambient store elsewhere must be released: $out"
   assert_present "$home/state/ship-one.meta" "the pinned spawn must publish its task record"
-  dirs=$(find "$home/state/claude-admission" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
-  case "$dirs" in
-    pinned-*) ;;
-    *) fail "admission state must exist only under the pinned store, got: $dirs" ;;
-  esac
-  [ "$(printf '%s\n' "$dirs" | wc -l)" -eq 1 ] || fail "the ambient store must take no admission state: $dirs"
-  assert_grep "ship-one" "$home/state/claude-admission/$dirs/last-release" \
-    "the release must be recorded against the pinned store"
-  out=$(admission "$home" "$ambient" check other-task) \
-    || fail "the ambient store's release slot must be untouched by a pinned spawn: $out"
-  pass "a pinned Claude spawn takes admission only on the pinned store, never the ambient one"
+  dirs=$(find "$home/state/claude-admission" -mindepth 1 -maxdepth 1 -type d -name 'pinned-*')
+  [ -n "$dirs" ] || fail "the pinned spawn must take admission state under the pinned store"
+  assert_grep "ship-one" "$dirs/last-release" "the release must be recorded against the pinned store"
+  cmp -s "$TMP_ROOT/spawn-pinned/ambient-release-before" "$a_dir/last-release" \
+    || fail "the ambient store's release state must stay unchanged by a pinned spawn"
+  pass "a pinned Claude spawn takes admission only on the pinned store, leaving the seeded ambient one unchanged"
 }
 
 test_unshaped_store_takes_no_state
