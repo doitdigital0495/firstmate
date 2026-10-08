@@ -6,7 +6,9 @@
 # Usage:
 #   fm-quota-intake.sh                  (same as: record)
 #   fm-quota-intake.sh record
-#     Runs quota-axi --full for this home's DEFAULT credential stores and for
+#     Runs quota-axi --full for this home's DEFAULT credential stores (the
+#     configured worker account pin's root for Claude and Pi when one is set,
+#     exactly the store fm-spawn and fm-control relaunch resolve) and for
 #     every enabled account store in config/accounts.json (fm_account_stores in
 #     bin/fm-account-lib.sh), with CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR, and
 #     CODEX_HOME pinned to each entry's stores. One private (0600) timestamped
@@ -88,6 +90,8 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd) || exit 2
 . "$SCRIPT_DIR/fm-account-lib.sh"
 # shellcheck source=bin/fm-quota-axi-lib.sh
 . "$SCRIPT_DIR/fm-quota-axi-lib.sh"
+# shellcheck source=bin/fm-worker-account-lib.sh
+. "$SCRIPT_DIR/fm-worker-account-lib.sh"
 
 FM_ROOT=${FM_ROOT_OVERRIDE:-$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd)}
 FM_HOME=${FM_HOME:-$FM_ROOT}
@@ -126,6 +130,17 @@ command -v jq >/dev/null 2>&1 || die "jq not installed"
 # exactly the resolution the launching scripts use, kept in one place so the
 # record and the gate can never disagree about a default.
 intake_default_store() { # <claude|pi|codex>
+  local selection root
+  case "$1" in
+    claude|pi)
+      selection=$(fm_worker_account_resolve "$1" "$CONFIG") || return 1
+      if [ -n "$selection" ]; then
+        root=${selection#*$'\t'}
+        root=${root%%$'\t'*}
+        printf '%s\n' "${root:-$HOME/.claude}"
+        return 0
+      fi ;;
+  esac
   case "$1" in
     claude) printf '%s\n' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" ;;
     pi)     printf '%s\n' "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}" ;;
@@ -376,7 +391,9 @@ cmd_record() {
   local -a accounts=()
   trap 'rm -rf -- "$tmp"' EXIT
 
-  default_stores=$(intake_default_store claude)$'\n'"$(intake_default_store pi)"$'\n'"$(intake_default_store codex)"
+  { sc=$(intake_default_store claude) && sp=$(intake_default_store pi) && sx=$(intake_default_store codex); } ||
+    die "the configured worker account pin (config/claude-account or config/pi-account) cannot be resolved"
+  default_stores=$sc$'\n'$sp$'\n'$sx
   plan_map=$(intake_plan_map)
   notes_map=$(intake_notes_map)
 
@@ -564,7 +581,8 @@ cmd_gate() {
       codex) chosen=$codex_store ;;
     esac
     if [ -z "$chosen" ] || [ "$chosen" = default ]; then
-      expected=$(intake_default_store "$store_field")
+      expected=$(intake_default_store "$store_field") ||
+        refuse "quota intake gate: refusing - the configured worker account pin for $store_field cannot be resolved; fix it before any launch"
     else
       expected=$chosen
     fi

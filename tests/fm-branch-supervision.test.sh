@@ -919,7 +919,7 @@ test_unmarked_main_honors_a_live_branch_lease() {
 # A lease file engages the guard's claim serialization for an unmarked caller
 # too, so the branch cannot claim between that caller's check and its mutation.
 test_unmarked_guard_with_a_lease_file_holds_exclusivity_through_mutation() {
-  local home operation_pid claim_pid claim_status
+  local home operation_pid claim_pid claim_status i
   home="$TMP_ROOT/unmarked-guard-mutation-home"
   mkdir -p "$home/state"
   printf '%s\n' "$$" > "$home/state/.lock"
@@ -939,7 +939,11 @@ test_unmarked_guard_with_a_lease_file_holds_exclusivity_through_mutation() {
       while [ ! -e "$FM_TEST_RELEASE" ] && [ "$i" -lt 1500 ]; do sleep 0.01; i=$((i + 1)); done
     ' _ "$ROOT/bin/fm-lease-lib.sh" >/dev/null 2>&1 &
   operation_pid=$!
-  while [ ! -e "$home/operation-ready" ]; do sleep 0.01; done
+  i=0
+  while [ ! -e "$home/operation-ready" ]; do
+    [ "$i" -lt 1000 ] || fail "the unmarked guarded mutation fixture never became ready"
+    sleep 0.01; i=$((i + 1))
+  done
   [ ! -e "$home/state/.lease-task-race" ] || fail "the unmarked guard kept the dead session's lease"
 
   env -u PI_CODING_AGENT FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_LEASE_HOLDER_PID=$$ \
@@ -965,7 +969,7 @@ test_unmarked_guard_with_a_lease_file_holds_exclusivity_through_mutation() {
 # file opts out; another primary needs the file (bin/fm-supervision-engine-lib.sh
 # owns the gate, and FM_TEST_HARNESS pins the primary it judges).
 test_host_home_unmarked_guard_excludes_the_first_claim() {
-  local home operation_pid claim_pid claim_status out harness line
+  local home operation_pid claim_pid claim_status out harness line i
   home="$TMP_ROOT/host-first-claim-home"
   mkdir -p "$home/state" "$home/config"
   printf '%s\n' "$$" > "$home/state/.lock"
@@ -1007,7 +1011,11 @@ test_host_home_unmarked_guard_excludes_the_first_claim() {
       while [ ! -e "$FM_TEST_RELEASE" ] && [ "$i" -lt 1500 ]; do sleep 0.01; i=$((i + 1)); done
     ' _ "$ROOT/bin/fm-lease-lib.sh" >/dev/null 2>&1 &
   operation_pid=$!
-  while [ ! -e "$home/operation-ready" ]; do sleep 0.01; done
+  i=0
+  while [ ! -e "$home/operation-ready" ]; do
+    [ "$i" -lt 1000 ] || fail "the host-home guarded mutation fixture never became ready"
+    sleep 0.01; i=$((i + 1))
+  done
   [ ! -e "$home/state/.lease-task-first" ] || fail "the guard created a lease for an unleased task"
 
   env -u PI_CODING_AGENT FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_LEASE_HOLDER_PID=$$ \

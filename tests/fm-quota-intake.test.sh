@@ -704,6 +704,55 @@ test_real_spawn_gate() {
   pass "fm-spawn: refuses without a record (nothing created), launches on a real seeded record, and refuses to reuse it"
 }
 
+test_worker_pin_record_covers_the_pinned_store() {
+  local home ambient claude_pin pi_pin rec out rc proj wt fakebin
+  home=$(make_home pinned)
+  ambient=$home/ambient-claude
+  claude_pin=$home/pinned-claude
+  pi_pin=$home/pinned-pi
+  mkdir -p "$ambient" "$claude_pin" "$pi_pin"
+  : > "$claude_pin/.credentials.json"
+  printf '%s\n' "$claude_pin" > "$home/config/claude-account"
+  printf '%s\nzai\n' "$pi_pin" > "$home/config/pi-account"
+  printf '%s\n' '{"plans":{"zai":"glm-coding-pro"},"accounts":{}}' > "$home/config/accounts.json"
+  fakebin=$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-base.json")
+
+  out=$(run_record "$home" "$fakebin" CLAUDE_CONFIG_DIR="$ambient") || fail "the pinned home's record failed: $out"
+  rec=$(newest_record "$home") || fail "no intake record was written for the pinned home"
+  jq -e --arg c "$claude_pin" --arg p "$pi_pin" \
+    '.accounts[0].account == "default" and .accounts[0].stores.claude == $c and .accounts[0].stores.pi == $p' \
+    "$rec" >/dev/null || fail "the default record must read the pinned Claude and Pi roots, not the ambient store"
+
+  # The gate exactly as fm-spawn and fm-control relaunch call it under a pin.
+  out=$(run_gate "$home" --harness claude --claude-store "$claude_pin"); rc=$?
+  expect_code 0 "$rc" "a pinned Claude launch must pass on the home's own record"$'\n'"$out"
+  out=$(run_gate "$home" --harness pi --model zai/glm-5.3 --pi-store "$pi_pin"); rc=$?
+  expect_code 0 "$rc" "a pinned Pi launch must pass on the home's own record"$'\n'"$out"
+  out=$(run_gate "$home" --harness claude --claude-store "$ambient"); rc=$?
+  expect_code 3 "$rc" "the ambient store the pin overrides must stay uncovered"
+  assert_contains "$out" "does not cover the chosen store $ambient" "the refusal must name the uncovered store"
+
+  # The real fm-spawn under the pin, with ambient CLAUDE_CONFIG_DIR elsewhere.
+  proj=$TMP_ROOT/pinned-proj
+  fm_git_init_commit "$proj"
+  fm_git_add_origin "$proj" "$TMP_ROOT/pinned-origin.git"
+  wt=$TMP_ROOT/pinned-wt
+  git -C "$proj" worktree add -q --detach "$wt" >/dev/null 2>&1
+  fakebin=$(make_spawn_fakebin "$TMP_ROOT/pinned-spawn-fake")
+  cp "$(make_fake_quota_axi "$TMP_ROOT/pinned-spawn-quota" "$TMP_ROOT/snap-base.json")/quota-axi" "$fakebin/quota-axi"
+  # shellcheck disable=SC2016  # Expanded by the stub at run time.
+  printf '#!/usr/bin/env bash\n[ "${1:-}" = auth ] || exit 0\n[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json" ]\n' > "$fakebin/claude"
+  chmod +x "$fakebin/claude"
+  run_record "$home" "$fakebin" CLAUDE_CONFIG_DIR="$ambient" >/dev/null || fail "re-seeding the pinned home's record failed"
+  fm_test_spawn_brief "$home" spawn-pinned "pinned quota gate intent"
+  out=$( unset FM_QUOTA_INTAKE_TEST_BYPASS
+    FM_TEST_CLAUDE_CONFIG_DIR=$ambient fm_test_run_spawn "$home" "$wt" "$fakebin" spawn-pinned "$proj" claude --mode no-mistakes --yolo off ); rc=$?
+  expect_code 0 "$rc" "fm-spawn: a pinned Claude launch must pass the real quota gate"$'\n'"$out"
+  assert_contains "$out" "quota-intake gate: PASS" "fm-spawn: the pass must be the real gate's"
+  assert_present "$home/state/spawn-pinned.meta" "fm-spawn: the pinned launch should record meta"
+  pass "a pinned home's intake record covers the pinned Claude and Pi roots, so pinned spawns and relaunches pass the real gate"
+}
+
 # The same lifecycle-modelling tmux stub as tests/fm-control-relaunch.test.sh:
 # the harness's exit command stops the agent, and a launch-brief literal
 # starts the harness named in `becomes`.
@@ -913,4 +962,5 @@ test_gate_test_bypass
 test_cached_fallback_fresh
 test_cached_fallback_stale
 test_real_spawn_gate
+test_worker_pin_record_covers_the_pinned_store
 test_relaunch_pre_stop_gate

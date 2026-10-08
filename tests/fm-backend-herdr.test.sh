@@ -85,7 +85,7 @@ herdr_submit_shift() {  # <resp-dir> <by>
   local resp=$1 by=$2 n ext f sorted
   local -a found=()
   shopt -s nullglob
-  for f in "$resp"/*.out "$resp"/*.exit; do
+  for f in "$resp"/*.out "$resp"/*.exit "$resp"/*.err; do
     n=$(basename "$f")
     n=${n%%.*}
     found+=("$n")
@@ -95,7 +95,7 @@ herdr_submit_shift() {  # <resp-dir> <by>
   sorted=$(printf '%s\n' "${found[@]}" | sort -rn -u)
   while IFS= read -r n; do
     [ -n "$n" ] || continue
-    for ext in out exit; do
+    for ext in out exit err; do
       f="$resp/$n.$ext"
       if [ -f "$f" ]; then
         mv "$f" "$resp/$((n + by)).$ext"

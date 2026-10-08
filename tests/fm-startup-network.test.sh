@@ -859,7 +859,37 @@ EOF
   pass "fm-startup-network: a held publish lock ends the worker inside its budget with a failed-rerun record"
 }
 
+# A worker that gives up on a held publish lock writes its failed record without
+# that lock. It must still refuse when another worker published a newer record
+# while it waited, or a stale failure overwrites a finished result.
+test_a_lock_deadline_does_not_clobber_a_newer_published_record() {
+  local rec home root log holder worker newer=999.1.newer
+  rec=$(new_world held-lock-newer)
+  IFS='|' read -r home root log <<EOF
+$rec
+EOF
+
+  holder=$(hold_publish_lock "$home")
+  env PATH="$root/bin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+    FM_STARTUP_NETWORK_TIMEOUT=3 FM_SESSION_START_TIMEOUT=3 FM_FAKE_BOOTSTRAP_LOG="$log" \
+    "$root/bin/fm-startup-network.sh" run --locked 0 >/dev/null 2>&1 &
+  worker=$!
+  sleep 1
+  printf 'state=done\npid=999999999\nstarted=%s\nfinished=%s\nrc=0\nlocked=1\nphases=probe,sweeps\ngeneration=%s\n' \
+    "$(date +%s)" "$(date +%s)" "$newer" > "$home/state/.startup-network.status"
+  await_pid_exit "$worker" 100 || fail "the worker outlived its budget against a held publish lock"
+  [ "$(sed -n 's/^state=//p' "$home/state/.startup-network.status")" = "done" ] \
+    || fail "an older worker overwrote a newer finished record with its lock-deadline failure"
+  [ "$(sed -n 's/^generation=//p' "$home/state/.startup-network.status")" = "$newer" ] \
+    || fail "an older worker replaced the newer record's generation"
+  assert_no_grep 'check	startup-network' "$home/state/.wake-queue" \
+    "an older worker queued a false failure wake over a newer finished record"
+  kill "$holder" 2>/dev/null || true
+  pass "fm-startup-network: a lock-deadline failure never clobbers a newer published record"
+}
+
 test_wait_fails_without_a_published_stage
+test_a_lock_deadline_does_not_clobber_a_newer_published_record
 test_start_returns_without_holding_the_callers_stdout
 test_harvest_acknowledgement_suppresses_the_wake_and_no_claim_produces_it
 test_a_claimant_crash_after_publish_still_queues_the_wake

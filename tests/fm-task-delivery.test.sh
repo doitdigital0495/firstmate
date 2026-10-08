@@ -157,8 +157,11 @@ EOF
 
   # The agreeing case clears the check and only fails later, at the refusing tmux.
   write_brief "$home" delivery-agree-b2 direct-PR
+  printf '#!/bin/sh\necho DELIVERY_CHECKS_CLEARED >&2\nexit 1\n' > "$fakebin/tmux"
+  chmod +x "$fakebin/tmux"
   out=$(run_spawn "$home" "$fakebin" delivery-agree-b2 "$proj" claude --mode direct-PR --yolo off)
   assert_not_contains "$out" "delivery mismatch" "an agreeing mode was reported as a mismatch"
+  assert_contains "$out" "DELIVERY_CHECKS_CLEARED" "an agreeing mode never reached the backend"
 
   # A brief scaffolded before the contract line existed warns once and continues.
   write_brief "$home" delivery-legacy-b3
@@ -429,6 +432,8 @@ test_spawn_notices_a_rigor_downgrade_against_the_registry() {
 $rec
 EOF
     write_brief "$home" "delivery-dev-$n" "$mode"
+    printf '#!/bin/sh\necho DELIVERY_CHECKS_CLEARED >&2\nexit 1\n' > "$fakebin/tmux"
+    chmod +x "$fakebin/tmux"
     out=$(run_spawn "$home" "$fakebin" "delivery-dev-$n" "$proj" claude --mode "$mode" --yolo off)
     case "$expect" in
       notice)
@@ -438,7 +443,9 @@ EOF
           "$label: notice did not name the standing posture it compared against" ;;
       quiet)
         assert_not_contains "$out" "less rigor than the captain's standing posture" \
-          "$label: printed a deviation notice that is not a downgrade" ;;
+          "$label: printed a deviation notice that is not a downgrade"
+        assert_contains "$out" "DELIVERY_CHECKS_CLEARED" \
+          "$label: the spawn never reached the backend, so the quiet row proves nothing" ;;
     esac
   done <<'ROWS'
 no-mistakes project shipped direct-PR|- proj [no-mistakes] - fixture (added 2026-01-01)|direct-PR|notice|no-mistakes
@@ -1781,6 +1788,15 @@ EOF
   fill_brief_subsections "$home/data/forge-agree-a3/brief.md" "Run the review loop." "Ship it."
   out=$(run_spawn "$home" "$fakebin" forge-agree-a3 "$proj" claude --mode no-mistakes --yolo off 2>&1)
   assert_not_contains "$out" "forge mismatch" "an agreeing brief and registry were reported as drift"
+
+  FM_HOME="$home" "$BRIEF" forge-agree-lane proj --mode no-mistakes --forge gerrit --fast-lane >/dev/null \
+    || fail "a gerrit fast-lane brief should scaffold"
+  fill_brief_subsections "$home/data/forge-agree-lane/brief.md" "Run the review loop." "Ship it."
+  out=$(run_spawn "$home" "$fakebin" forge-agree-lane "$proj" claude --mode no-mistakes --yolo off 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a gerrit fast-lane brief launched without --fast-lane"
+  assert_contains "$out" "the brief says lane=fast but this spawn did not pass --fast-lane" \
+    "the lane after forge= and shape= on a gerrit contract line was not read"
 
   # local-only publishes nothing and cannot carry the forge, so a bound project
   # has no local-only brief that agrees with its registry: landing one would

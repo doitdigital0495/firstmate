@@ -123,6 +123,7 @@ Never launch a vendor CLI yourself, and never probe a credential store the candi
 Grok prepaid `credits` are unrelated to paid-window headroom; never read them as exhaustion.
 
 Malformed configuration is an actionable error, not a candidate to rank around.
+A configured worker pin (`config/claude-account`, `config/pi-account`) wins over any seat you pick: an `--account` or relaunch binding whose store differs from the pinned root refuses with an error naming the pin file, so route that runner only onto its pinned store; with no pin, registered cross-account routing applies unchanged.
 
 ### 2. Reasoning-class fit
 

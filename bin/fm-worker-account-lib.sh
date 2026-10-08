@@ -149,6 +149,7 @@ fm_worker_account_resolve() {
     echo "error: config/$file must name a readable, searchable existing directory (ordinary means $fallback): $cfg -> $root" >&2
     return 1
   fi
+  [ -z "$root" ] || root=$(cd "$root" && pwd -P) || return 1
   printf '%s\t%s\t%s\n' "$declared" "$root" "${token#*$'\t'}"
 }
 

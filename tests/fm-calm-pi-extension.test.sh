@@ -3010,11 +3010,12 @@ test_working_ship_geometry_and_lifecycle() {
 
   # The standalone Pi Calm extension is a separate project that installs its own boat
   # in the same Pi working-row slot, so the dual-install check below reads its real
-  # module when it is installed: a rename on either side then renders two boats and
-  # fails there, instead of passing against a key this test invented. The pinned slot
-  # contract inside the program covers a machine without that extension.
+  # module when FM_STANDALONE_CALM_SHIP opts in (1 reads the installed copy under
+  # HOME, any other value is the module path): a rename on either side then renders
+  # two boats and fails there, instead of passing against a key this test invented.
+  # The pinned slot contract inside the program covers every run without it.
   standalone_ship=${FM_STANDALONE_CALM_SHIP:-}
-  if [ -z "$standalone_ship" ] && [ -f "${HOME:-}/.pi/agent/extensions/calm/lib/working-ship.ts" ]; then
+  if [ "$standalone_ship" = 1 ]; then
     standalone_ship=${HOME:-}/.pi/agent/extensions/calm/lib/working-ship.ts
   fi
   [ -f "$standalone_ship" ] || standalone_ship=

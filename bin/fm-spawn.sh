@@ -3702,7 +3702,7 @@ if [ "$KIND" = ship ]; then
   # the standard lane; a legacy brief without the contract line has no lane at
   # all, so a --fast-lane spawn of one refuses rather than running a lane whose
   # instructions the worker never received.
-  BRIEF_LANE=$(sed -n 's/^Delivery contract: mode=[^ ]* lane=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
+  BRIEF_LANE=$(sed -n 's/^Delivery contract: mode=[^ ]*.*[[:space:]]lane=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
   case "$BRIEF_LANE" in
     fast|'') ;;
     *)

@@ -844,6 +844,47 @@ test_worker_account_pin_follows_the_relaunch() {
   pass 'fm-control relaunch: configured pins and recorded bindings agree, or refuse before stop; removing a pin preserves the task store'
 }
 
+park_claude_session() {  # <store> <session-id>
+  mkdir -p "$1/projects/-fixture"
+  FM_T_SESSION=$2 python3 -c '
+import datetime, json, os, time
+s = os.environ["FM_T_SESSION"]
+park = datetime.datetime.utcfromtimestamp(time.time() - 60).isoformat() + "Z"
+print(json.dumps({"type": "assistant", "sessionId": s, "message": {"id": "msg-" + s, "model": "claude-opus-5",
+  "usage": {"input_tokens": 100000, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}}))
+print(json.dumps({"type": "system", "subtype": "informational", "level": "notice", "sessionId": s, "timestamp": park,
+  "content": "Usage limit reached · continuing automatically at 8:20pm · esc or type to cancel"}))
+' > "$1/projects/-fixture/$2.jsonl"
+}
+
+test_pinned_relaunch_shapes_only_the_pinned_store() {
+  local dir out rc id=rl-acct-shaped dirs
+  dir=$(new_case acct-shaped "$id")
+  add_ship_task "$dir" "$id" claude
+  make_claude_auth_stub "$dir"
+  mkdir -p "$dir/home/config" "$dir/ambient" "$dir/pinned"
+  : > "$dir/pinned/.credentials.json"
+  park_claude_session "$dir/ambient" parked-a
+  park_claude_session "$dir/pinned" parked-b
+  printf '%s\n%s\n' "$dir/ambient" "$dir/pinned" > "$dir/home/config/claude-shaped-store"
+  printf '%s\n' "$dir/pinned" > "$dir/home/config/claude-account"
+  printf 'worker_account=%s\nclaude_config_dir=%s\n' "$dir/pinned" "$dir/pinned" >> "$dir/home/state/$id.meta"
+
+  out=$(FM_TEST_CLAUDE_CONFIG_DIR="$dir/ambient" run_control "$dir" "$id" relaunch --note "pinned shaped store"); rc=$?
+  expect_code 0 "$rc" "a pinned relaunch with an ambient store elsewhere must be released"$'\n'"$out"
+  assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$dir/pinned'" \
+    "the replacement must launch under the pinned root"
+  dirs=$(find "$dir/home/state/claude-admission" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
+  case "$dirs" in
+    pinned-*) ;;
+    *) fail "relaunch admission state must exist only under the pinned store, got: $dirs" ;;
+  esac
+  [ "$(printf '%s\n' "$dirs" | wc -l)" -eq 1 ] || fail "the ambient store must take no admission state: $dirs"
+  assert_grep "$id" "$dir/home/state/claude-admission/$dirs/last-release" \
+    "the relaunch release must be recorded against the pinned store"
+  pass "fm-control relaunch: a pinned task's admission preview and consuming gate land only on the pinned store"
+}
+
 test_pi_exclude_tools_follow_the_relaunch() {
   local dir out rc id=rl-pi-excl
   dir=$(new_case pi-exclude "$id")
@@ -2772,6 +2813,7 @@ test_same_harness_relaunch_keeps_the_profile_axes
 test_native_ultra_relaunch_preserves_profile_and_rejects_before_stop
 test_signed_out_worker_account_pin_refuses_before_stop
 test_worker_account_pin_follows_the_relaunch
+test_pinned_relaunch_shapes_only_the_pinned_store
 test_pi_exclude_tools_follow_the_relaunch
 test_exclude_tools_refusals_happen_before_the_agent_stops
 test_explicit_model_wins_over_the_recorded_one

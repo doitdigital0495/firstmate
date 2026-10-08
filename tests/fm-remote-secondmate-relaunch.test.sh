@@ -85,6 +85,7 @@ case "$FM_FAKE_RELAUNCH_MODE" in
 esac
 printf 'relaunched %s harness=%s from=pi model=%s effort=%s backend=herdr endpoint=fm-remote:w1:p1 worktree=/srv/fm-home\n' \
   "$id" "$harness" "$model" "$effort"
+[ "$FM_FAKE_RELAUNCH_MODE" != no-route ] || exit 0
 printf 'schema=fm-remote-secondmate-control.v1\n'
 printf 'backend=herdr\n'
 printf 'target=fm-remote:w1:p1\n'
@@ -149,6 +150,21 @@ assert_contains "$OUT" "unverified remote secondmate harness" \
 cmp -s "$TMP/ios-before-refusal.meta" "$HOME_DIR/state/ios.meta" \
   || fail "a refused relaunch must not touch the parent's record"
 pass "a refused remote relaunch leaves the parent's record untouched"
+
+# --- an older host without a route block still reports the relaunch ---------
+reset_meta
+cp "$HOME_DIR/state/ios.meta" "$TMP/ios-before-no-route.meta"
+FM_FAKE_RELAUNCH_MODE=no-route
+OUT=$(run_relaunch ios claude claude-opus-5-5 medium); RC=$?
+unset FM_FAKE_RELAUNCH_MODE
+expect_code 0 "$RC" "a relaunch the host performed must not fail for a missing route block"$'\n'"$OUT"
+assert_contains "$OUT" "relaunched ios harness=claude" \
+  "the host's confirmation line should still reach the caller"
+assert_contains "$OUT" "warning: the host relaunched ios but reported no route confirmation" \
+  "a missing route block should be surfaced as a warning"
+cmp -s "$TMP/ios-before-no-route.meta" "$HOME_DIR/state/ios.meta" \
+  || fail "an unconfirmed route must not be written into the parent's record"
+pass "a relaunch on a host without a route block warns instead of failing"
 
 # --- a local (non-remote) secondmate is refused, not silently mishandled ----
 fm_write_meta "$HOME_DIR/state/local1.meta" \

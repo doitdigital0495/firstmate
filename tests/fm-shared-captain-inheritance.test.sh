@@ -554,7 +554,10 @@ EOF
   write_shared "$data_override/captain-shared.md" "inherited shared bytes"
   PATH="$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
     FM_DATA_OVERRIDE="$data_override" \
-    "$ROOT/bin/fm-config-push.sh" >/dev/null 2>&1
+    "$ROOT/bin/fm-config-push.sh" >/dev/null 2>&1 \
+    || fail "config-push setup push of the inherited shared file failed"
+  cmp -s "$data_override/captain-shared.md" "$sm/data/captain-shared.md" \
+    || fail "config-push setup push did not inherit the shared captain preferences"
   write_shared "$data_override/captain-shared.md" "updated shared bytes"
 
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \

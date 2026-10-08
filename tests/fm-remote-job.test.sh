@@ -824,11 +824,22 @@ pass "a repeatedly signalled shutdown still releases ownership for the next work
 cat > "$REMOTE_ROOT/bin/fm-hold-job.sh" <<'SH'
 #!/bin/bash
 trap '' HUP INT TERM
-printf 'started\n' > "$1"
+printf '%s\n' "$$" > "$1.tmp"
+mv -f -- "$1.tmp" "$1"
 sleep 30
 printf 'ran\n' > "$2"
 SH
 chmod +x "$REMOTE_ROOT/bin/fm-hold-job.sh"
+
+assert_pid_exits() {
+  local pid=$1 message=$2
+  [ -n "$pid" ] || fail "$message (no pid recorded)"
+  for _ in $(seq 1 100); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.05
+  done
+  fail "$message"
+}
 git -C "$REMOTE_ROOT" add bin/fm-hold-job.sh
 git -C "$REMOTE_ROOT" commit -qm 'hold job'
 
@@ -905,6 +916,8 @@ for _ in $(seq 1 100); do
   sleep 0.05
 done
 assert_present "$HOLD_STARTED" "the held command did not start before ownership loss"
+HOLD_JOB_PID=$(cat "$HOLD_STARTED")
+kill -0 "$HOLD_JOB_PID" 2>/dev/null || fail "the held command was not running before ownership loss"
 kill -STOP "$LOST_TERM_PID"
 for _ in $(seq 1 100); do
   [ "$(ps -o state= -p "$LOST_TERM_PID" 2>/dev/null | cut -c1)" = T ] && break
@@ -922,8 +935,8 @@ if kill -0 "$LOST_TERM_PID" 2>/dev/null; then
 fi
 wait "$LOST_TERM_PID" 2>/dev/null || true
 LOST_TERM_PID=
-sleep 0.5
-assert_absent "$HOLD_SIDE_EFFECT" "the active command kept running after an unowned TERM"
+assert_pid_exits "$HOLD_JOB_PID" "the active command kept running after an unowned TERM"
+assert_absent "$HOLD_SIDE_EFFECT" "the active command finished after an unowned TERM"
 pass "TERM after ownership loss still stops the active command tree"
 
 OWNER_HOME="$TMP_ROOT/replacement-owner-account"
@@ -965,6 +978,7 @@ for _ in $(seq 1 100); do
   sleep 0.05
 done
 assert_present "$OWNER_STARTED" "the replacement worker's command did not start"
+OWNER_JOB_PID=$(cat "$OWNER_STARTED")
 OWNER_JOB_SUPERVISOR=$(cat "$OWNER_STATE/jobs/$FM_REMOTE_JOB_ID/.claim/supervisor")
 printf 'replacement guard\n' > "$OWNER_STATE/worker.lock/quarantine"
 OWNER_QUARANTINE_INODE=$(file_inode "$OWNER_STATE/worker.lock/quarantine")
@@ -989,6 +1003,8 @@ kill -0 "$REPLACEMENT_OWNER_PID" 2>/dev/null \
   || fail "terminating the old worker also terminated the replacement owner"
 kill -0 "$OWNER_JOB_SUPERVISOR" 2>/dev/null \
   || fail "terminating the old worker stopped the replacement owner's command"
+kill -0 "$OWNER_JOB_PID" 2>/dev/null \
+  || fail "terminating the old worker killed the replacement owner's command process"
 [ "$(cat "$OWNER_STATE/worker.lock/pid" 2>/dev/null || true)" = "$REPLACEMENT_OWNER_PID" ] \
   || fail "the old worker's cleanup removed the replacement owner's lock"
 [ "$(cat "$OWNER_STATE/worker.lock/quarantine" 2>/dev/null || true)" = "replacement guard" ] \
@@ -1008,9 +1024,10 @@ wait "$REPLACEMENT_OWNER_PID" 2>/dev/null || true
 REPLACEMENT_OWNER_PID=
 assert_absent "$OWNER_STATE/worker.lock" \
   "the replacement owner's shutdown left its lock behind"
-sleep 0.5
-assert_absent "$OWNER_SIDE_EFFECT" \
+assert_pid_exits "$OWNER_JOB_PID" \
   "the replacement owner's command kept running after its own shutdown"
+assert_absent "$OWNER_SIDE_EFFECT" \
+  "the replacement owner's command finished after its own shutdown"
 pass "a lost owner terminates without stopping the replacement owner's work"
 
 # Shutdown publishes quarantine, then stops the command, then clears quarantine.

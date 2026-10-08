@@ -548,7 +548,7 @@ EOF
 
 test_ado_merge_refuses_unpinned_auto_complete() {
   local dir out rc=0 url
-  dir=$(make_fixture ado-merge-refusal)
+  dir=$(make_case ado-merge-refusal)
   url=https://dev.azure.com/Org-1/Insights-Requests/_git/fabric_monorepo/pullrequest/801
   out=$(run_merge_entry "$dir" task-a "$url" 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "ADO asynchronous merge was accepted"
@@ -3399,7 +3399,7 @@ test_teardown_cannot_race_authority_consumption() {
 }
 
 test_authority_retirement_preserves_replacement() {
-  local dir state url_a url_b rc merge_pid
+  local dir state url_a url_b rc merge_pid i=0
   url_a=https://github.com/o/r/pull/1
   url_b=https://github.com/o/r/pull/2
   dir=$(make_case merge-authority-retirement-replacement)

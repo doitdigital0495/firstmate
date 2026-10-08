@@ -387,7 +387,37 @@ test_local_secondmate_reads_the_launching_home_pin() {
   pass "a local secondmate reads the launching home's pin and its own home's file is never inherited over"
 }
 
+test_noncanonical_pin_resolves_to_the_canonical_root() {
+  local out rc canon pin id sel
+  new_case canonical-pin claude
+  signed_in_claude_root "$CASE/work"
+  canon=$(cd "$CASE/work" && pwd -P)
+  ln -s "$CASE/work" "$CASE/work-link"
+  for id in slash link; do
+    pin="$CASE/work/"
+    [ "$id" = slash ] || pin="$CASE/work-link"
+    id=acct-canon-$id
+    printf '%s\n' "$pin" > "$HOME_DIR/config/claude-account"
+    out=$(spawn_ship "$id"); rc=$?
+    expect_code 0 "$rc" "a Claude spawn pinned to $pin should succeed: $out"
+    grep -qxF "claude_config_dir=$canon" "$HOME_DIR/state/$id.meta" \
+      || fail "the task record should carry the canonical root for pin $pin"
+    run_pane
+    grep -qxF "CLAUDE_CONFIG_DIR=$canon" "$CASE/claude-worker" \
+      || fail "the worker should run under the canonical root for pin $pin"
+  done
+  mkdir -p "$CASE/pi-root"
+  ln -s "$CASE/pi-root" "$CASE/pi-link"
+  printf '%s\nopenai-codex\n' "$CASE/pi-link/" > "$HOME_DIR/config/pi-account"
+  sel=$(. "$ROOT/bin/fm-worker-account-lib.sh" && fm_worker_account_resolve pi "$HOME_DIR/config") \
+    || fail "a symlinked Pi pin should resolve"
+  [ "$(printf '%s' "$sel" | cut -f2)" = "$(cd "$CASE/pi-root" && pwd -P)" ] \
+    || fail "a symlinked Pi pin should resolve to the canonical root: $sel"
+  pass "a pin with a trailing slash or through a symlink resolves to the canonical root"
+}
+
 test_absent_pin_keeps_the_launch_unchanged
+test_noncanonical_pin_resolves_to_the_canonical_root
 test_claude_pin_selects_the_root_and_sheds_ambient_credentials
 test_claude_pin_refuses_a_signed_out_root_despite_an_ambient_login
 test_claude_ordinary_pin_unsets_the_config_root

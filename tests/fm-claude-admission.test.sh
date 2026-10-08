@@ -958,6 +958,37 @@ test_spawn_on_unshaped_store_is_unchanged() {
   pass "an unshaped Claude launch preserves command bytes and record body, apart from its verified nonce-bearing carrier path"
 }
 
+test_pinned_spawn_shapes_only_the_pinned_store() {
+  local home wt fakebin launchlog proj ambient pinned out dirs
+  IFS='|' read -r home wt fakebin launchlog proj <<< "$(spawn_case spawn-pinned ship-one)"
+  ambient=$(make_store "$TMP_ROOT/spawn-pinned/ambient")
+  pinned=$(make_store "$TMP_ROOT/spawn-pinned/pinned")
+  add_turn_then_park "$ambient" parked-a 60 100000
+  add_turn_then_park "$pinned" parked-b 60 100000
+  : > "$pinned/.credentials.json"
+  printf '%s\n%s\n' "$ambient" "$pinned" > "$home/config/claude-shaped-store"
+  printf '%s\n' "$pinned" > "$home/config/claude-account"
+  # shellcheck disable=SC2016  # Expanded by the stub at run time.
+  printf '#!/usr/bin/env bash\n[ "${1:-}" = auth ] || exit 0\n[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json" ]\n' > "$fakebin/claude"
+  chmod +x "$fakebin/claude"
+  rm -f "$fakebin/timeout"
+
+  out=$(run_claude_spawn "$home" "$wt" "$fakebin" "$launchlog" "$ambient" ship-one "$proj") \
+    || fail "a pinned Claude spawn with an ambient store elsewhere must be released: $out"
+  assert_present "$home/state/ship-one.meta" "the pinned spawn must publish its task record"
+  dirs=$(find "$home/state/claude-admission" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
+  case "$dirs" in
+    pinned-*) ;;
+    *) fail "admission state must exist only under the pinned store, got: $dirs" ;;
+  esac
+  [ "$(printf '%s\n' "$dirs" | wc -l)" -eq 1 ] || fail "the ambient store must take no admission state: $dirs"
+  assert_grep "ship-one" "$home/state/claude-admission/$dirs/last-release" \
+    "the release must be recorded against the pinned store"
+  out=$(admission "$home" "$ambient" check other-task) \
+    || fail "the ambient store's release slot must be untouched by a pinned spawn: $out"
+  pass "a pinned Claude spawn takes admission only on the pinned store, never the ambient one"
+}
+
 test_unshaped_store_takes_no_state
 test_reset_herd_is_staggered_and_ordered
 test_withheld_work_is_durable_across_processes
@@ -982,3 +1013,4 @@ test_spawn_withholds_before_creating_anything
 test_withheld_secondmate_spawn_leaves_the_child_home_untouched
 test_a_refusal_after_the_gate_never_spends_the_slot
 test_spawn_on_unshaped_store_is_unchanged
+test_pinned_spawn_shapes_only_the_pinned_store

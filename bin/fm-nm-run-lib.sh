@@ -91,15 +91,14 @@ fm_nm_field() {  # <toon-output> <key>
 # review_approved_head_sha is that reviewed head. Prints covered only when the
 # record's head_sha and review_approved_head_sha both equal $2; stale when
 # either is a different head; unverified when the record, reviewed head or the
-# read-only reader (NM_HOME/state.sqlite, default ~/.no-mistakes) is missing.
+# read-only reader (fm_nm_state_db from the current directory) is missing.
 fm_nm_review_coverage() {  # <run> <full-head>
-  python3 - "$1" "$2" 2>/dev/null <<'PY' || printf 'unverified\n'
-import os, sqlite3, sys
+  python3 - "$1" "$2" "$(fm_nm_state_db "$PWD")" 2>/dev/null <<'PY' || printf 'unverified\n'
+import sqlite3, sys
 from contextlib import closing
 from pathlib import Path
-run, sha = sys.argv[1:]
-root = Path(os.environ.get("NM_HOME") or Path.home() / ".no-mistakes")
-with closing(sqlite3.connect((root / "state.sqlite").as_uri() + "?mode=ro", uri=True, timeout=1)) as db:
+run, sha, database = sys.argv[1:]
+with closing(sqlite3.connect(Path(database).as_uri() + "?mode=ro", uri=True, timeout=30)) as db:
     rows = db.execute("SELECT head_sha, review_approved_head_sha FROM runs WHERE id = ?", (run,)).fetchall()
 if len(rows) != 1 or not rows[0][1]:
     print("unverified")

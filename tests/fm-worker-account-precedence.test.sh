@@ -17,6 +17,7 @@ new_case() {
   fm_test_spawn_home "$HOME_DIR" "$2"
   fm_git_worktree "$PROJ" "$WT" "wt-$1"
   mkdir -p "$CASE/work" "$CASE/other" "$CASE/pi-work" "$CASE/pi-other" "$CASE/codex"
+  CASE=$(cd -P "$CASE" && pwd -P)
   : > "$CASE/work/signed-in"; : > "$CASE/pi-work/signed-in"
   jq -n --arg work "$CASE/work" --arg other "$CASE/other" --arg pi "$CASE/pi-work" --arg pi_other "$CASE/pi-other" --arg codex "$CASE/codex" '
     {crossAccount:{enabled:true}, accounts:{
@@ -51,14 +52,14 @@ spawn_case() {
 }
 
 test_pin_and_registered_seat() {
-  local harness pin store_key out rc id launch model
+  local harness pin other trust_file store_key out rc id launch model
   for harness in claude pi; do
     new_case "precedence-$harness" "$harness"
     if [ "$harness" = claude ]; then
-      pin="$CASE/work"; store_key=claude_config_dir; model=sonnet
+      pin="$CASE/work"; other="$CASE/other"; trust_file=.claude.json; store_key=claude_config_dir; model=sonnet
       printf '%s\n' "$pin" > "$HOME_DIR/config/claude-account"
     else
-      pin="$CASE/pi-work"; store_key=pi_agent_dir; model=openai-codex/gpt-5.5
+      pin="$CASE/pi-work"; other="$CASE/pi-other"; trust_file=trust.json; store_key=pi_agent_dir; model=openai-codex/gpt-5.5
       printf '%s\nopenai-codex\n' "$pin" > "$HOME_DIR/config/pi-account"
     fi
     id="precedence-$harness-conflict"
@@ -68,7 +69,8 @@ test_pin_and_registered_seat() {
     assert_absent "$HOME_DIR/state/$id.meta" "$harness: mismatch must not publish metadata"
     assert_absent "$CASE/launch.log" "$harness: mismatch must not send a launch"
     assert_absent "$HOME_DIR/state/quota-intake" "$harness: mismatch must not consume quota"
-    assert_absent "$CASE/work/.claude.json" "$harness: mismatch must not write trust"
+    assert_absent "$pin/$trust_file" "$harness: mismatch must not write trust into the pinned store"
+    assert_absent "$other/$trust_file" "$harness: mismatch must not write trust into the conflicting store"
     id="precedence-$harness-match"
     out=$(spawn_case "$id" --account matching --model "$model"); rc=$?
     expect_code 0 "$rc" "$harness: matching registered seat should launch: $out"

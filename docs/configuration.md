@@ -312,6 +312,7 @@ A Claude, Cursor, OpenCode, omp, Grok, or Codex primary can run the host.
 
 A present `config/supervision-host-off`, whatever it holds, opts the home out on every primary.
 Otherwise a Claude primary runs the host by default: with no `config/supervision-host` it runs exactly as with an empty one, at the Claude engine's default model.
+Because the engine defaults on for Claude primaries, a fork operational home that should keep the supervision host off must carry its own local `config/supervision-host-off`.
 A Cursor, OpenCode, omp, Grok, or Codex primary runs the host only while `config/supervision-host` exists and the home is not opted out.
 A home that does not run the host behaves exactly as it does without it, and a Pi primary keeps its in-process supervision branch whatever either file says.
 `fm_supervision_host_enabled` in `bin/fm-supervision-engine-lib.sh` implements this gate for every reader.
@@ -1245,8 +1246,10 @@ A Pi candidate uses its declared provider's plan, not Pi's harness name.
 Run `bin/fm-account-routing.sh on|off|status` to change or inspect the switch atomically; a home without an explicit switch refuses the toggle.
 Off excludes named-account candidates at the next intake without touching workers already running, and `fm-spawn.sh --account <id>` refuses an unregistered or disabled seat before any home mutation.
 `fm-control.sh <task> relaunch --account <id>` moves a running worker onto another allowlisted seat under those same gates, rewriting the task's recorded account and its three store bindings while keeping its worktree, branch, and instructions.
+A configured [worker account pin](#worker-account-pin-configclaude-account-configpi-account) wins over both: a `--account` seat or relaunch binding whose store differs from the pinned root refuses with an error naming the pin file, before any quota release or launch.
 The selected store is pinned per harness (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, or `CODEX_HOME`), and the task record retains all three paths for a relaunch that does not name a new `--account`, even after routing is switched off.
 Without `--account`, a first Pi or Codex launch records an ambient `PI_CODING_AGENT_DIR` or `CODEX_HOME` and relaunches on it; when none is set, nothing is recorded and the worker keeps inheriting the pane's store as before.
+With no pin present, all of this registered cross-account behaviour is unchanged; a task record that carries no store is unbound, so a pin added later may redirect it (see [Failures, reporting, and inheritance](#failures-reporting-and-inheritance)).
 Quota ranking uses one `quota-axi` snapshot for the default store and one environment-pinned snapshot per distinct named store triple, then compares applicable `spendPriority` across the union without a reserve or quota floor.
 Unmeasurable Team-seat five-hour quota remains disclosed uncertainty, not healthy headroom.
 

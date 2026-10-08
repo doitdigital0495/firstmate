@@ -31,6 +31,7 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
+warn_unrecorded() { printf 'warning: %s; state/%s.meta was not updated\n' "$1" "$ID" >&2; exit 0; }
 usage() { sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 [ "$#" -eq 4 ] || usage
@@ -61,18 +62,17 @@ printf '%s\n' "$RELAUNCH_OUT"
 # field for "no explicit pin".
 [ "$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^schema=//p' | tail -1)" \
   = fm-remote-secondmate-control.v1 ] \
-  || die "the host relaunched $ID but reported no route confirmation to record"
+  || warn_unrecorded "the host relaunched $ID but reported no route confirmation to record"
 NEW_HARNESS=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^harness=//p' | tail -1)
 NEW_MODEL=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^model=//p' | tail -1)
 NEW_EFFORT=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^effort=//p' | tail -1)
-[ -n "$NEW_HARNESS" ] || die "the host's route confirmation carried no harness to record"
+[ -n "$NEW_HARNESS" ] || warn_unrecorded "the host's route confirmation carried no harness to record"
 
 META_LOCK=$(fm_meta_lock_path "$META") || die "metadata lock path is invalid for $ID"
 fm_lock_acquire_wait "$META_LOCK"
-META_TMP=$(mktemp "$STATE/.fm-remote-relaunch-meta.XXXXXX") || {
-  fm_lock_release "$META_LOCK"
-  die "cannot stage the updated record"
-}
+META_TMP=
+trap 'rm -f -- "$META_TMP"; fm_lock_release "$META_LOCK"' EXIT
+META_TMP=$(mktemp "$STATE/.fm-remote-relaunch-meta.XXXXXX") || die "cannot stage the updated record"
 {
   printf 'harness=%s\n' "$NEW_HARNESS"
   printf 'model=%s\n' "$NEW_MODEL"
@@ -92,4 +92,3 @@ while IFS= read -r line || [ -n "$line" ]; do
 done < "$META"
 chmod 0600 "$META_TMP"
 mv -f -- "$META_TMP" "$META"
-fm_lock_release "$META_LOCK"

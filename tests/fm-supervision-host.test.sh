@@ -93,7 +93,7 @@ verdict=routine
 case "$mode" in
   fail) exit 3 ;;
   handle|captain|captain-close-before-return|held|captain-held|hold-lease|return|return-silent|return-fail|return-fail-silent|return-many|return-lookup-fail|return-first|noack|emptyresult|go-away)
-    case "$mode" in held|captain-held) read -r _ < "$FM_HOME/stub-release" ;; esac
+    case "$mode" in held|captain-held) read -t "$FM_TEST_STUB_MAX_BLOCK_SECONDS" -r _ <> "$FM_HOME/stub-release" || exit 75 ;; esac
     [ "$mode" != return-first ] || "$FM_REPO/bin/fm-afk-contract.sh" archive >> "$FM_HOME/engine-return.log" 2>&1
     [ "$mode" != go-away ] || "$FM_REPO/bin/fm-afk-contract.sh" enter --words 'gone mid-turn' >> "$FM_HOME/engine-return.log" 2>&1
     "$FM_REPO/bin/fm-lease.sh" claim "$task" >> "$FM_HOME/engine-lease.log" 2>&1
@@ -1552,6 +1552,7 @@ test_a_park_stopped_mid_take_over_leaves_the_take_over_to_the_next_park() {
     fm_lock_release "$2"
   ' _ "$ROOT/bin/fm-wake-lib.sh" "$home/state/.watcher-down.lock" "$home/marker-lock-held" "$home/marker-lock-release" &
   holder=$!
+  printf '%s\n' "$holder" >> "$home/orphan-pid"
   wait_until 100 test -e "$home/marker-lock-held" || fail "fixture: could not hold the recovery-marker lock"
   turn_end "$home"
   wait_until 150 grep -q "	take-over	arm=$LEFT_ARM\$" "$home/state/.supervision-host.log" \
@@ -2410,7 +2411,7 @@ test_park_boundary_rechecked_just_before_the_engine_turn() {
 #!/usr/bin/env bash
 if [ "\${2:-}" = wake-prompt ]; then
   cp "\$FM_HOME/state/.supervision-host" "\$FM_HOME/host-record-at-render" 2>/dev/null
-  read -r _ < "\$FM_HOME/render-release"
+  read -t "\${FM_TEST_STUB_MAX_BLOCK_SECONDS:-120}" -r _ <> "\$FM_HOME/render-release" || exit 75
 fi
 exec "$real_node" "\$@"
 SH
