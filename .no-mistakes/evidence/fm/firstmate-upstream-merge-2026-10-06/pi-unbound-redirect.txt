@@ -1,0 +1,5 @@
+unbound recorded=[]
+unbound rc=0 effective=$T/pin
+bound recorded=[$T/other]
+bound rc=1 out=error: config/pi-account pins pi workers to '$T/pin', but recorded relaunch binding selects '$T/other'; the configured pin is authoritative. Remove the conflicting --account, or ask the captain to reconcile the recorded task binding and pin before relaunching; no quota release or launch was consumed
+nopin rc=0 effective=$T/other
