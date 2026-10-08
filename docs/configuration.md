@@ -960,6 +960,11 @@ A home that authenticates Claude through environment credentials on purpose shou
 A malformed file, a root that is not a readable directory, or a signed-out account refuses the launch and names the file to fix; Firstmate never falls back to the ambient account and never changes a global login or copies a credential.
 The spawn prints the pin as `account=` (plus `account_provider=` for Pi) and records the same fields in the task record, so the session-start digest shows which account each worker launched on.
 
+A present pin is authoritative over every launch, including relaunches.
+An explicit `--account` store or a store the task record carries that names a different root refuses before any quota release or launch, naming the pin file; remove the conflicting `--account`, or reconcile the recorded binding and the pin.
+A task record that carries no store is unbound, not a binding: a Pi task spawned unpinned with no `PI_CODING_AGENT_DIR` records no `pi_agent_dir`, so after a `config/pi-account` is added its next relaunch moves onto the pinned root, even though the task actually ran on `~/.pi/agent`.
+The captain accepted this consequence on 2026-10-08; to keep such a task on its original store, point the pin at that store.
+
 Pins are not inherited into secondmate homes: a local secondmate agent launches on the launching home's pin, while the secondmate's own workers read the secondmate home's files.
 A remote secondmate is launched on its host from its own home's configuration, so create the file in that remote home.
 
