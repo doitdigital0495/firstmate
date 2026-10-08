@@ -35,7 +35,11 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-unconfirmed() { printf 'error: %s; state/%s.meta was not updated\n' "$1" "$ID" >&2; exit 3; }
+unconfirmed() {
+  printf 'error: %s; state/%s.meta was not updated\n' "$1" "$ID" >&2
+  printf '%s\n' "$RELAUNCH_OUT"
+  exit 3
+}
 usage() { sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 [ "$#" -eq 4 ] || usage
@@ -57,7 +61,6 @@ RELAUNCH_OUT=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh \
   printf '%s\n' "$RELAUNCH_OUT" >&2
   exit "$rc"
 }
-printf '%s\n' "$RELAUNCH_OUT"
 
 # The confirmed identity comes from the route block the host prints after a
 # successful relaunch, never from the human-readable "relaunched ..." summary
@@ -71,6 +74,7 @@ NEW_HARNESS=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^harness=//p' | tail -1)
 NEW_MODEL=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^model=//p' | tail -1)
 NEW_EFFORT=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^effort=//p' | tail -1)
 [ -n "$NEW_HARNESS" ] || unconfirmed "the host's route confirmation carried no harness to record"
+printf '%s\n' "$RELAUNCH_OUT"
 
 META_LOCK=$(fm_meta_lock_path "$META") || die "metadata lock path is invalid for $ID"
 fm_lock_acquire_wait "$META_LOCK"

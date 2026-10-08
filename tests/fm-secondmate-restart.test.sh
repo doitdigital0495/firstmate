@@ -487,11 +487,12 @@ case "${rargs[1]:-}" in
     esac
     printf 'relaunched %s harness=%s from=claude model=%s effort=%s backend=herdr endpoint=fm-remote:2ndmate-%s worktree=/srv/fm\n' \
       "${rargs[2]}" "${rargs[3]}" "${rargs[4]}" "${rargs[5]}" "${rargs[2]}"
+    [ "${FM_FAKE_SSH_MODE:-ok}" != no-route ] || exit 0
     printf 'schema=fm-remote-secondmate-control.v1\n'
     printf 'backend=herdr\n'
     printf 'target=fm-remote:2ndmate-%s\n' "${rargs[2]}"
     printf 'herdr_session=fm-remote\n'
-    printf 'harness=%s\n' "${rargs[3]}"
+    [ "${FM_FAKE_SSH_MODE:-ok}" = no-harness ] || printf 'harness=%s\n' "${rargs[3]}"
     printf 'model=%s\n' "${rargs[4]}"
     printf 'effort=%s\n' "${rargs[5]}"
     ;;
@@ -544,6 +545,30 @@ test_unreachable_host_is_reported_unknown() {
   assert_contains "$out" "sm3:" "the unreachable mate must still be named"
   assert_contains "$out" "could not be delivered" "an unreachable host must be reported as undelivered, not as reloaded"
   pass "T7 an unreachable host is reported honestly instead of claimed as reloaded"
+}
+
+# --- T7b: an unconfirmed remote route is reported with its real reason --------
+test_unconfirmed_remote_route_reports_its_reason() {
+  local dir out rc mode
+  for mode in no-route no-harness; do
+    dir=$(new_case "unconfirmed-$mode")
+    setup_remote_case "$dir" sm4 "$mode"
+    cp "$dir/home/state/sm4.meta" "$dir/sm4-before.meta"
+    export FM_FAKE_ANSWER_STATUS="$dir/home/state/sm4.status"
+
+    out=$(run_restart "$dir" sm4); rc=$?
+    unset FM_FAKE_ANSWER_STATUS
+
+    expect_code 3 "$rc" "$mode: an unconfirmed remote route must not be reported as a reload"$'\n'"$out"
+    assert_not_contains "$out" "restarted: sm4" "$mode: an unconfirmed route must not be claimed as restarted"
+    assert_contains "$out" "unreached: sm4: the restart outcome is unknown: the host" \
+      "$mode: the report must carry the route-confirmation error, not the host's relaunch line"
+    assert_contains "$out" "state/sm4.meta was not updated" \
+      "$mode: the report must say the parent record was left as it was"
+    cmp -s "$dir/sm4-before.meta" "$dir/home/state/sm4.meta" \
+      || fail "$mode: an unconfirmed route must not be written into the parent's record"
+  done
+  pass "T7b an unconfirmed remote route is reported unknown with the confirmation error as its reason"
 }
 
 # --- T8: a local restart lands on this home's durable pin, and says which -----
@@ -858,6 +883,7 @@ test_local_restart_uses_the_home_pin_and_reports_what_ran
 test_native_ultra_restart_keeps_local_and_remote_profiles
 test_remote_mate_restarts_over_the_transport_hop
 test_unreachable_host_is_reported_unknown
+test_unconfirmed_remote_route_reports_its_reason
 test_concurrent_reply_cannot_release_persist_gate
 test_persist_waits_are_polled_together
 test_post_stop_failure_is_reported_unreached
