@@ -1,0 +1,233 @@
+
+===== seed backlog: 2 tasks in repo alpha, 1 in beta, 1 unassigned =====
+seeded
+
+===== hold alpha-pick WITH owner context (close=release, 2 options, recommendation) =====
+alpha-pick
+exit=0
+
+===== hold beta-docs WITHOUT context (legacy hold) priority 1 =====
+beta-docs
+exit=0
+
+===== ADVERSARIAL: malformed contexts refuse before mutation =====
+rc=1  input={"schema":"fm-captain-question.v1"}  -> jq: error (at /tmp/fm-board-drive/home.uI2e/bad.json:1): unsupported or malformed question context
+fm-captain-hold: unsupported or malformed question context
+rc=1  input={"schema":"fm-captain-question.v1","close":"merge"}  -> jq: error (at /tmp/fm-board-drive/home.uI2e/bad.json:1): unsupported or malformed question context
+fm-captain-hold: unsupported or malformed question context
+rc=1  input={"schema":"fm-captain-question.v2","close":"done"}  -> jq: error (at /tmp/fm-board-drive/home.uI2e/bad.json:1): unsupported or malformed question context
+fm-captain-hold: unsupported or malformed question context
+rc=1  input={"schema":"fm-captain-question.v1","close":"done","actions":"rm -rf"}  -> jq: error (at /tmp/fm-board-drive/home.uI2e/bad.json:1): unsupported or malformed question context
+fm-captain-hold: unsupported or malformed question context
+rc=1  input={"schema":"fm-captain-question.v1","close":"done","options":[{"value":"reconcile","label":"x"}]}  -> jq: error (at /tmp/fm-board-drive/home.uI2e/bad.json:1): unsupported or malformed question context
+fm-captain-hold: unsupported or malformed question context
+rc=1  input={"schema":"fm-captain-question.v1","close":"done","recommendation":"invented"}  -> jq: error (at /tmp/fm-board-drive/home.uI2e/bad.json:1): unsupported or malformed question context
+fm-captain-hold: unsupported or malformed question context
+rc=1  input={"schema":"fm-captain-question.v1","close":"done","lifecycle":"forged#0"}  -> jq: error (at /tmp/fm-board-drive/home.uI2e/bad.json:1): unsupported or malformed question context
+fm-captain-hold: unsupported or malformed question context
+rc=1  input=not json  -> jq: error (at /tmp/fm-board-drive/home.uI2e/bad.json:1): Invalid literal at line 1, column 4 (while parsing 'not json
+')
+fm-captain-hold: unsupported or malformed question context
+rc=1 oversize -> fm-captain-hold: context file exceeds 8192 bytes
+backlog UNCHANGED after all refused contexts
+
+===== live-board snapshot (default collection path) =====
+exit=0
+{
+  "schema": "fm-live-board.v1",
+  "revision": 64,
+  "home": {
+    "key": "home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618",
+    "label": "home.uI2e"
+  },
+  "counts": {
+    "blocked": 0,
+    "open_tasks": 5,
+    "questions": 2,
+    "queued": 4,
+    "unknown": 1,
+    "urgent_questions": 1,
+    "working": 0
+  },
+  "projects": [
+    {
+      "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"beta\"]",
+      "label": "beta",
+      "counts": {
+        "blocked": 0,
+        "open_tasks": 1,
+        "questions": 1,
+        "queued": 1,
+        "unknown": 0,
+        "urgent_questions": 1,
+        "working": 0
+      },
+      "tasks": [
+        {
+          "id": "beta-docs",
+          "state": "queued"
+        }
+      ],
+      "questions": [
+        {
+          "id": "beta-docs",
+          "priority": 1,
+          "answerable": false,
+          "context_status": "legacy",
+          "close": null,
+          "options": null,
+          "recommendation": null,
+          "lifecycle": null
+        }
+      ]
+    },
+    {
+      "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"alpha\"]",
+      "label": "alpha",
+      "counts": {
+        "blocked": 0,
+        "open_tasks": 3,
+        "questions": 1,
+        "queued": 2,
+        "unknown": 1,
+        "urgent_questions": 0,
+        "working": 0
+      },
+      "tasks": [
+        {
+          "id": "alpha-pick",
+          "state": "queued"
+        },
+        {
+          "id": "alpha-x",
+          "state": "queued"
+        },
+        {
+          "id": "alpha-build",
+          "state": "unknown"
+        }
+      ],
+      "questions": [
+        {
+          "id": "alpha-pick",
+          "priority": null,
+          "answerable": true,
+          "context_status": "ready",
+          "close": null,
+          "options": null,
+          "recommendation": null,
+          "lifecycle": null
+        }
+      ]
+    },
+    {
+      "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",null]",
+      "label": "Unassigned",
+      "counts": {
+        "blocked": 0,
+        "open_tasks": 1,
+        "questions": 0,
+        "queued": 1,
+        "unknown": 0,
+        "urgent_questions": 0,
+        "working": 0
+      },
+      "tasks": [
+        {
+          "id": "loose-note",
+          "state": "queued"
+        }
+      ],
+      "questions": []
+    }
+  ],
+  "warnings": [
+    "missing-worker-metadata",
+    "question-needs-owner-review"
+  ]
+}
+
+===== privacy: board must not contain backlog body text or home path =====
+home-path occurrences: 0
+raw-body-marker occurrences: 0
+
+===== determinism: re-render from --input twice -> identical revision =====
+r1=56466850267d4b920fc6caa96c1d0e48a3c57bfde13643aff229fc9707ba415b
+r2=56466850267d4b920fc6caa96c1d0e48a3c57bfde13643aff229fc9707ba415b
+revision deterministic
+
+===== ADVERSARIAL: malformed --input fails without partial output =====
+rc=4 stdout-bytes=0
+
+===== guarded answer: lifecycle from open --identity =====
+identity=2026-10-09T08:00:00Z#0
+-- wrong close mode (done vs owner release):
+skipped: alpha-pick (guarded answer requires ready context with matching close mode)
+answers: closed=0 skipped=1
+rc=1
+-- stale lifecycle:
+skipped: alpha-pick (stale captain question lifecycle)
+answers: closed=0 skipped=1
+rc=1
+backlog UNCHANGED after refused answers
+-- guarded answer on context-less hold beta-docs:
+skipped: beta-docs (guarded answer requires ready context with matching close mode)
+answers: closed=0 skipped=1
+rc=1
+backlog UNCHANGED (context-less hold not guarded-answerable)
+-- correct guarded answer:
+closed: alpha-pick
+answers: closed=1 skipped=0
+rc=0
+-- exact replay:
+closed: alpha-pick
+answers: closed=1 skipped=0
+rc=0
+  state: queued
+  held: no
+  body: "Resolution recorded by fm-captain-hold.\nDecision digest: 29930782b45f87b240bac3ca14fd3fc581100d9ccb4c457e4552e81d18e7420d\nResolution mode: released\nCaptain answer lifecycle: 2026-10-09T08:00:00Z#0\n\nCaptain decision:\nCaptain answered this call through drive.\nTask: alpha-pick\nAnswer: canary\nAnswer as shown to the captain: Canary first\n\nCaptain question context: {\"close\":\"release\",\"lifecycle\":\"2026-10-09T08:00:00Z#0\",\"options\":[{\"label\":\"Canary first\",\"value\":\"canary\"},{\"label\":\"Roll out to all\",\"value\":\"all\"}],\"recommendation\":\"canary\",\"schema\":\"fm-captain-question.v1\",\"subject\":{\"artifact\":\"alpha-rollout\",\"version\":\"1.0.0\"}}"
+
+===== board after answer: alpha-pick question gone, task back in queue =====
+[
+  {
+    "label": "beta",
+    "questions": [
+      "beta-docs"
+    ],
+    "tasks": [
+      {
+        "id": "beta-docs",
+        "state": "queued"
+      }
+    ]
+  },
+  {
+    "label": "alpha",
+    "questions": [],
+    "tasks": [
+      {
+        "id": "alpha-pick",
+        "state": "queued"
+      },
+      {
+        "id": "alpha-x",
+        "state": "queued"
+      },
+      {
+        "id": "alpha-build",
+        "state": "unknown"
+      }
+    ]
+  },
+  {
+    "label": "Unassigned",
+    "questions": [],
+    "tasks": [
+      {
+        "id": "loose-note",
+        "state": "queued"
+      }
+    ]
+  }
+]
+HOME=/tmp/fm-board-drive/home.uI2e

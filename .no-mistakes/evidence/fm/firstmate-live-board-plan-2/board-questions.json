@@ -1,0 +1,67 @@
+{
+  "answerable": false,
+  "blockers": [],
+  "context": null,
+  "context_status": "legacy",
+  "hold": {
+    "age_days": -1,
+    "bucket": "live",
+    "kind": "captain",
+    "reason": "Publish docs now?",
+    "set": "2026-10-09T09:00:00Z",
+    "until": null
+  },
+  "home_key": "home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618",
+  "id": "beta-docs",
+  "integrity": [],
+  "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"beta-docs\",\"3\"]",
+  "priority": 1,
+  "project": "beta",
+  "since": "2026-10-09",
+  "title": "beta docs pass",
+  "unresolved_blockers": [],
+  "urgent": true
+}
+{
+  "answerable": true,
+  "blockers": [],
+  "context": {
+    "close": "release",
+    "lifecycle": "2026-10-09T08:00:00Z#0",
+    "options": [
+      {
+        "label": "Canary first",
+        "value": "canary"
+      },
+      {
+        "label": "Roll out to all",
+        "value": "all"
+      }
+    ],
+    "recommendation": "canary",
+    "schema": "fm-captain-question.v1",
+    "subject": {
+      "artifact": "alpha-rollout",
+      "version": "1.0.0"
+    }
+  },
+  "context_status": "ready",
+  "hold": {
+    "age_days": -1,
+    "bucket": "live",
+    "kind": "captain",
+    "reason": "Canary or full rollout?",
+    "set": "2026-10-09T08:00:00Z",
+    "until": null
+  },
+  "home_key": "home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618",
+  "id": "alpha-pick",
+  "integrity": [],
+  "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"alpha-pick\",\"2\"]",
+  "priority": null,
+  "project": "alpha",
+  "since": "2026-10-09",
+  "title": "pick alpha rollout",
+  "unresolved_blockers": [],
+  "urgent": false
+}

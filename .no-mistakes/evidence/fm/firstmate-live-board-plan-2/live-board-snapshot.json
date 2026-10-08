@@ -1,0 +1,380 @@
+{
+  "collected_at": "2026-10-08T22:40:44Z",
+  "collected_at_epoch": 1791499244,
+  "collection_duration_seconds": 0,
+  "counts": {
+    "blocked": 0,
+    "open_tasks": 5,
+    "questions": 2,
+    "queued": 4,
+    "unknown": 1,
+    "urgent_questions": 1,
+    "working": 0
+  },
+  "coverage": {
+    "local": {
+      "complete": true,
+      "metadata_only": 0,
+      "shown": 5,
+      "structured_open": 5,
+      "total_open": 5,
+      "truncated": false,
+      "trustworthy": false
+    },
+    "registered_homes": {
+      "complete": false,
+      "reason": "home-local input; registered-home board exports not collected"
+    }
+  },
+  "home": {
+    "key": "home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618",
+    "label": "home.uI2e"
+  },
+  "omissions": [
+    {
+      "kind": "registry-unavailable"
+    },
+    {
+      "kind": "registered-homes-uncollected",
+      "reason": "home-local input; registered-home board exports not collected"
+    }
+  ],
+  "projects": [
+    {
+      "counts": {
+        "blocked": 0,
+        "open_tasks": 1,
+        "questions": 1,
+        "queued": 1,
+        "unknown": 0,
+        "urgent_questions": 1,
+        "working": 0
+      },
+      "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"beta\"]",
+      "label": "beta",
+      "name": "beta",
+      "questions": [
+        {
+          "answerable": false,
+          "blockers": [],
+          "context": null,
+          "context_status": "legacy",
+          "hold": {
+            "age_days": -1,
+            "bucket": "live",
+            "kind": "captain",
+            "reason": "Publish docs now?",
+            "set": "2026-10-09T09:00:00Z",
+            "until": null
+          },
+          "home_key": "home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618",
+          "id": "beta-docs",
+          "integrity": [],
+          "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"beta-docs\",\"3\"]",
+          "priority": 1,
+          "project": "beta",
+          "since": "2026-10-09",
+          "title": "beta docs pass",
+          "unresolved_blockers": [],
+          "urgent": true
+        }
+      ],
+      "registration": null,
+      "tasks": [
+        {
+          "backlog_state": "queued",
+          "blockers": [],
+          "current_state": null,
+          "hold": {
+            "age_days": -1,
+            "bucket": "live",
+            "kind": "captain",
+            "reason": "Publish docs now?",
+            "set": "2026-10-09T09:00:00Z",
+            "until": null
+          },
+          "home_key": "home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618",
+          "id": "beta-docs",
+          "integrity": [],
+          "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"beta-docs\",\"3\"]",
+          "kind": "docs",
+          "last_meaningful_event": null,
+          "owner": null,
+          "pr": {
+            "source": "absent",
+            "url": null
+          },
+          "priority": 1,
+          "project": "beta",
+          "question_context": null,
+          "question_context_status": "legacy",
+          "role": "queued",
+          "since": "2026-10-09",
+          "state": "queued",
+          "title": "beta docs pass",
+          "unregistered_decisions": [],
+          "unresolved_blockers": [],
+          "worker_present": false
+        }
+      ]
+    },
+    {
+      "counts": {
+        "blocked": 0,
+        "open_tasks": 3,
+        "questions": 1,
+        "queued": 2,
+        "unknown": 1,
+        "urgent_questions": 0,
+        "working": 0
+      },
+      "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"alpha\"]",
+      "label": "alpha",
+      "name": "alpha",
+      "questions": [
+        {
+          "answerable": true,
+          "blockers": [],
+          "context": {
+            "close": "release",
+            "lifecycle": "2026-10-09T08:00:00Z#0",
+            "options": [
+              {
+                "label": "Canary first",
+                "value": "canary"
+              },
+              {
+                "label": "Roll out to all",
+                "value": "all"
+              }
+            ],
+            "recommendation": "canary",
+            "schema": "fm-captain-question.v1",
+            "subject": {
+              "artifact": "alpha-rollout",
+              "version": "1.0.0"
+            }
+          },
+          "context_status": "ready",
+          "hold": {
+            "age_days": -1,
+            "bucket": "live",
+            "kind": "captain",
+            "reason": "Canary or full rollout?",
+            "set": "2026-10-09T08:00:00Z",
+            "until": null
+          },
+          "home_key": "home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618",
+          "id": "alpha-pick",
+          "integrity": [],
+          "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"alpha-pick\",\"2\"]",
+          "priority": null,
+          "project": "alpha",
+          "since": "2026-10-09",
+          "title": "pick alpha rollout",
+          "unresolved_blockers": [],
+          "urgent": false
+        }
+      ],
+      "registration": null,
+      "tasks": [
+        {
+          "backlog_state": "queued",
+          "blockers": [],
+          "current_state": null,
+          "hold": {
+            "age_days": -1,
+            "bucket": "live",
+            "kind": "captain",
+            "reason": "Canary or full rollout?",
+            "set": "2026-10-09T08:00:00Z",
+            "until": null
+          },
+          "home_key": "home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618",
+          "id": "alpha-pick",
+          "integrity": [],
+          "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"alpha-pick\",\"2\"]",
+          "kind": "ship",
+          "last_meaningful_event": null,
+          "owner": null,
+          "pr": {
+            "source": "absent",
+            "url": null
+          },
+          "priority": null,
+          "project": "alpha",
+          "question_context": {
+            "close": "release",
+            "lifecycle": "2026-10-09T08:00:00Z#0",
+            "options": [
+              {
+                "label": "Canary first",
+                "value": "canary"
+              },
+              {
+                "label": "Roll out to all",
+                "value": "all"
+              }
+            ],
+            "recommendation": "canary",
+            "schema": "fm-captain-question.v1",
+            "subject": {
+              "artifact": "alpha-rollout",
+              "version": "1.0.0"
+            }
+          },
+          "question_context_status": "ready",
+          "role": "queued",
+          "since": "2026-10-09",
+          "state": "queued",
+          "title": "pick alpha rollout",
+          "unregistered_decisions": [],
+          "unresolved_blockers": [],
+          "worker_present": false
+        },
+        {
+          "backlog_state": "queued",
+          "blockers": [],
+          "current_state": null,
+          "hold": {
+            "age_days": -1,
+            "bucket": null,
+            "kind": null,
+            "reason": null,
+            "set": null,
+            "until": null
+          },
+          "home_key": "home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618",
+          "id": "alpha-x",
+          "integrity": [],
+          "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"alpha-x\",\"5\"]",
+          "kind": "unknown",
+          "last_meaningful_event": null,
+          "owner": null,
+          "pr": {
+            "source": "absent",
+            "url": null
+          },
+          "priority": null,
+          "project": "alpha",
+          "question_context": null,
+          "question_context_status": "legacy",
+          "role": "queued",
+          "since": "2026-10-09",
+          "state": "queued",
+          "title": "another alpha call",
+          "unregistered_decisions": [],
+          "unresolved_blockers": [],
+          "worker_present": false
+        },
+        {
+          "backlog_state": "in_flight",
+          "blockers": [],
+          "current_state": null,
+          "hold": {
+            "age_days": -1,
+            "bucket": null,
+            "kind": null,
+            "reason": null,
+            "set": null,
+            "until": null
+          },
+          "home_key": "home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618",
+          "id": "alpha-build",
+          "integrity": [
+            {
+              "kind": "missing-worker-metadata"
+            }
+          ],
+          "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"alpha-build\",\"1\"]",
+          "kind": "ship",
+          "last_meaningful_event": null,
+          "owner": null,
+          "pr": {
+            "source": "absent",
+            "url": null
+          },
+          "priority": null,
+          "project": "alpha",
+          "question_context": null,
+          "question_context_status": "legacy",
+          "role": "worker",
+          "since": "2026-10-09",
+          "state": "unknown",
+          "title": "build alpha widget",
+          "unregistered_decisions": [],
+          "unresolved_blockers": [],
+          "worker_present": false
+        }
+      ]
+    },
+    {
+      "counts": {
+        "blocked": 0,
+        "open_tasks": 1,
+        "questions": 0,
+        "queued": 1,
+        "unknown": 0,
+        "urgent_questions": 0,
+        "working": 0
+      },
+      "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",null]",
+      "label": "Unassigned",
+      "name": null,
+      "questions": [],
+      "registration": null,
+      "tasks": [
+        {
+          "backlog_state": "queued",
+          "blockers": [],
+          "current_state": null,
+          "hold": {
+            "age_days": -1,
+            "bucket": null,
+            "kind": null,
+            "reason": null,
+            "set": null,
+            "until": null
+          },
+          "home_key": "home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618",
+          "id": "loose-note",
+          "integrity": [],
+          "key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"loose-note\",\"4\"]",
+          "kind": "unknown",
+          "last_meaningful_event": null,
+          "owner": null,
+          "pr": {
+            "source": "absent",
+            "url": null
+          },
+          "priority": null,
+          "project": null,
+          "question_context": null,
+          "question_context_status": "legacy",
+          "role": "queued",
+          "since": "2026-10-09",
+          "state": "queued",
+          "title": "loose note",
+          "unregistered_decisions": [],
+          "unresolved_blockers": [],
+          "worker_present": false
+        }
+      ]
+    }
+  ],
+  "schema": "fm-live-board.v1",
+  "warnings": [
+    {
+      "id": "alpha-build",
+      "kind": "missing-worker-metadata",
+      "task_key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"alpha-build\",\"1\"]"
+    },
+    {
+      "context_status": "legacy",
+      "id": "beta-docs",
+      "kind": "question-needs-owner-review",
+      "task_key": "[\"home-5abacc3be737d7a537fb6738aa5ca5c2a3aa90a2d4b28b3b2513dba1658eb618\",\"beta-docs\",\"3\"]"
+    }
+  ],
+  "revision": "a0e459a44b86e1585d2e8fa740d719ee61e62851c0c013948f26ac27d5a1f3e6"
+}
