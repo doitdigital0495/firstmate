@@ -191,6 +191,54 @@ _fm_classify_matches() {  # <line> <pattern>
   return "$matched"
 }
 
+# Strict display-history read, separate from the lifecycle/legacy event scan.
+# Prints the latest accepted line in append order, or nothing when absent.
+# Accepts recognized prefixed events with nonempty notes and well-formed head
+# tags/correlation tokens and keys, plus status_milestone_record measurements.
+# Missing or malformed time is unknown per status_line_at_epoch, not a reason
+# to invent an emission time. Continuations, bare captain tokens and malformed
+# milestones never qualify. This does not fold decisions or classify state.
+status_last_meaningful_event() {  # <captured-status-file>
+  local line last='' verb head rest token key note tag_re unstamped
+  [ -f "$1" ] && [ -r "$1" ] || return 0
+  tag_re='^\[[A-Za-z][A-Za-z0-9_-]*=[^][]+\]$'
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in *:*) ;; *) continue ;; esac
+    status_line_verb "$line" verb
+    if [ "$verb" = milestone ]; then
+      status_milestone_record "$line" >/dev/null && last=$line
+      continue
+    fi
+    case "$verb" in
+      working|needs-decision|blocked|done|failed|note|\
+      "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|\
+      "${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}"|\
+      "${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}") ;;
+      *) continue ;;
+    esac
+    _fm_status_unstamped "$line" unstamped
+    head=${unstamped%%:*}; rest=${head#"$verb"}
+    while [ -n "$rest" ]; do
+      rest=${rest#"${rest%%[![:space:]]*}"}
+      [ -n "$rest" ] || break
+      case "$rest" in
+        \[*) token=${rest%%\]*}; token="$token]" ;;
+        *) token=${rest%%[[:space:]]*} ;;
+      esac
+      if ! [[ "$token" =~ $tag_re ]] && ! _fm_classify_is_corr_token "$token"; then break; fi
+      rest=${rest#"$token"}
+    done
+    [ -z "$rest" ] || continue
+    key=$(_fm_decision_key "$line") || continue
+    note=$(status_line_note "$line")
+    [[ "$note" = *[![:space:]]* ]] || continue
+    _fm_decision_key_transition_allowed "$key" "$note" || continue
+    last=$line
+  done < "$1"
+  [ -z "$last" ] || printf '%s\n' "$last"
+  return 0
+}
+
 # 0 if the given (last) status line's leading verb is a real terminal captain verb
 # (done, needs-decision, blocked, failed). Free-text tokens alone never count here;
 # callers that need legacy free-text matching use status_is_captain_relevant.
