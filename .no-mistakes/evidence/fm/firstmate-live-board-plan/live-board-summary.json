@@ -1,0 +1,112 @@
+{
+  "schema": "fm-live-board.v1",
+  "counts": {
+    "blocked": 0,
+    "open_tasks": 6,
+    "questions": 4,
+    "queued": 5,
+    "unknown": 1,
+    "urgent_questions": 1,
+    "working": 0
+  },
+  "coverage": {
+    "local": {
+      "complete": true,
+      "metadata_only": 0,
+      "shown": 6,
+      "structured_open": 6,
+      "total_open": 6,
+      "truncated": false,
+      "trustworthy": true
+    },
+    "registered_homes": {
+      "complete": false,
+      "reason": "home-local input; registered-home board exports not collected"
+    }
+  },
+  "omissions": [
+    "registered-homes-uncollected"
+  ],
+  "warnings": [],
+  "projects": [
+    {
+      "label": "alpha",
+      "tasks": [
+        {
+          "id": "q-p3",
+          "state": "queued",
+          "role": "queued",
+          "last": null
+        },
+        {
+          "id": "q-p2",
+          "state": "queued",
+          "role": "queued",
+          "last": null
+        },
+        {
+          "id": "q-p0",
+          "state": "queued",
+          "role": "queued",
+          "last": null
+        },
+        {
+          "id": "build",
+          "state": "unknown",
+          "role": "worker",
+          "last": "working"
+        }
+      ],
+      "questions": [
+        {
+          "id": "q-p0",
+          "priority": 0,
+          "answerable": false,
+          "bucket": "aged"
+        },
+        {
+          "id": "q-p2",
+          "priority": 2,
+          "answerable": false,
+          "bucket": "aged"
+        },
+        {
+          "id": "q-p3",
+          "priority": 3,
+          "answerable": false,
+          "bucket": "aged"
+        }
+      ]
+    },
+    {
+      "label": "beta",
+      "tasks": [
+        {
+          "id": "later",
+          "state": "queued",
+          "role": "queued",
+          "last": null
+        },
+        {
+          "id": "q-none",
+          "state": "queued",
+          "role": "queued",
+          "last": null
+        }
+      ],
+      "questions": [
+        {
+          "id": "q-none",
+          "priority": null,
+          "answerable": false,
+          "bucket": "live"
+        }
+      ]
+    },
+    {
+      "label": "gamma",
+      "tasks": [],
+      "questions": []
+    }
+  ]
+}

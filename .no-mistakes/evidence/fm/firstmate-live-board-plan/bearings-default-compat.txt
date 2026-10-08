@@ -1,0 +1,12 @@
+bearings diff:
+65c65
+<   "generated": "2026-10-08T19:39:21Z",
+---
+>   "generated": "2026-10-08T19:39:22Z",
+fleet --json diff:
+311c311
+<     "fm_root": "/tmp/fmlb.tOXm/base",
+---
+>     "fm_root": "/home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4EBSF7EPVRJEA2C3KACZCDV",
+project-mode diff:
+identical

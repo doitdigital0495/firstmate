@@ -1,0 +1,422 @@
+$ FM_HOME=<tmp> bin/fm-live-board-snapshot.sh --json
+{
+  "collected_at": "2026-10-08T19:39:05Z",
+  "collected_at_epoch": 1791488345,
+  "collection_duration_seconds": 0,
+  "counts": {
+    "blocked": 0,
+    "open_tasks": 6,
+    "questions": 4,
+    "queued": 5,
+    "unknown": 1,
+    "urgent_questions": 1,
+    "working": 0
+  },
+  "coverage": {
+    "local": {
+      "complete": true,
+      "metadata_only": 0,
+      "shown": 6,
+      "structured_open": 6,
+      "total_open": 6,
+      "truncated": false,
+      "trustworthy": true
+    },
+    "registered_homes": {
+      "complete": false,
+      "reason": "home-local input; registered-home board exports not collected"
+    }
+  },
+  "home": {
+    "key": "home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c",
+    "label": "home"
+  },
+  "omissions": [
+    {
+      "kind": "registered-homes-uncollected",
+      "reason": "home-local input; registered-home board exports not collected"
+    }
+  ],
+  "projects": [
+    {
+      "counts": {
+        "blocked": 0,
+        "open_tasks": 4,
+        "questions": 3,
+        "queued": 3,
+        "unknown": 1,
+        "urgent_questions": 1,
+        "working": 0
+      },
+      "key": "[\"home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c\",\"alpha\"]",
+      "label": "alpha",
+      "name": "alpha",
+      "questions": [
+        {
+          "answerable": false,
+          "blockers": [],
+          "hold": {
+            "age_days": 80,
+            "bucket": "aged",
+            "kind": "captain",
+            "reason": "URGENT!!! highest",
+            "set": null,
+            "until": null
+          },
+          "home_key": "home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c",
+          "id": "q-p0",
+          "integrity": [],
+          "key": "[\"home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c\",\"q-p0\",\"3\"]",
+          "priority": 0,
+          "project": "alpha",
+          "since": "2026-07-20",
+          "title": "New p0 call",
+          "unresolved_blockers": [],
+          "urgent": true
+        },
+        {
+          "answerable": false,
+          "blockers": [],
+          "hold": {
+            "age_days": 99,
+            "bucket": "aged",
+            "kind": "captain",
+            "reason": "pick",
+            "set": null,
+            "until": null
+          },
+          "home_key": "home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c",
+          "id": "q-p2",
+          "integrity": [],
+          "key": "[\"home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c\",\"q-p2\",\"4\"]",
+          "priority": 2,
+          "project": "alpha",
+          "since": "2026-07-01",
+          "title": "p2 call",
+          "unresolved_blockers": [],
+          "urgent": false
+        },
+        {
+          "answerable": false,
+          "blockers": [],
+          "hold": {
+            "age_days": 129,
+            "bucket": "aged",
+            "kind": "captain",
+            "reason": "pick",
+            "set": null,
+            "until": null
+          },
+          "home_key": "home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c",
+          "id": "q-p3",
+          "integrity": [],
+          "key": "[\"home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c\",\"q-p3\",\"2\"]",
+          "priority": 3,
+          "project": "alpha",
+          "since": "2026-06-01",
+          "title": "Old p3 call",
+          "unresolved_blockers": [],
+          "urgent": false
+        }
+      ],
+      "registration": {
+        "annotation": "no-mistakes",
+        "mode": "no-mistakes",
+        "name": "alpha",
+        "recognised": true,
+        "yolo": "on"
+      },
+      "tasks": [
+        {
+          "backlog_state": "queued",
+          "blockers": [],
+          "current_state": null,
+          "hold": {
+            "age_days": 129,
+            "bucket": "aged",
+            "kind": "captain",
+            "reason": "pick",
+            "set": null,
+            "until": null
+          },
+          "home_key": "home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c",
+          "id": "q-p3",
+          "integrity": [],
+          "key": "[\"home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c\",\"q-p3\",\"2\"]",
+          "kind": "captain",
+          "last_meaningful_event": null,
+          "owner": null,
+          "pr": {
+            "source": "absent",
+            "url": null
+          },
+          "priority": 3,
+          "project": "alpha",
+          "role": "queued",
+          "since": "2026-06-01",
+          "state": "queued",
+          "title": "Old p3 call",
+          "unregistered_decisions": [],
+          "unresolved_blockers": [],
+          "worker_present": false
+        },
+        {
+          "backlog_state": "queued",
+          "blockers": [],
+          "current_state": null,
+          "hold": {
+            "age_days": 99,
+            "bucket": "aged",
+            "kind": "captain",
+            "reason": "pick",
+            "set": null,
+            "until": null
+          },
+          "home_key": "home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c",
+          "id": "q-p2",
+          "integrity": [],
+          "key": "[\"home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c\",\"q-p2\",\"4\"]",
+          "kind": "captain",
+          "last_meaningful_event": null,
+          "owner": null,
+          "pr": {
+            "source": "absent",
+            "url": null
+          },
+          "priority": 2,
+          "project": "alpha",
+          "role": "queued",
+          "since": "2026-07-01",
+          "state": "queued",
+          "title": "p2 call",
+          "unregistered_decisions": [],
+          "unresolved_blockers": [],
+          "worker_present": false
+        },
+        {
+          "backlog_state": "queued",
+          "blockers": [],
+          "current_state": null,
+          "hold": {
+            "age_days": 80,
+            "bucket": "aged",
+            "kind": "captain",
+            "reason": "URGENT!!! highest",
+            "set": null,
+            "until": null
+          },
+          "home_key": "home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c",
+          "id": "q-p0",
+          "integrity": [],
+          "key": "[\"home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c\",\"q-p0\",\"3\"]",
+          "kind": "captain",
+          "last_meaningful_event": null,
+          "owner": null,
+          "pr": {
+            "source": "absent",
+            "url": null
+          },
+          "priority": 0,
+          "project": "alpha",
+          "role": "queued",
+          "since": "2026-07-20",
+          "state": "queued",
+          "title": "New p0 call",
+          "unregistered_decisions": [],
+          "unresolved_blockers": [],
+          "worker_present": false
+        },
+        {
+          "backlog_state": "in_flight",
+          "blockers": [],
+          "current_state": {
+            "detail": "worktree gone (torn down?)",
+            "freshness": "fresh",
+            "observed_at": "2026-10-08T19:39:05Z",
+            "source": "none",
+            "state": "unknown"
+          },
+          "hold": {
+            "age_days": null,
+            "bucket": null,
+            "kind": null,
+            "reason": null,
+            "set": null,
+            "until": null
+          },
+          "home_key": "home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c",
+          "id": "build",
+          "integrity": [],
+          "key": "[\"home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c\",\"build\",\"1\"]",
+          "kind": "ship",
+          "last_meaningful_event": {
+            "age_seconds": 6488345,
+            "emitted_at_epoch": 1785000000,
+            "name": null,
+            "note": "rendering",
+            "observed_at_epoch": 1791488345,
+            "type": "event",
+            "verb": "working"
+          },
+          "owner": {
+            "harness": "claude",
+            "kind": "ship"
+          },
+          "pr": {
+            "source": "absent",
+            "url": null
+          },
+          "priority": null,
+          "project": "alpha",
+          "role": "worker",
+          "since": null,
+          "state": "unknown",
+          "title": "Build board",
+          "unregistered_decisions": [],
+          "unresolved_blockers": [],
+          "worker_present": true
+        }
+      ]
+    },
+    {
+      "counts": {
+        "blocked": 0,
+        "open_tasks": 2,
+        "questions": 1,
+        "queued": 2,
+        "unknown": 0,
+        "urgent_questions": 0,
+        "working": 0
+      },
+      "key": "[\"home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c\",\"beta\"]",
+      "label": "beta",
+      "name": "beta",
+      "questions": [
+        {
+          "answerable": false,
+          "blockers": [],
+          "hold": {
+            "age_days": null,
+            "bucket": "live",
+            "kind": "captain",
+            "reason": "pick",
+            "set": null,
+            "until": null
+          },
+          "home_key": "home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c",
+          "id": "q-none",
+          "integrity": [],
+          "key": "[\"home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c\",\"q-none\",\"5\"]",
+          "priority": null,
+          "project": "beta",
+          "since": null,
+          "title": "no priority",
+          "unresolved_blockers": [],
+          "urgent": false
+        }
+      ],
+      "registration": {
+        "annotation": "direct-PR",
+        "mode": "direct-PR",
+        "name": "beta",
+        "recognised": true,
+        "yolo": "off"
+      },
+      "tasks": [
+        {
+          "backlog_state": "queued",
+          "blockers": [],
+          "current_state": null,
+          "hold": {
+            "age_days": null,
+            "bucket": null,
+            "kind": null,
+            "reason": null,
+            "set": null,
+            "until": null
+          },
+          "home_key": "home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c",
+          "id": "later",
+          "integrity": [],
+          "key": "[\"home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c\",\"later\",\"6\"]",
+          "kind": "ship",
+          "last_meaningful_event": null,
+          "owner": null,
+          "pr": {
+            "source": "absent",
+            "url": null
+          },
+          "priority": null,
+          "project": "beta",
+          "role": "queued",
+          "since": null,
+          "state": "queued",
+          "title": "queued",
+          "unregistered_decisions": [],
+          "unresolved_blockers": [],
+          "worker_present": false
+        },
+        {
+          "backlog_state": "queued",
+          "blockers": [],
+          "current_state": null,
+          "hold": {
+            "age_days": null,
+            "bucket": "live",
+            "kind": "captain",
+            "reason": "pick",
+            "set": null,
+            "until": null
+          },
+          "home_key": "home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c",
+          "id": "q-none",
+          "integrity": [],
+          "key": "[\"home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c\",\"q-none\",\"5\"]",
+          "kind": "captain",
+          "last_meaningful_event": null,
+          "owner": null,
+          "pr": {
+            "source": "absent",
+            "url": null
+          },
+          "priority": null,
+          "project": "beta",
+          "role": "queued",
+          "since": null,
+          "state": "queued",
+          "title": "no priority",
+          "unregistered_decisions": [],
+          "unresolved_blockers": [],
+          "worker_present": false
+        }
+      ]
+    },
+    {
+      "counts": {
+        "blocked": 0,
+        "open_tasks": 0,
+        "questions": 0,
+        "queued": 0,
+        "unknown": 0,
+        "urgent_questions": 0,
+        "working": 0
+      },
+      "key": "[\"home-72e1185d6c87779874f5a8fea457edf55b2206e898ab09893aca6070936d4c9c\",\"gamma\"]",
+      "label": "gamma",
+      "name": "gamma",
+      "questions": [],
+      "registration": {
+        "annotation": "local-only",
+        "mode": "local-only",
+        "name": "gamma",
+        "recognised": true,
+        "yolo": "off"
+      },
+      "tasks": []
+    }
+  ],
+  "schema": "fm-live-board.v1",
+  "warnings": [],
+  "revision": "2e1e3ec58ae4477efdad15d8b1758745f9a94f010f29a33bda2acd5861bb07d8"
+}
+EXIT=0
