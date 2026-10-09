@@ -135,7 +135,9 @@ build_board() {  # <refresh-seconds>
   # `<` never appears in JSON syntax outside strings, so escaping every
   # occurrence keeps the payload valid JSON while making </script> inert.
   json=${json//</\\u003c}
-  if ! BOARD_JSON="$json" perl -pe "s/^\\Q$PLACEHOLDER\\E\$/\$ENV{BOARD_JSON}/" "$TEMPLATE" > "$tmp"; then
+  printf '%s' "$json" > "$snap" || fail "cannot stage the board data"
+  if ! BOARD_DATA="$snap" perl -pe "BEGIN { local \$/; open my \$f, '<', \$ENV{BOARD_DATA} or die; \$data = <\$f>; close \$f }
+    s/^\\Q$PLACEHOLDER\\E\$/\$data/" "$TEMPLATE" > "$tmp"; then
     fail "cannot inject the board data"
   fi
   grep -qxF "$PLACEHOLDER" "$tmp" && fail "the board data slot survived injection"

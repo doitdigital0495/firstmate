@@ -124,6 +124,19 @@ check "$out" '.empty != null and (.empty | test("No open work"))
   "an empty fleet did not render the explicit empty state"
 pass "an empty fleet renders No open work with idle registered projects folded away"
 
+# --- Large fleet ---------------------------------------------------------------
+home=$(make_home large)
+printf -- '- big [local-only] - fixture (added 2026-01-01)\n' > "$home/data/projects.md"
+long=$(printf '%*s' 70000 '' | tr ' ' x)
+tasks_in "$home" add big-a "$long" --repo big --kind ship
+tasks_in "$home" add big-b "$long" --repo big --kind ship
+out=$(in_home "$home" "$LIVE" build 2>&1) || fail "a board past the env-string limit did not build: $out"
+[ "$(wc -c < "$home/data/live-board/board.html")" -gt 140000 ] \
+  || fail "the large-fleet fixture did not produce a payload past the env-string limit"
+check "$(render "$home")" '.stats.open_tasks == 2 and (.projects[0].tasks | map(.id) | sort) == ["big-a","big-b"]' \
+  "a large board lost its open work"
+pass "a board whose payload exceeds one environment string still builds and renders"
+
 # --- Projects, questions and tasks ---------------------------------------------
 home=$(make_home fleet)
 printf -- '- web-shop [no-mistakes] - fixture (added 2026-01-01)\n- data [direct-PR] - fixture (added 2026-01-01)\n' \
