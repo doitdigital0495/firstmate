@@ -1,0 +1,16 @@
+ok - the board stays off unless a regular, valid, enabled config opts in
+ok - an empty fleet renders its empty state with idle registered projects folded away
+ok - a board whose payload exceeds one environment string still builds and renders
+ok - repository fallback leads with real questions and explained options, and lists only workers
+ok - a project map groups work under the captain's names; unmatched work and bad maps fall back by repository
+ok - Send answer emits one choice with the owner close mode and lifecycle, or plain free text
+ok - the page ages its own data from live to stale to out of date
+ok - refresh rebuilds only when due and keeps the last good board on failure
+ok - open serves the board, binds its answers, then arms the source
+ok - guarded and free-text answers close their questions, stale ones are refused, and cards clear on refresh
+tests/fm-live-board.test.sh: line 345: 1345793 Killed                  PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=9999999 FM_HEARTBEAT=9999999 "$WATCH" > "$TMP_ROOT/watch.out" 2> "$TMP_ROOT/watch.err"
+ok - a running watcher keeps an enabled board published
+
+real	0m22.540s
+user	0m12.636s
+sys	0m4.507s
