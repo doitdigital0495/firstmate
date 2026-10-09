@@ -187,11 +187,18 @@ The refusal names the record and the validation reason, so the captain can repai
 Only `answer` with the captain's words or evidence-backed `reconcile close` resolves the call, by either closing the question or releasing the gated work.
 `bin/fm-backlog-transition-lib.sh` owns the transition and its record, and `bin/fm-captain-hold.sh --help` owns the predicate's contract.
 
+## Structured question context
+
+`bin/fm-captain-hold.sh --help` owns the versioned question-context storage, codec, explicit close modes, active-lifecycle immutability and guarded-answer/retry contract.
+The canonical snapshot and home summary preserve that validated context; the separate live-board projection keeps legacy, malformed and ambiguous calls visible but read-only.
+`tests/fm-captain-hold-lifecycle.test.sh` and `tests/fm-live-board-snapshot.test.sh` exercise this mechanism through public commands, including context preservation and answer-before-rehold refusal.
+
 ## Answer-time resolution
 
 "A keyed answer resolves its matching captain-held task" is one capability with one owner.
 `answers` is its channel-agnostic entry point.
-It reads `<task-id>\t<answer>\t<label>[\t<mode>]` lines and resolves each named task through the same `answer` path.
+It reads `<task-id>\t<answer>\t<label>[\t<mode>[\t<expected-lifecycle>]]` lines and resolves each named task through the same `answer` path.
+The optional fifth column is the structured-question lifecycle guard described above.
 Every guard therefore applies identically no matter which channel the answer arrived on.
 
 The optional mode column carries a card-declared close:

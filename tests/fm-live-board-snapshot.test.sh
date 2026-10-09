@@ -201,3 +201,63 @@ check "$TMP_ROOT/default-fleet.json" '.schema == "fm-fleet-snapshot.v1"
 FM_HOME="$h" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-bearings-snapshot.sh" --json > "$TMP_ROOT/default-bearings.json"
 check "$TMP_ROOT/default-bearings.json" '.schema == "fm-bearings.v1" and (has("projects") | not)' 'board portfolio leaked into Bearings'
 pass 'default canonical and original Bearings contracts remain separate from the live board'
+
+
+# Only owner-authored, current, unique context can supply answer semantics.
+h=$(home context)
+context='{"schema":"fm-captain-question.v1","close":"release","lifecycle":"2026-07-24T00:00:00Z#0","options":[{"value":"go","label":"Go café"}],"recommendation":"go","subject":{"artifact":"widget","version":"1.2.3"}}'
+{
+  printf '## In flight\n\n## Queued\n'
+  for id in valid-release valid-done invalid duplicate stale legacy unsupported duplicate-member ambiguous; do
+    printf -- '- [ ] %s - Choose widget (repo: alpha) (kind: ship) (hold: choose) (hold-kind: captain)\n' "$id"
+    printf '  Captain hold set: 2026-07-24T00:00:00Z\n'
+    case "$id" in
+      valid-release|ambiguous) printf '  Captain question context: %s\n' "$context" ;;
+      valid-done) printf '  Captain question context: %s\n' "$(printf '%s' "$context" | jq -c '.close = "done"')" ;;
+      invalid) printf '%s\n' '  Captain question context: {not JSON}' ;;
+      unsupported) printf '  Captain question context: %s\n' "$(printf '%s' "$context" | jq -c '.schema = "future.v2"')" ;;
+      duplicate) printf '  Captain question context: %s\n  Captain question context: %s\n' "$context" "$context" ;;
+      stale) printf '  Captain question context: %s\n' "$(printf '%s' "$context" | jq -c '.lifecycle = "2026-07-23T00:00:00Z#0"')" ;;
+      duplicate-member) printf '%s\n' '  Captain question context: {"schema":"fm-captain-question.v1","close":"done","close":"release","lifecycle":"2026-07-24T00:00:00Z#0"}' ;;
+    esac
+  done
+  printf '%s\n' '- [ ] ambiguous - Other owning row (repo: beta) (hold: choose) (hold-kind: captain)' \
+    '  Captain hold set: 2026-07-24T00:00:00Z'
+  printf '  Captain question context: %s\n' "$context"
+  printf '\n## Done\n'
+} > "$h/data/backlog.md"
+collect "$h" "$TMP_ROOT/context-input.json"
+render "$TMP_ROOT/context-input.json" "$TMP_ROOT/context-board.json"
+check "$TMP_ROOT/context-board.json" '.counts.questions == 10
+  and ([.projects[].questions[] | select(.answerable)] | map(.id) | sort) == ["valid-done","valid-release"]
+  and any(.projects[].questions[]; .id == "valid-release" and .context.close == "release"
+    and .context.options == [{value:"go",label:"Go café"}]
+    and .context.recommendation == "go" and .context.subject.version == "1.2.3")
+  and any(.projects[].questions[]; .id == "duplicate" and .context_status == "duplicate")
+  and any(.projects[].questions[]; .id == "stale" and .context_status == "stale")
+  and any(.projects[].questions[]; .id == "legacy" and .context_status == "legacy")
+  and all(.projects[].questions[] | select(.id == "ambiguous"); .answerable == false)
+  and all(.projects[].questions[] | select(.id == "invalid" or .id == "unsupported" or .id == "duplicate-member");
+    .answerable == false and .context == null)
+  and ([.. | objects | select(has("body_lines") or has("raw"))] | length == 0)' \
+  'context projection lost explicit mode/options or exposed ambiguous/malformed calls as answerable'
+# Summary transport preserves the same validated field but remains bounded,
+# and adding it must not alter the original Bearings decision digest.
+FM_HOME="$h" FM_ROOT_OVERRIDE="$ROOT" FM_SNAPSHOT_NOW=2026-07-25T00:00:00Z \
+  "$FLEET" --secondmate-home-summary > "$TMP_ROOT/context-summary.json"
+check "$TMP_ROOT/context-summary.json" 'any(.decisions_open[]; .id == "valid-release" and .question_context.context.close == "release")
+  and any(.queued[]; .id == "valid-done" and .question_context.context.close == "done")' \
+  'home summary dropped the canonical owner context'
+FM_HOME="$h" FM_ROOT_OVERRIDE="$ROOT" FM_SNAPSHOT_NOW=2026-07-25T00:00:00Z \
+  "$ROOT/bin/fm-bearings-snapshot.sh" --json > "$TMP_ROOT/context-bearings.json"
+check "$TMP_ROOT/context-bearings.json" 'all(.decisions_open[]; has("question_context") | not)' \
+  'safe context changed the original Bearings digest'
+# A malformed replayed structured field is not trusted merely because it says ready.
+jq '(.backlog.records[] | select(.id == "valid-release") | .question_context.context).private_extra = "private context sentinel"
+  | (.backlog.records[] | select(.id == "valid-done") | .question_context.status) = "private context sentinel"' \
+  "$TMP_ROOT/context-input.json" > "$TMP_ROOT/context-malformed-input.json"
+render "$TMP_ROOT/context-malformed-input.json" "$TMP_ROOT/context-malformed-board.json"
+check "$TMP_ROOT/context-malformed-board.json" 'all(.projects[].questions[]; .answerable == false)
+  and ([.. | strings | select(contains("private context sentinel"))] | length == 0)' \
+  'replayed context bypassed the validator or leaked non-allowlisted data'
+pass 'canonical owner context preserves explicit modes and summaries; legacy, stale, duplicate and malformed calls stay read-only'
