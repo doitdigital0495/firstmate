@@ -114,6 +114,18 @@
 #
 # --contribution-input prints only the canonical backlog/tasks ownership pair,
 # without worker observations or cross-home collection, for the home-local poll.
+# --live-board-input is the separate home-local, opt-in board input contract
+# fm-live-board-input.v1: generated/generated_epoch, fm_home, collection duration,
+# registry (fm-project-mode.sh --list-json), canonical backlog/tasks and main_inventory.
+# It reuses generation-bound worker observations without contributions, terminal
+# capture, remote reads, cache writes or bounded home-summary aggregation.
+# tasks additionally carry last_meaningful_event: null or {type,verb,name,note,
+# emitted_at_epoch,observed_at_epoch,age_seconds}; strict selection is owned by
+# status_last_meaningful_event/status_milestone_record in fm-classify-lib.sh.
+# History is never current state. All local open rows remain available without
+# Bearings caps; coverage explicitly discloses unstructured rows, duplicate ids,
+# missing registry and uncollected registered homes. No bodies enter the thin
+# bin/fm-live-board-snapshot.sh projection; this input remains internal plumbing.
 # Compatibility: JSON is the primary machine-readable surface.
 # Human views must render this output instead of parsing state files again.
 set -u
@@ -234,6 +246,7 @@ usage() {
   cat <<'EOF'
 usage: fm-fleet-snapshot.sh --json
        fm-fleet-snapshot.sh --secondmate-home-summary
+       fm-fleet-snapshot.sh --live-board-input
 
 Print a structured snapshot of the firstmate fleet.
 JSON is the stable machine-readable output contract. The default snapshot
@@ -241,6 +254,10 @@ refreshes only its parent-side remote-summary cache as an observational side eff
 
 --contribution-input emits the canonical local backlog/tasks ownership pair only,
 without worker observations or cross-home collection.
+
+--live-board-input emits the separate home-local board input described in this
+script's header, not an expanded Bearings digest. It does not aggregate other
+homes or refresh contribution/remote caches; uncollected homes are disclosed.
 
 --secondmate-home-summary emits the bounded structured summary used after a
 validated registered-home handoff. It is local-only, skips nested secondmate
@@ -291,9 +308,12 @@ case "${1:---json}" in
   --json) ;;
   --secondmate-home-summary) OUTPUT_MODE=secondmate-home-summary ;;
   --contribution-input) OUTPUT_MODE=contribution-input ;;
+  --live-board-input) OUTPUT_MODE=live-board-input ;;
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac
+
+[ "$OUTPUT_MODE" != live-board-input ] || BOARD_STARTED_EPOCH=$(date +%s)
 
 command -v jq >/dev/null 2>&1 || { echo "fm-fleet-snapshot: jq not found" >&2; exit 1; }
 
@@ -374,6 +394,25 @@ status_event_json() {  # <observed-status-log> [<contract-path>]
     --argjson age "$age" \
     --argjson present "$(bool_json "$present")" \
     '{path:$path,present:$present,kind:"event_history",last_event:{state:$verb,note:$note,raw:$raw,age_seconds:$age}}'
+}
+
+board_status_event_json() {  # <captured-status-log>
+  local raw verb name='' epoch=null age=null note measurement
+  raw=$(status_last_meaningful_event "$1") || return 1
+  if [ -z "$raw" ]; then printf 'null\n'; return 0; fi
+  verb=$(status_line_verb "$raw")
+  epoch=$(status_line_at_epoch "$raw") || epoch=null
+  if [ "$epoch" != null ] && [ "$epoch" -le "$SNAPSHOT_EPOCH" ]; then age=$((SNAPSHOT_EPOCH - epoch)); fi
+  if [ "$verb" = milestone ]; then
+    measurement=$(status_milestone_record "$raw") || return 1
+    name=${measurement%%$'\t'*}
+  fi
+  note=$(status_line_note "$raw")
+  jq -n --arg verb "$verb" --arg name "$name" --arg note "$note" \
+    --argjson epoch "$epoch" --argjson observed "$SNAPSHOT_EPOCH" --argjson age "$age" \
+    '{type:(if $verb == "milestone" then "measurement" else "event" end),verb:$verb,
+      name:($name | if . == "" then null else . end),note:($note[:240]),
+      emitted_at_epoch:$epoch,observed_at_epoch:$observed,age_seconds:$age}'
 }
 
 first_pr_url_in_file() {  # <file>
@@ -744,7 +783,7 @@ task_json_lines() {
   local remote_host remote_root current_file endpoint_file observation_line index=0
   local pr pr_source event_json current_json endpoint_exists agent_alive meta_json status_json report_json worktree_json home_json
   local last_event_raw current_state current_source pending_decision blocked_event report_present=0 pr_from_status
-  local open_decisions_tsv open_decisions_json
+  local open_decisions_tsv open_decisions_json board_fields
 
   while [ "$index" -lt "$SNAPSHOT_TASK_META_COUNT" ]; do
     meta=${SNAPSHOT_TASK_METAS[index]}
@@ -789,6 +828,10 @@ task_json_lines() {
       snapshot_task_cleanup
       return 1
     }
+    board_fields='{}'
+    if [ "$OUTPUT_MODE" = live-board-input ]; then
+      board_fields=$(set -o pipefail; board_status_event_json "$status_log" | jq '{last_meaningful_event:.}') || { snapshot_task_cleanup; return 1; }
+    fi
     event_json=$(status_event_json "$status_log" "$STATE/$id.status")
     last_event_raw=$(printf '%s' "$event_json" | jq -r '.last_event.raw // ""')
     read -r current_state current_source < <(
@@ -872,6 +915,7 @@ task_json_lines() {
       --arg agent_alive "$agent_alive" \
       --arg observed_at "$SNAPSHOT_NOW" \
       --arg last_event_raw "$last_event_raw" \
+      --argjson board_fields "$board_fields" \
       --argjson current_state "$current_json" \
       --argjson meta_path "$meta_json" \
       --argjson status_log "$status_json" \
@@ -925,7 +969,7 @@ task_json_lines() {
              steer:"bin/fm-send.sh fm-\($id) \u0027<instruction>\u0027",
              return_channel_note:null}
           end)
-      }'
+      } + $board_fields'
   done | jq -s 'sort_by(.id)'
 }
 
@@ -1992,7 +2036,7 @@ if [ "$OUTPUT_MODE" = contribution-input ]; then
   exit 0
 fi
 prefetch_task_current_states || { echo "fm-fleet-snapshot: task observation failed" >&2; exit 1; }
-TASKS_JSON=$(task_json_lines) || { echo "fm-fleet-snapshot: task snapshot failed" >&2; exit 1; }
+TASKS_JSON=$(set -o pipefail; task_json_lines) || { echo "fm-fleet-snapshot: task snapshot failed" >&2; exit 1; }
 
 JSON_TRANSPORT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/fm-fleet-snapshot.XXXXXX") \
   || { echo "fm-fleet-snapshot: temporary transport directory creation failed" >&2; exit 1; }
@@ -2006,6 +2050,29 @@ printf '%s\n' "$BACKLOG_JSON" > "$BACKLOG_JSON_FILE" \
   || { echo "fm-fleet-snapshot: temporary backlog file write failed" >&2; exit 1; }
 printf '%s\n' "$TASKS_JSON" > "$TASKS_JSON_FILE" \
   || { echo "fm-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
+
+if [ "$OUTPUT_MODE" = live-board-input ]; then
+  "$SCRIPT_DIR/fm-project-mode.sh" --list-json > "$JSON_TRANSPORT_DIR/registry.json" \
+    || { echo "fm-fleet-snapshot: project inventory failed" >&2; exit 1; }
+  main_inventory_json "$BACKLOG_JSON_FILE" "$TASKS_JSON_FILE" > "$MAIN_INVENTORY_JSON_FILE" \
+    || { echo "fm-fleet-snapshot: main inventory failed" >&2; exit 1; }
+  board_finished=$(date +%s)
+  board_home=$FM_HOME
+  [ ! -d "$FM_HOME" ] || board_home=$(cd "$FM_HOME" && pwd -P) || exit 1
+  jq -n --arg generated "$SNAPSHOT_NOW" --arg fm_home "$board_home" \
+    --argjson epoch "$SNAPSHOT_EPOCH" --argjson duration "$((board_finished - BOARD_STARTED_EPOCH))" \
+    --slurpfile registry "$JSON_TRANSPORT_DIR/registry.json" \
+    --slurpfile backlog "$BACKLOG_JSON_FILE" --slurpfile tasks "$TASKS_JSON_FILE" \
+    --slurpfile inventory "$MAIN_INVENTORY_JSON_FILE" '
+    [$backlog[0].records[] | select(.state != "done")] as $open
+    | {schema:"fm-live-board-input.v1",generated:$generated,generated_epoch:$epoch,
+     fm_home:$fm_home,collection_duration_seconds:$duration,registry:$registry[0],
+     backlog:$backlog[0],tasks:$tasks[0],main_inventory:$inventory[0],
+     coverage:{local:{complete:($backlog[0].present and all($open[]; .structured != false)),
+       total_open:($open | length)},
+       registered_homes:{complete:false,reason:"home-local input; registered-home board exports not collected"}}}'
+  exit $?
+fi
 
 CONTRIBUTIONS_JSON_FILE="$JSON_TRANSPORT_DIR/contributions.json"
 CONTRIBUTION_TASKS_JSON=$(contribution_tasks_json) \
