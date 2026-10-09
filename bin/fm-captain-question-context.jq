@@ -20,17 +20,21 @@ def fm_question_timestamp:
 def fm_question_lifecycle_valid:
   type == "string" and length <= 64 and test("^[^#]+#(0|[1-9][0-9]*)$")
   and (split("#")[0] | fm_question_timestamp);
+def fm_question_text($max; $newlines):
+  type == "string" and length > 0 and length <= $max and test("[^[:space:]]")
+  and (test(if $newlines then "[\\x00-\\x09\\x0b-\\x1f\\x7f]" else "[\\x00-\\x1f\\x7f]" end) | not);
 def fm_question_valid($stored):
   type == "object"
-  and ((keys - (["schema","close","options","recommendation","subject"]
+  and ((keys - (["schema","close","question","options","recommendation","subject"]
     + if $stored then ["lifecycle"] else [] end)) | length == 0)
   and .schema == "fm-captain-question.v1" and (.close | IN("done","release"))
   and (if $stored then (.lifecycle | fm_question_lifecycle_valid) else true end)
+  and (.question == null or (.question | fm_question_text(600; true)))
   and ((.options // []) | type == "array" and length <= 12
-    and all(.[]; type == "object" and keys == ["label","value"]
+    and all(.[]; type == "object" and (keys == ["label","value"] or keys == ["detail","label","value"])
       and (.value | fm_question_slug(64)) and .value != "reconcile"
-      and (.label | type == "string" and length > 0 and length <= 120
-        and test("[^[:space:]]") and (test("[\\x00-\\x1f\\x7f]") | not)))
+      and (.label | fm_question_text(120; false))
+      and (.detail == null or (.detail | fm_question_text(300; false))))
     and (map(.value) | length == (unique | length)))
   and (.recommendation as $recommendation
     | $recommendation == null or any((.options // [])[]; .value == $recommendation))
@@ -38,7 +42,8 @@ def fm_question_valid($stored):
     and (.artifact | fm_question_slug(128))
     and (.version | type == "string" and length <= 64 and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))));
 def fm_question_normalize:
-  {schema,close,options:(.options // []),recommendation:(.recommendation // null),subject:(.subject // null)};
+  {schema,close,options:(.options // []),recommendation:(.recommendation // null),subject:(.subject // null)}
+  + if .question == null then {} else {question} end;
 def fm_question_lifecycle:
   if (.hold_set | fm_question_timestamp) then
     .hold_set + "#" + ([.body_lines[]? | select(test("^Resolution recorded by fm-(captain|decision)-hold\\.$"))] | length | tostring)

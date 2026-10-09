@@ -9,9 +9,11 @@
 #
 # The live board is a separate captain-facing browser page, never a Bearings
 # mode: the shipped dark template (bin/fm-live-board-template.html) plus one
-# injected payload {refresh_seconds, board}, where board is exactly one
-# `fm-live-board-snapshot.sh --json` document (schema fm-live-board.v1). The
-# snapshot owns every fact and ordering on the page; this script reads no other
+# injected payload {refresh_seconds, board, view}, where board is exactly one
+# `fm-live-board-snapshot.sh --json` document (schema fm-live-board.v1) and view
+# is its fm-live-board-view.v1 grouping into the captain's named projects (see
+# PROJECTS). The snapshot owns every fact; bin/fm-live-board-projects.jq owns
+# the grouping, ordering and captain-facing wording; this script reads no other
 # home state and the page computes nothing beyond display and local freshness.
 #
 # build    Collect one snapshot, bounded by FM_LIVE_BOARD_TIMEOUT seconds
@@ -38,13 +40,38 @@
 # marks data stale after max(150, 2.5 x refresh_seconds) seconds and out of
 # date after twice that, so a stopped watcher is visible instead of silent.
 #
-# ANSWERS. A question card is answerable only when the snapshot marks it
+# PROJECTS. config/live-board-projects.json is an optional, home-private map
+# from the captain's own project names to the work that belongs to them:
+#   {"schema":"fm-live-board-projects.v1","projects":[{"name":"Stock report",
+#     "description":"...","match":[{"id":"stock-*"},{"repo":"claims"}]}]}
+# name is required (nonblank, <=60 chars, unique), description optional
+# (<=200 chars), and match holds 1-64 rules; a rule has an id pattern (task-id
+# characters plus `*` as the only wildcard), a repo (the backlog repo, or the
+# last part of a metadata project path), or both, and matches when every key
+# it has matches. A task, question or recently finished row belongs to the
+# first project, in file order, with a matching rule. Unmatched work, and all
+# work when the file is absent, groups by repository instead. An unreadable or
+# invalid map never fails the build: the page groups by repository and says
+# the map needs fixing. Firstmate maintains the file; it is never tracked.
+# The view leads with projects that have questions for the captain, then
+# stuck, then running work, in map order; projects with no question and no
+# in-flight work fold away. Queued, unstarted work is only a per-project
+# count. Worker status, titles and reasons drop links, paths, branches, run
+# ids and task ids, so ids appear only in data attributes.
+#
+# ANSWERS. A question card offers answer controls when the snapshot marks it
 # answerable with owner-authored context (bin/fm-captain-hold.sh owns that
-# contract). Its Queue answer control emits one Lavish `choice` carrying
+# contract, including the optional question text and per-option detail the
+# card shows); its Queue answer control emits one Lavish `choice` carrying
 # fm-bearings-answer.v1 context with the task id, selection, note, the owner's
-# close mode and lifecycle. bin/fm-procevent-lavish.sh relays those to
-# `fm-captain-hold.sh answers`, whose lifecycle guard refuses an answer queued
-# for an earlier hold. The page never calls a command or invents options.
+# close mode and lifecycle. A captain hold with no owner context at all and an
+# unambiguous identity gets a free-text answer box instead, emitting the same
+# choice with an empty selection and no close mode or lifecycle, exactly as a
+# Bearings free-form answer does. bin/fm-procevent-lavish.sh relays either to
+# `fm-captain-hold.sh answers`, whose guards refuse an answer for a task that
+# is no longer held and, for guarded cards, one queued for an earlier hold.
+# Stale, malformed, duplicate or ambiguous calls stay read-only. The page never
+# calls a command or invents options.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,6 +81,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 CONFIG_FILE="$CONFIG/live-board.json"
+PROJECTS_FILE="$CONFIG/live-board-projects.json"
+PROJECTS_MAX_BYTES=65536
 TEMPLATE="$SCRIPT_DIR/fm-live-board-template.html"
 PLACEHOLDER='__FM_LIVE_BOARD_DATA__'
 BUILD_TIMEOUT=${FM_LIVE_BOARD_TIMEOUT:-45}
@@ -112,8 +141,24 @@ file_age() {  # <path>
   printf '%s\n' "$(( $(date +%s) - mtime ))"
 }
 
+# Print the project map as one JSON value: null when absent, the parsed
+# document when readable, or a string the projection reports as invalid.
+project_map_json() {
+  local size
+  [ -e "$PROJECTS_FILE" ] || [ -L "$PROJECTS_FILE" ] || { printf 'null\n'; return 0; }
+  if [ -f "$PROJECTS_FILE" ] && [ ! -L "$PROJECTS_FILE" ]; then
+    size=$(LC_ALL=C wc -c < "$PROJECTS_FILE" 2>/dev/null | tr -d '[:space:]')
+    case "$size" in ''|*[!0-9]*) size=$((PROJECTS_MAX_BYTES + 1)) ;; esac
+    if [ "$size" -le "$PROJECTS_MAX_BYTES" ] \
+      && jq -cs 'if length == 1 then .[0] else "unreadable" end' "$PROJECTS_FILE" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  printf '"unreadable"\n'
+}
+
 build_board() {  # <refresh-seconds>
-  local refresh=$1 board tmp snap json extracted
+  local refresh=$1 board tmp snap json extracted map
   command -v jq >/dev/null 2>&1 || fail "jq is required"
   [ -f "$TEMPLATE" ] && [ ! -L "$TEMPLATE" ] || fail "board template is missing: $TEMPLATE"
   [ "$(grep -cxF "$PLACEHOLDER" "$TEMPLATE")" -eq 1 ] \
@@ -128,9 +173,11 @@ build_board() {  # <refresh-seconds>
   if ! fm_run_timed "$BUILD_TIMEOUT" "$SCRIPT_DIR/fm-live-board-snapshot.sh" --json > "$snap"; then
     fail "the live-board snapshot failed or exceeded ${BUILD_TIMEOUT}s; the previous board is unchanged"
   fi
-  json=$(jq -c --argjson refresh "$refresh" '
+  map=$(project_map_json)
+  json=$(jq -c -L "$SCRIPT_DIR" --argjson refresh "$refresh" --argjson map "$map" '
+    include "fm-live-board-projects";
     if .schema == "fm-live-board.v1" and (.projects | type == "array")
-    then {refresh_seconds:$refresh, board:.} else error("not fm-live-board.v1") end' "$snap" 2>/dev/null) \
+    then {refresh_seconds:$refresh, board:., view:lb_view($map)} else error("not fm-live-board.v1") end' "$snap" 2>/dev/null) \
     || fail "the snapshot is not a readable fm-live-board.v1 document"
   # `<` never appears in JSON syntax outside strings, so escaping every
   # occurrence keeps the payload valid JSON while making </script> inert.
@@ -144,7 +191,7 @@ build_board() {  # <refresh-seconds>
   # Round-trip the payload out of the built page so a page the browser could
   # not parse fails here instead.
   extracted=$(sed -n '/<script id="live-board-data" type="application\/json">/,/<\/script>/p' "$tmp" | sed '1d;$d')
-  printf '%s\n' "$extracted" | jq -e '.board.schema == "fm-live-board.v1"' >/dev/null 2>&1 \
+  printf '%s\n' "$extracted" | jq -e '.board.schema == "fm-live-board.v1" and .view.schema == "fm-live-board-view.v1"' >/dev/null 2>&1 \
     || fail "the built board does not carry a readable fm-live-board.v1 payload"
   { chmod 0600 "$tmp" && mv -f -- "$tmp" "$board"; } || fail "cannot publish the board"
   rm -f -- "$snap"

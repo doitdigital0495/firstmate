@@ -1589,7 +1589,7 @@ families_for_changed_path() {
     bin/fm-home-summary-refresh.sh|bin/fm-live-board-snapshot.sh|bin/fm-live-board-snapshot.jq)
       printf '%s\n' snapshot-bearings
       ;;
-    bin/fm-live-board.sh|bin/fm-live-board-template.html)
+    bin/fm-live-board.sh|bin/fm-live-board-template.html|bin/fm-live-board-projects.jq)
       printf '%s\n' __script__:fm-live-board.test.sh
       ;;
     bin/fm-lavish-board-lib.sh)

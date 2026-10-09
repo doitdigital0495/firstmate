@@ -75,12 +75,17 @@
 #
 # QUESTION CONTEXT: ONE OWNER, SAME BACKLOG BODY.
 # `hold --context-file` accepts one JSON object, at most 8192 bytes, with schema
-# `fm-captain-question.v1`, mandatory close `done|release`, optional options
-# (at most 12 unique {value,label} objects; slug values <=64 chars, printable
-# nonblank labels <=120 chars; `reconcile` is reserved), recommendation (null
+# `fm-captain-question.v1`, mandatory close `done|release`, optional question
+# (the full question as the captain should read it: nonblank, <=600 chars,
+# newlines allowed but no other control characters), options
+# (at most 12 unique {value,label[,detail]} objects; slug values <=64 chars, printable
+# nonblank labels <=120 chars, optional printable nonblank detail <=300 chars
+# explaining what choosing it means; `reconcile` is reserved), recommendation (null
 # or an option value), and subject (null or {artifact:<slug <=128>,
 # version:<numeric x.y.z <=64 chars>}). Unknown fields/versions and malformed input refuse
-# before any mutation. Omitted options/recommendation/subject become []/null/null.
+# before any mutation. Omitted options/recommendation/subject become []/null/null;
+# an omitted or null question stays absent. question and detail are display text
+# only and never change answer routing.
 # The owner adds lifecycle, the exact `open --identity` stamp#answer-count.
 # Guarded context requires a valid full UTC stamp; legacy date-only/unknown
 # stamps remain read-only until owner review, never assigned an invented time.

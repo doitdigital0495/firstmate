@@ -4036,7 +4036,7 @@ test_structured_context_and_guarded_answers() {
   home=$(make_home structured-context)
   for mode in "done" release; do
     id=sample-context-$mode
-    printf '{"schema":"fm-captain-question.v1","close":"%s","options":[{"value":"go","label":"Go café"}],"recommendation":"go","subject":{"artifact":"widget","version":"1.2.3"}}\n' "$mode" > "$home/context.json"
+    printf '{"schema":"fm-captain-question.v1","close":"%s","question":"Ship the widget\\nthis week?","options":[{"value":"go","label":"Go café","detail":"Ships today."}],"recommendation":"go","subject":{"artifact":"widget","version":"1.2.3"}}\n' "$mode" > "$home/context.json"
     FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold "$id" \
       --title "Choose the widget option" --reason "Choose go or revise" --repo sample \
       --context-file "$home/context.json" >/dev/null || fail "structured hold failed"
@@ -4045,6 +4045,8 @@ test_structured_context_and_guarded_answers() {
     show=$(tasks_in "$home" show "$id" --full)
     assert_contains "$show" 'Captain question context:' "context was not stored in the body API"
     assert_contains "$show" 'Go café' "context label lost its UTF-8 bytes"
+    assert_contains "$show" 'Ships today.' "context option detail was not stored"
+    assert_contains "$show" 'Ship the widget' "context question text was not stored"
     cp "$home/data/backlog.md" "$home/before"
     FM_CAPTAIN_HOLD_NOW=2026-07-15T12:00:00Z run_captain "$home" hold "$id" \
       --reason "Choose go or revise" --context-file "$home/context.json" >/dev/null \
@@ -4125,6 +4127,11 @@ test_context_input_refuses_before_mutation() {
     '{"schema":"fm-captain-question.v1","close":"done","recommendation":"invented"}' \
     '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"bad\tlabel"}]}' \
     '{"schema":"fm-captain-question.v1","close":"done","lifecycle":"caller-forged"}' \
+    '{"schema":"fm-captain-question.v1","close":"done","question":"   "}' \
+    '{"schema":"fm-captain-question.v1","close":"done","question":"bad\u0007bell"}' \
+    "$(jq -nc '{schema:"fm-captain-question.v1",close:"done",question:("x" * 601)}')" \
+    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go","detail":""}]}' \
+    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go","explain":"Why"}]}' \
     '{"schema":"fm-captain-question.v1","close":"done"} {}'; do
     printf '%s\n' "$value" > "$home/invalid.json"
     cp "$home/data/backlog.md" "$home/before"

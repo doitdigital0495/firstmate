@@ -118,11 +118,11 @@ in_home "$home" "$LIVE" build | grep -q '^board: ' || fail "build did not report
 [ "$(in_home "$home" "$LIVE" path)" = "$home/data/live-board/board.html" ] \
   || fail "path does not name the published board"
 out=$(render "$home")
-check "$out" '.empty != null and (.empty | test("No open work"))
+check "$out" '.empty != null and (.empty | test("Nothing running"))
   and (.projects | length == 0) and .idle.count == 1 and .idle.names == ["quiet"]
-  and .stats.open_tasks == 0 and .stats.questions == 0 and .freshness == "live"' \
+  and .stats.questions == 0 and .stats.active_projects == 0 and .freshness == "live"' \
   "an empty fleet did not render the explicit empty state"
-pass "an empty fleet renders No open work with idle registered projects folded away"
+pass "an empty fleet renders its empty state with idle registered projects folded away"
 
 # --- Large fleet ---------------------------------------------------------------
 home=$(make_home large)
@@ -133,71 +133,116 @@ tasks_in "$home" add big-b "$long" --repo big --kind ship
 out=$(in_home "$home" "$LIVE" build 2>&1) || fail "a board past the env-string limit did not build: $out"
 [ "$(wc -c < "$home/data/live-board/board.html")" -gt 140000 ] \
   || fail "the large-fleet fixture did not produce a payload past the env-string limit"
-check "$(render "$home")" '.stats.open_tasks == 2 and (.projects[0].tasks | map(.id) | sort) == ["big-a","big-b"]' \
-  "a large board lost its open work"
+check "$(render "$home")" '(.projects | length == 0) and .idle.names == ["big"]
+  and (.idle.lines[0] | test("2 waiting to start"))' \
+  "a large board lost its queued count"
 pass "a board whose payload exceeds one environment string still builds and renders"
 
-# --- Projects, questions and tasks ---------------------------------------------
+# --- Projects, questions and workers -------------------------------------------
 home=$(make_home fleet)
 printf -- '- web-shop [no-mistakes] - fixture (added 2026-01-01)\n- data [direct-PR] - fixture (added 2026-01-01)\n' \
   > "$home/data/projects.md"
-tasks_in "$home" add redesign "Redesign checkout" --repo web-shop --kind ship
-tasks_in "$home" add retry "Retry payments" --repo web-shop --kind ship
-tasks_in "$home" add export "Nightly export" --repo data --kind ship
-tasks_in "$home" add carrier "Which carrier?" --repo web-shop --kind captain --priority 1
-tasks_in "$home" add window "Move the window?" --repo data --kind captain
-tasks_in "$home" add legacy 'Logo </script><b>x</b>' --repo web-shop --kind captain
-tasks_in "$home" add note-only "Name the release" --repo data --kind captain
-printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"dhl","label":"DHL"},{"value":"postnl","label":"PostNL"}],"recommendation":"postnl"}' > "$home/ctx-done.json"
+tasks_in "$home" add ws-redesign "Redesign checkout" --repo web-shop --kind ship
+tasks_in "$home" add ws-retry "Retry payments" --repo web-shop --kind ship
+tasks_in "$home" add data-export "Nightly export" --repo data --kind ship
+tasks_in "$home" add ws-carrier "Which carrier?" --repo web-shop --kind captain --priority 1
+tasks_in "$home" add data-window "Move the window?" --repo data --kind captain
+tasks_in "$home" add ws-legacy 'Logo </script><b>x</b>' --repo web-shop --kind captain
+tasks_in "$home" add data-note-only "Name the release" --repo data --kind captain
+printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done","question":"Who should ship the spring orders?","options":[{"value":"dhl","label":"DHL","detail":"Next-day delivery, about 8 percent dearer."},{"value":"postnl","label":"PostNL"}],"recommendation":"postnl"}' > "$home/ctx-done.json"
 printf '%s\n' '{"schema":"fm-captain-question.v1","close":"release","options":[{"value":"keep","label":"Keep"},{"value":"move","label":"Move"}]}' > "$home/ctx-release.json"
 printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done"}' > "$home/ctx-note.json"
-in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold carrier --reason "Pick a carrier." --context-file "$home/ctx-done.json" >/dev/null \
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --reason "Pick a carrier." --context-file "$home/ctx-done.json" >/dev/null \
   || fail "could not hold the carrier question"
-in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold window --reason "Load overlaps." --context-file "$home/ctx-release.json" >/dev/null \
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold data-window --reason "Load overlaps." --context-file "$home/ctx-release.json" >/dev/null \
   || fail "could not hold the window question"
-in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold legacy --reason "Old hold." >/dev/null \
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-legacy --reason "Old hold." >/dev/null \
   || fail "could not hold the legacy question"
-in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold note-only --reason "Free answer." --context-file "$home/ctx-note.json" >/dev/null \
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold data-note-only --reason "Free answer." --context-file "$home/ctx-note.json" >/dev/null \
   || fail "could not hold the note-only question"
-fm_write_meta "$home/state/redesign.meta" 'kind=ship' 'harness=claude' 'project=web-shop' \
+fm_write_meta "$home/state/ws-redesign.meta" 'kind=ship' 'harness=claude' 'project=web-shop' \
   'pr=https://github.com/example/web-shop/pull/42'
+printf 'working [at=%s]: checkout tests pass on fm/ws-redesign, see data/ws-redesign/report.md run=01ABCDEFGHJKMNPQRSTVWXYZ01\n' \
+  "$(date +%s)" > "$home/state/ws-redesign.status"
 printf '%s\n' "$ENABLED" > "$home/config/live-board.json"
 in_home "$home" "$LIVE" build >/dev/null || fail "the fleet board did not build"
 now=$(date +%s)
 out=$(render "$home" "$now")
-check "$out" '.stats.questions == 4 and .stats.urgent_questions == 1
+check "$out" '.stats.questions == 4 and .stats.urgent == 1 and .stats.active_projects == 2
   and (.projects | map(.label)) == ["web-shop","data"]
-  and .projects[0].questions[0].id == "carrier" and .projects[0].questions[0].urgent
-  and (.projects[0].questions | map(.id)) == ["carrier","legacy"]
-  and (.projects[1].questions | map(.id) | sort) == ["note-only","window"]' \
-  "projects or their questions were not ordered by the snapshot"
-check "$out" '(.projects[0].questions[0] | .answerable and .mode == "Answering closes this question."
-    and .options == [{value:"dhl",label:"DHL",recommended:false},{value:"postnl",label:"PostNL",recommended:true}]
-    and (.lavishQuestion | startswith("live-board:carrier#")))
-  and (.projects[1].questions[] | select(.id == "window") | .answerable
-    and .mode == "Answering releases the hold so the work continues.")
-  and (.projects[1].questions[] | select(.id == "note-only") | .answerable and .options == [])
-  and (.projects[0].questions[1] | (.answerable | not) and .readonly.status == "legacy"
-    and .title == "Logo </script><b>x</b>")' \
-  "owner context did not drive answer controls, or a legacy call became answerable"
-check "$out" '(.projects[0].tasks | map(.id) | sort) == ["redesign","retry"]
-  and (.projects[0].tasks[] | select(.id == "redesign") | .links) == ["https://github.com/example/web-shop/pull/42"]
-  and (.projects[1].tasks | map(.id)) == ["export"]' \
-  "open work rows duplicated question cards or lost the recorded PR link"
-pass "projects lead with their ordered questions, owner context drives controls, and open work follows"
+  and (.projects[0].questions | map(.id)) == ["ws-carrier","ws-legacy"]
+  and .projects[0].questions[0].urgent
+  and (.projects[1].questions | map(.id) | sort) == ["data-note-only","data-window"]' \
+  "without a project map, work did not group by repository with questions first"
+check "$out" '(.projects[0].questions[0] | .answerable and .mode == "options"
+    and .title == "Who should ship the spring orders?" and .topic == "Which carrier?"
+    and (.why | test("Pick a carrier"))
+    and .modeText == "Answering closes this question."
+    and .options == [{value:"dhl",label:"DHL",detail:"Next-day delivery, about 8 percent dearer.",recommended:false},
+      {value:"postnl",label:"PostNL",detail:null,recommended:true}]
+    and (.lavishQuestion | startswith("live-board:ws-carrier#")))
+  and (.projects[1].questions[] | select(.id == "data-window") | .answerable
+    and .modeText == "Answering lets the paused work continue.")
+  and (.projects[1].questions[] | select(.id == "data-note-only") | .answerable and .options == [] and .mode == "text")
+  and (.projects[0].questions[1] | .answerable and .mode == "free-text" and .readonly == null
+    and .options == [] and .noteField == "textarea" and .lavishQuestion == "live-board:ws-legacy"
+    and .title == "Logo </script><b>x</b>" and (.modeText | test("records your words")))' \
+  "owner context did not drive the real question, its explained options, or the free-text fallback"
+check "$out" '(.projects[0].workers | map(.id)) == ["ws-redesign"]
+  and (.projects[0].workers[0] | .title == "Redesign checkout"
+    and .links == [{href:"https://github.com/example/web-shop/pull/42",text:"pull request"}]
+    and (.note | test("checkout tests pass")) and (.note | test("fm/|data/|run=|01ABC") | not))
+  and (.projects[0].latest | test("Redesign checkout - checkout tests pass"))
+  and (.projects[0].progress | test("1 in progress")) and (.projects[0].progress | test("1 waiting to start"))
+  and (.projects[1].workers == []) and (.projects[1].progress | test("1 waiting to start"))
+  and ([.projects[].text] | join(" ") | test("Retry payments|Nightly export") | not)' \
+  "workers lost their plain progress, or queued work was listed"
+check "$out" '[.projects[].text] | join(" ")
+  | test("ws-redesign|ws-retry|data-export|ws-carrier|data-window|ws-legacy|data-note-only|web-shop/pull") | not' \
+  "the page face showed task ids or raw links"
+pass "repository fallback leads with real questions and explained options, and lists only workers"
+
+# --- The captain's named projects ----------------------------------------------
+cat > "$home/config/live-board-projects.json" <<'JSON'
+{"schema":"fm-live-board-projects.v1","projects":[
+  {"name":"Data platform","description":"Nightly data and its release.","match":[{"repo":"data"}]},
+  {"name":"Checkout","description":"The new checkout.","match":[{"id":"ws-redesign"},{"id":"ws-carrier"},{"id":"ws-retry"}]},
+  {"name":"Unused effort","match":[{"id":"nothing-*"}]}]}
+JSON
+in_home "$home" "$LIVE" build >/dev/null || fail "the mapped board did not build"
+out=$(render "$home" "$now")
+check "$out" '(.projects | map(.label)) == ["Checkout","Data platform","web-shop"]
+  and .projects[0].description == "The new checkout."
+  and (.projects[0].questions | map(.id)) == ["ws-carrier"]
+  and (.projects[0].workers | map(.id)) == ["ws-redesign"]
+  and .projects[0].status == "1 question waits for you (1 urgent), 1 in flight"
+  and (.projects[2].questions | map(.id)) == ["ws-legacy"]
+  and (.projects[2].description | test("Not yet sorted"))
+  and .idle.names == ["Unused effort"] and (.notes | any(test("project map")) | not)' \
+  "the project map did not group work under the captain's names in priority order"
+printf '%s\n' '{"schema":"fm-live-board-projects.v1","projects":[{"name":"X","match":[{"branch":"x"}]}]}' \
+  > "$home/config/live-board-projects.json"
+in_home "$home" "$LIVE" build >/dev/null || fail "an invalid project map failed the build"
+check "$(render "$home" "$now")" '(.projects | map(.label)) == ["web-shop","data"]
+  and (.notes | any(test("project map is invalid")))' \
+  "an invalid project map did not fall back to repository grouping with a note"
+rm -f "$home/config/live-board-projects.json"
+in_home "$home" "$LIVE" build >/dev/null || fail "the fleet board did not rebuild"
+pass "a project map groups work under the captain's names; unmatched work and bad maps fall back by repository"
 
 # --- Queued answers carry the owner's guard ------------------------------------
-out=$(render "$home" "$now" 'carrier=postnl:cheaper' 'window=' 'note-only=:Call it Tidewater' 'legacy=x')
-check "$out" '(.queued | length == 2)
+out=$(render "$home" "$now" 'ws-carrier=postnl:cheaper' 'data-window=' 'data-note-only=:Call it Tidewater' \
+  'ws-legacy=:Use the new logo')
+check "$out" '(.queued | length == 3)
   and .queued[0].tag == "choice"
-  and (.queued[0].data | .schema == "fm-bearings-answer.v1" and .question == "carrier"
+  and (.queued[0].data | .schema == "fm-bearings-answer.v1" and .question == "ws-carrier"
     and .selection == "postnl" and .note == "cheaper" and .close == "done"
     and (.lifecycle | test("^[0-9T:Z-]+#0$")))
-  and (.queued[1].data | .question == "note-only" and .selection == "" and .note == "Call it Tidewater")
-  and (.submits[] | select(.id == "window") | .queuedClass == false)
-  and (.submits[] | select(.id == "legacy") | .status == "no-form")' \
-  "a queued answer lost its close mode or lifecycle, or an empty answer queued"
-pass "Queue answer emits one choice with the owner close mode and lifecycle"
+  and (.queued[1].data | .question == "data-note-only" and .selection == "" and .note == "Call it Tidewater")
+  and (.queued[2].data == {schema:"fm-bearings-answer.v1",question:"ws-legacy",selection:"",note:"Use the new logo"})
+  and (.submits[] | select(.id == "data-window") | .queuedClass == false)' \
+  "a queued answer lost its close mode or lifecycle, an empty answer queued, or free text was not sent"
+pass "Send answer emits one choice with the owner close mode and lifecycle, or plain free text"
 
 # --- Local freshness ----------------------------------------------------------
 check "$(render "$home" "$((now + 400))")" '.freshness == "stale" and .banner == ""' \
@@ -234,8 +279,8 @@ in_home "$home" "$ROOT/bin/fm-captain-hold.sh" binding "$sid" >/dev/null \
 pass "open serves the board, binds its answers, then arms the source"
 
 # --- Guarded answers through the Lavish adapter --------------------------------
-lifecycle=$(render "$home" "$now" 'carrier=postnl' | jq -r '.queued[0].data.lifecycle')
-window_lifecycle=$(render "$home" "$now" 'window=move' | jq -r '.queued[0].data.lifecycle')
+lifecycle=$(render "$home" "$now" 'ws-carrier=postnl' | jq -r '.queued[0].data.lifecycle')
+window_lifecycle=$(render "$home" "$now" 'data-window=move' | jq -r '.queued[0].data.lifecycle')
 row() {  # <n> <question> <selection> <extra-context-members>
   printf '  "%s","Answer\\n\\nContext data:\\n{\\"schema\\": \\"fm-bearings-answer.v1\\", \\"question\\": \\"%s\\", \\"selection\\": \\"%s\\", \\"note\\": \\"\\"%s}","form",choice,"%s -> %s"\n' \
     "$1" "$2" "$3" "$4" "$2" "$3"
@@ -243,29 +288,45 @@ row() {  # <n> <question> <selection> <extra-context-members>
 result="$TMP_ROOT/captured.result"
 {
   printf 'status: feedback\nprompts[4]{id,prompt,selector,tag,text}:\n'
-  row 1 carrier postnl ", \\\"close\\\": \\\"done\\\", \\\"lifecycle\\\": \\\"$lifecycle\\\""
-  row 2 window move ', \"close\": \"release\", \"lifecycle\": \"2020-01-01T00:00:00Z#0\"'
+  row 1 ws-carrier postnl ", \\\"close\\\": \\\"done\\\", \\\"lifecycle\\\": \\\"$lifecycle\\\""
+  row 2 data-window move ', \"close\": \"release\", \"lifecycle\": \"2020-01-01T00:00:00Z#0\"'
   row 3 forged yes ', \"close\": \"done\", \"lifecycle\": \"bad\\tlife#0\"'
   row 4 nomode yes ', \"lifecycle\": \"2020-01-01T00:00:00Z#0\"'
 } > "$result"
 rows=$(in_home "$home" "$ROOT/bin/fm-procevent-lavish.sh" answers "$result")
-[ "$(printf '%s\n' "$rows" | cut -f1,2,4,5)" = "$(printf 'carrier\tpostnl\tdone\t%s\nwindow\tmove\trelease\t2020-01-01T00:00:00Z#0' "$lifecycle")" ] \
+[ "$(printf '%s\n' "$rows" | cut -f1,2,4,5)" = "$(printf 'ws-carrier\tpostnl\tdone\t%s\ndata-window\tmove\trelease\t2020-01-01T00:00:00Z#0' "$lifecycle")" ] \
   || fail "the adapter did not relay exactly the well-formed guarded rows: $rows"
 out=$(printf '%s\n' "$rows" | in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answers --any-origin --source "fixture capture" 2>&1)
-assert_contains "$out" "closed: carrier" "a current guarded answer did not close its question"
-assert_contains "$out" "skipped: window (stale captain question lifecycle)" \
+assert_contains "$out" "closed: ws-carrier" "a current guarded answer did not close its question"
+assert_contains "$out" "skipped: data-window (stale captain question lifecycle)" \
   "an answer for an earlier hold was not refused by the lifecycle guard"
-show=$(cd "$home" && tasks-axi show carrier --full)
+show=$(cd "$home" && tasks-axi show ws-carrier --full)
 assert_contains "$show" "state: done" "the answered question stayed open"
 assert_contains "$show" "Captain answer lifecycle: $lifecycle" "the answer did not record its guarded lifecycle"
-show=$(cd "$home" && tasks-axi show window --full)
+show=$(cd "$home" && tasks-axi show data-window --full)
 assert_contains "$show" "held: yes" "a refused stale answer released the newer hold"
 [ "$window_lifecycle" != "2020-01-01T00:00:00Z#0" ] || fail "the fixture lifecycle collided with the stale guard"
 touch -t 202001010000 "$board"
 in_home "$home" "$LIVE" refresh
-check "$(render "$home")" '[.projects[].questions[].id] | index("carrier") == null' \
+check "$(render "$home")" '[.projects[].questions[].id] | index("ws-carrier") == null' \
   "the next refresh still showed an answered question"
-pass "guarded answers close the current question, refuse stale ones, and clear on refresh"
+result="$TMP_ROOT/free-text.result"
+{
+  printf 'status: feedback\nprompts[1]{id,prompt,selector,tag,text}:\n'
+  printf '  "1","Answer\\n\\nContext data:\\n{\\"schema\\": \\"fm-bearings-answer.v1\\", \\"question\\": \\"ws-legacy\\", \\"selection\\": \\"\\", \\"note\\": \\"Use the new logo\\"}","form",choice,"Logo -> Use the new logo"\n'
+} > "$result"
+rows=$(in_home "$home" "$ROOT/bin/fm-procevent-lavish.sh" answers "$result")
+[ "$(printf '%s\n' "$rows" | cut -f1,2)" = "$(printf 'ws-legacy\tUse the new logo')" ] \
+  || fail "the adapter did not relay the free-text answer: $rows"
+out=$(printf '%s\n' "$rows" | in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answers --any-origin --source "fixture capture" 2>&1)
+assert_contains "$out" "closed: ws-legacy" "a free-text answer did not reach the keyed-answer intake"
+show=$(cd "$home" && tasks-axi show ws-legacy --full)
+assert_contains "$show" "Use the new logo" "the free-text answer did not record the captain's words"
+touch -t 202001010000 "$board"
+in_home "$home" "$LIVE" refresh
+check "$(render "$home")" '[.projects[].questions[].id] | index("ws-carrier") == null and index("ws-legacy") == null' \
+  "the next refresh still showed an answered question"
+pass "guarded and free-text answers close their questions, stale ones are refused, and cards clear on refresh"
 
 # --- The watcher drives refresh -----------------------------------------------
 home=$(make_home watched)

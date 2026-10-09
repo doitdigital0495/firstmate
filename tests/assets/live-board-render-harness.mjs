@@ -6,10 +6,12 @@
 // An answer spec is `<question-id>=<option-value>[:<note>]` (empty value for a
 // note-only answer); each is applied to that card's form and submitted.
 // Prints one JSON document:
-//   { freshness, banner, stats:{}, notes:[], empty, idle, foot,
-//     projects:[{label, badges, questions:[{id,title,urgent,badges,answerable,
-//       readonly,options:[{value,label,recommended}],mode}], tasks:[{id,state}]}],
-//     submits:[{id,status}], queued:[{prompt,options}], tickers }
+//   { freshness, banner, stats:{}, notes:[], empty, idle:{count,names,lines}, foot,
+//     projects:[{label, key, badges, description, status, progress, latest, text,
+//       questions:[{id,mode,title,topic,why,urgent,badges,answerable,lavishQuestion,
+//         readonly,options:[{value,label,detail,recommended}],noteField,modeText}],
+//       workers:[{id,state,label,title,note,links}]}],
+//     submits:[{id,status}], queued:[{prompt,tag,data}], tickers }
 import { readFileSync } from "node:fs";
 
 const [file, nowArg, ...answers] = process.argv.slice(2);
@@ -84,34 +86,55 @@ for (const spec of answers) {
 const fresh = byId.get("lb-fresh").find((c) => c.getAttribute("data-freshness") !== null)[0];
 const stats = {};
 for (const s of byId.get("lb-stats").children) stats[s.getAttribute("data-stat")] = Number(s.children[0].textContent);
-const projects = root.children.filter((c) => c.getAttribute("data-project") !== null).map((p) => ({
-  label: p.getAttribute("data-project"),
-  badges: badges(p.children[0]),
-  questions: p.find((c) => c.getAttribute("data-question") !== null).map((q) => {
-    const form = q.find((c) => c.tagName === "FORM")[0];
-    const ro = q.find((c) => c.getAttribute("data-readonly") !== null)[0];
-    return {
-      id: q.getAttribute("data-question"),
-      title: text(q.find((c) => c.tagName === "H3")[0]),
-      urgent: q.hasClass("q-urgent"),
-      badges: badges(q.children[0]),
-      answerable: Boolean(form),
-      lavishQuestion: form ? form.getAttribute("data-lavish-question") : null,
-      readonly: ro ? { status: ro.getAttribute("data-readonly"), text: text(ro) } : null,
-      options: form ? form.find((c) => c.hasClass("q-opt")).map((o) => ({
-        value: o.find((c) => c.type === "radio")[0].value,
-        label: text(o.children[1]),
-        recommended: o.find((c) => c.hasClass("rec")).length > 0,
-      })) : [],
-      mode: form ? text(form.find((c) => c.hasClass("q-mode"))[0]) : null,
-    };
-  }),
-  tasks: p.find((c) => c.getAttribute("data-task") !== null).map((t) => ({
-    id: t.getAttribute("data-task"),
-    state: text(t.children[0].children[0]),
-    links: t.find((c) => c.tagName === "A").map((a) => a.href),
-  })),
-}));
+const projects = root.children.filter((c) => c.getAttribute("data-project") !== null).map((p) => {
+  const head = p.children[0];
+  const one = (cls) => { const n = head.find((c) => c.hasClass(cls))[0]; return n ? text(n) : null; };
+  return {
+    label: p.getAttribute("data-project"),
+    key: p.getAttribute("data-project-key"),
+    badges: badges(head.children[0]),
+    description: one("proj-desc"),
+    status: one("proj-status"),
+    progress: one("prog-text"),
+    latest: one("proj-latest"),
+    questions: p.find((c) => c.getAttribute("data-question") !== null).map((q) => {
+      const form = q.find((c) => c.tagName === "FORM")[0];
+      const ro = q.find((c) => c.getAttribute("data-readonly") !== null)[0];
+      const topic = q.find((c) => c.hasClass("q-topic"))[0];
+      const why = q.find((c) => c.hasClass("q-why"))[0];
+      const note = form ? form.find((c) => c.name === "note")[0] : null;
+      return {
+        id: q.getAttribute("data-question"),
+        mode: q.getAttribute("data-mode"),
+        title: text(q.find((c) => c.tagName === "H3")[0]),
+        topic: topic ? text(topic) : null,
+        why: why ? text(why) : null,
+        urgent: q.hasClass("q-urgent"),
+        badges: badges(q.children[0]),
+        answerable: Boolean(form),
+        lavishQuestion: form ? form.getAttribute("data-lavish-question") : null,
+        readonly: ro ? { status: ro.getAttribute("data-readonly"), text: text(ro) } : null,
+        options: form ? form.find((c) => c.hasClass("q-opt")).map((o) => ({
+          value: o.find((c) => c.type === "radio")[0].value,
+          label: text(o.find((c) => c.hasClass("q-opt-label"))[0]),
+          detail: (o.find((c) => c.hasClass("q-opt-detail"))[0] || null) && text(o.find((c) => c.hasClass("q-opt-detail"))[0]),
+          recommended: o.find((c) => c.hasClass("rec")).length > 0,
+        })) : [],
+        noteField: note ? note.tagName.toLowerCase() : null,
+        modeText: form ? text(form.find((c) => c.hasClass("q-mode"))[0]) : null,
+      };
+    }),
+    workers: p.find((c) => c.getAttribute("data-worker") !== null).map((w) => ({
+      id: w.getAttribute("data-worker"),
+      state: w.getAttribute("data-state"),
+      label: text(w.children[0]),
+      title: text(w.find((c) => c.hasClass("w-title"))[0]),
+      note: (w.find((c) => c.hasClass("w-note"))[0] || null) && text(w.find((c) => c.hasClass("w-note"))[0]),
+      links: w.find((c) => c.tagName === "A").map((a) => ({ href: a.href, text: text(a) })),
+    })),
+    text: text(p),
+  };
+});
 const idle = root.find((c) => c.getAttribute("data-idle") !== null)[0];
 
 console.log(JSON.stringify({
@@ -122,7 +145,9 @@ console.log(JSON.stringify({
   stats,
   notes: byId.get("lb-notes").find((c) => c.tagName === "LI").map(text),
   empty: root.find((c) => c.getAttribute("data-empty") !== null).map(text)[0] || null,
-  idle: idle ? { count: Number(idle.getAttribute("data-idle")), names: idle.find((c) => c.tagName === "LI").map(text) } : null,
+  idle: idle ? { count: Number(idle.getAttribute("data-idle")),
+    names: idle.find((c) => c.getAttribute("data-quiet-project") !== null).map((c) => c.getAttribute("data-quiet-project")),
+    lines: idle.find((c) => c.tagName === "LI").map(text) } : null,
   foot: text(byId.get("lb-foot")),
   projects,
   submits,
