@@ -95,8 +95,13 @@
 # to the forge binding, so it prints even when the forge token is malformed;
 # every path that reads the forge binding (default, --forge, and spawn's
 # forge-agreement check) still refuses.
-# Usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] <project-name>
-set -eu
+# --list-json returns {present,projects:[{name,mode,yolo,recognised,annotation}],
+# duplicates:[]}, enumerating names and raw registered posture only, never
+# descriptions or remotes. Unknown modes retain the fail-safe fallback and
+# recognised:false. Duplicate names retain the first posture and are disclosed.
+# A missing registry is present:false, not an empty registered portfolio.
+# Usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] <project-name> | --list-json
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
@@ -106,28 +111,17 @@ REG="$DATA/projects.md"
 RAW=0
 BRANCH_PREFIX_QUERY=0
 WANT_FORGE=0
-case "${1:-}" in
-  --raw) RAW=1; shift ;;
-  --branch-prefix) BRANCH_PREFIX_QUERY=1; shift ;;
-  --forge) WANT_FORGE=1; shift ;;
-esac
-NAME=${1:?usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] <project-name>}
 
-if [ ! -f "$REG" ]; then
-  echo "warn: no registry at $REG; defaulting $NAME to no-mistakes off" >&2
-  if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
-    echo "fm/"
-  elif [ "$WANT_FORGE" -eq 1 ]; then echo none; else echo "no-mistakes off"; fi
-  exit 0
-fi
-
+# registered_posture <name>: the one posture parser, shared by the single-name
+# forms and --list-json.
 # awk emits one "near <token>" line per keyed token whose key is a near miss of
 # `forge`, then "posture <mode> <yolo> <branch-prefix> <forge>" (branch-prefix is
 # the raw prefix, defaulting to "fm/"; forge is `none` or the whole `forge=<value>`
 # token, so an empty value survives the split), or nothing if the project is
 # absent. Every other token beside the mode is ignored, exactly as before either
 # annotation existed.
-parsed=$(awk -v n="$NAME" '
+registered_posture() {
+  awk -v n="$1" '
   function dist(x, y,   i, j, lx, ly, d, c, v) {
     lx = length(x); ly = length(y);
     for (i=0; i<=lx; i++) d[i,0] = i;
@@ -181,7 +175,55 @@ parsed=$(awk -v n="$NAME" '
     # empty final field, which only holds when nothing follows it.
     print "posture", mode, yolo, forge, branch; exit
   }
-' "$REG")
+' "$REG"
+}
+known_mode() {
+  case "$1" in no-mistakes|direct-PR|local-only|no-mistakes-prod-only) return 0 ;; esac
+  return 1
+}
+usage() { printf '%s\n' 'usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] <project-name> | --list-json'; }
+if [ "${1:-}" = --help ] || [ "${1:-}" = -h ]; then usage; exit 0; fi
+if [ "${1:-}" = --list-json ]; then
+  [ "$#" = 1 ] || { usage >&2; exit 2; }
+  command -v jq >/dev/null 2>&1 || { echo 'fm-project-mode: jq not found' >&2; exit 1; }
+  if [ ! -f "$REG" ]; then printf '{"present":false,"projects":[],"duplicates":[]}\n'; exit 0; fi
+  # A name ends at the first literal " [" or " - " after "- " (see the header).
+  names=$(awk 'substr($0, 1, 2) == "- " {
+    s = substr($0, 3); e = length(s) + 1
+    i = index(s, " ["); if (i && i < e) e = i
+    i = index(s, " - "); if (i && i < e) e = i
+    s = substr(s, 1, e - 1); if (s != "") print s
+  }' "$REG")
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    posture=$(registered_posture "$name" | awk '$1 == "posture" { print $2, $3 }')
+    mode=${posture%% *}; yolo=${posture##* }; recognised=true
+    annotation=$mode
+    if ! known_mode "$mode"; then mode=no-mistakes; yolo=off; recognised=false; fi
+    jq -n --arg name "$name" --arg mode "$mode" --arg yolo "$yolo" \
+      --arg annotation "$annotation" --argjson recognised "$recognised" \
+      '{name:$name,mode:$mode,yolo:$yolo,recognised:$recognised,annotation:$annotation}'
+  done <<EOF | jq -s '{present:true,projects:unique_by(.name),duplicates:[group_by(.name)[] | select(length>1) | .[0].name]}'
+$names
+EOF
+  exit 0
+fi
+case "${1:-}" in
+  --raw) RAW=1; shift ;;
+  --branch-prefix) BRANCH_PREFIX_QUERY=1; shift ;;
+  --forge) WANT_FORGE=1; shift ;;
+esac
+NAME=${1:?usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] <project-name> | --list-json}
+
+if [ ! -f "$REG" ]; then
+  echo "warn: no registry at $REG; defaulting $NAME to no-mistakes off" >&2
+  if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
+    echo "fm/"
+  elif [ "$WANT_FORGE" -eq 1 ]; then echo none; else echo "no-mistakes off"; fi
+  exit 0
+fi
+
+parsed=$(registered_posture "$NAME")
 
 if [ -z "$parsed" ]; then
   echo "warn: project \"$NAME\" not in registry; defaulting to no-mistakes off" >&2
@@ -206,10 +248,9 @@ done <<EOF
 $posture
 EOF
 forge=${rest_forge:-none}
-case "$mode" in
-  no-mistakes|direct-PR|local-only|no-mistakes-prod-only) ;;
-  *) echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off; branch=fm/ ;;
-esac
+if ! known_mode "$mode"; then
+  echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off; branch=fm/
+fi
 case "$yolo" in on|off) ;; *) yolo=off ;; esac
 if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
   echo "$branch"
