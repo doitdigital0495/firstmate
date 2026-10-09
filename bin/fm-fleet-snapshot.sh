@@ -22,7 +22,9 @@
 #     hold_reason, and hold_until when tasks-axi emits it. They also carry
 #     normalized current_role, requires_child_metadata, blocked_by_ids,
 #     unresolved_blocker_ids, captain_actionable, hold_set, hold_age_days,
-#     and hold_bucket fields.
+#     and hold_bucket fields. Captain holds additionally carry question_context,
+#     validated by the pure fm-captain-hold.sh contexts codec; that owner
+#     defines the storage/lifecycle contract. Home summaries preserve the field.
 #     Repeated blocker tokens remain ordered; a blocker resolves only when its
 #     structured record is Done, and missing ids stay open.
 #     There is no separate decision type: any captain-held task is the same
@@ -420,7 +422,8 @@ first_pr_url_in_file() {  # <file>
   grep -Eo 'https?://[^[:space:])"]+/pull/[0-9]+' "$1" 2>/dev/null | head -1
 }
 
-backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
+backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
+  set -o pipefail
   local backlog=${1:-$BACKLOG}
   if [ ! -f "$backlog" ]; then
     jq -n --arg path "$backlog" '{path:$path,present:false,records:[]}'
@@ -609,8 +612,8 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
           | .captain_actionable = (.hold_bucket == "live")
         else . end)
     | del(.section,.order)
-  ' < "$backlog"
-}
+  ' < "$backlog" | "$SCRIPT_DIR/fm-captain-hold.sh" contexts
+)
 
 SNAPSHOT_TASK_DIR=
 SNAPSHOT_TASK_METAS=()
@@ -1048,7 +1051,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
             reason:(.hold_reason | trunc(160)),
             hold_until:(.hold_until // null),
             hold_bucket:(.hold_bucket // null),
-            hold_age_days:(.hold_age_days // null),source:"backlog"} ]) as $captain_holds_all
+            hold_age_days:(.hold_age_days // null),question_context,source:"backlog"} ]) as $captain_holds_all
     | ([ $backlog.records[]? | select(landed_record)
          | {id:(.id | trunc(120)),title:(.title | trunc(120)),
             kind:((.kind // null) | if . == null then null else trunc(40) end),
@@ -1162,7 +1165,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
           hold_until:((.hold_until // null) | if . == null then null else trunc(40) end),
           hold_bucket:(.hold_bucket // null),
           hold_age_days:(.hold_age_days // null),
-          captain_actionable:(.captain_actionable // false),
+          captain_actionable:(.captain_actionable // false),question_context,
           repo:((.repo // null) | if . == null then null else trunc(120) end),
           kind:((.kind // null) | if . == null then null else trunc(40) end),
           since:((.since // null) | if . == null then null else trunc(40) end)}]

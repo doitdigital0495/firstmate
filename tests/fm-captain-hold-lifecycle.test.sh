@@ -602,13 +602,16 @@ SH
   rm -f "$fb/tasks-axi.bak"
   chmod +x "$fb/tasks-axi"
 
+  printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done"}' > "$home/context.json"
   PATH="$fb:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" \
     FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
     FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
-    "$ROOT/bin/fm-captain-hold.sh" hold "$id" --reason "captain must decide" >/dev/null \
+    "$ROOT/bin/fm-captain-hold.sh" hold "$id" --reason "captain must decide" --context-file "$home/context.json" >/dev/null \
     || fail "holding on a beads-configured home failed without a markdown backlog"
   assert_grep "hold $id" "$log" \
     "the captain-hold mutation never reached the configured backend"
+  assert_grep 'Captain question context:' "$home/last-body" \
+    "structured context did not round-trip through the Beads body API"
 
   decision="$home/captain-decision.txt"
   printf 'Ship the gold-only plan.\n' > "$decision"
@@ -4027,6 +4030,187 @@ test_retained_body_keeps_its_utf8_bytes() {
   pass "cleanup preserves every byte of a retained body's non-ASCII characters"
 }
 
+
+test_structured_context_and_guarded_answers() {
+  local home mode id identity show out new_identity board
+  home=$(make_home structured-context)
+  for mode in "done" release; do
+    id=sample-context-$mode
+    printf '{"schema":"fm-captain-question.v1","close":"%s","options":[{"value":"go","label":"Go café"}],"recommendation":"go","subject":{"artifact":"widget","version":"1.2.3"}}\n' "$mode" > "$home/context.json"
+    FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold "$id" \
+      --title "Choose the widget option" --reason "Choose go or revise" --repo sample \
+      --context-file "$home/context.json" >/dev/null || fail "structured hold failed"
+    identity=$(run_captain "$home" open "$id" --identity) || fail "context hold is not open"
+    [ "$identity" = '2026-07-14T12:00:00Z#0' ] || fail "context lifecycle differs from open identity"
+    show=$(tasks_in "$home" show "$id" --full)
+    assert_contains "$show" 'Captain question context:' "context was not stored in the body API"
+    assert_contains "$show" 'Go café' "context label lost its UTF-8 bytes"
+    cp "$home/data/backlog.md" "$home/before"
+    FM_CAPTAIN_HOLD_NOW=2026-07-15T12:00:00Z run_captain "$home" hold "$id" \
+      --reason "Choose go or revise" --context-file "$home/context.json" >/dev/null \
+      || fail "identical active context refused"
+    cmp "$home/before" "$home/data/backlog.md" || fail "active context retry changed its lifecycle/body"
+    jq '.options[0].label = "Changed semantics"' "$home/context.json" > "$home/changed.json"
+    if run_captain "$home" hold "$id" --reason "choose changed" --context-file "$home/changed.json" >/dev/null 2>&1; then
+      fail "published context semantics changed within an active lifecycle"
+    fi
+    cmp "$home/before" "$home/data/backlog.md" || fail "refused context change mutated the row"
+    # The explicit owner mode, never the task kind or prose, gates a captured close.
+    if [ "$mode" = release ]; then
+      if printf '%s\tgo\tGo café\tdone\t%s\n' "$id" "$identity" \
+        | run_captain "$home" answers --source "context fixture" > "$home/wrong-mode"; then
+        fail "guarded close ignored the owner-authored release mode"
+      fi
+      cmp "$home/before" "$home/data/backlog.md" || fail "wrong close mode mutated held work"
+    fi
+    out=$(printf '%s\tgo\tGo café\t%s\t%s\n' "$id" "$mode" "$identity" \
+      | run_captain "$home" answers --source "context fixture") || fail "guarded keyed answer failed"
+    assert_contains "$out" "closed: $id" "guarded keyed answer did not resolve"
+    printf '%s\tgo\tGo café\t%s\t%s\n' "$id" "$mode" "$identity" \
+      | run_captain "$home" answers --source "context fixture" >/dev/null || fail "guarded replay failed"
+    show=$(tasks_in "$home" show "$id" --full)
+    assert_contains "$show" 'Captain question context:' "answer lost prior question context"
+    assert_contains "$show" "Captain answer lifecycle: $identity" "resolution lost guarded lifecycle"
+    if [ "$mode" = "done" ]; then
+      assert_contains "$show" 'state: done' "done context did not close"
+    else
+      assert_contains "$show" 'state: queued' "release context completed held work"
+      assert_contains "$show" 'held: no' "release context did not release"
+      # Same-second release/re-hold, same answer text: the old delivery MUST NOT
+      # settle the new call, and the new one must write a new resolution record.
+      FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold "$id" \
+        --reason "A new widget gate" --context-file "$home/context.json" >/dev/null || fail "re-hold failed"
+      new_identity=$(run_captain "$home" open "$id" --identity)
+      [ "$new_identity" = '2026-07-14T12:00:00Z#1' ] || fail "same-second lifecycle collided"
+      cp "$home/data/backlog.md" "$home/new-held"
+      if printf '%s\tgo\tGo café\trelease\t%s\n' "$id" "$identity" \
+        | run_captain "$home" answers --source "context fixture" > "$home/stale-answer"; then
+        fail "answer queued before re-hold settled the new call"
+      fi
+      cmp "$home/new-held" "$home/data/backlog.md" || fail "stale delivery mutated the new call"
+      printf '%s\tgo\tGo café\trelease\t%s\n' "$id" "$new_identity" \
+        | run_captain "$home" answers --source "context fixture" >/dev/null || fail "fresh identical answer failed"
+      show=$(tasks_in "$home" show "$id" --full)
+      assert_contains "$show" "Captain answer lifecycle: $new_identity" "fresh answer reused an old record"
+      FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold "$id" \
+        --reason "Owner must describe this new gate" >/dev/null || fail "legacy re-hold failed"
+      cp "$home/data/backlog.md" "$home/legacy-held"
+      if printf '%s\tgo\tGo café\trelease\t%s\n' "$id" "$new_identity" \
+        | run_captain "$home" answers --source "context fixture" >/dev/null; then
+        fail "historical context answered a newly unannotated call"
+      fi
+      cmp "$home/legacy-held" "$home/data/backlog.md" || fail "historical delivery mutated an unannotated re-hold"
+      board=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-live-board-snapshot.sh")
+      printf '%s' "$board" | jq -e --arg id "$id" 'any(.projects[].questions[];
+        .id == $id and .context_status == "legacy" and .answerable == false)' >/dev/null \
+        || fail "re-hold without context borrowed historical answer semantics"
+
+    fi
+  done
+  pass "owner context round-trips, stays immutable, selects done/release and guards same-second re-holds"
+}
+
+test_context_input_refuses_before_mutation() {
+  local home value
+  home=$(make_home invalid-context)
+  for value in \
+    '{"schema":"future.v2","close":"done"}' \
+    '{"schema":"fm-captain-question.v1"}' \
+    '{"schema":"fm-captain-question.v1","close":"merge"}' \
+    '{"schema":"fm-captain-question.v1","close":"done","actions":"not allowed"}' \
+    '{"schema":"fm-captain-question.v1","close":"done","clo\u0073e":"release"}' \
+    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"reconcile","label":"Close"}]}' \
+    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go"},{"value":"go","label":"Again"}]}' \
+    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go","label":"Again"}]}' \
+    '{"schema":"fm-captain-question.v1","close":"done","recommendation":"invented"}' \
+    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"bad\tlabel"}]}' \
+    '{"schema":"fm-captain-question.v1","close":"done","lifecycle":"caller-forged"}' \
+    '{"schema":"fm-captain-question.v1","close":"done"} {}'; do
+    printf '%s\n' "$value" > "$home/invalid.json"
+    cp "$home/data/backlog.md" "$home/before"
+    if run_captain "$home" hold sample-invalid --title "Never created" --reason "choose" \
+      --context-file "$home/invalid.json" >/dev/null 2>&1; then fail "invalid context accepted: $value"; fi
+    cmp "$home/before" "$home/data/backlog.md" || fail "invalid input created/mutated a task"
+  done
+  pass "unknown, malformed, duplicate-member/option and unsafe context refuses before any mutation"
+}
+
+test_guarded_answer_retries_interrupted_close_and_normalization() {
+  local home identity show
+  home=$(make_home guarded-interruption)
+  printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done"}' > "$home/context.json"
+  FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-pending \
+    --title "Choose once" --reason "choose" --repo sample --context-file "$home/context.json" >/dev/null
+  identity=$(run_captain "$home" open sample-pending --identity)
+  printf 'The captain chose go.\n' > "$home/decision.txt"
+  cat > "$home/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = done ] && [ ! -e "$FM_HOME/close-failed" ]; then
+  : > "$FM_HOME/close-failed"
+  exit 92
+fi
+if [ "${1:-}" = update ] && [ ! -e "$FM_HOME/normalize-failed" ]; then
+  show=$("$REAL_TASKS_AXI" show "${2:-}" --full)
+  if printf '%s\n' "$show" | grep -F 'state: done' >/dev/null; then
+    : > "$FM_HOME/normalize-failed"
+    exit 93
+  fi
+fi
+exec "$REAL_TASKS_AXI" "$@"
+SH
+  chmod +x "$home/fakebin/tasks-axi"
+  if run_captain "$home" answer sample-pending --decision-file "$home/decision.txt" \
+    --expected-lifecycle "$identity" >/dev/null 2>&1; then fail "forced close failure succeeded"; fi
+  assert_present "$home/close-failed" "close failure seam was not exercised"
+  if run_captain "$home" answer sample-pending --decision-file "$home/decision.txt" \
+    --expected-lifecycle "$identity" >/dev/null 2>&1; then fail "forced normalize failure succeeded"; fi
+  assert_present "$home/normalize-failed" "normalization seam was not exercised"
+  run_captain "$home" answer sample-pending --decision-file "$home/decision.txt" \
+    --expected-lifecycle "$identity" >/dev/null || fail "guarded interrupted retry could not finish"
+  show=$(tasks_in "$home" show sample-pending --full)
+  assert_contains "$show" 'body: "Resolution recorded by fm-captain-hold.' "guarded retry did not restore record ordering"
+  assert_contains "$show" 'Captain question context:' "guarded retry discarded context history"
+  [ "$(printf '%s' "$show" | grep -o 'Captain answer lifecycle:' | wc -l | tr -d ' ')" = 1 ] \
+    || fail "guarded retry appended duplicate resolution records"
+  pass "guarded retries finish interrupted closure and normalization without duplicating records"
+}
+
+
+
+test_reholding_expired_context_preserves_history_not_authority() {
+  local home board show id kind
+  home=$(make_home expired-context)
+  printf '%s\n' '{"schema":"fm-captain-question.v1","close":"release","options":[{"value":"go","label":"Go café"}]}' > "$home/context.json"
+  for kind in annotated legacy; do
+    id=sample-expired-$kind
+    FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold "$id" \
+      --title "Expired synthetic deferral" --reason choose --until 2025-01-01 \
+      --context-file "$home/context.json" >/dev/null || fail "could not create expired context"
+    if [ "$kind" = annotated ]; then
+      FM_CAPTAIN_HOLD_NOW=2026-07-24T12:00:00Z run_captain "$home" hold "$id" \
+        --reason choose --context-file "$home/context.json" >/dev/null || fail "expired contextual re-hold failed"
+    else
+      FM_CAPTAIN_HOLD_NOW=2026-07-24T12:00:00Z run_captain "$home" hold "$id" --reason choose >/dev/null \
+        || fail "expired legacy re-hold failed"
+    fi
+    board=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-live-board-snapshot.sh")
+    printf '%s' "$board" | jq -e --arg id "$id" --arg kind "$kind" 'any(.projects[].questions[];
+      .id == $id and .hold.set == "2026-07-24T12:00:00Z"
+        and (if $kind == "annotated" then .answerable and .context_status == "ready"
+          and .context.lifecycle == "2026-07-24T12:00:00Z#0"
+          else .answerable == false and .context_status == "legacy" end))' >/dev/null \
+      || fail "expired re-hold duplicated or borrowed old context"
+    show=$(tasks_in "$home" show "$id" --full)
+    assert_contains "$show" 'Previous captain question context:' "expired re-hold lost context history"
+    assert_contains "$show" 'Go café' "expired context history lost UTF-8 text"
+  done
+  pass "expired re-holds archive prior context and never duplicate or borrow active authority"
+}
+
+test_reholding_expired_context_preserves_history_not_authority
+test_structured_context_and_guarded_answers
+test_context_input_refuses_before_mutation
+test_guarded_answer_retries_interrupted_close_and_normalization
 test_uninventoried_report_decision_refuses_completion
 test_hold_decodes_a_bare_scalar_body_without_the_nonref_default
 test_retained_body_keeps_its_utf8_bytes

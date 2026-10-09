@@ -1,3 +1,4 @@
+include "fm-captain-question-context";
 # The fm-live-board.v1 projection; its executable wrapper owns the public contract.
 def valid_input:
   .schema == "fm-live-board-input.v1"
@@ -16,6 +17,14 @@ def valid_input:
       and (.order | type == "number") else true end))
   and all(.tasks[]; (.id | type == "string" and length > 0)
     and (.current_state | type == "object") and (.hints.open_decisions | type == "array"));
+def question_context:
+  if . == null then {status:"legacy",context:null}
+  elif type != "object" then {status:"invalid",context:null}
+  elif .status == "ready" and (.context | fm_question_valid(true))
+    and .context.lifecycle == .lifecycle then
+      {status:"ready",context:(.context | fm_question_normalize + {lifecycle:.lifecycle})}
+  elif .status | IN("legacy","invalid","duplicate","stale") then {status,context:null}
+  else {status:"invalid",context:null} end;
 def priority:
   if type == "string" and test("^[0-4]$") then tonumber
   elif type == "number" and . >= 0 and . <= 4 and floor == . then . else null end;
@@ -58,12 +67,15 @@ if valid_input then . else error("unsupported or malformed fm-live-board-input.v
          else ($worker.current_state.state // "unknown") end
        elif $row.current_role == "held" then "held"
        elif $row.current_role == "program" then "program" else "unknown" end) as $state
+    | ($row.question_context | question_context) as $question_context
     | {key:([$home_key,$row.id,($row.order // "meta" | tostring)] | tojson),
        id:$row.id,home_key:$home_key,project:$project,title:($row.title // $row.id),kind:$kind,
        backlog_state:$row.state,role:($row.current_role // "worker"),state:$state,
        current_state:(if $worker == null then null else
          $worker.current_state | {state,source,detail:((.detail // "")[:240]),observed_at,freshness} end),
        owner:(if $worker == null then null else {harness:$worker.harness,kind:$worker.kind} end),
+       question_context:$question_context.context,
+       question_context_status:$question_context.status,
        worker_present:($worker != null),since:$row.since,priority:($row.priority | priority),
        blockers:($row.blocked_by_ids // []),unresolved_blockers:($row.unresolved_blocker_ids // []),
        hold:{kind:$row.hold_kind,reason:$row.hold_reason,bucket:$row.hold_bucket,
@@ -87,7 +99,8 @@ if valid_input then . else error("unsupported or malformed fm-live-board-input.v
    | {key:.key,id:.id,home_key:.home_key,project:.project,title:.title,
       priority:.priority,urgent:(.priority == 0 or .priority == 1),
       since:.since,hold:.hold,blockers:.blockers,unresolved_blockers:.unresolved_blockers,
-      answerable:false,integrity:.integrity}] as $questions
+      context:.question_context,context_status:.question_context_status,
+      answerable:(.question_context != null and (.integrity | length == 0)),integrity:.integrity}] as $questions
 | ([$input.registry.projects[].name] + [$tasks[].project] | unique) as $projects
 | [$projects[] as $name
    | ([$tasks[] | select(.project == $name)]
@@ -116,6 +129,8 @@ if valid_input then . else error("unsupported or malformed fm-live-board-input.v
      | if $unstructured > 0 then {kind:"unstructured-open-work",count:$unstructured} else empty end],
    warnings:[
      ($tasks[] as $task | $task.integrity[] | . + {task_key:$task.key,id:$task.id}),
+     ($questions[] | select(.answerable | not) |
+       {kind:"question-needs-owner-review",id:.id,task_key:.key,context_status:.context_status}),
      ($tasks[] as $task | $task.unregistered_decisions[] |
        {kind:"owner-must-register-call",task_key:$task.key,id:$task.id,decision:.}),
      ($input.registry.duplicates[] | {kind:"duplicate-project-registration",name:.}),

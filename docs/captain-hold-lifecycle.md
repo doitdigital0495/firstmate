@@ -45,11 +45,18 @@ A pending-close record that fails validation outright is a different case and st
 `--force` does not lift the deferral, because it authorizes discarding unlanded work, never the captain's question; only `answer` with the captain's words or evidence-backed `reconcile close` resolves the call, by either closing the question or releasing the gated work.
 `bin/fm-backlog-transition-lib.sh` owns the transition and its record, and `bin/fm-captain-hold.sh --help` owns the predicate's contract.
 
+## Structured question context
+
+`bin/fm-captain-hold.sh --help` owns the versioned question-context storage, codec, explicit close modes, active-lifecycle immutability and guarded-answer/retry contract.
+The canonical snapshot and home summary preserve that validated context; the separate live-board projection keeps legacy, malformed and ambiguous calls visible but read-only.
+`tests/fm-captain-hold-lifecycle.test.sh` and `tests/fm-live-board-snapshot.test.sh` exercise this mechanism through public commands, including context preservation and answer-before-rehold refusal.
+
 ## Answer-time resolution
 
 "A keyed answer resolves its matching captain-held task" is one capability with one owner.
-`answers` is its channel-agnostic entry point: it reads `<task-id>\t<answer>\t<label>[\t<mode>]` lines and resolves each named task through the same `answer` path, so every guard applies identically no matter which channel the answer arrived on.
+`answers` is its channel-agnostic entry point: it reads `<task-id>\t<answer>\t<label>[\t<mode>[\t<expected-lifecycle>]]` lines and resolves each named task through the same `answer` path, so every guard applies identically no matter which channel the answer arrived on.
 The optional mode column carries a card-declared close: `done` (default) completes the task and `release` lifts the hold so held work resumes; any other value is skipped.
+The optional fifth column is the structured-question lifecycle guard described above.
 A key that names no task, names a task that is not captain-held, or names a task already closed is reported as `skipped:` and feeds nothing; a replay whose answer and requested close mode match the newest record is an idempotent `closed:`, while a mode mismatch is skipped; and the command exits nonzero when any key was skipped.
 `--source` is provenance text recorded in the durable decision, never a behavior switch, and the command carries no per-channel branch.
 
