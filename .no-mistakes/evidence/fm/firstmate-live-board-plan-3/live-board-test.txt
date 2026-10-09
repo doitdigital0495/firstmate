@@ -1,0 +1,10 @@
+ok - empty home is explicit, not an all-fleet clear verdict
+ok - registry enumeration reuses mechanical posture, preserves idle projects and discloses duplicates
+ok - full open inventory retains programs, queued work, conflicting repo/id and current-state provenance
+ok - more than twenty holds retain all buckets with structured priority and oldest-first order
+ok - strict append-order history accepts milestones and resolutions, skips malformed tails, preserves unknown time
+ok - unregistered keyed calls remain owner-registration warnings, not another answer path
+ok - allowlisted replay strips raw paths/bodies, rejects unsafe links and qualifies ids by home
+ok - unknown or malformed input fails closed without partial board output
+ok - default canonical and original Bearings contracts remain separate from the live board
+ok - canonical owner context preserves explicit modes and summaries; legacy, stale, duplicate and malformed calls stay read-only

@@ -1,0 +1,128 @@
+
+=== S1 hold with owner context (release mode, options, recommendation, subject)
+demo-1
+exit=0
+open identity: 2026-10-09T10:00:00Z#0
+
+=== S1 board shows project-grouped question with context
+{
+  "project": "webshop",
+  "questions": [
+    {
+      "answerable": true,
+      "blockers": [],
+      "context": {
+        "close": "release",
+        "lifecycle": "2026-10-09T10:00:00Z#0",
+        "options": [
+          {
+            "label": "Gold-only plan",
+            "value": "gold"
+          },
+          {
+            "label": "Revise scope",
+            "value": "revise"
+          }
+        ],
+        "recommendation": "gold",
+        "schema": "fm-captain-question.v1",
+        "subject": {
+          "artifact": "pricing-page",
+          "version": "1.2.0"
+        }
+      },
+      "context_status": "ready",
+      "hold": {
+        "age_days": 0,
+        "bucket": "live",
+        "kind": "captain",
+        "reason": "Captain picks plan",
+        "set": "2026-10-09T10:00:00Z",
+        "until": null
+      },
+      "home_key": "home-d0a1c59495d440c9b2342d64de7f379482bceaf0d1e58741acfb86226937b628",
+      "id": "demo-1",
+      "integrity": [],
+      "key": "[\"home-d0a1c59495d440c9b2342d64de7f379482bceaf0d1e58741acfb86226937b628\",\"demo-1\",\"1\"]",
+      "priority": null,
+      "project": "webshop",
+      "since": "2026-10-09",
+      "title": "Pick pricing plan",
+      "unresolved_blockers": [],
+      "urgent": false
+    }
+  ]
+}
+
+=== S2 changing published context within active lifecycle refuses, row unchanged
+fm-captain-hold: active question context differs; resolve this call before publishing new semantics
+exit=1
+backlog unchanged
+
+=== S3 malformed contexts refuse before mutation
+jq: error (at /tmp/fm-lab-ctx.YJKdhm/bad.json:0): unsupported or malformed question context
+fm-captain-hold: unsupported or malformed question context
+exit=1 input={"schema":"fm-captain-question.v2","close":"done"}
+jq: error (at /tmp/fm-lab-ctx.YJKdhm/bad.json:0): unsupported or malformed question context
+fm-captain-hold: unsupported or malformed question context
+exit=1 input={"schema":"fm-captain-question.v1"}
+jq: error (at /tmp/fm-lab-ctx.YJKdhm/bad.json:0): unsupported or malformed question context
+fm-captain-hold: unsupported or malformed question context
+exit=1 input={"schema":"fm-captain-question.v1","close":"done","recommendation":"made-up"}
+jq: error (at /tmp/fm-lab-ctx.YJKdhm/bad.json:0): unsupported or malformed question context
+fm-captain-hold: unsupported or malformed question context
+exit=1 input={"schema":"fm-captain-question.v1","close":"done","answer_mode":"auto"}
+jq: error (at /tmp/fm-lab-ctx.YJKdhm/bad.json:0): Invalid literal at line 1, column 4 (while parsing 'not json')
+fm-captain-hold: unsupported or malformed question context
+exit=1 input=not json
+demo-bad never created/held
+
+=== S4 wrong close mode (done vs owner release) refuses, no mutation
+skipped: demo-1 (guarded answer requires ready context with matching close mode)
+answers: closed=0 skipped=1
+exit=1
+backlog unchanged
+
+=== S5 guarded answer with matching mode + lifecycle releases
+closed: demo-1
+answers: closed=1 skipped=0
+exit=0
+  state: queued
+  held: no
+  body: "Resolution recorded by fm-captain-hold.\nDecision digest: 48104abaf6e1db6784e71d7e6604328c3bd50f9859e7592d5b5a24262728b961\nResolution mode: released\nCaptain answer lifecycle: 2026-10-09T10:00:00Z#0\n\nCaptain decision:\nCaptain answered this call through lab.\nTask: demo-1\nAnswer: gold\nAnswer as shown to the captain: Gold-only plan\n\nCaptain question context: {\"close\":\"release\",\"lifecycle\":\"2026-10-09T10:00:00Z#0\",\"options\":[{\"label\":\"Gold-only plan\",\"value\":\"gold\"},{\"label\":\"Revise scope\",\"value\":\"revise\"}],\"recommendation\":\"gold\",\"schema\":\"fm-captain-question.v1\",\"subject\":{\"artifact\":\"pricing-page\",\"version\":\"1.2.0\"}}"
+
+=== S5b exact replay is idempotent
+closed: demo-1
+answers: closed=1 skipped=0
+exit=0
+backlog unchanged on replay
+
+=== S6 same-second re-hold: stale old-lifecycle answer refuses
+demo-1
+new identity: 2026-10-09T10:00:00Z#1
+skipped: demo-1 (stale captain question lifecycle)
+answers: closed=0 skipped=1
+exit=1
+backlog unchanged
+
+=== S7 re-hold without context -> board shows legacy, not answerable
+demo-1
+{"id":"demo-1","context_status":"legacy","answerable":false}
+
+=== S8 done-mode context closes task
+demo-2
+closed: demo-2
+answers: closed=1 skipped=0
+exit=0
+  state: done
+
+=== S9 legacy unguarded answer (no lifecycle field) still works
+demo-3
+closed: demo-3
+answers: closed=1 skipped=0
+exit=0
+  state: done
+
+=== S10 contexts codec (pure stdin) + board renders
+{"status":"ready","lifecycle":"2026-10-09T10:00:00Z#0","context":{"close":"done","lifecycle":"2026-10-09T10:00:00Z#0","options":[],"recommendation":null,"schema":"fm-captain-question.v1","subject":null}}
+{"projects":[{"name":"webshop","q":[{"id":"demo-1","context_status":"legacy","answerable":false}]}]}
