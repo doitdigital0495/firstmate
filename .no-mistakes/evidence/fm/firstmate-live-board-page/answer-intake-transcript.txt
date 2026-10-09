@@ -1,0 +1,15 @@
+$ fm-procevent-lavish.sh answers captured.result
+carrier	postnl	carrier -> postnl	done	2026-10-09T18:47:19Z#0
+window	move	window -> move	release	2020-01-01T00:00:00Z#0
+$ ... | fm-captain-hold.sh answers --any-origin
+closed: carrier
+skipped: window (stale captain question lifecycle)
+answers: closed=1 skipped=1
+$ tasks-axi show carrier --full | grep state/lifecycle
+  state: done
+  body: "Resolution recorded by fm-captain-hold.\nDecision digest: c9778884c069aa1fd8fe0c7b77b9a110d02b5a0e1a83f803c2fa77487117687e\nResolution mode: answered\nCaptain answer lifecycle: 2026-10-09T18:47:19Z#0\n\nCaptain decision:\nCaptain answered this call through live test capture.\nTask: carrier\nAnswer: postnl\nAnswer as shown to the captain: carrier -> postnl\n\nCaptain question context: {\"close\":\"done\",\"lifecycle\":\"2026-10-09T18:47:19Z#0\",\"options\":[{\"label\":\"DHL\",\"value\":\"dhl\"},{\"label\":\"PostNL\",\"value\":\"postnl\"}],\"recommendation\":\"postnl\",\"schema\":\"fm-captain-question.v1\",\"subject\":null}"
+$ tasks-axi show window --full | grep held
+  held: yes
+$ fm-live-board.sh refresh
+exit=0
+-rw------- 1 daan daan 33451 20:48:16 /tmp/fm-lb-live.NWhF/data/live-board/board.html

@@ -1,0 +1,10 @@
+ok - the board stays off unless a regular, valid, enabled config opts in
+ok - an empty fleet renders No open work with idle registered projects folded away
+ok - a board whose payload exceeds one environment string still builds and renders
+ok - projects lead with their ordered questions, owner context drives controls, and open work follows
+ok - Queue answer emits one choice with the owner close mode and lifecycle
+ok - the page ages its own data from live to stale to out of date
+ok - refresh rebuilds only when due and keeps the last good board on failure
+ok - open serves the board, binds its answers, then arms the source
+ok - guarded answers close the current question, refuse stale ones, and clear on refresh
+ok - a running watcher keeps an enabled board published
