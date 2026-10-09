@@ -1,3 +1,4 @@
 ok - authoritative pins refuse conflicting seats before quota/trust/launch and preserve matching seat identities
 ok - legacy and fork relaunch bindings cannot silently drift; unpinned and ordinary identities remain stable
 # all fm-worker-account-precedence tests passed
+EXIT=0

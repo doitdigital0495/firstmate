@@ -23,3 +23,4 @@ ok - a withheld secondmate spawn leaves the child home byte-for-byte untouched
 ok - a spawn refused before it launches never spends a release slot
 ok - an unshaped Claude launch preserves command bytes and record body, apart from its verified nonce-bearing carrier path
 ok - a pinned Claude spawn takes admission only on the pinned store, leaving the seeded ambient one unchanged
+EXIT=0

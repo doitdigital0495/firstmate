@@ -1,0 +1,11 @@
+--- case 1: Pi task meta with NO pi_agent_dir/account (implicit default), pin=B
+recorded store=''
+<tmp>/pin
+rc=0
+--- case 2: Pi task meta with recorded pi_agent_dir=A, pin=B
+recorded store='<tmp>/other'
+error: config/pi-account pins pi workers to '<tmp>/pin', but recorded relaunch binding selects '<tmp>/other'; the configured pin is authoritative. Remove the conflicting --account, or ask the captain to reconcile the recorded task binding and pin before relaunching; no quota release or launch was consumed
+rc=1
+--- case 3: no pin, recorded A
+<tmp>/other
+rc=0
