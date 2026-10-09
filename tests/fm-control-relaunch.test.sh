@@ -1705,7 +1705,10 @@ test_prepublication_failure_keeps_concurrent_durable_metadata() {
     run_control "$dir" rl30 relaunch --harness codex --note "preserve concurrent metadata" \
       > "$dir/control.out" &
   control_pid=$!
-  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 200 ]; do
+  # Generous budget: the path to the endpoint check includes the supervision
+  # host gate's real harness detection, a process-tree walk that takes seconds
+  # under a deep agent process tree.
+  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 2000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
