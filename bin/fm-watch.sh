@@ -2153,6 +2153,22 @@ home_summary_refresh_detached() {
   HOME_SUMMARY_PID=$!
 }
 
+# The opt-in live board (bin/fm-live-board.sh) is the same kind of side-band
+# publication: refresh decides from its own config and board age whether a
+# rebuild is due, so the poll only pays a detached no-op when it is not.
+LIVE_BOARD_PID=
+live_board_refresh_detached() {
+  if [ -n "$LIVE_BOARD_PID" ]; then
+    if kill -0 "$LIVE_BOARD_PID" 2>/dev/null; then
+      return 0
+    fi
+    wait "$LIVE_BOARD_PID" 2>/dev/null || true
+    LIVE_BOARD_PID=
+  fi
+  "$SCRIPT_DIR/fm-live-board.sh" refresh </dev/null >/dev/null 2>&1 &
+  LIVE_BOARD_PID=$!
+}
+
 RECONCILE_REQUEST_PID=
 reconcile_requests_pending() {
   local request
@@ -2325,6 +2341,9 @@ while :; do
 
   if [ "$(age_of "$STATE/home-summary.json")" -ge "$HOME_SUMMARY_INTERVAL" ]; then
     home_summary_refresh_detached
+  fi
+  if [ -f "$CONFIG/live-board.json" ]; then
+    live_board_refresh_detached
   fi
 
   # Bearings publishes reconcile asks as local one-shot request files and

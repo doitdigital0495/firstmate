@@ -49,7 +49,8 @@ A pending-close record that fails validation outright is a different case and st
 
 `bin/fm-captain-hold.sh --help` owns the versioned question-context storage, codec, explicit close modes, active-lifecycle immutability and guarded-answer/retry contract.
 The canonical snapshot and home summary preserve that validated context; the separate live-board projection keeps legacy, malformed and ambiguous calls visible but read-only.
-`tests/fm-captain-hold-lifecycle.test.sh` and `tests/fm-live-board-snapshot.test.sh` exercise this mechanism through public commands, including context preservation and answer-before-rehold refusal.
+The live board page (`bin/fm-live-board.sh`) queues a Lavish choice carrying that close mode and lifecycle, and `bin/fm-procevent-lavish.sh answers` relays the lifecycle as the intake's guard field.
+`tests/fm-captain-hold-lifecycle.test.sh`, `tests/fm-live-board-snapshot.test.sh` and `tests/fm-live-board.test.sh` exercise this mechanism through public commands, including context preservation and answer-before-rehold refusal.
 
 ## Answer-time resolution
 

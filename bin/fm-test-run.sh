@@ -388,7 +388,8 @@ family_for_basename() {
       printf '%s\n' afk
       ;;
     fm-bearings-board-render.test.sh|fm-bearings-snapshot.test.sh|fm-contributions.test.sh|\
-    fm-fleet-snapshot-view.test.sh|fm-live-board-snapshot.test.sh|fm-home-summary-refresh.test.sh)
+    fm-fleet-snapshot-view.test.sh|fm-live-board-snapshot.test.sh|fm-home-summary-refresh.test.sh|\
+    fm-live-board.test.sh)
       printf '%s\n' snapshot-bearings
       ;;
     fm-backend-cmux.test.sh|fm-backend-cmux-smoke.test.sh)
@@ -1365,6 +1366,9 @@ families_for_changed_path() {
       # resolution in the caller; emit a marker family of __script__
       printf '%s\n' "__script__:$(basename "$path")"
       ;;
+    tests/assets/live-board-render-harness.mjs)
+      printf '%s\n' __script__:fm-live-board.test.sh
+      ;;
     bin/fm-test-run.sh)
       # Deliberately the WHOLE family, not just the two contract tests. This
       # runner executes every pure-contract-unit script, so a change to it is
@@ -1584,6 +1588,15 @@ families_for_changed_path() {
     bin/fm-bearings-snapshot.sh|bin/fm-fleet-snapshot.sh|bin/fm-fleet-view.sh|bin/fm-contributions.sh|bin/fm-contributions.jq|\
     bin/fm-home-summary-refresh.sh|bin/fm-live-board-snapshot.sh|bin/fm-live-board-snapshot.jq)
       printf '%s\n' snapshot-bearings
+      ;;
+    bin/fm-live-board.sh|bin/fm-live-board-template.html)
+      printf '%s\n' __script__:fm-live-board.test.sh
+      ;;
+    bin/fm-lavish-board-lib.sh)
+      # The shared serve/bind/arm sequence behind both captain-facing boards.
+      printf '%s\n' __script__:fm-bearings-board.test.sh
+      printf '%s\n' __script__:fm-bearings-board-render.test.sh
+      printf '%s\n' __script__:fm-live-board.test.sh
       ;;
     bin/fm-install-herdr.sh|bin/fm-install-treehouse.sh|bin/fm-herdr-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit

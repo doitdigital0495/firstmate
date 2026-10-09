@@ -410,9 +410,12 @@ cmd_silent() {
   [ "$content_rc" -eq 1 ]
 }
 
-# Print `key<TAB>answer<TAB>label[<TAB>mode]` for each non-reconcile structured choice the
+# Print `key<TAB>answer<TAB>label[<TAB>mode[<TAB>lifecycle]]` for each non-reconcile structured choice the
 # captain submitted in a captured result; the optional mode column relays the
-# card's declared close mode (`done` or `release`) to the keyed-answer intake. The published response frames queued feedback as
+# card's declared close mode (`done` or `release`) to the keyed-answer intake,
+# and the optional lifecycle column relays a guarded card's owner lifecycle
+# identity (`<hold-set>#<answer-count>`, valid only with an explicit mode) so the
+# intake refuses an answer queued for an earlier hold. The published response frames queued feedback as
 # a `prompts[N]{field,...}:` header followed by exactly N indented CSV rows whose
 # quoted fields carry JSON-style escapes, so this reads the declared field ORDER
 # rather than assuming a fixed column, and takes only rows whose `tag` field is
@@ -505,6 +508,15 @@ cmd_choice_rows() {
           || ($data->{close} ne "done" && $data->{close} ne "release");
         $mode = $data->{close};
       }
+      # A guarded card relays its owner lifecycle; a malformed guard drops the
+      # row rather than degrading into an unguarded answer.
+      my $lifecycle = "";
+      if (exists $data->{lifecycle}) {
+        next if !defined($data->{lifecycle}) || ref($data->{lifecycle})
+          || $data->{lifecycle} !~ /\A[0-9TZ:-]{1,40}#(?:0|[1-9][0-9]{0,8})\z/
+          || !length($mode);
+        $lifecycle = $data->{lifecycle};
+      }
       my $label = defined $f{text} ? $f{text} : "";
       s/[\x00-\x1f\x7f]/ /g for ($answer, $note, $label);
       $label = substr($label, 0, 512);
@@ -512,7 +524,7 @@ cmd_choice_rows() {
       $seen{$key} = scalar @choices;
       push @choices, {
         key => $key, selection => $selected, note => $note, legacy => $legacy,
-        answer => $answer, label => $label, mode => $mode
+        answer => $answer, label => $label, mode => $mode, lifecycle => $lifecycle
       };
     }
     for my $choice (grep { defined } @choices) {
@@ -526,9 +538,13 @@ cmd_choice_rows() {
         next;
       }
       next if $choice->{selection} eq "reconcile";
-      print length $choice->{mode}
-        ? "$choice->{key}\t$choice->{answer}\t$choice->{label}\t$choice->{mode}\n"
-        : "$choice->{key}\t$choice->{answer}\t$choice->{label}\n";
+      if (length $choice->{lifecycle}) {
+        print "$choice->{key}\t$choice->{answer}\t$choice->{label}\t$choice->{mode}\t$choice->{lifecycle}\n";
+      } elsif (length $choice->{mode}) {
+        print "$choice->{key}\t$choice->{answer}\t$choice->{label}\t$choice->{mode}\n";
+      } else {
+        print "$choice->{key}\t$choice->{answer}\t$choice->{label}\n";
+      }
     }
   ' "$selection" "$file"
 }
