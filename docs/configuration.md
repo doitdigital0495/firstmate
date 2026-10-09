@@ -755,6 +755,23 @@ The sweep must finish inside `FM_CHECK_TIMEOUT` (default 30), because a run the 
 So a budget larger than that timeout allows is cut down to what fits instead of being refused, and the cut is reported in the report line.
 A budget that is not a whole number from 1 to 120 is still refused outright.
 
+## Live board (config/live-board.json)
+
+The live board is an opt-in browser page that shows every open task and project in this home, with each project's open captain questions first, and refreshes about once a minute.
+It is separate from `/bearings lavish` and renders only the canonical `bin/fm-live-board-snapshot.sh` projection; [`bin/fm-live-board.sh`](../bin/fm-live-board.sh)'s header owns its commands, config schema, freshness thresholds, and answer path.
+
+To enable it in a home, create the local, gitignored `config/live-board.json`:
+
+```json
+{"schema":"fm-live-board-config.v1","enabled":true,"refresh_seconds":60}
+```
+
+Then run `bin/fm-live-board.sh open` once; it publishes `data/live-board/board.html`, opens it as a Lavish session, and arms that session's answers through the captain-hold intake.
+While the config stays enabled, the home's watcher rebuilds the page whenever it is older than `refresh_seconds`, and Lavish repaints the open page.
+A page whose rebuilds stop marks itself stale and then out of date instead of looking current.
+A question offers answer controls only when its owner recorded structured context with `bin/fm-captain-hold.sh hold --context-file`; every other question stays visible but read-only.
+Set `enabled` to false or delete the file to stop refreshing; the published page and any recorded answers stay in place.
+
 ## Mail plane (.env)
 
 The mail plane (bin/fm-mail.sh) reads unseen IMAP messages and sends one SMTP message.
@@ -1187,6 +1204,7 @@ FM_POLL=15              # seconds between watcher poll cycles
 FM_HOME_SUMMARY_INTERVAL=300   # seconds before a live watcher refreshes this home's state/home-summary.json even without a status signal; invalid or zero values use 300
 FM_HOME_SUMMARY_TIMEOUT=60     # seconds bounding the complete best-effort home-summary refresh, including lock acquisition, validation, atomic publication, and worker-side failure logging; invalid or zero values use 60
 FM_HOME_SUMMARY_ERROR_LOG_MAX_BYTES=65536   # approximate size cap for state/.home-summary-refresh.log before it is trimmed to the newest 200 lines; invalid or zero values use 65536
+FM_LIVE_BOARD_TIMEOUT=45   # seconds bounding one live-board snapshot collection in bin/fm-live-board.sh; a timed-out build keeps the previous page; invalid or zero values use 45
 FM_HOME_SUMMARY_FAILURE_REPORT=2   # recorded publication failures since the ledger's own last publication before session start reports a HOME_SUMMARY line; invalid or zero values use 2
 FM_SNAPSHOT_CREW_STATE_TIMEOUT=10   # seconds bounding each local per-task current-state read inside bin/fm-fleet-snapshot.sh; remote endpoint liveness is not probed on the snapshot path
 FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=8   # maximum local tasks whose current-state and endpoint observations are collected concurrently during snapshot composition

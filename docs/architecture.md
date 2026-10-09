@@ -135,6 +135,7 @@ The fleet snapshot and Bearings paths use the concurrent remote-ledger collectio
 `bin/fm-fleet-view.sh` renders that snapshot as Markdown for humans, while `bin/fm-bearings-snapshot.sh` provides the bounded bearings projection, so both views consume one structured contract instead of reparsing raw fleet files.
 The script header owns the exact JSON schema.
 The separate home-local `bin/fm-live-board-snapshot.sh` consumes only the opt-in canonical `--live-board-input` contract; its header owns the board projection, strict history selection, and explicit uncollected-home disclosure.
+`bin/fm-live-board.sh` renders that projection as the opt-in browser page the watcher keeps fresh; its header owns the page payload, refresh, and answer path.
 
 On a Pi primary, supervision is default-on: the watcher extension can hand eligible task-local rows from an ordinary actionable wake, plus selected fleet-wide heartbeat reviews, to a persistent in-process supervision conversation while main-only rows remain on the captain-facing path.
 The branch handles those rows, stores the outcome durably, and merges it back into main.
