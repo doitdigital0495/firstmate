@@ -757,8 +757,9 @@ A budget that is not a whole number from 1 to 120 is still refused outright.
 
 ## Live board (config/live-board.json)
 
-The live board is an opt-in browser page that shows every open task and project in this home, with each project's open captain questions first, and refreshes about once a minute.
-It is separate from `/bearings lavish` and renders only the canonical `bin/fm-live-board-snapshot.sh` projection; [`bin/fm-live-board.sh`](../bin/fm-live-board.sh)'s header owns its commands, config schema, freshness thresholds, and answer path.
+The live board is an opt-in browser page that shows the captain's projects in this home, each with its open captain questions first, its progress across workers, and what those workers last reported, and refreshes about once a minute.
+Queued work that has not started is never listed; each project shows only a count of it, and projects with no question and nothing in progress fold away.
+It is separate from `/bearings lavish` and renders only the canonical `bin/fm-live-board-snapshot.sh` projection; [`bin/fm-live-board.sh`](../bin/fm-live-board.sh)'s header owns its commands, config schemas, grouping, freshness thresholds, and answer path.
 
 To enable it in a home, create the local, gitignored `config/live-board.json`:
 
@@ -769,7 +770,17 @@ To enable it in a home, create the local, gitignored `config/live-board.json`:
 Then run `bin/fm-live-board.sh open` once; it publishes `data/live-board/board.html`, opens it as a Lavish session, and arms that session's answers through the captain-hold intake.
 While the config stays enabled, the home's watcher rebuilds the page whenever it is older than `refresh_seconds`, and Lavish repaints the open page.
 A page whose rebuilds stop marks itself stale and then out of date instead of looking current.
-A question offers answer controls only when its owner recorded structured context with `bin/fm-captain-hold.sh hold --context-file`; every other question stays visible but read-only.
+Projects are named the way the captain talks about them through a second local, gitignored file, `config/live-board-projects.json`, which Firstmate maintains:
+
+```json
+{"schema":"fm-live-board-projects.v1","projects":[
+  {"name":"Stock report","description":"The new stock report.","match":[{"id":"stock-*"}]},
+  {"name":"Claims app","match":[{"repo":"claims"}]}]}
+```
+
+Each task belongs to the first project with a matching task-id pattern or repo; without the file, or for work no rule matches, the page groups by repository instead, and an invalid file falls back the same way with a note on the page.
+A question shows its owner-written question text and each option's explanation, with the recommended option marked, when its owner recorded structured context with `bin/fm-captain-hold.sh hold --context-file`.
+A captain hold with no recorded context gets a free-text answer box that feeds the same captain-hold intake; stale, malformed or ambiguous questions stay visible but read-only.
 Set `enabled` to false or delete the file to stop refreshing; the published page and any recorded answers stay in place.
 
 ## Mail plane (.env)

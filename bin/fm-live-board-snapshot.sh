@@ -7,12 +7,15 @@
 # Output contract: fm-live-board.v1; schema validation and projection are owned
 # by bin/fm-live-board-snapshot.jq. Fields: revision (SHA-256 of payload before
 # revision), collected_at/epoch, collection_duration_seconds, home {key,label},
-# coverage, omissions[], warnings[], counts, and projects[]. Each project has
-# a home-qualified key, name/label, registration, counts, tasks[] and questions[].
+# coverage, omissions[], warnings[], counts, projects[] and recently_finished[].
+# Each project has a home-qualified key, name/label, registration, counts,
+# tasks[] and questions[]. recently_finished lists structured done backlog rows
+# whose done/merged date falls in the 14 days before collection as
+# {key,id,project,title,finished}, newest first, so a board can show progress.
 # Project identity is backlog repo first, metadata project second, else Unassigned;
 # conflicting structured identities are disclosed, never guessed from prose.
 # Open backlog rows and metadata-only workers are retained. Done backlog rows
-# are excluded even if their metadata remains. Duplicate ids remain visible with
+# are excluded from projects even if their metadata remains. Duplicate ids remain visible with
 # row-qualified keys and warnings, not conflated into an answerable identity.
 # Queued/program/held backlog-only rows are not fabricated workers. Runtime done
 # with open backlog is finished-awaiting-processing, not merged or landed.
@@ -20,7 +23,8 @@
 # the canonical reader's strict generation-bound event/milestone projection.
 # Every open captain hold across all buckets is a question. Valid owner-authored
 # context supplies lifecycle, explicit close mode and labelled options; its
-# storage/guard contract belongs to fm-captain-hold.sh. Missing/invalid/stale
+# storage/guard contract (including the optional question text and option
+# detail) belongs to fm-captain-hold.sh. Missing/invalid/stale
 # context and ambiguous identity stay visible but not answerable, with owner
 # review warnings. This projection starts no listener or answer delivery.
 # Unregistered keyed status decisions remain owner-registration warnings.

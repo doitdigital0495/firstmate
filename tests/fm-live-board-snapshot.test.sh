@@ -63,6 +63,7 @@ cat > "$h/data/backlog.md" <<'BACKLOG'
 Unstructured current work must be disclosed.
 ## Done
 - [x] landed - Landed task (repo: alpha) (kind: ship) (merged 2026-07-24)
+- [x] ancient - Long finished (repo: alpha) (kind: ship) (done 2026-06-01)
 BACKLOG
 fm_write_meta "$h/state/stale.meta" 'kind=ship' 'harness=claude' 'project=contradiction'
 printf 'blocked [at=1700000000]: historical blocker\ncontinuation text\n' > "$h/state/stale.status"
@@ -94,7 +95,10 @@ render "$TMP_ROOT/working-input.json" "$TMP_ROOT/working.json"
 check "$TMP_ROOT/working.json" 'any(.projects[].tasks[]; .id == "stale" and .state == "working"
   and .current_state.source == "pane" and .last_meaningful_event.verb == "blocked")
   and any(.projects[].tasks[]; .id == "metadata-only" and .state == "finished-awaiting-processing")' 'historical event overrode current state or runtime done implied landed'
-pass 'full open inventory retains programs, queued work, conflicting repo/id and current-state provenance'
+check "$TMP_ROOT/inventory.json" '(.recently_finished | map(del(.key)))
+  == [{id:"landed",project:"alpha",title:"Landed task",finished:"2026-07-24"}]' \
+  'recently finished work is missing, or work finished long ago was retained'
+pass 'full open inventory retains programs, queued work, conflicting repo/id, current-state provenance and recent finishes'
 
 h=$(home holds)
 {
@@ -213,7 +217,8 @@ context='{"schema":"fm-captain-question.v1","close":"release","lifecycle":"2026-
     printf '  Captain hold set: 2026-07-24T00:00:00Z\n'
     case "$id" in
       valid-release|ambiguous) printf '  Captain question context: %s\n' "$context" ;;
-      valid-done) printf '  Captain question context: %s\n' "$(printf '%s' "$context" | jq -c '.close = "done"')" ;;
+      valid-done) printf '  Captain question context: %s\n' "$(printf '%s' "$context" \
+        | jq -c '.close = "done" | .question = "Ship the widget now?" | .options[0].detail = "Ships today."')" ;;
       invalid) printf '%s\n' '  Captain question context: {not JSON}' ;;
       unsupported) printf '  Captain question context: %s\n' "$(printf '%s' "$context" | jq -c '.schema = "future.v2"')" ;;
       duplicate) printf '  Captain question context: %s\n  Captain question context: %s\n' "$context" "$context" ;;
@@ -233,6 +238,8 @@ check "$TMP_ROOT/context-board.json" '.counts.questions == 10
   and any(.projects[].questions[]; .id == "valid-release" and .context.close == "release"
     and .context.options == [{value:"go",label:"Go café"}]
     and .context.recommendation == "go" and .context.subject.version == "1.2.3")
+  and any(.projects[].questions[]; .id == "valid-done" and .context.question == "Ship the widget now?"
+    and .context.options == [{value:"go",label:"Go café",detail:"Ships today."}])
   and any(.projects[].questions[]; .id == "duplicate" and .context_status == "duplicate")
   and any(.projects[].questions[]; .id == "stale" and .context_status == "stale")
   and any(.projects[].questions[]; .id == "legacy" and .context_status == "legacy")

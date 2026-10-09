@@ -101,6 +101,15 @@ if valid_input then . else error("unsupported or malformed fm-live-board-input.v
       since:.since,hold:.hold,blockers:.blockers,unresolved_blockers:.unresolved_blockers,
       context:.question_context,context_status:.question_context_status,
       answerable:(.question_context != null and (.integrity | length == 0)),integrity:.integrity}] as $questions
+| [$backlog[] | select(.state == "done") as $row
+   | ($row.completion.date // $row.done // $row.merged) as $finished
+   | select(($finished | date_key) as $at
+       | $at != null and $at >= $input.generated_epoch - 1209600 and $at <= $input.generated_epoch + 86400)
+   | ([$input.tasks[] | select(.id == $row.id)][0].project // null) as $meta_project
+   | {key:([$home_key,$row.id,($row.order // "meta" | tostring)] | tojson),id:$row.id,
+      project:(($row.repo | nonempty) // ($meta_project | nonempty)),title:($row.title // $row.id),
+      finished:$finished}]
+  | sort_by([-(.finished | date_key),.id,.key]) as $finished
 | ([$input.registry.projects[].name] + [$tasks[].project] | unique) as $projects
 | [$projects[] as $name
    | ([$tasks[] | select(.project == $name)]
@@ -136,4 +145,4 @@ if valid_input then . else error("unsupported or malformed fm-live-board-input.v
      ($input.registry.duplicates[] | {kind:"duplicate-project-registration",name:.}),
      ($input.registry.projects[] | select(.recognised == false) |
        {kind:"unrecognised-project-posture",name:.name,annotation:.annotation})],
-   counts:counts($tasks;$questions),projects:$groups}
+   counts:counts($tasks;$questions),projects:$groups,recently_finished:$finished}

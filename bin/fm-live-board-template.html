@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark" />
 <title>Firstmate live board</title>
+<link rel="icon" href="data:," />
 <style>
 /* Shipped renderer for bin/fm-live-board.sh. Self-contained: no external
    fonts, scripts, images or requests. Palette follows the Firstmate
@@ -27,17 +28,18 @@ body {
 }
 * { box-sizing: border-box; }
 a { color: var(--ocean); overflow-wrap: anywhere; }
-a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible { outline: none; box-shadow: var(--focus); border-radius: 6px; }
+a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus-visible, .q-opt:focus-within { outline: none; box-shadow: var(--focus); border-radius: 6px; }
 .lb { max-width: 1180px; margin: 0 auto; padding: 20px 20px 48px; }
 .lb-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; }
 .lb-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .lb-title h1 { margin: 0; font-size: 1.35rem; color: var(--text-strong); letter-spacing: 0.01em; }
-.lb-home { color: var(--text-muted); font-family: var(--mono); font-size: 0.8rem; overflow-wrap: anywhere; }
+.lb-home { color: var(--text-muted); font-size: 0.8rem; overflow-wrap: anywhere; }
 .lb-fresh { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text-muted); font-size: 0.85rem; }
-.lb-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 16px 0; }
+.lb-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 16px 0; }
 .lb-stat { background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 10px; padding: 8px 12px; min-width: 0; }
 .lb-stat b { display: block; font-size: 1.3rem; color: var(--text-strong); }
-.lb-stat span { color: var(--text-muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.lb-stat span { color: var(--text-muted); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.lb-stat.is-hot { border-color: #6b5326; background: var(--gold-soft); }
 .badge { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 2px 9px; font-size: 0.74rem; font-weight: 600; letter-spacing: 0.02em; white-space: nowrap; border: 1px solid transparent; }
 .b-live { background: var(--sea-soft); color: var(--sea); border-color: #2f6b4f; }
 .b-warn { background: var(--gold-soft); color: var(--gold); border-color: #6b5326; }
@@ -45,33 +47,46 @@ a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visibl
 .b-info { background: var(--ocean-soft); color: var(--ocean); border-color: #2f5574; }
 .b-muted { background: var(--bg-inset); color: var(--text-muted); border-color: var(--line); }
 .dot { width: 8px; height: 8px; flex: none; }
-.lb-notes { margin: 0 0 16px; border: 1px solid #6b5326; background: var(--gold-soft); border-radius: 10px; padding: 10px 14px; color: var(--text); }
-.lb-notes summary { cursor: pointer; color: var(--gold); font-weight: 600; min-height: 28px; }
-.lb-notes ul { margin: 6px 0 0; padding-left: 20px; }
-.lb-notes li { overflow-wrap: anywhere; margin: 2px 0; }
 .lb-banner { margin: 0 0 16px; border-radius: 10px; padding: 10px 14px; border: 1px solid #6b3527; background: var(--rust-soft); color: var(--text-strong); }
 .lb-empty { text-align: center; padding: 40px 16px; margin: 0 0 14px; background: var(--bg-raised); border: 1px dashed var(--line); border-radius: 14px; color: var(--text-muted); }
 .lb-empty h2 { color: var(--text-strong); margin: 8px 0 4px; font-size: 1.1rem; }
 .proj { background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 14px; margin: 0 0 14px; min-width: 0; }
-.proj-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); }
-.proj-head h2 { margin: 0; font-size: 1.05rem; color: var(--text-strong); min-width: 0; overflow-wrap: anywhere; flex: 1 1 auto; }
+.proj.has-q { border-color: #6b5326; }
+.proj-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--line-soft); display: grid; gap: 6px; min-width: 0; }
+.proj-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.proj-title h2 { margin: 0; font-size: 1.15rem; color: var(--text-strong); min-width: 0; overflow-wrap: anywhere; flex: 1 1 auto; }
+.proj-desc { margin: 0; color: var(--text-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+.proj-status { margin: 0; color: var(--text-strong); font-weight: 600; overflow-wrap: anywhere; }
+.prog { display: grid; gap: 4px; }
+.prog-bar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: var(--bg-inset); border: 1px solid var(--line-soft); }
+.prog-bar span { display: block; height: 100%; }
+.pb-done { background: var(--sea); } .pb-run { background: var(--ocean); } .pb-stuck { background: var(--rust); }
+.prog-text { color: var(--text-muted); font-size: 0.82rem; overflow-wrap: anywhere; }
+.prog-text .quiet { color: var(--text-faint); }
+.proj-latest { margin: 0; font-size: 0.85rem; color: var(--text); overflow-wrap: anywhere; }
+.proj-latest b { color: var(--text-muted); font-weight: 600; }
 .proj-body { padding: 10px 12px 12px; display: grid; gap: 10px; min-width: 0; }
 .sec-label { margin: 2px 4px 0; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-faint); }
 .q { background: var(--bg-card); border: 1px solid #6b5326; border-left: 4px solid var(--gold); border-radius: 10px; padding: 12px 14px; min-width: 0; }
 .q.q-urgent { border-color: #6b3527; border-left-color: var(--rust); }
 .q.is-queued { border-left-color: var(--sea); }
 .q-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.q h3 { margin: 6px 0 4px; font-size: 1rem; color: var(--text-strong); overflow-wrap: anywhere; }
-.q-reason { margin: 4px 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.q h3 { margin: 8px 0 4px; font-size: 1.02rem; line-height: 1.4; color: var(--text-strong); overflow-wrap: anywhere; white-space: pre-wrap; }
+.q-topic { margin: 0 0 4px; color: var(--text-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+.q-why { margin: 2px 0 6px; color: var(--text); font-size: 0.88rem; overflow-wrap: anywhere; white-space: pre-wrap; }
+.q-why b { color: var(--text-muted); font-weight: 600; }
 .meta { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--text-muted); font-size: 0.8rem; }
-.meta code, .mono { font-family: var(--mono); font-size: 0.78rem; overflow-wrap: anywhere; }
 .q-form { margin-top: 10px; display: grid; gap: 8px; min-width: 0; }
-.q-opts { display: grid; gap: 6px; }
-.q-opt { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-inset); cursor: pointer; min-width: 0; }
-.q-opt input { width: 18px; height: 18px; accent-color: var(--gold); flex: none; margin: 0; }
-.q-opt span { overflow-wrap: anywhere; min-width: 0; }
-.q-opt .rec { margin-left: auto; }
+.q-opts { display: grid; gap: 8px; }
+.q-opt { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 4px 12px; min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-inset); cursor: pointer; min-width: 0; }
+.q-opt:hover { border-color: #6b5326; }
+.q-opt.is-rec { border-color: #2f6b4f; }
+.q-opt input { width: 20px; height: 20px; accent-color: var(--gold); margin: 1px 0 0; }
+.q-opt-body { display: grid; gap: 2px; min-width: 0; }
+.q-opt-label { color: var(--text-strong); font-weight: 600; overflow-wrap: anywhere; }
+.q-opt-detail { color: var(--text-muted); font-size: 0.86rem; overflow-wrap: anywhere; }
 .q-note { width: 100%; min-height: 44px; padding: 8px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg-inset); color: var(--text); font: inherit; }
+textarea.q-note { min-height: 88px; resize: vertical; }
 .q-note::placeholder { color: var(--text-faint); }
 .q-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .btn { min-height: 44px; padding: 8px 18px; border-radius: 9px; border: 1px solid #6b5326; background: var(--gold); color: #1a2238; font: 600 0.95rem var(--font); cursor: pointer; }
@@ -80,29 +95,28 @@ a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visibl
 .q-status { font-size: 0.85rem; color: var(--sea); }
 .q-status.err { color: var(--rust); }
 .q-readonly { margin-top: 8px; padding: 8px 12px; border-radius: 9px; background: var(--bg-inset); border: 1px dashed var(--line); color: var(--text-muted); font-size: 0.85rem; }
-.t { border: 1px solid var(--line-soft); border-radius: 9px; background: var(--bg-card); min-width: 0; }
-.t > summary { list-style: none; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 12px; min-height: 44px; cursor: pointer; }
-.t > summary::-webkit-details-marker { display: none; }
-.t-title { min-width: 0; overflow-wrap: anywhere; color: var(--text-strong); }
-.t-id { color: var(--text-faint); font-family: var(--mono); font-size: 0.75rem; overflow-wrap: anywhere; }
-.chev { width: 14px; height: 14px; transition: transform 0.15s; }
-.t[open] .chev { transform: rotate(90deg); }
-.t:not([open]) > .t-body { display: none; }
-.t-body { padding: 4px 14px 12px; display: grid; gap: 4px; font-size: 0.85rem; color: var(--text-muted); border-top: 1px solid var(--line-soft); }
-.t-body div { overflow-wrap: anywhere; }
-.t-body b { color: var(--text); font-weight: 600; }
-.idle { background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 14px; padding: 10px 16px; }
-.idle summary { cursor: pointer; color: var(--text-muted); min-height: 28px; }
-.idle ul { margin: 8px 0 0; padding-left: 20px; color: var(--text-muted); }
+.w { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 9px; background: var(--bg-card); min-width: 0; }
+.w-main { display: grid; gap: 2px; min-width: 0; }
+.w-title { color: var(--text-strong); overflow-wrap: anywhere; }
+.w-note { color: var(--text-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+.w-when { color: var(--text-faint); font-size: 0.78rem; }
+.idle { background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 14px; padding: 10px 16px; margin: 0 0 14px; }
+.idle summary, .lb-notes summary { cursor: pointer; color: var(--text-muted); min-height: 28px; }
+.idle ul, .lb-notes ul { margin: 8px 0 0; padding-left: 20px; color: var(--text-muted); }
+.idle li, .lb-notes li { overflow-wrap: anywhere; margin: 3px 0; }
+.idle li b { color: var(--text); font-weight: 600; }
+.lb-notes { margin: 0 0 14px; border: 1px solid var(--line-soft); background: var(--bg-raised); border-radius: 10px; padding: 8px 14px; font-size: 0.85rem; }
 .lb-foot { margin-top: 20px; color: var(--text-faint); font-size: 0.78rem; overflow-wrap: anywhere; }
 @media (max-width: 640px) {
   .lb { padding: 14px 10px 40px; }
-  .proj-head { padding: 10px 12px; }
+  .proj-head { padding: 12px; }
   .proj-body { padding: 8px; }
   .q { padding: 10px 12px; }
+  .q-opt { grid-template-columns: auto minmax(0, 1fr); }
+  .q-opt .rec { grid-column: 2; justify-self: start; }
   .lb-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .lb-stat span { font-size: 0.68rem; letter-spacing: 0.04em; }
 }
-@media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
 </style>
 </head>
 <body>
@@ -111,16 +125,16 @@ a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visibl
     <div class="lb-title">
       <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="12" fill="#1f2843" stroke="#e0a52e" stroke-width="2"/><path d="M14 5 L17 14 L14 23 L11 14 Z" fill="#e0a52e"/><circle cx="14" cy="14" r="2.2" fill="#11172a"/></svg>
       <div>
-        <h1>Firstmate live board</h1>
+        <h1>Your projects</h1>
         <div class="lb-home" id="lb-home"></div>
       </div>
     </div>
     <div class="lb-fresh" id="lb-fresh" aria-live="polite"></div>
   </header>
   <div id="lb-banner"></div>
-  <section class="lb-stats" id="lb-stats" aria-label="Fleet totals"></section>
-  <div id="lb-notes"></div>
+  <section class="lb-stats" id="lb-stats" aria-label="Totals"></section>
   <div id="lb-projects"></div>
+  <div id="lb-notes"></div>
   <p class="lb-foot" id="lb-foot"></p>
 </main>
 <script id="live-board-data" type="application/json">
@@ -134,24 +148,15 @@ __FM_LIVE_BOARD_DATA__
     warn: '<svg class="dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#e0a52e"/></svg>',
     danger: '<svg class="dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#e08365"/></svg>'
   };
-  var CHEV = '<svg class="chev" viewBox="0 0 14 14" aria-hidden="true"><path d="M5 3 L9 7 L5 11" fill="none" stroke="#a7afc6" stroke-width="2" stroke-linecap="round"/></svg>';
-  var STATE = {
-    blocked: ["blocked", "b-danger"], parked: ["parked", "b-danger"],
-    working: ["working", "b-live"], "finished-awaiting-processing": ["finished, awaiting processing", "b-info"],
-    paused: ["paused", "b-warn"], queued: ["queued", "b-muted"], held: ["held", "b-warn"],
-    program: ["program", "b-info"], unknown: ["state unknown", "b-muted"]
+  var STATE_CLASS = {
+    working: "b-live", blocked: "b-danger", parked: "b-danger", paused: "b-warn",
+    "finished-awaiting-processing": "b-info", held: "b-warn"
   };
-  var CONTEXT_NOTE = {
-    legacy: "This question has no owner-written answer options yet. Answer it in chat with Firstmate.",
-    stale: "The question changed after its answer options were written. Firstmate must refresh it before it can be answered here.",
-    duplicate: "This question carries conflicting answer options. Firstmate must review it before it can be answered here.",
-    invalid: "This question's answer options are malformed. Firstmate must review it before it can be answered here."
-  };
-  var OMISSION = {
-    "backlog-unavailable": "The backlog could not be read, so open work may be missing.",
-    "registry-unavailable": "The project registry could not be read; projects come from tasks only.",
-    "registered-homes-uncollected": "Work in registered secondmate homes is not collected on this board.",
-    "unstructured-open-work": "Some open backlog lines are not structured tasks and are not shown."
+  var READONLY = {
+    stale: "This question changed after its answer options were written. Firstmate must refresh it before you can answer here.",
+    duplicate: "This question carries conflicting answer options. Firstmate must review it before you can answer here.",
+    invalid: "This question's answer options are malformed. Firstmate must review it before you can answer here.",
+    ambiguous: "Firstmate cannot tell exactly which piece of work this question belongs to. It must review it before you can answer here."
   };
 
   function el(tag, cls, text) {
@@ -167,7 +172,7 @@ __FM_LIVE_BOARD_DATA__
     return b;
   }
   function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
-  function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+  function plural(n, one, many) { return n + " " + (n === 1 ? one : (many || one + "s")); }
   function ago(seconds) {
     if (seconds < 0) seconds = 0;
     if (seconds < 90) return Math.round(seconds) + "s ago";
@@ -194,22 +199,23 @@ __FM_LIVE_BOARD_DATA__
     return typeof url === "string" && /^https:\/\/[A-Za-z0-9.-]+(:[0-9]+)?\/[^\s<>"?#]+\/pull\/[0-9]+$/.test(url) ? url : null;
   }
 
-  var root = document.getElementById("lb-root");
   var payload;
   try {
     payload = JSON.parse(document.getElementById("live-board-data").textContent);
   } catch (e) { payload = null; }
   var board = payload && payload.board;
-  if (!board || board.schema !== "fm-live-board.v1" || !Array.isArray(board.projects)) {
-    var bad = document.getElementById("lb-banner");
-    bad.appendChild(el("div", "lb-banner", "The board data could not be read. Run fm-live-board.sh build to rebuild it."));
+  var view = payload && payload.view;
+  if (!board || board.schema !== "fm-live-board.v1" || !view || view.schema !== "fm-live-board-view.v1"
+      || !Array.isArray(view.projects)) {
+    document.getElementById("lb-banner").appendChild(
+      el("div", "lb-banner", "The board data could not be read. Run fm-live-board.sh build to rebuild it."));
     return;
   }
   var refresh = typeof payload.refresh_seconds === "number" && payload.refresh_seconds > 0 ? payload.refresh_seconds : 60;
   var staleAfter = Math.max(150, Math.round(refresh * 2.5));
   var unavailableAfter = Math.max(600, staleAfter * 2);
 
-  document.getElementById("lb-home").textContent = "home " + (board.home && board.home.label || "unknown");
+  document.getElementById("lb-home").textContent = "Firstmate live board · " + (board.home && board.home.label || "unknown home");
 
   /* Freshness is recomputed locally, so a board whose rebuilds stopped says so. */
   var fresh = document.getElementById("lb-fresh");
@@ -236,100 +242,96 @@ __FM_LIVE_BOARD_DATA__
   paintFreshness();
   setInterval(paintFreshness, 5000);
 
-  var counts = board.counts || {};
+  var counts = view.counts || {};
   var stats = document.getElementById("lb-stats");
-  [["open_tasks", "open tasks"], ["questions", "questions"], ["urgent_questions", "urgent"],
-   ["working", "working"], ["blocked", "blocked"], ["queued", "queued"]].forEach(function (s) {
-    var box = el("div", "lb-stat");
+  [["questions", "questions for you"], ["urgent", "urgent"], ["active_projects", "active projects"],
+   ["working", "workers busy"], ["stuck", "stuck"], ["finished", "done, last 2 weeks"]].forEach(function (s) {
+    var box = el("div", "lb-stat" + ((s[0] === "questions" || s[0] === "urgent") && counts[s[0]] ? " is-hot" : ""));
     box.setAttribute("data-stat", s[0]);
     box.appendChild(el("b", "", counts[s[0]] || 0));
     box.appendChild(el("span", "", s[1]));
     stats.appendChild(box);
   });
 
-  /* Coverage gaps and integrity warnings stay above the fold. */
-  var notes = [];
-  (board.omissions || []).forEach(function (o) {
-    var text = OMISSION[o.kind] || ("Coverage gap: " + o.kind);
-    if (o.kind === "unstructured-open-work" && o.count) text += " (" + o.count + ")";
-    notes.push(text);
-  });
-  (board.warnings || []).forEach(function (w) {
-    if (w.kind === "question-needs-owner-review") return; /* shown on the card itself */
-    var subject = w.id || w.name || "";
-    var text = w.kind.replace(/-/g, " ") + (subject ? ": " + subject : "");
-    if (w.kind === "owner-must-register-call" && w.decision && w.decision.summary) text += " - " + w.decision.summary;
-    notes.push(text);
-  });
-  if (notes.length) {
-    var box = el("details", "lb-notes");
-    if (notes.length <= 3) box.setAttribute("open", "");
-    box.appendChild(el("summary", "", plural(notes.length, "coverage note")));
-    var ul = el("ul");
-    notes.forEach(function (t) { ul.appendChild(el("li", "", t)); });
-    box.appendChild(ul);
-    document.getElementById("lb-notes").appendChild(box);
-  }
-
   function questionCard(q) {
     var urgent = q.urgent === true;
     var card = el("article", "q" + (urgent ? " q-urgent" : ""));
     card.setAttribute("data-question", q.id);
+    card.setAttribute("data-mode", q.mode);
     var top = el("div", "q-top");
-    top.appendChild(badge(urgent ? "b-danger" : "b-warn", urgent ? "urgent · P" + q.priority : (q.priority === null || q.priority === undefined ? "question" : "question · P" + q.priority)));
-    var hold = q.hold || {};
-    if (hold.bucket === "deferred" && hold.until) top.appendChild(badge("b-muted", "deferred until " + hold.until));
-    else if (hold.bucket && hold.bucket !== "live") top.appendChild(badge("b-muted", hold.bucket));
-    if (q.unresolved_blockers && q.unresolved_blockers.length) top.appendChild(badge("b-danger", "blocked by " + q.unresolved_blockers.join(", ")));
+    top.appendChild(badge(urgent ? "b-danger" : "b-warn", urgent ? "urgent question" : "question for you"));
+    if (q.deferred_until) top.appendChild(badge("b-muted", "you deferred this until " + q.deferred_until));
+    if (q.waiting_on_other_work) top.appendChild(badge("b-muted", "waits on other work first"));
     card.appendChild(top);
-    card.appendChild(el("h3", "", q.title));
-    if (hold.reason) card.appendChild(el("p", "q-reason", hold.reason));
+    card.appendChild(el("h3", "", q.text));
+    if (q.topic) card.appendChild(el("p", "q-topic", q.topic));
+    if (q.why && q.why !== q.text) {
+      var why = el("p", "q-why");
+      why.appendChild(el("b", "", "Why it is asked: "));
+      why.appendChild(el("span", "", q.why));
+      card.appendChild(why);
+    }
     var meta = el("div", "meta");
-    meta.appendChild(el("code", "", q.id));
-    var since = dateEpoch(hold.set) || dateEpoch(q.since);
-    meta.appendChild(el("span", "", since === null ? "age unknown" : "asked " + ago(Date.now() / 1000 - since)));
+    var since = dateEpoch(q.asked);
+    meta.appendChild(el("span", "", since === null ? "asked at an unknown time" : "asked " + ago(Date.now() / 1000 - since)));
     card.appendChild(meta);
 
-    var ctx = q.context;
-    if (!q.answerable || !ctx || !Array.isArray(ctx.options) || !ctx.lifecycle
-        || (ctx.close !== "done" && ctx.close !== "release")) {
-      var why = q.integrity && q.integrity.length
-        ? "This question's task identity is ambiguous. Firstmate must review it before it can be answered here."
-        : (CONTEXT_NOTE[q.context_status] || CONTEXT_NOTE.invalid);
-      var ro = el("div", "q-readonly", why);
-      ro.setAttribute("data-readonly", q.context_status || "unknown");
+    var options = Array.isArray(q.options) ? q.options : [];
+    if (q.mode === "options" || q.mode === "text") {
+      if (!q.lifecycle || (q.close !== "done" && q.close !== "release")) q.mode = "read-only";
+    }
+    if (q.mode !== "options" && q.mode !== "text" && q.mode !== "free-text") {
+      var ro = el("div", "q-readonly", READONLY[q.readonly] || READONLY.invalid);
+      ro.setAttribute("data-readonly", q.readonly || "unknown");
       card.appendChild(ro);
       return card;
     }
+    var guarded = q.mode !== "free-text";
+    if (!guarded) options = [];
 
     var form = el("form", "q-form");
-    form.setAttribute("data-lavish-question", "live-board:" + q.id + "#" + ctx.lifecycle);
+    form.setAttribute("data-lavish-question", "live-board:" + q.id + (guarded ? "#" + q.lifecycle : ""));
     var opts = el("div", "q-opts");
-    if (!ctx.options.length) opts.hidden = true;
+    if (!options.length) opts.hidden = true;
     var radios = [];
-    ctx.options.forEach(function (o) {
-      var lab = el("label", "q-opt");
+    options.forEach(function (o) {
+      var rec = q.recommendation && q.recommendation === o.value;
+      var lab = el("label", "q-opt" + (rec ? " is-rec" : ""));
+      lab.setAttribute("data-option", o.value);
       var input = document.createElement("input");
       input.type = "radio"; input.name = "answer"; input.value = o.value;
       radios.push(input);
       lab.appendChild(input);
-      lab.appendChild(el("span", "", o.label));
-      if (ctx.recommendation && ctx.recommendation === o.value) lab.appendChild(badge("b-live", "recommended", null)).className += " rec";
+      var body = el("span", "q-opt-body");
+      body.appendChild(el("span", "q-opt-label", o.label));
+      if (o.detail) body.appendChild(el("span", "q-opt-detail", o.detail));
+      lab.appendChild(body);
+      if (rec) { var r = badge("b-live", "recommended"); r.className += " rec"; lab.appendChild(r); }
       opts.appendChild(lab);
     });
     form.appendChild(opts);
-    var note = document.createElement("input");
-    note.type = "text"; note.name = "note"; note.className = "q-note";
-    note.placeholder = ctx.options.length ? "optional note for Firstmate" : "your answer";
-    note.setAttribute("aria-label", ctx.options.length ? "Optional note" : "Your answer");
+    var note;
+    if (options.length) {
+      note = document.createElement("input");
+      note.type = "text";
+      note.placeholder = "optional note for Firstmate";
+      note.setAttribute("aria-label", "Optional note");
+    } else {
+      note = document.createElement("textarea");
+      note.placeholder = "Type your answer";
+      note.setAttribute("aria-label", "Your answer");
+    }
+    note.name = "note"; note.className = "q-note";
     form.appendChild(note);
     var foot = el("div", "q-foot");
-    var btn = el("button", "btn", "Queue answer");
+    var btn = el("button", "btn", "Send answer");
     btn.type = "submit";
     foot.appendChild(btn);
-    foot.appendChild(el("span", "q-mode", ctx.close === "release"
-      ? "Answering releases the hold so the work continues."
-      : "Answering closes this question."));
+    foot.appendChild(el("span", "q-mode", !guarded
+      ? "Firstmate records your words as the answer and closes this question."
+      : q.close === "release"
+        ? "Answering lets the paused work continue."
+        : "Answering closes this question."));
     var status = el("span", "q-status");
     status.setAttribute("role", "status");
     foot.appendChild(status);
@@ -340,30 +342,30 @@ __FM_LIVE_BOARD_DATA__
       status.className = "q-status";
       var value = "";
       radios.forEach(function (r) { if (r.checked) value = r.value; });
-      var noteText = (note.value || "").trim();
+      var noteText = (note.value || "").replace(/\s+/g, " ").trim();
       if (!value && !noteText) {
         status.className = "q-status err";
-        status.textContent = ctx.options.length ? "Pick one of the options or write a note first." : "Write your answer first.";
+        status.textContent = options.length ? "Pick one of the options or write a note first." : "Write your answer first.";
         return;
       }
       var label = value;
-      ctx.options.forEach(function (o) { if (o.value === value) label = o.label; });
+      options.forEach(function (o) { if (o.value === value) label = o.label; });
       var shown = value ? (noteText ? label + " - " + noteText : label) : noteText;
       if (utf8Bytes(value) + utf8Bytes(noteText) + 3 > 512 || utf8Bytes(shown) > 512) {
         status.className = "q-status err";
-        status.textContent = "The note is too long to queue (512 bytes maximum).";
+        status.textContent = "The answer is too long to send (512 bytes maximum).";
         return;
       }
       if (!(window.lavish && window.lavish.queuePrompt)) {
         status.className = "q-status err";
-        status.textContent = "Answers can only be queued when this board is open in Lavish.";
+        status.textContent = "Answers can only be sent when this board is open in Lavish.";
         return;
       }
+      var data = { schema: "fm-bearings-answer.v1", question: q.id, selection: value, note: noteText };
+      if (guarded) { data.close = q.close; data.lifecycle = q.lifecycle; }
       window.lavish.queuePrompt(
-        "Live board answer - " + q.title + ": " + shown,
-        { tag: "choice", text: q.title + " -> " + shown, element: form,
-          data: { schema: "fm-bearings-answer.v1", question: q.id, selection: value,
-                  note: noteText, close: ctx.close, lifecycle: ctx.lifecycle } });
+        "Live board answer - " + q.text + ": " + shown,
+        { tag: "choice", text: q.text + " -> " + shown, element: form, data: data });
       card.className += " is-queued";
       status.textContent = "Queued. Press Send in the Lavish panel; the card clears after the answer is recorded.";
     });
@@ -371,97 +373,130 @@ __FM_LIVE_BOARD_DATA__
     return card;
   }
 
-  function taskRow(t) {
-    var row = el("details", "t");
-    row.setAttribute("data-task", t.id);
-    var sum = el("summary");
-    var st = STATE[t.state] || [String(t.state || "unknown"), "b-muted"];
-    sum.appendChild(badge(st[1], st[0]));
-    var title = el("span", "t-title");
-    title.appendChild(el("span", "", t.title));
-    title.appendChild(el("span", "", " "));
-    title.appendChild(el("span", "t-id", t.id));
-    sum.appendChild(title);
-    var ch = el("span"); ch.innerHTML = CHEV; sum.appendChild(ch);
-    row.appendChild(sum);
-    var body = el("div", "t-body");
-    function line(k, v) { if (v === null || v === undefined || v === "") return; var d = el("div"); d.appendChild(el("b", "", k + ": ")); d.appendChild(el("span", "", v)); body.appendChild(d); }
-    line("kind", t.kind);
-    if (t.current_state) {
-      line("now", (t.current_state.detail || t.current_state.state) + " (source " + t.current_state.source + ", " + (t.current_state.freshness || "freshness unknown") + ")");
-    }
-    if (t.owner && t.owner.harness) line("worker", t.owner.harness);
-    var ev = t.last_meaningful_event;
-    if (ev) {
-      var when = typeof ev.emitted_at_epoch === "number" ? ago(Date.now() / 1000 - ev.emitted_at_epoch) : "time unknown";
-      line("last event", (ev.verb || ev.name || ev.type) + (ev.note ? " - " + ev.note : "") + " (" + when + ")");
-    }
-    if (t.unresolved_blockers && t.unresolved_blockers.length) line("blocked by", t.unresolved_blockers.join(", "));
-    if (t.hold && t.hold.reason) line("held", t.hold.reason);
-    var since = dateEpoch(t.since);
-    line("since", since === null ? null : t.since);
-    var pr = safePr(t.pr && t.pr.url);
+  function workerRow(w) {
+    var row = el("div", "w");
+    row.setAttribute("data-worker", w.id);
+    row.setAttribute("data-state", w.state || "unknown");
+    row.appendChild(badge(STATE_CLASS[w.state] || "b-muted", w.state_label || "In flight"));
+    var main = el("div", "w-main");
+    main.appendChild(el("span", "w-title", w.title));
+    if (w.note) main.appendChild(el("span", "w-note", w.note));
+    var when = [];
+    if (typeof w.at === "number") when.push("last update " + ago(Date.now() / 1000 - w.at));
+    var line = el("span", "w-when", when.join(" · "));
+    var pr = safePr(w.pr);
     if (pr) {
-      var d = el("div"); d.appendChild(el("b", "", "PR: "));
-      var a = el("a", "", pr); a.href = pr; a.target = "_blank"; a.rel = "noopener";
-      d.appendChild(a); body.appendChild(d);
+      if (when.length) line.appendChild(el("span", "", " · "));
+      var a = el("a", "", "pull request"); a.href = pr; a.target = "_blank"; a.rel = "noopener";
+      line.appendChild(a);
     }
-    (t.integrity || []).forEach(function (i) { line("warning", i.kind.replace(/-/g, " ")); });
-    row.appendChild(body);
+    if (when.length || pr) main.appendChild(line);
+    row.appendChild(main);
     return row;
   }
 
+  function progress(c) {
+    var box = el("div", "prog");
+    var running = (c.workers || 0) - (c.stuck || 0);
+    var total = (c.finished || 0) + (c.workers || 0);
+    if (total > 0) {
+      var bar = el("div", "prog-bar");
+      bar.setAttribute("aria-hidden", "true");
+      [["pb-done", c.finished || 0], ["pb-run", running], ["pb-stuck", c.stuck || 0]].forEach(function (seg) {
+        if (!seg[1]) return;
+        var s = el("span", seg[0]);
+        s.style = "width:" + (100 * seg[1] / total).toFixed(1) + "%";
+        bar.appendChild(s);
+      });
+      box.appendChild(bar);
+    }
+    var text = el("div", "prog-text");
+    var parts = [];
+    parts.push((c.finished || 0) + " done in the last 2 weeks");
+    parts.push((c.workers || 0) + " in progress" + (c.stuck ? " (" + c.stuck + " stuck)" : ""));
+    text.appendChild(el("span", "", parts.join(" · ")));
+    if (c.waiting) text.appendChild(el("span", "quiet", " · " + c.waiting + " waiting to start"));
+    box.appendChild(text);
+    return box;
+  }
+
+  function projectSection(p) {
+    var c = p.counts || {};
+    var sec = el("section", "proj" + (c.questions ? " has-q" : ""));
+    sec.setAttribute("data-project", p.name);
+    sec.setAttribute("data-project-key", p.key);
+    var head = el("div", "proj-head");
+    var title = el("div", "proj-title");
+    title.appendChild(el("h2", "", p.name));
+    if (c.urgent) title.appendChild(badge("b-danger", plural(c.urgent, "urgent question")));
+    if (c.questions - (c.urgent || 0) > 0) title.appendChild(badge("b-warn", plural(c.questions - (c.urgent || 0), "question")));
+    if (c.stuck) title.appendChild(badge("b-danger", c.stuck + " stuck"));
+    head.appendChild(title);
+    if (p.description) head.appendChild(el("p", "proj-desc", p.description));
+    head.appendChild(el("p", "proj-status", p.status));
+    head.appendChild(progress(c));
+    if (p.latest) {
+      var latest = el("p", "proj-latest");
+      latest.setAttribute("data-latest", "");
+      latest.appendChild(el("b", "", "Latest: "));
+      latest.appendChild(el("span", "", p.latest.title + " - " + p.latest.note +
+        (typeof p.latest.at === "number" ? " (" + ago(Date.now() / 1000 - p.latest.at) + ")" : "")));
+      head.appendChild(latest);
+    }
+    sec.appendChild(head);
+    var body = el("div", "proj-body");
+    if ((p.questions || []).length) {
+      body.appendChild(el("div", "sec-label", "Questions for you"));
+      p.questions.forEach(function (q) { body.appendChild(questionCard(q)); });
+    }
+    if ((p.workers || []).length) {
+      body.appendChild(el("div", "sec-label", "Work in progress"));
+      p.workers.forEach(function (w) { body.appendChild(workerRow(w)); });
+    }
+    if (body.firstChild) sec.appendChild(body);
+    return sec;
+  }
+
   var host = document.getElementById("lb-projects");
-  var active = [], idle = [];
-  board.projects.forEach(function (p) {
-    if ((p.questions || []).length || (p.tasks || []).length) active.push(p); else idle.push(p);
-  });
+  var active = view.projects.filter(function (p) { return p.active; });
+  var quiet = view.projects.filter(function (p) { return !p.active; });
   if (!active.length) {
     var empty = el("div", "lb-empty");
     empty.setAttribute("data-empty", "true");
     empty.innerHTML = '<svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="18" fill="#1f3a30"/><path d="M12 20 L18 26 L29 14" fill="none" stroke="#7cc4a0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    empty.appendChild(el("h2", "", "No open work"));
+    empty.appendChild(el("h2", "", "Nothing running and no questions for you"));
     empty.appendChild(el("p", "", (board.coverage && board.coverage.local && board.coverage.local.trustworthy)
-      ? "There are no open tasks or questions in this home."
-      : "No open tasks were found, but coverage is incomplete - see the coverage notes above."));
+      ? "No project has work in progress right now."
+      : "No work in progress was found, but the board could not see everything - see the board notes below."));
     host.appendChild(empty);
   }
-  active.forEach(function (p) {
-    var sec = el("section", "proj");
-    sec.setAttribute("data-project", p.label);
-    var head = el("div", "proj-head");
-    head.appendChild(el("h2", "", p.label));
-    var c = p.counts || {};
-    if (c.urgent_questions) head.appendChild(badge("b-danger", plural(c.urgent_questions, "urgent question")));
-    var ordinary = (c.questions || 0) - (c.urgent_questions || 0);
-    if (ordinary > 0) head.appendChild(badge("b-warn", plural(ordinary, "question")));
-    if (c.working) head.appendChild(badge("b-live", c.working + " working"));
-    if (c.blocked) head.appendChild(badge("b-danger", c.blocked + " blocked"));
-    if (c.queued) head.appendChild(badge("b-muted", c.queued + " queued"));
-    if (!p.registration && p.name !== null) head.appendChild(badge("b-muted", "not registered"));
-    sec.appendChild(head);
-    var body = el("div", "proj-body");
-    var asked = {};
-    if ((p.questions || []).length) {
-      body.appendChild(el("div", "sec-label", "Questions for you"));
-      p.questions.forEach(function (q) { asked[q.key] = true; body.appendChild(questionCard(q)); });
-    }
-    var rows = (p.tasks || []).filter(function (t) { return !asked[t.key]; });
-    if (rows.length) {
-      body.appendChild(el("div", "sec-label", "Open work"));
-      rows.forEach(function (t) { body.appendChild(taskRow(t)); });
-    }
-    sec.appendChild(body);
-    host.appendChild(sec);
-  });
-  if (idle.length) {
+  active.forEach(function (p) { host.appendChild(projectSection(p)); });
+  if (quiet.length) {
     var box = el("details", "idle");
-    box.setAttribute("data-idle", String(idle.length));
-    box.appendChild(el("summary", "", plural(idle.length, "registered project") + " with nothing open"));
+    box.setAttribute("data-idle", String(quiet.length));
+    box.appendChild(el("summary", "", plural(quiet.length, "quiet project") + " with nothing in progress"));
     var ul = el("ul");
-    idle.forEach(function (p) { ul.appendChild(el("li", "", p.label)); });
+    quiet.forEach(function (p) {
+      var li = el("li");
+      li.setAttribute("data-quiet-project", p.name);
+      li.appendChild(el("b", "", p.name));
+      var extra = [];
+      if (p.counts && p.counts.finished) extra.push(p.counts.finished + " done in the last 2 weeks");
+      if (p.counts && p.counts.waiting) extra.push(p.counts.waiting + " waiting to start");
+      if (extra.length) li.appendChild(el("span", "", " - " + extra.join(" · ")));
+      ul.appendChild(li);
+    });
     box.appendChild(ul);
     host.appendChild(box);
+  }
+
+  if ((view.notes || []).length) {
+    var notes = el("details", "lb-notes");
+    notes.appendChild(el("summary", "", plural(view.notes.length, "board note")));
+    var nl = el("ul");
+    view.notes.forEach(function (t) { nl.appendChild(el("li", "", t)); });
+    notes.appendChild(nl);
+    document.getElementById("lb-notes").appendChild(notes);
   }
 
   document.getElementById("lb-foot").textContent =
