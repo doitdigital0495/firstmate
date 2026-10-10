@@ -1,0 +1,87 @@
+### 1. Adversarial: the banner answer replayed with an earlier asking's lifecycle
+ws-banner	plain	Which banner design should go on the home page? -> Plain banner	release	2020-01-01T00:00:00Z#0
+skipped: ws-banner (stale captain question lifecycle)
+answers: closed=0 skipped=1
+
+### 2. The real Lavish poll result through the adapter and the captain-hold intake
+adapter exit=0
+ws-carrier	dhl	Who should ship the spring orders? -> DHL - Speed matters more this spring	done	2026-10-10T15:32:49Z#0
+ws-banner	plain	Which banner design should go on the home page? -> Plain banner	release	2026-10-10T15:32:52Z#0
+ws-name	Spring Tide	Name the release -> Spring Tide	done	2026-10-10T15:32:55Z#0
+closed: ws-carrier
+closed: ws-banner
+closed: ws-name
+answers: closed=3 skipped=0
+intake exit=0
+
+### 3. Task state afterwards
+-- ws-carrier
+  body: "Resolution recorded by fm-captain-hold.\nDecision digest: 7c0ba80d14e162a677f2f47e531545601a4d8dff9d1228d12bff321bcbcb2895\nResolution mode: answered\nCaptain answer lifecycle: 2026-10-10T15:32:49Z#0\n\nCaptain decision:\nCaptain answered this call through gate live Lavish poll.\nTask: ws-carrier\nAnswer: dhl\nAnswer as shown to the captain: Who should ship the spring orders? -> DHL - Speed matters more this spring\n\nCaptain question context: {\"about\":\"The web shop needs one company to deliver the spring orders to customers.\",\"close\":\"done\",\"lifecycle\":\"2026-10-10T15:32:49Z#0\",\"options\":[{\"detail\":\"Next-day delivery, about 8 percent dearer.\",\"label\":\"DHL\",\"value\":\"dhl\"},{\"detail\":\"Two-day delivery at today's price, which is why it is recommended.\",\"label\":\"PostNL\",\"value\":\"postnl\"}],\"purpose\":\"Your pick lets the team book the deliveries. Until you pick, spring orders cannot be sent out.\",\"question\":\"Who should ship the spring orders?\",\"recommendation\":\"postnl\",\"schema\":\"fm-captain-question.v1\",\"subject\":null}"
+-- ws-banner
+  body: "Resolution recorded by fm-captain-hold.\nDecision digest: c00579cbf111161a8b4560ad509f976c48c440d13605f3853c2aaa11e16cbaf5\nResolution mode: released\nCaptain answer lifecycle: 2026-10-10T15:32:52Z#0\n\nCaptain decision:\nCaptain answered this call through gate live Lavish poll.\nTask: ws-banner\nAnswer: plain\nAnswer as shown to the captain: Which banner design should go on the home page? -> Plain banner\n\nCaptain question context: {\"about\":\"The home page gets a banner for the spring sale, and there are two designs.\",\"close\":\"release\",\"lifecycle\":\"2026-10-10T15:32:52Z#0\",\"options\":[{\"detail\":\"A large product photo. Looks richer, loads a little slower on phones.\",\"label\":\"Photo banner\",\"value\":\"photo\"},{\"detail\":\"Text on a colour. Loads fastest and is ready a day sooner.\",\"label\":\"Plain banner\",\"value\":\"plain\"}],\"purpose\":\"Your pick tells the team which design to build. Until you pick, the banner is not built.\",\"question\":\"Which banner design should go on the home page?\",\"recommendation\":\"plain\",\"schema\":\"fm-captain-question.v1\",\"subject\":null}"
+-- ws-name
+  body: "Resolution recorded by fm-captain-hold.\nDecision digest: a76cc7d7f1172388ae1089ac1846777e3e92ccdf3da694766198ebdff391f986\nResolution mode: answered\nCaptain answer lifecycle: 2026-10-10T15:32:55Z#0\n\nCaptain decision:\nCaptain answered this call through gate live Lavish poll.\nTask: ws-name\nAnswer: Spring Tide\nAnswer as shown to the captain: Name the release -> Spring Tide\n\nCaptain question context: {\"about\":\"The spring relaunch of the web shop still has no name.\",\"close\":\"done\",\"lifecycle\":\"2026-10-10T15:32:55Z#0\",\"options\":[],\"purpose\":\"The name goes on the announcement to customers. Without it the announcement waits.\",\"recommendation\":null,\"schema\":\"fm-captain-question.v1\",\"subject\":null}"
+-- ws-partner
+
+### 4. Next refresh
+refresh exit=0
+{
+  "stats": {
+    "questions": 1,
+    "urgent": 0,
+    "doing": 1,
+    "next": 3,
+    "charted": 4,
+    "finished": 2
+  },
+  "status": "1 question waits for you, 1 being done now, 3 starting next, 4 not starting on their own (1 stuck)",
+  "questions": [
+    {
+      "id": "ws-partner",
+      "badges": [
+        "question for you",
+        "you deferred this until 2099-01-01"
+      ]
+    }
+  ],
+  "lanes": {
+    "doing": [
+      {
+        "title": "Build the new checkout",
+        "reason": null
+      }
+    ],
+    "next": [
+      {
+        "title": "Add order tracking",
+        "reason": null
+      },
+      {
+        "title": "Put the spring banner on the home page",
+        "reason": null
+      },
+      {
+        "title": "Polish the footer",
+        "reason": null
+      }
+    ],
+    "charted": [
+      {
+        "title": "Fix the payment error",
+        "reason": "Stuck, needs help"
+      },
+      {
+        "title": "Launch the loyalty scheme",
+        "reason": "Waits for other work to finish first"
+      },
+      {
+        "title": "Switch payment provider",
+        "reason": "Waiting until 2099-01-01"
+      },
+      {
+        "title": "Pick a loyalty partner",
+        "reason": "You put this off until 2099-01-01"
+      }
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+== cards ==
+        uid=1_37 StaticText "QUESTIONS FOR YOU"
+        uid=1_49 form
+          uid=14_0 StaticText "ANSWER QUEUED IN LAVISH"
+          uid=18_0 StaticText "Who should ship the spring orders? - DHL - Speed matters more this spring"
+          uid=14_2 button "Change answer"
+        uid=1_74 form
+          uid=16_3 StaticText "ANSWER QUEUED IN LAVISH"
+          uid=18_1 StaticText "Which banner design should go on the home page? - Plain banner"
+          uid=16_5 button "Change answer"
+        uid=1_98 form
+          uid=18_2 StaticText "ANSWER QUEUED IN LAVISH"
+          uid=18_3 StaticText "Name the release - Spring Tide"
+          uid=18_4 button "Change answer"
+        uid=1_103 StaticText "question for you"
+        uid=1_104 StaticText "you deferred this until 2099-01-01"
+        uid=1_105 StaticText "Web shop relaunch"
+        uid=1_106 StaticText "Needs a plain-language explanation"
+        uid=1_107 StaticText "Firstmate has not yet written in plain words what this is about and what answering it is for. Ask Firstmate to explain it before you answer."
+        uid=1_108 StaticText "THE QUESTION"
+        uid=1_109 heading "Pick a loyalty partner" level="3"
+        uid=1_110 StaticText "Why it is asked: "
+        uid=1_111 StaticText "Decide after the summer."
+        uid=1_112 StaticText "asked 17s ago"
+        uid=1_113 form
+          uid=1_114 textbox "Your answer" multiline
+          uid=1_115 button "Queue answer" focusable focused
+          uid=1_116 StaticText "Firstmate records your words as the answer and closes this question."
+          uid=1_117 status atomic live="polite" relevant="additions text"
+            uid=19_0 StaticText "Write your answer first."
+== Lavish panel ==
+  uid=1_140 complementary
+    uid=1_141 heading "Conversation" level="2"
+    uid=18_5 StaticText "QUEUED"
+    uid=18_6 button "Remove queued prompt"
+    uid=18_7 StaticText "<choice>"
+    uid=18_8 StaticText "“Who should ship the spring orders? -> DHL - Speed matters more this spring”"
+    uid=18_9 StaticText "Live board answer - Who should ship the spring orders?: DHL - Speed matters more this spring
+
+Context data:
+{
+  "schema": "fm-bearings-answer.v1",
+  "question": "ws-carrier",
+  "selection": "dhl",
+  "note": "Speed matters more this spring",
+  "close": "done",
+  "lifecycle": "2026-10-10T15:32:49Z#0"
+}"
+    uid=18_10 StaticText "QUEUED"
+    uid=18_11 button "Remove queued prompt"
+    uid=18_12 StaticText "<choice>"
+    uid=18_13 StaticText "“Which banner design should go on the home page? -> Plain banner”"
+    uid=18_14 StaticText "Live board answer - Which banner design should go on the home page?: Plain banner
+
+Context data:
+{
+  "schema": "fm-bearings-answer.v1",
+  "question": "ws-banner",
+  "selection": "plain",
+  "note": "",
+  "close": "release",
+  "lifecycle": "2026-10-10T15:32:52Z#0"
+}"
+    uid=18_15 StaticText "QUEUED"
+    uid=18_16 button "Remove queued prompt"
+    uid=18_17 StaticText "<choice>"
+    uid=18_18 StaticText "“Name the release -> Spring Tide”"
+    uid=18_19 StaticText "Live board answer - Name the release: Spring Tide
+
+Context data:
+{
+  "schema": "fm-bearings-answer.v1",
+  "question": "ws-name",
+  "selection": "",
+  "note": "Spring Tide",
+  "close": "done",
+  "lifecycle": "2026-10-10T15:32:55Z#0"
+}"
+    uid=1_143 StaticText "Your agent is not listening. If this persists, ask your agent to poll for updates from Lavish."
+    uid=1_144 textbox "Write a message for the agent..." multiline
+    uid=1_145 button "Attach images"
+    uid=1_146 status atomic live="polite" relevant="additions text"
+    uid=1_147 button "Send & End"
+    uid=1_148 button "Send to Agent"
+

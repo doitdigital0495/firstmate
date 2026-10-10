@@ -1,0 +1,40 @@
+### 1. Adversarial: the banner answer replayed with an earlier asking's lifecycle
+ws-banner	plain	Which banner design should go on the home page? -> Plain banner	release	2020-01-01T00:00:00Z#0
+skipped: ws-banner (stale captain question lifecycle)
+answers: closed=0 skipped=1
+stale intake exit=1
+
+### 2. The real Lavish poll result through the adapter and the captain-hold intake
+adapter exit=0
+ws-carrier	postnl	Who should ship the spring orders? -> PostNL - Cheaper wins after all	done	2026-10-10T15:48:45Z#0
+ws-banner	plain	Which banner design should go on the home page? -> Plain banner	release	2026-10-10T15:48:46Z#0
+ws-name	Spring Tide	Name the release -> Spring Tide	done	2026-10-10T15:48:47Z#0
+closed: ws-carrier
+closed: ws-banner
+closed: ws-name
+answers: closed=3 skipped=0
+intake exit=0
+
+### 3. Task state afterwards
+error: "Unknown flag: --all"
+code: VALIDATION_ERROR
+help[1]: Run the command with --help to see supported flags
+count: 10
+tasks[10]{id,state,kind,repo,title}:
+  ws-payment,in_flight,ship,web-shop,Fix the payment error
+  ws-checkout,in_flight,ship,web-shop,Build the new checkout
+  ws-tracking,queued,ship,web-shop,Add order tracking
+  ws-footer,queued,ship,web-shop,Polish the footer
+  ws-loyalty,queued,ship,web-shop,Launch the loyalty scheme
+  ws-provider,queued,ship,web-shop,Switch payment provider
+  ws-banner,queued,ship,web-shop,Put the spring banner on the home page
+  ws-partner,queued,captain,web-shop,Pick a loyalty partner
+  ws-name,done,captain,web-shop,Name the release
+  ws-carrier,done,captain,web-shop,Which carrier?
+help[2]:
+  - Run `tasks-axi show <id>` for full notes on a task
+  - Run `tasks-axi ready` to see unblocked queued work
+
+### 4. Next refresh
+board: /tmp/fm-lb-gate2.YULPWm/home/data/live-board/board.html
+build exit=0

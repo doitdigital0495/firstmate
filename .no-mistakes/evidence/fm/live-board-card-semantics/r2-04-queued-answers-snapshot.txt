@@ -1,0 +1,149 @@
+page:
+  title: Firstmate live board · Lavish
+  refs: 110
+snapshot:
+uid=g32:1_0 RootWebArea "Firstmate live board · Lavish" url="https://desktop-agentic.tail1dbb2d.ts.net:8387/session/cda26f395768afef"
+  uid=g32:1_1 StaticText "Lavish"
+  uid=g32:1_2 StaticText "EDITOR"
+  uid=g32:1_3 button "Annotate" description="Toggle annotate/explore mode (⌘I / Ctrl+I)"
+  uid=g32:1_4 button "More" expandable haspopup="menu"
+  uid=g32:1_5 Iframe
+    uid=g32:1_6 RootWebArea "Firstmate live board" url="https://desktop-agentic.tail1dbb2d.ts.net:8387/artifact/cda26f395768afef/index.html?artifact_revision=1&artifact_load_token=Ezp9MfV3qgc5nH1KXd4FeqsRRf5vurFL"
+      uid=g32:1_7 main
+        uid=g32:1_8 heading "Your projects" level="1"
+        uid=g32:1_9 StaticText "Firstmate live board · home"
+        uid=g32:1_10 generic live="polite" relevant="additions text"
+          uid=g32:28_0 StaticText "live"
+          uid=g32:28_1 StaticText "updated 57s ago · refreshes every 60s"
+        uid=g32:1_13 region "Totals"
+          uid=g32:1_14 StaticText "4"
+          uid=g32:1_15 StaticText "QUESTIONS FOR YOU"
+          uid=g32:1_16 StaticText "1"
+          uid=g32:1_17 StaticText "URGENT"
+          uid=g32:1_18 StaticText "1"
+          uid=g32:1_19 StaticText "DOING NOW"
+          uid=g32:1_20 StaticText "2"
+          uid=g32:1_21 StaticText "NEXT"
+          uid=g32:1_22 StaticText "7"
+          uid=g32:1_23 StaticText "CHARTED NEXT"
+          uid=g32:1_24 StaticText "0"
+          uid=g32:1_25 StaticText "DONE, LAST 2 WEEKS"
+        uid=g32:1_26 generic live="polite" relevant="additions text"
+          uid=g32:1_27 StaticText "Answers you queue are delivered to Firstmate when you press Send in the Lavish panel."
+        uid=g32:1_28 heading "Web shop relaunch" level="2"
+        uid=g32:1_29 StaticText "1 urgent question"
+        uid=g32:1_30 StaticText "3 questions"
+        uid=g32:1_31 StaticText "1 stuck"
+        uid=g32:1_32 StaticText "The new web shop that opens in spring."
+        uid=g32:1_33 StaticText "4 questions wait for you (1 urgent), 1 being done now, 2 starting next, 7 not starting on their own (1 stuck)"
+        uid=g32:1_34 StaticText "0 done in the last 2 weeks"
+        uid=g32:1_35 StaticText "Latest: "
+        uid=g32:1_36 StaticText "Build the new checkout - wiring the basket into the new checkout page (12s ago)"
+        uid=g32:1_37 StaticText "QUESTIONS FOR YOU"
+        uid=g32:1_49 form
+          uid=g32:23_0 StaticText "ANSWER QUEUED IN LAVISH"
+          uid=g32:31_0 StaticText "Who should ship the spring orders? - PostNL - Cheaper wins after all"
+          uid=g32:23_2 button "Change answer"
+        uid=g32:1_74 form
+          uid=g32:27_1 StaticText "ANSWER QUEUED IN LAVISH"
+          uid=g32:31_1 StaticText "Which banner design should go on the home page? - Plain banner"
+          uid=g32:27_3 button "Change answer"
+        uid=g32:1_98 form
+          uid=g32:31_2 StaticText "ANSWER QUEUED IN LAVISH"
+          uid=g32:31_3 StaticText "Name the release - Spring Tide"
+          uid=g32:31_4 button "Change answer"
+        uid=g32:1_103 StaticText "question for you"
+        uid=g32:1_104 StaticText "you deferred this until 2099-01-01"
+        uid=g32:1_105 StaticText "Web shop relaunch"
+        uid=g32:1_106 StaticText "Needs a plain-language explanation"
+        uid=g32:1_107 StaticText "Firstmate has not yet written in plain words what this is about and what answering it is for. Ask Firstmate to explain it before you answer."
+        uid=g32:1_108 StaticText "THE QUESTION"
+        uid=g32:1_109 heading "Pick a loyalty partner" level="3"
+        uid=g32:1_110 StaticText "Why it is asked: "
+        uid=g32:1_111 StaticText "Decide after the summer."
+        uid=g32:1_112 StaticText "asked 8s ago"
+        uid=g32:1_113 form
+          uid=g32:1_114 textbox "Your answer" multiline
+          uid=g32:1_115 button "Queue answer"
+          uid=g32:1_116 StaticText "Firstmate records your words as the answer and closes this question."
+          uid=g32:1_117 status atomic live="polite" relevant="additions text"
+        uid=g32:1_118 heading "Doing now 1" level="3"
+        uid=g32:1_119 StaticText "A worker is on this right now."
+        uid=g32:1_120 StaticText "Build the new checkout"
+        uid=g32:1_121 StaticText "wiring the basket into the new checkout page"
+        uid=g32:1_122 StaticText "last update 12s ago"
+        uid=g32:1_123 heading "Next 2" level="3"
+        uid=g32:1_124 StaticText "A worker starts these without you; nothing is in their way."
+        uid=g32:1_125 StaticText "Add order tracking"
+        uid=g32:1_126 StaticText "Polish the footer"
+        uid=g32:1_127 heading "Charted next 7" level="3"
+        uid=g32:1_128 StaticText "These will not start on their own. Each one says what it waits for."
+        uid=g32:1_129 StaticText "Fix the payment error"
+        uid=g32:1_130 StaticText "Stuck, needs help"
+        uid=g32:1_131 StaticText "the payment sandbox keeps refusing our test card"
+        uid=g32:1_132 StaticText "last update 12s ago"
+        uid=g32:1_133 StaticText "Put the spring banner on the home page"
+        uid=g32:1_134 StaticText "Waits for your answer"
+        uid=g32:1_135 StaticText "Which carrier?"
+        uid=g32:1_136 StaticText "Waits for your answer"
+        uid=g32:1_137 DisclosureTriangle "Show 4 more" expandable
+        uid=g32:1_138 DisclosureTriangle "3 board notes" expandable
+        uid=g32:1_139 StaticText "Collected 2026-10-10T15:48:50Z in 1s · revision 0193d658f220 · answers go through Firstmate's captain-hold intake."
+  uid=g32:1_140 complementary
+    uid=g32:1_141 heading "Conversation" level="2"
+    uid=g32:31_5 StaticText "QUEUED"
+    uid=g32:31_6 button "Remove queued prompt"
+    uid=g32:31_7 StaticText "<choice>"
+    uid=g32:31_8 StaticText "“Who should ship the spring orders? -> PostNL - Cheaper wins after all”"
+    uid=g32:31_9 StaticText "Live board answer - Who should ship the spring orders?: PostNL - Cheaper wins after all
+
+Context data:
+{
+  "schema": "fm-bearings-answer.v1",
+  "question": "ws-carrier",
+  "selection": "postnl",
+  "note": "Cheaper wins after all",
+  "close": "done",
+  "lifecycle": "2026-10-10T15:48:45Z#0"
+}"
+    uid=g32:31_10 StaticText "QUEUED"
+    uid=g32:31_11 button "Remove queued prompt"
+    uid=g32:31_12 StaticText "<choice>"
+    uid=g32:31_13 StaticText "“Which banner design should go on the home page? -> Plain banner”"
+    uid=g32:31_14 StaticText "Live board answer - Which banner design should go on the home page?: Plain banner
+
+Context data:
+{
+  "schema": "fm-bearings-answer.v1",
+  "question": "ws-banner",
+  "selection": "plain",
+  "note": "",
+  "close": "release",
+  "lifecycle": "2026-10-10T15:48:46Z#0"
+}"
+    uid=g32:31_15 StaticText "QUEUED"
+    uid=g32:31_16 button "Remove queued prompt"
+    uid=g32:31_17 StaticText "<choice>"
+    uid=g32:31_18 StaticText "“Name the release -> Spring Tide”"
+    uid=g32:31_19 StaticText "Live board answer - Name the release: Spring Tide
+
+Context data:
+{
+  "schema": "fm-bearings-answer.v1",
+  "question": "ws-name",
+  "selection": "",
+  "note": "Spring Tide",
+  "close": "done",
+  "lifecycle": "2026-10-10T15:48:47Z#0"
+}"
+    uid=g32:1_143 StaticText "Your agent is not listening. If this persists, ask your agent to poll for updates from Lavish."
+    uid=g32:1_144 textbox "Write a message for the agent..." multiline
+    uid=g32:1_145 button "Attach images"
+    uid=g32:1_146 status atomic live="polite" relevant="additions text"
+    uid=g32:1_147 button "Send & End"
+    uid=g32:1_148 button "Send to Agent"
+help[4]:
+  Run `chrome-devtools-axi fill @g32:1_114 "text"` to fill the "Your answer" field
+  Run `chrome-devtools-axi click @g32:1_3` to click the "Annotate" button
+  Run `chrome-devtools-axi scroll down` to scroll down
+  Use `chrome-devtools-axi eval <expr>` for JS expressions. For multi-statement code, pass a function: `eval "() => { ...; return result }"`
