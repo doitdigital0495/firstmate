@@ -379,8 +379,8 @@ check "$out" ".tray == $tray"'
   "Change answer did not reopen its card, or touched another card"
 out=$(render "$home" "$now" 'ws-carrier=dhl' '!change=ws-carrier' 'ws-carrier=postnl')
 check "$out" '(.queued | map(.data.selection)) == ["dhl","postnl"]
-  and (.projects[0].questions[0] | .lavishQuestion as $key | .answer == "queued" and (.answered | test("PostNL"))
-    and ($key | test("^live-board:ws-carrier#")))' \
+  and (.projects[0].questions[0] | .answer == "queued" and (.answered | test("PostNL"))
+    and (.lavishQuestion | test("^live-board:ws-carrier#")))' \
   "queueing a new answer on a changed card did not re-queue it under the same Lavish question"
 out=$(render "$home" "$now" "!restore=ws-carrier=$kept" "!restore=ws-legacy=$(printf '2020-01-01T00:00:00Z#0\tOld words')")
 check "$out" '(.queued | length == 0)
