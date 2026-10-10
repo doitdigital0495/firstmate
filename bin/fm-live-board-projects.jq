@@ -139,6 +139,8 @@ def lb_view($map):
         | {key:$q.key,id:$q.id,urgent:$q.urgent,priority:$q.priority,
            text:($ctx.question // ($q.title | lb_title($ids)) // "Question without a title"),
            topic:(if $ctx.question != null then ($q.title | lb_title($ids)) else null end),
+           about:($ctx.about // null),purpose:($ctx.purpose // null),
+           needs_explanation:($ctx.about == null or $ctx.purpose == null),
            why:($q.hold.reason | lb_clean($ids)),
            asked:($q.hold.set // $q.since),deferred_until:(if $q.hold.until != null and $q.hold.bucket != "live" then $q.hold.until else null end),
            waiting_on_other_work:(($q.unresolved_blockers // []) | length > 0),
@@ -164,6 +166,9 @@ def lb_view($map):
    notes:[
      if $map != null and $named == null then
        "The project map is invalid, so work is grouped by repository until Firstmate fixes it." else empty end,
+     ([$groups[].questions[] | select(.needs_explanation)] | length) as $bare
+     | if $bare > 0 then lb_plural($bare; "question still needs"; "questions still need")
+         + " a plain-language explanation from Firstmate." else empty end,
      ($board.omissions[]? | .kind as $k
        | if $k == "backlog-unavailable" then "The task list could not be read, so some work may be missing."
          elif $k == "registry-unavailable" then "The project registry could not be read."

@@ -47,10 +47,11 @@ A pending-close record that fails validation outright is a different case and st
 
 ## Structured question context
 
-`bin/fm-captain-hold.sh --help` owns the versioned question-context storage, codec, explicit close modes, active-lifecycle immutability and guarded-answer/retry contract.
-The canonical snapshot and home summary preserve that validated context; the separate live board offers a context-less call only a free-text answer and keeps malformed, stale and ambiguous calls visible but read-only.
+`bin/fm-captain-hold.sh --help` owns the versioned question-context storage, codec, plain-language rule, explicit close modes, active-lifecycle immutability and guarded-answer/retry contract.
+That rule makes the writer refuse a context that does not tell a non-technical manager what the call is about and what answering it is for, so every newly written call explains itself.
+The canonical snapshot and home summary preserve that validated context; the separate live board offers a context-less call only a free-text answer, marks any call without that explanation as needing one, and keeps malformed, stale and ambiguous calls visible but read-only.
 The live board page (`bin/fm-live-board.sh`) queues a Lavish choice carrying that close mode and lifecycle, and `bin/fm-procevent-lavish.sh answers` relays the lifecycle as the intake's guard field.
-`tests/fm-captain-hold-lifecycle.test.sh`, `tests/fm-live-board-snapshot.test.sh` and `tests/fm-live-board.test.sh` exercise this mechanism through public commands, including context preservation and answer-before-rehold refusal.
+`tests/fm-captain-hold-lifecycle.test.sh`, `tests/fm-live-board-snapshot.test.sh` and `tests/fm-live-board.test.sh` exercise this mechanism through public commands, including context preservation, answer-before-rehold refusal, the writer's plain-language refusals and the card of a call stored without its explanation.
 
 ## Answer-time resolution
 
