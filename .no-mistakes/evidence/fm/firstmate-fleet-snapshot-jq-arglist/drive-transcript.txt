@@ -1,0 +1,43 @@
+== jq: jq-1.6, ARG_MAX=2097152, single argv cap=131072 bytes
+
+== S1: realistic backlog, 200 queued tasks with detail lines
+backlog.md bytes: 173093
+-- base 8793116
+base   --contribution-input                          exit=0 stdout_bytes=0
+    stderr: /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4KZSHTDPVDYFB3WZ61FH23S/bin/fm-fleet-snapshot.base.sh: line 2043: /usr/bin/jq: Argument list too long
+-- target cfcab60
+target --contribution-input                          exit=0 stdout_bytes=452187
+   payload: {"backlog_records":200,"tasks":0,"first":"task-0001","last":"task-0200"}
+   temp dirs left behind by target run: 0
+
+== S2: small backlog, base and target must emit identical JSON
+base exit=0
+target exit=0
+byte-identical: no (object key order differs)
+same JSON value after key sort (jq -S): yes (8266 bytes)
+top-level key order base:   ["backlog","tasks"]
+top-level key order target: ["backlog","tasks"]
+
+== S3: every snapshot mode and the views built from it, 200-task home, target
+target (default fleet JSON)                          exit=0 stdout_bytes=454150
+   payload: {"backlog_records":200}
+target --live-board-input                            exit=0 stdout_bytes=452822
+target --secondmate-home-summary                     exit=0 stdout_bytes=11888
+fm-fleet-view.sh                                     exit=0 stdout_bytes=27374
+   view lines: 217, mentions task-0200: 1
+fm-contributions.sh poll (consumer of the fixed mode) exit=0 stdout_bytes=0
+-- same consumer wired to the base snapshot (temp copy of bin/ with the base script swapped in)
+base   fm-contributions.sh poll                      exit=0 stdout_bytes=0
+    stderr: /tmp/fm-snap-drive.jGL5Eg/basebin/fm-fleet-snapshot.sh: line 2043: /usr/bin/jq: Argument list too long
+
+== S4: adversarial
+backlog.md bytes (2000 tasks): 2450284
+target --contribution-input, 2000 tasks              exit=0 stdout_bytes=5288181
+   payload: {"backlog_records":2000,"tasks":0}
+target --contribution-input, shell-hostile titles    exit=0 stdout_bytes=407821
+   payload: {"backlog_records":300,"sample":"Title with \"quotes\", $(subshell), `ticks`, backslash \\ and unicode e-acute é %s number 1 padded to make the record long enough to matter for the size"}
+-- unwritable TMPDIR must fail loudly, not emit a partial document
+target --contribution-input, TMPDIR read-only        exit=1 stdout_bytes=0
+    stderr: mktemp: failed to create directory via template ‘/tmp/fm-snap-drive.jGL5Eg/ro/fm-fleet-snapshot.XXXXXX’: Permission denied
+    stderr: fm-fleet-snapshot: temporary transport directory creation failed
+-- no temp dirs leaked across the whole run: 28 present now vs 28 at start
