@@ -7,8 +7,7 @@
 // note-only answer); each is applied to that card's form and submitted.
 // Three more specs drive the rest of the answer flow, in argument order:
 //   `!send`               press the page's send control at the top
-//   `!send=<id>`          press the send control on that answered card
-//   `!change=<id>`        press that answered card's change control
+//   `!change=<id>`        press that answered card's Change answer or Answer again control
 //   `!restore=<id>=<kept>` put <kept> back in that card's hidden answer field and
 //                         deliver a parent message, as Lavish does after a reload
 // Prints one JSON document:
@@ -16,7 +15,7 @@
 //     projects:[{label, key, badges, description, status, progress, latest, text,
 //       questions:[{id,mode,title,topic,why,urgent,badges,answerable,lavishQuestion,
 //         readonly,options:[{value,label,detail,recommended}],noteField,modeText,
-//         submit,answer,answered,kept,canChange,sendHere}],
+//         submit,answer,answered,kept,change,status}],
 //       lanes:{doing|next|charted:{count,say,none,more,
 //         cards:[{id,why,reason,title,note,links,folded}]}}}],
 //     submits:[{id,status}], queued:[{prompt,tag,data}], sends, tray:{count,text,send}, tickers }
@@ -97,13 +96,6 @@ for (const spec of answers) {
     submits.push({ id: spec, status: send ? "sent" : "no-send-control" });
     continue;
   }
-  if (spec.startsWith("!send=")) {
-    const target = cardOf(spec.slice(6));
-    const send = target && target.find((c) => c.getAttribute("data-send-here") !== null)[0];
-    if (send && !send.hidden) send.dispatch("click");
-    submits.push({ id: spec, status: send && !send.hidden ? "sent" : "no-send-control" });
-    continue;
-  }
   if (spec.startsWith("!change=")) {
     const target = cardOf(spec.slice(8));
     const change = target && target.find((c) => c.getAttribute("data-change") !== null)[0];
@@ -179,9 +171,9 @@ const projects = root.children.filter((c) => c.getAttribute("data-project") !== 
         answered: form && !form.find((c) => c.hasClass("q-answered"))[0].hidden
           ? text(form.find((c) => c.hasClass("q-answered-main"))[0]) : null,
         kept: form ? form.find((c) => c.name === "queued")[0].value : null,
-        canChange: form ? !form.find((c) => c.getAttribute("data-change") !== null)[0].hidden : null,
-        sendHere: form && !form.find((c) => c.getAttribute("data-send-here") !== null)[0].hidden
-          ? text(form.find((c) => c.getAttribute("data-send-here") !== null)[0]) : null,
+        change: q.getAttribute("data-answer") === "queued" || q.getAttribute("data-answer") === "sent"
+          ? text(form.find((c) => c.getAttribute("data-change") !== null)[0]) : null,
+        status: form ? text(form.find((c) => c.hasClass("q-status"))[0]) : null,
       };
     }),
     lanes: Object.fromEntries(p.find((c) => c.getAttribute("data-lane-box") !== null).map((lane) => {

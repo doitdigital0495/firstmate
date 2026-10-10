@@ -198,11 +198,13 @@ check "$out" '.projects[0].lanes
   "the lane rules did not put each kind of open work in its one lane with its plain reason"
 check "$out" '[.projects[].lanes[].cards[].id] | length == 14 and (unique | length) == 14' \
   "a task appeared in no lane or in more than one"
-check "$out" '.stats.doing == 1 and .stats.next == 5 and .stats.charted == 8 and .stats.questions == 1
-  and (.projects[0].questions | map(.id)) == ["ln-ask"]
-  and .projects[0].status == "1 question waits for you, 1 being done now, 5 starting next, 8 not starting on their own (1 stuck)"
+check "$out" '.stats.doing == 1 and .stats.next == 5 and .stats.charted == 8 and .stats.questions == 2
+  and (.projects[0].questions | map(.id) | sort) == ["ln-ask","ln-later"]
+  and (.projects[0].questions[] | select(.id == "ln-later") | .answerable
+    and (.badges | index("you deferred this until 2099-01-01") != null))
+  and .projects[0].status == "2 questions wait for you, 1 being done now, 5 starting next, 8 not starting on their own (1 stuck)"
   and ([.projects[].text] | join(" ") | test("ln-[a-z]") | not)' \
-  "a question the captain put off still had a card, or the lane totals were wrong"
+  "a question the captain put off lost its answerable card and deferred badge, or the lane totals were wrong"
 pass "doing now, next and charted next each follow one rule, and every task sits in exactly one lane"
 
 # --- Projects, questions and workers -------------------------------------------
@@ -356,7 +358,7 @@ check "$(render "$home" "$now")" '.tray == null
   "an unanswered board showed a send control, or a card did not offer Queue answer"
 check "$out" '.tray == {count:3,text:"3 answers queuedNothing reaches Firstmate until you send. Queue as many as you like first.",send:"Send 3 answers to Firstmate"}
   and .sends == 0
-  and (.projects[0].questions[0] | .answer == "queued" and .canChange and .sendHere == "Send 3 answers to Firstmate"
+  and (.projects[0].questions[0] | .answer == "queued" and .change == "Change answer"
     and (.answered | test("^Answer queued") and test("Who should ship the spring orders\\? - PostNL - cheaper")))
   and (.projects[1].questions[] | select(.id == "data-window") | .answer == "open" and .answered == null)
   and (.projects[0].questions[1] | .answer == "queued" and (.answered | test("Use the new logo")))' \
@@ -365,15 +367,21 @@ kept=$(printf '%s\n' "$out" | jq -r '.projects[0].questions[0].kept')
 out=$(render "$home" "$now" 'ws-carrier=postnl:cheaper' 'data-note-only=:Call it Tidewater' '!send')
 check "$out" '.sends == 1 and .tray == null and (.queued | length == 2)
   and ([.projects[].questions[] | select(.id == "ws-carrier" or .id == "data-note-only")]
-    | all(.answer == "sent" and (.canChange | not) and .sendHere == null and (.answered | test("^Answer sent"))))' \
-  "sending did not deliver the queued answers once and mark their cards sent"
-check "$(render "$home" "$now" 'ws-carrier=postnl' 'ws-legacy=:Use the new logo' '!send=ws-legacy')" '.sends == 1 and .tray == null
-  and ([.projects[].questions[] | select(.id == "ws-carrier" or .id == "ws-legacy")] | all(.answer == "sent"))' \
-  "the send control on an answered card did not send every queued answer"
+    | all(.answer == "sent" and .change == "Answer again" and (.answered | test("^Answer sent"))))' \
+  "sending did not deliver the queued answers once and mark their cards sent with Answer again"
+check "$(render "$home" "$now" 'ws-carrier=postnl' '!send' '!change=ws-carrier')" '.sends == 1 and .tray == null
+  and (.projects[0].questions[0] | .answer == "open" and .answered == null and .submit == "Queue answer")' \
+  "Answer again did not reopen a sent card whose question is still open"
 out=$(render "$home" "$now" 'ws-carrier=dhl' 'data-note-only=:Call it Tidewater' '!change=ws-carrier')
-check "$out" '.tray.count == 1 and .tray.send == "Send answer to Firstmate"
-  and (.projects[0].questions[0] | .answer == "open" and .answered == null)' \
-  "Change answer did not reopen its card"
+check "$out" '.tray.count == 2 and .tray.send == "Send 2 answers to Firstmate"
+  and (.projects[0].questions[0] | .answer == "changing" and .answered == null and (.status | test("DHL.*still queued")))' \
+  "Change answer did not reopen its card, or stopped counting the answer Lavish still holds"
+check "$(render "$home" "$now" 'ws-carrier=dhl' 'data-note-only=:Call it Tidewater' '!change=ws-carrier' '!send')" '.sends == 1 and .tray == null
+  and ([.projects[].questions[] | select(.id == "ws-carrier" or .id == "data-note-only")] | all(.answer == "sent"))' \
+  "sending while an answer was being changed left its card open although Lavish delivered it"
+check "$(render "$home" "$now" 'ws-carrier=dhl' '!change=ws-carrier' 'ws-carrier=postnl')" '.tray.count == 1
+  and (.projects[0].questions[0] | .answer == "queued" and (.answered | test("PostNL")))' \
+  "queueing a new answer on a changed card did not replace the earlier one"
 out=$(render "$home" "$now" "!restore=ws-carrier=$kept" "!restore=ws-legacy=$(printf 'queued\t2020-01-01T00:00:00Z#0\tOld words')")
 check "$out" '(.queued | length == 0) and .tray.count == 1
   and (.projects[0].questions[0] | .answer == "queued" and (.answered | test("PostNL - cheaper")))

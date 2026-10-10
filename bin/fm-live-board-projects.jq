@@ -83,10 +83,6 @@ def lb_lane($today):
   elif .state == "program" then {lane:"charted",why:"program"}
   else {lane:"charted",why:"unclear"} end;
 
-# A captain call the captain put off to a later day is answered for now: it
-# has no card until that day, only its deferred row in the charted lane.
-def lb_is_question: (.hold.bucket == "dated") | not;
-
 def lb_why_label($until):
   if . == "working" then "Being done now"
   elif . == "ready" then "Starts on its own"
@@ -122,7 +118,7 @@ def lb_view($map):
          | .key) // null end) as $index
     | if $index != null then {key:"project:\($index)",index:$index}
       else {key:"repo:\($repo // "")",index:null,repo:$repo} end;
-  [$board.projects[] | .questions[] | select(lb_is_question) | . as $q | group_of(.id; .project) + {question:$q}] as $asked
+  [$board.projects[] | .questions[] | . as $q | group_of(.id; .project) + {question:$q}] as $asked
 | [$board.projects[] | .tasks[] | . as $t | group_of(.id; .project) + {task:$t}] as $placed
 | [($board.recently_finished // [])[] | . as $f | group_of(.id; .project) + {finished:$f}] as $done
 | ([$asked[], $placed[], $done[] | {key,index,repo}]

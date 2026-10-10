@@ -1611,8 +1611,9 @@ A question card is written for a manager who did not build the work: it shows it
 Those words come from the structured context its owner recorded with `bin/fm-captain-hold.sh hold --context-file`, which refuses a context without them.
 A question stored without that explanation still shows and can still be answered, under a visible "Needs a plain-language explanation" marker and a matching board note.
 A captain hold with no recorded context gets a free-text answer box that feeds the same captain-hold intake; stale, malformed or ambiguous questions stay visible but read-only.
-The captain picks an option, optionally adds a note, and queues the answer; the card shrinks to that answer, and one send control delivers every queued answer at once.
-An answered question leaves the page on the first refresh after its answer is recorded, and a question the captain put off until a later day has no card until that day, only a Charted next card saying until when.
+The captain picks an option, optionally adds a note, and queues the answer; the card shrinks to that answer, and the one send control at the top of the page delivers every queued answer at once.
+Change answer reopens a queued card, which still counts as queued and says its earlier answer will be sent until a new one replaces it; a sent card offers Answer again for as long as its question is open.
+An answered question leaves the page on the first refresh after its answer is recorded; a question the captain put off until a later day keeps its card, badged with that day, beside its Charted next card.
 Set `enabled` to false or delete the file to stop refreshing; the published page and any recorded answers stay in place.
 
 ## Mail plane (.env)
