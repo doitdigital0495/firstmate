@@ -1,0 +1,221 @@
+
+=== S1 explained hold is accepted
+--- explained context
+$ fm-captain-hold.sh hold margin-grant --reason Decide access and reconciliation order. --context-file /tmp/fm-lb-live.run2/home/ctx/good.json
+exit=0
+margin-grant
+backlog: changed
+
+=== S3 adversarial: contexts a manager cannot place are refused before any change
+--- refused: none
+$ fm-captain-hold.sh hold margin-legacy --reason choose --context-file /tmp/fm-lb-live.run2/home/ctx/none.json
+exit=1
+fm-captain-hold: question context needs "about" and "purpose": the captain is a non-technical manager who did not build this, so say in plain words what this is about, and what answering it unlocks or what happens while it stays unanswered
+backlog: unchanged
+--- refused: nopurpose
+$ fm-captain-hold.sh hold margin-legacy --reason choose --context-file /tmp/fm-lb-live.run2/home/ctx/nopurpose.json
+exit=1
+fm-captain-hold: question context needs "about" and "purpose": the captain is a non-technical manager who did not build this, so say in plain words what this is about, and what answering it unlocks or what happens while it stays unanswered
+backlog: unchanged
+--- refused: noabout
+$ fm-captain-hold.sh hold margin-legacy --reason choose --context-file /tmp/fm-lb-live.run2/home/ctx/noabout.json
+exit=1
+fm-captain-hold: question context needs "about" and "purpose": the captain is a non-technical manager who did not build this, so say in plain words what this is about, and what answering it unlocks or what happens while it stays unanswered
+backlog: unchanged
+--- refused: link
+$ fm-captain-hold.sh hold margin-legacy --reason choose --context-file /tmp/fm-lb-live.run2/home/ctx/link.json
+exit=1
+fm-captain-hold: "about" and "purpose" are read by a non-technical manager: drop links, backticks and GUIDs and say it in plain words
+backlog: unchanged
+--- refused: tick
+$ fm-captain-hold.sh hold margin-legacy --reason choose --context-file /tmp/fm-lb-live.run2/home/ctx/tick.json
+exit=1
+fm-captain-hold: "about" and "purpose" are read by a non-technical manager: drop links, backticks and GUIDs and say it in plain words
+backlog: unchanged
+--- refused: guid
+$ fm-captain-hold.sh hold margin-legacy --reason choose --context-file /tmp/fm-lb-live.run2/home/ctx/guid.json
+exit=1
+fm-captain-hold: "about" and "purpose" are read by a non-technical manager: drop links, backticks and GUIDs and say it in plain words
+backlog: unchanged
+--- refused: nodetail
+$ fm-captain-hold.sh hold margin-legacy --reason choose --context-file /tmp/fm-lb-live.run2/home/ctx/nodetail.json
+exit=1
+fm-captain-hold: every option needs a "detail" telling a non-technical manager what happens when he picks it
+backlog: unchanged
+
+=== S4 plain words with slashes are accepted (decided in review round 1)
+--- slashes
+$ fm-captain-hold.sh hold data-rhythm --reason choose --context-file /tmp/fm-lb-live.run2/home/ctx/slashes.json
+exit=0
+data-rhythm
+backlog: changed
+
+=== S5 reason-only hold (no context file) is still accepted, and a pre-rule stored call stays valid
+--- reason only
+$ fm-captain-hold.sh hold margin-legacy --reason Pick a refresh time.
+exit=0
+margin-legacy
+backlog: changed
+
+=== Board build 1
+board: /tmp/fm-lb-live.run2/home/data/live-board/board.html
+{
+  "notes": [
+    "2 questions still need a plain-language explanation from Firstmate.",
+    "Work run from other Firstmate homes is not on this board."
+  ],
+  "cards": [
+    {
+      "project": "Margin overview",
+      "id": "margin-grant",
+      "text": "Should the finance group get access now, or only after the totals match the old report?",
+      "topic": "Margin overview: group grant and Power BI reconciliation",
+      "about": "The new margin overview is built, but the finance team cannot open it yet and its totals have not been compared with the old Power BI report.",
+      "purpose": "Your answer decides who may see the report and whether the team checks the numbers first. Until you answer, nobody outside the build team can use it.",
+      "needs_explanation": false,
+      "why": "Decide access and reconciliation order.",
+      "options": [
+        {
+          "label": "Give access now",
+          "detail": "Finance can open the report today, but a wrong total may be seen before it is checked."
+        },
+        {
+          "label": "Check the numbers first",
+          "detail": "Finance waits about two days while the totals are compared, which is recommended because a wrong margin figure is hard to take back."
+        }
+      ],
+      "recommendation": "check-first"
+    },
+    {
+      "project": "Margin overview",
+      "id": "margin-legacy",
+      "text": "Margin overview: refresh time",
+      "topic": null,
+      "about": null,
+      "purpose": null,
+      "needs_explanation": true,
+      "why": "Pick a refresh time.",
+      "options": [],
+      "recommendation": null
+    },
+    {
+      "project": "Data platform",
+      "id": "data-old",
+      "text": "Move the nightly window?",
+      "topic": "Move the nightly window?",
+      "about": null,
+      "purpose": null,
+      "needs_explanation": true,
+      "why": "Load overlaps.",
+      "options": [
+        {
+          "label": "Keep",
+          "detail": "The load keeps running at night."
+        },
+        {
+          "label": "Move",
+          "detail": null
+        }
+      ],
+      "recommendation": "keep"
+    },
+    {
+      "project": "Data platform",
+      "id": "data-rhythm",
+      "text": "Reporting rhythm",
+      "topic": null,
+      "about": "The team can report monthly/quarterly/yearly to the business from now on.",
+      "purpose": "Your pick sets how often the business gets the figures. Until then nothing is sent.",
+      "needs_explanation": false,
+      "why": "choose",
+      "options": [],
+      "recommendation": null
+    }
+  ]
+}
+
+=== S2 persistence: the explanation lives in the task record and survives a rebuild and an identical re-hold
+task:
+  id: margin-grant
+  title: "Margin overview: group grant and Power BI reconciliation"
+  state: queued
+  blocked: no
+  blocked_by: none
+  held: yes
+  hold_reason: Decide access and reconciliation order.
+  hold_kind: captain
+  hold_until: "-"
+  kind: captain
+  repo: geris-reports
+  priority: 1
+  created: 2026-10-10
+  closed: "-"
+  deps: none
+  links: none
+  body: "Captain hold set: 2026-10-10T07:46:15Z\nCaptain question context: {\"about\":\"The new margin overview is built, but the finance team cannot open it yet and its totals have not been compared with the old Power BI report.\",\"close\":\"done\",\"lifecycle\":\"2026-10-10T07:46:15Z#0\",\"options\":[{\"detail\":\"Finance can open the report today, but a wrong total may be seen before it is checked.\",\"label\":\"Give access now\",\"value\":\"grant-now\"},{\"detail\":\"Finance waits about two days while the totals are compared, which is recommended because a wrong margin figure is hard to take back.\",\"label\":\"Check the numbers first\",\"value\":\"check-first\"}],\"purpose\":\"Your answer decides who may see the report and whether the team checks the numbers first. Until you answer, nobody outside the build team can use it.\",\"question\":\"Should the finance group get access now, or only after the totals match the old report?\",\"recommendation\":\"check-first\",\"schema\":\"fm-captain-question.v1\",\"subject\":null}"
+--- identical re-hold
+$ fm-captain-hold.sh hold margin-grant --reason Decide access and reconciliation order. --context-file /tmp/fm-lb-live.run2/home/ctx/good.json
+exit=0
+margin-grant
+backlog: unchanged
+board: /tmp/fm-lb-live.run2/home/data/live-board/board.html
+[
+  {
+    "about": "The new margin overview is built, but the finance team cannot open it yet and its totals have not been compared with the old Power BI report.",
+    "purpose": "Your answer decides who may see the report and whether the team checks the numbers first. Until you answer, nobody outside the build team can use it.",
+    "needs_explanation": false
+  }
+]
+
+=== S6 backfill: a flagged call gains its explanation in the same lifecycle; a backfill that also changes the call is refused
+lifecycle before: 2026-07-14T12:00:00Z#0
+--- backfill that changes the recommendation
+$ fm-captain-hold.sh hold data-old --reason Load overlaps. --context-file /tmp/fm-lb-live.run2/home/ctx/changed.json
+exit=1
+fm-captain-hold: active question context differs; resolve this call before publishing new semantics
+backlog: unchanged
+--- backfill that only explains
+$ fm-captain-hold.sh hold data-old --reason Load overlaps. --context-file /tmp/fm-lb-live.run2/home/ctx/explained.json
+exit=0
+data-old
+backlog: changed
+lifecycle after: 2026-07-14T12:00:00Z#0
+
+=== Board build 2
+board: /tmp/fm-lb-live.run2/home/data/live-board/board.html
+{
+  "notes": [
+    "1 question still needs a plain-language explanation from Firstmate.",
+    "Work run from other Firstmate homes is not on this board."
+  ],
+  "cards": [
+    {
+      "project": "Margin overview",
+      "id": "margin-grant",
+      "about": "The new margin overview is built, but the finance team cannot open it yet and its totals have not been compared with the old Power BI report.",
+      "purpose": "Your answer decides who may see the report and whether the team checks the numbers first. Until you answer, nobody outside the build team can use it.",
+      "needs_explanation": false
+    },
+    {
+      "project": "Margin overview",
+      "id": "margin-legacy",
+      "about": null,
+      "purpose": null,
+      "needs_explanation": true
+    },
+    {
+      "project": "Data platform",
+      "id": "data-old",
+      "about": "The nightly data load overlaps with the backup, which sometimes slows both down.",
+      "purpose": "Your answer decides when the figures are refreshed. Until then the overlap stays.",
+      "needs_explanation": false
+    },
+    {
+      "project": "Data platform",
+      "id": "data-rhythm",
+      "about": "The team can report monthly/quarterly/yearly to the business from now on.",
+      "purpose": "Your pick sets how often the business gets the figures. Until then nothing is sent.",
+      "needs_explanation": false
+    }
+  ]
+}
