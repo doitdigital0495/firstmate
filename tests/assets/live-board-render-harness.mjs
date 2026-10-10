@@ -15,7 +15,14 @@
 //                         key needed) presses the pinned detail's Close; and
 //                         `restore` puts <pr-key> back in the timeline's hidden
 //                         pin field and delivers a parent message, as Lavish
-//                         does after a reload
+//                         does after a reload. `press` is a real pointer press
+//                         on a marker (mouseenter, focus, click, and it keeps
+//                         focus); `presslink` and `pressclose` (no key needed)
+//                         are a real pointer press on the pinned detail's link
+//                         or Close: mouse-down takes focus off the marker
+//                         (mouseleave, blur) and the click on mouse-up lands
+//                         only if that node is still on the page, else the
+//                         spec's status is `replaced`
 // Prints one JSON document:
 //   { freshness, banner, stats:{}, notes:[], empty, idle:{count,names,lines}, foot,
 //     projects:[{label, key, badges, description, status, progress, latest, text,
@@ -143,6 +150,7 @@ const timelineOf = (holder) => {
 };
 
 const submits = [];
+let focused = null;  // the pull request marker the pointer last pressed
 const cardOf = (id) => root.find((c) => c.getAttribute("data-question") === id)[0];
 for (const spec of answers) {
   if (spec.startsWith("!change=")) {
@@ -156,12 +164,22 @@ for (const spec of answers) {
     const [event, name] = spec.slice(4).split("=");
     const key = spec.slice(4 + event.length + name.length + 2);
     const holder = projectNode(name);
-    const target = holder && (event === "close" ? holder.find((c) => c.getAttribute("data-pr-close") !== null)[0]
+    const detail = holder && holder.find((c) => c.getAttribute("data-pr-detail") !== null)[0];
+    const target = holder && (event === "close" || event === "pressclose" ? holder.find((c) => c.getAttribute("data-pr-close") !== null)[0]
+      : event === "presslink" ? detail && detail.find((c) => c.tagName === "A")[0]
       : event === "restore" ? holder.find((c) => c.name === "pinned")[0]
       : holder.find((c) => c.getAttribute("data-pr") === key)[0]);
+    let status = target ? "delivered" : "no-target";
     if (target && event === "restore") { target.value = key; for (const fn of messageListeners) fn({}); }
-    else if (target) target.dispatch(event === "close" ? "click" : event);
-    submits.push({ id: spec, status: target ? "delivered" : "no-target" });
+    else if (target && event === "press") {
+      for (const e of ["mouseenter", "focus", "click"]) target.dispatch(e);
+      focused = target;
+    } else if (target && event.startsWith("press")) {
+      if (focused) { focused.dispatch("mouseleave"); focused.dispatch("blur"); focused = null; }
+      if (holder.find((c) => c === target).length) target.dispatch("click");
+      else status = "replaced";
+    } else if (target) target.dispatch(event === "close" ? "click" : event);
+    submits.push({ id: spec, status });
     continue;
   }
   if (spec.startsWith("!restore=")) {

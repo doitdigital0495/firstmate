@@ -473,6 +473,14 @@ check "$(TZ=UTC render "$tl" "$tl_now" "!pr=click=web-shop=$(shop_pr 1)" "!pr=cl
 check "$(TZ=UTC render "$tl" "$tl_now" "!pr=click=web-shop=$(shop_pr 1)" "!pr=close=web-shop")" \
   '.projects[0].timeline | .detail.shown == null and .kept == "" and all(.marks[]; .pressed == false)' \
   "Close did not unpin the pull request"
+# A real pointer press: the pressed pull request keeps focus, and mouse-down on
+# the link or on Close takes it away before the click lands.
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=press=web-shop=$(shop_pr 1)" "!pr=presslink=web-shop")" \
+  '.submits[1].status == "delivered" and (.projects[0].timeline.detail | .pinned == true and (.links | length) == 1)' \
+  "the first pointer press on a pinned pull request's link did not land"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=press=web-shop=$(shop_pr 1)" "!pr=pressclose=web-shop")" \
+  '.submits[1].status == "delivered" and (.projects[0].timeline | .detail.shown == null and .kept == "")' \
+  "the first pointer press on Close did not unpin the pull request"
 pass "pressing a pull request pins its detail with a link to it, across reloads, until it is pressed again or closed"
 
 check "$out" '.idle.names == ["data","docs-site"]

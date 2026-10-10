@@ -638,7 +638,7 @@ __FM_LIVE_BOARD_DATA__
     var detail = el("div", "tl-detail");
     detail.setAttribute("data-pr-detail", "");
     detail.setAttribute("aria-live", "polite");
-    var pinned = null, preview = null, marks = [];
+    var pinned = null, preview = null, marks = [], drawn = null;
     var kept = el("input");
     kept.type = "hidden"; kept.name = "pinned"; kept.value = "";
     box.setAttribute("data-lavish-question", "live-board-pin:" + p.key);
@@ -650,6 +650,11 @@ __FM_LIVE_BOARD_DATA__
         m.node.className = "tl-pr tl-" + m.kind + (m.item === pinned ? " is-pinned" : "") + (m.item === shown ? " is-shown" : "");
         m.node.setAttribute("aria-pressed", m.item === pinned ? "true" : "false");
       });
+      /* Leaving a pinned pull request for its own link or Close shows the
+         same thing; redrawing would replace that control under the pointer
+         between mouse-down and mouse-up, and the press would be lost. */
+      if (drawn && drawn.item === shown && drawn.pinned === (shown === pinned)) return;
+      drawn = { item: shown, pinned: shown === pinned };
       clear(detail);
       if (!shown) {
         detail.className = "tl-detail";
