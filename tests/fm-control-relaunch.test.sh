@@ -25,6 +25,8 @@ set -u
 . "$ROOT/bin/fm-control-lib.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-trace-context-lib.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-tasks-axi-lib.sh"
 
 CONTROL="$ROOT/bin/fm-control.sh"
 SPAWN="$ROOT/bin/fm-spawn.sh"
@@ -79,7 +81,7 @@ case "${1:-}" in
           printf 'zsh' > "$D/command"
           [ -z "${FM_FAKE_EXIT_TRANSPORT_FAIL_AFTER_STOP:-}" ] || exit 1
           ;;
-        *'encode launch-brief'*)
+        *'encode launch-brief'* | *'Firstmate operational input waiting: read'*)
           cat "$D/becomes" > "$D/command"
           [ -z "${FM_FAKE_LAUNCH_TRANSPORT_FAIL_AFTER_START:-}" ] || exit 1
           ;;
@@ -89,6 +91,7 @@ case "${1:-}" in
       case "$payload" in
         'export GOTMPDIR='*)
           if [ -n "${FM_FAKE_TRACE_PREPARE:-}" ]; then
+            [ -z "${FM_FAKE_TRACE_PREPARE_DELAY:-}" ] || /bin/sleep "$FM_FAKE_TRACE_PREPARE_DELAY"
             : > "$FM_FAKE_TRACE_PREPARE"
             while [ ! -e "$FM_FAKE_TRACE_RELEASE" ]; do /bin/sleep 0.01; done
           fi
@@ -247,6 +250,7 @@ run_control() {  # <case-dir> <args...>
     FM_REAL_MV="${FM_REAL_MV:-}" FM_FAKE_COMPLETE_JOURNAL_MV_FAIL="${FM_FAKE_COMPLETE_JOURNAL_MV_FAIL:-}" \
     FM_FAKE_META_PUBLISH_MV_FAIL="${FM_FAKE_META_PUBLISH_MV_FAIL:-}" \
     FM_FAKE_TRACE_PREPARE="${FM_FAKE_TRACE_PREPARE:-}" \
+    FM_FAKE_TRACE_PREPARE_DELAY="${FM_FAKE_TRACE_PREPARE_DELAY:-}" \
     FM_FAKE_TRACE_RELEASE="${FM_FAKE_TRACE_RELEASE:-}" \
     FM_FAKE_META_WRITER_READY="${FM_FAKE_META_WRITER_READY:-}" \
     FM_FAKE_TRACE_EXPORTED="${FM_FAKE_TRACE_EXPORTED:-}" \
@@ -390,7 +394,8 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
   [ "$(journal_field "$dir" rl1 phase)" = complete ] \
     || fail "the transaction journal should end complete"
   assert_grep "/exit" "$dir/fake/literal" "the previous agent should have been exited"
-  assert_grep "encode launch-brief" "$dir/fake/literal" "the replacement should have been launched"
+  assert_grep "cd -- '$dir/wt'" "$dir/fake/keys" "the replacement launch must enter the recorded worktree"
+  assert_grep "Firstmate operational input waiting: read" "$dir/fake/literal" "the replacement should have been launched"
   pass "fm-control relaunch: a same-harness relaunch replaces the agent in the same endpoint and worktree"
 }
 
@@ -506,20 +511,25 @@ test_relaunch_serializes_concurrent_durable_metadata_publication() {
   waiting="$dir/meta-writer-waiting"
   ready="$dir/meta-writer-ready"
   release="$dir/meta-writer-release"
+  # Exercise a valid delayed launch beyond the former five-second wait budget.
   FM_REAL_MV=$(command -v mv) \
     FM_FAKE_TRACE_PREPARE="$prepare" \
+    FM_FAKE_TRACE_PREPARE_DELAY=6 \
     FM_FAKE_TRACE_RELEASE="$launch_release" \
     run_control "$dir" rl28 relaunch --note "continue after publication" > "$dir/control.out" &
   control_pid=$!
-  while [ ! -e "$prepare" ] && [ "$i" -lt 500 ]; do
+  # Launch preflights are not the synchronization contract. Allow bounded
+  # host headroom while still requiring the real prepare/release ordering.
+  while [ ! -e "$prepare" ] && [ "$i" -lt 3000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
   [ -e "$prepare" ] || {
     kill "$control_pid" 2>/dev/null || true
     wait "$control_pid" 2>/dev/null || true
-    fail "relaunch did not reach trace delivery"
+    fail "relaunch did not reach trace delivery"$'\n'"$(cat "$dir/control.out")"
   }
+  printf 'trace fixture prepared after %s polling attempts\n' "$i"
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
     FM_REAL_MV="$(command -v mv)" \
     FM_FAKE_LOCK_WAITING="$waiting" \
@@ -530,7 +540,7 @@ test_relaunch_serializes_concurrent_durable_metadata_publication() {
       --carry-platform x --carry-max 280 > "$dir/link.out" 2>&1 &
   link_pid=$!
   i=0
-  while [ ! -e "$waiting" ] && [ "$i" -lt 500 ]; do
+  while [ ! -e "$waiting" ] && [ "$i" -lt 3000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
@@ -543,7 +553,7 @@ test_relaunch_serializes_concurrent_durable_metadata_publication() {
   }
   : > "$launch_release"
   i=0
-  while [ ! -e "$ready" ] && [ "$i" -lt 500 ]; do
+  while [ ! -e "$ready" ] && [ "$i" -lt 3000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
@@ -766,6 +776,193 @@ test_native_ultra_relaunch_preserves_profile_and_rejects_before_stop() {
   pass "native Ultra relaunch preserves its profile and rejects an unsupported model before stopping"
 }
 
+# A fake claude that answers `claude auth status` the way the real runner
+# does: signed in only when the selected config root holds a stored login.
+make_claude_auth_stub() {  # <case-dir>
+  cat > "$1/fakebin/claude" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = auth ] && [ "${2:-}" = status ] || exit 0
+[ -f "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json" ]
+SH
+  chmod +x "$1/fakebin/claude"
+}
+
+test_signed_out_worker_account_pin_refuses_before_stop() {
+  local dir out rc id=rl-acct-out
+  dir=$(new_case acct-out "$id")
+  add_ship_task "$dir" "$id" claude
+  make_claude_auth_stub "$dir"
+  mkdir -p "$dir/home/config" "$dir/work"
+  printf '%s\n' "$dir/work" > "$dir/home/config/claude-account"
+  cp "$dir/home/state/$id.meta" "$dir/meta-before"
+  out=$(run_control "$dir" "$id" relaunch --note "account signed out"); rc=$?
+  expect_code 1 "$rc" "a relaunch under a signed-out account pin must refuse"
+  assert_contains "$out" "config/claude-account pins Claude workers to $dir/work, which is not signed in" \
+    "the refusal should name the pin and the signed-out root"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "a signed-out pin must refuse before the running agent stops"
+  [ ! -s "$dir/fake/literal" ] || fail "a signed-out pin must refuse before any lifecycle input is sent"
+  cmp -s "$dir/meta-before" "$dir/home/state/$id.meta" || fail "a refused relaunch must leave the task record untouched"
+  pass "fm-control relaunch: a signed-out worker account pin refuses before the old agent stops"
+}
+
+test_worker_account_pin_follows_the_relaunch() {
+  local dir out rc id=rl-acct
+  dir=$(new_case acct "$id")
+  add_ship_task "$dir" "$id" claude
+  make_claude_auth_stub "$dir"
+  mkdir -p "$dir/home/config" "$dir/work"
+  : > "$dir/work/.credentials.json"
+  printf '%s\n' "$dir/work" > "$dir/home/config/claude-account"
+  out=$(run_control "$dir" "$id" relaunch --note "pinned account"); rc=$?
+  expect_code 0 "$rc" "a relaunch under a signed-in account pin should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" "$id" worker_account)" = "$dir/work" ] || fail "the relaunched record should carry the configured worker pin"
+  [ "$(meta_field "$dir" "$id" claude_config_dir)" = "$dir/work" ] || fail "the recorded effective store must match the pin"
+  assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$dir/work'" \
+    "the replacement should launch under the pinned root"
+
+  # A changed, signed-in pin must not silently migrate the existing task, even
+  # when both accounts are otherwise usable. Refuse before stop and quota.
+  mkdir -p "$dir/other"
+  : > "$dir/other/.credentials.json"
+  printf '%s\n' "$dir/other" > "$dir/home/config/claude-account"
+  cp "$dir/home/state/$id.meta" "$dir/meta-before"
+  : > "$dir/fake/literal"
+  out=$(FM_QUOTA_INTAKE_TEST_BYPASS=0 run_control "$dir" "$id" relaunch --note "changed pin"); rc=$?
+  expect_code 1 "$rc" 'a changed pin must refuse the recorded task binding'
+  assert_contains "$out" 'the configured pin is authoritative' 'the mismatch must identify the configured authority'
+  [ "$(cat "$dir/fake/command")" = claude ] || fail 'a mismatched pin stopped the old agent'
+  [ ! -s "$dir/fake/literal" ] || fail 'a mismatched pin sent lifecycle input'
+  cmp -s "$dir/meta-before" "$dir/home/state/$id.meta" || fail 'a mismatched pin rewrote metadata'
+  assert_absent "$dir/home/state/quota-intake" 'a mismatched pin spent quota'
+
+  rm "$dir/home/config/claude-account"
+  out=$(run_control "$dir" "$id" relaunch --note "pin removed"); rc=$?
+  expect_code 0 "$rc" "a relaunch after the pin is removed should retain its recorded store"$'\n'"$out"
+  assert_no_grep "worker_account=" "$dir/home/state/$id.meta" 'an absent pin must drop only its declaration'
+  [ "$(meta_field "$dir" "$id" claude_config_dir)" = "$dir/work" ] || fail 'removing a pin silently migrated the existing task'
+  assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$dir/work'" 'an unpinned relaunch must keep the recorded root'
+  pass 'fm-control relaunch: configured pins and recorded bindings agree, or refuse before stop; removing a pin preserves the task store'
+}
+
+park_claude_session() {  # <store> <session-id>
+  mkdir -p "$1/projects/-fixture"
+  FM_T_SESSION=$2 python3 -c '
+import datetime, json, os, time
+s = os.environ["FM_T_SESSION"]
+park = datetime.datetime.utcfromtimestamp(time.time() - 60).isoformat() + "Z"
+print(json.dumps({"type": "assistant", "sessionId": s, "message": {"id": "msg-" + s, "model": "claude-opus-5",
+  "usage": {"input_tokens": 100000, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}}))
+print(json.dumps({"type": "system", "subtype": "informational", "level": "notice", "sessionId": s, "timestamp": park,
+  "content": "Usage limit reached · continuing automatically at 8:20pm · esc or type to cancel"}))
+' > "$1/projects/-fixture/$2.jsonl"
+}
+
+test_pinned_relaunch_shapes_only_the_pinned_store() {
+  local dir out rc id=rl-acct-shaped adm a_dir b_dir rec
+  dir=$(new_case acct-shaped "$id")
+  add_ship_task "$dir" "$id" claude
+  make_claude_auth_stub "$dir"
+  mkdir -p "$dir/home/config" "$dir/ambient" "$dir/pinned" "$dir/quota-fake" "$dir/user-home"
+  : > "$dir/pinned/.credentials.json"
+  park_claude_session "$dir/ambient" parked-a
+  park_claude_session "$dir/pinned" parked-b
+  printf '%s\n%s\n' "$dir/ambient" "$dir/pinned" > "$dir/home/config/claude-shaped-store"
+  printf '%s\n' "$dir/pinned" > "$dir/home/config/claude-account"
+  adm=$dir/home/state/claude-admission
+
+  # Ambient store A already released a task: a preview or gate that read A
+  # instead of the pin would be withheld by A's release interval.
+  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    FM_CLAUDE_RELEASE_INTERVAL=600 "$ROOT/bin/fm-claude-admission.sh" gate seed-a --store "$dir/ambient" >/dev/null 2>&1 \
+    || fail "seeding the ambient store's release failed"
+  a_dir=$(find "$adm" -mindepth 1 -maxdepth 1 -type d -name 'ambient-*')
+  [ -n "$a_dir" ] || fail "the ambient seed must take admission state"
+  cp "$a_dir/last-release" "$dir/ambient-release-before"
+
+  # A real intake record taken with ambient CLAUDE_CONFIG_DIR=A, so the
+  # pre-stop preview and fm-spawn's consuming gate both run unbypassed.
+  printf '%s\n' '{"model_notes":{"claude":"personal max line"}}' > "$dir/home/config/crew-dispatch.json"
+  cat > "$dir/quota-snap.json" <<'EOF'
+{"schemaVersion":5,"providers":[
+ {"provider":"claude","label":"Max","plan":"max","state":{"status":"fresh"},
+  "windows":[
+   {"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":10,"percentRemaining":90,"resetsAt":"2099-09-29T15:19:59Z"},
+   {"id":"seven_day","label":"7d","kind":"seven_day","percentUsed":7,"percentRemaining":93,"resetsAt":"2099-10-05T17:59:59Z"}],
+  "quotaSemantics":{"status":"known","effectiveAvailability":[
+   {"scope":"all_models","status":"known","effectivePercentRemaining":90,"boundedBy":["five_hour","seven_day"],"limitingWindowIds":["five_hour"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":0.4}}]}}]}
+EOF
+  printf '#!/usr/bin/env bash\ncat -- %q\n' "$dir/quota-snap.json" > "$dir/quota-fake/quota-axi"
+  chmod +x "$dir/quota-fake/quota-axi"
+  env HOME="$dir/user-home" CLAUDE_CONFIG_DIR="$dir/ambient" PI_CODING_AGENT_DIR= CODEX_HOME= \
+    FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    PATH="$dir/quota-fake:$PATH" "$ROOT/bin/fm-quota-intake.sh" record >/dev/null 2>&1 || true
+  rec=$(find "$dir/home/state/quota-intake" -maxdepth 1 -name 'quota-*.json' 2>/dev/null)
+  [ -n "$rec" ] || fail "no intake record was written for the pinned home"
+
+  out=$( unset FM_QUOTA_INTAKE_TEST_BYPASS
+    FM_TEST_CLAUDE_CONFIG_DIR="$dir/ambient" run_control "$dir" "$id" relaunch --note "pinned shaped store" ); rc=$?
+  expect_code 0 "$rc" "a pinned relaunch with an unbound task and ambient store A must be released onto the pin"$'\n'"$out"
+  assert_contains "$out" "quota-intake gate: PASS" "the relaunch must pass the real quota gate"
+  assert_present "$rec.spent" "the relaunch must consume the pinned home's intake record"
+  assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$dir/pinned'" \
+    "the replacement must launch under the pinned root"
+  [ "$(meta_field "$dir" "$id" claude_config_dir)" = "$dir/pinned" ] || fail "the relaunched record must bind the pinned store"
+  b_dir=$(find "$adm" -mindepth 1 -maxdepth 1 -type d -name 'pinned-*')
+  [ -n "$b_dir" ] || fail "the relaunch must take admission state under the pinned store"
+  assert_grep "$id" "$b_dir/last-release" "the relaunch release must be recorded against the pinned store"
+  cmp -s "$dir/ambient-release-before" "$a_dir/last-release" \
+    || fail "the ambient store's release state must stay unchanged by a pinned relaunch"
+  pass "fm-control relaunch: an unbound task under pin B previews, gates quota and takes admission only on B, leaving ambient A unchanged"
+}
+
+test_pi_exclude_tools_follow_the_relaunch() {
+  local dir out rc id=rl-pi-excl
+  dir=$(new_case pi-exclude "$id")
+  add_ship_task "$dir" "$id" pi
+  printf pi > "$dir/fake/command"
+  printf pi > "$dir/fake/becomes"
+  printf '#!/usr/bin/env bash\nprintf "Options: --tui-mode\\n"\n' > "$dir/fakebin/pi"
+  chmod +x "$dir/fakebin/pi"
+  mkdir -p "$dir/home/config"
+  printf '%s\n' '# hide writes' 'mcp__srv__writeTool' 'mcp__srv__adminTool' > "$dir/home/config/crew-exclude-tools"
+  out=$(run_control "$dir" "$id" relaunch --note "keep exclusions"); rc=$?
+  expect_code 0 "$rc" "a Pi relaunch with exclusions should succeed"$'\n'"$out"
+  assert_contains "$(cat "$dir/fake/literal")" "--exclude-tools 'mcp__srv__writeTool,mcp__srv__adminTool'" \
+    "the relaunched Pi worker must keep the home's tool exclusions"
+  rm "$dir/home/config/crew-exclude-tools"
+  : > "$dir/fake/literal"
+  printf pi > "$dir/fake/command"
+  out=$(run_control "$dir" "$id" relaunch --note "exclusions removed"); rc=$?
+  expect_code 0 "$rc" "a Pi relaunch after the file is removed should succeed"$'\n'"$out"
+  assert_not_contains "$(cat "$dir/fake/literal")" "--exclude-tools" \
+    "a relaunch without the file must launch with no exclusions"
+  pass "fm-control relaunch: a Pi replacement keeps the home's tool exclusions"
+}
+
+test_exclude_tools_refusals_happen_before_the_agent_stops() {
+  local dir out rc id=rl-excl-refuse
+  dir=$(new_case excl-refuse "$id")
+  add_ship_task "$dir" "$id" pi
+  printf pi > "$dir/fake/command"
+  printf pi > "$dir/fake/becomes"
+  printf '#!/usr/bin/env bash\nprintf "Options: --tui-mode\\n"\n' > "$dir/fakebin/pi"
+  chmod +x "$dir/fakebin/pi"
+  mkdir -p "$dir/home/config"
+  printf '%s\n' 'two words' > "$dir/home/config/crew-exclude-tools"
+  out=$(run_control "$dir" "$id" relaunch --note "bad list"); rc=$?
+  expect_code 1 "$rc" "a malformed exclusion list must refuse the relaunch"
+  assert_contains "$out" "config/crew-exclude-tools has a malformed entry" "refusal must name the entry"
+  [ "$(cat "$dir/fake/command")" = pi ] || fail "a malformed exclusion list stopped the running agent"
+  [ ! -s "$dir/fake/literal" ] || fail "a refused relaunch sent lifecycle input"
+  printf '%s\n' 'mcp__srv__writeTool' > "$dir/home/config/crew-exclude-tools"
+  out=$(run_control "$dir" "$id" relaunch --harness codex --note "switch runtime"); rc=$?
+  expect_code 1 "$rc" "relaunching onto a runtime that cannot hide tools must refuse"
+  assert_contains "$out" "config/crew-exclude-tools" "refusal must name the config file"
+  [ "$(cat "$dir/fake/command")" = pi ] || fail "an unhonorable exclusion list stopped the running agent"
+  [ ! -s "$dir/fake/literal" ] || fail "a refused relaunch sent lifecycle input"
+  pass "fm-control relaunch: exclusion-list refusals happen before the running agent stops"
+}
+
 test_explicit_model_wins_over_the_recorded_one() {
   local dir out rc
   dir=$(new_case explicit rl7)
@@ -818,7 +1015,7 @@ test_wiring_removal_failure_refuses_before_replacement_arm() {
   assert_contains "$out" "could not retire claude wiring" \
     "the failure should identify prior wiring cleanup"
   [ -e "$hook" ] || fail "the fixture should retain the undeletable prior hook"
-  assert_no_grep "encode launch-brief" "$dir/fake/literal" \
+  assert_no_grep "Firstmate operational input waiting: read" "$dir/fake/literal" \
     "replacement launch must not be armed after wiring cleanup fails"
   [ "$(journal_field "$dir" rl29 phase)" = failed:launching ] \
     || fail "the transaction should record the partial launch failure"
@@ -1029,6 +1226,25 @@ test_spawn_relaunch_without_a_harness_reuses_the_recorded_one() {
     || fail "fm-spawn --relaunch without --harness must reuse the recorded harness, got '$(meta_field "$dir" rl21 harness)'"
   assert_contains "$out" "spawned rl21 harness=claude" "the launch should report the recorded harness"
   pass "fm-spawn --relaunch: with no explicit harness it reuses the task's recorded one, never the crew default"
+}
+
+# A promoted scout records kind=ship and a custom ship branch in its meta, but
+# its brief is the scout scaffold: it never gained a Ship branch line, and a
+# relaunch cannot regenerate the brief (--branch-prefix is refused there). The
+# recorded branch is authoritative, so the relaunch must proceed on it.
+test_spawn_relaunch_of_promoted_scout_uses_the_recorded_branch() {
+  local dir out
+  dir=$(new_case promotebranch rl42)
+  add_ship_task "$dir" rl42 claude
+  printf 'branch=fix/rl42\n' >> "$dir/home/state/rl42.meta"
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" rl42 --relaunch)
+  assert_contains "$out" "spawned rl42" "the relaunch should complete on the recorded branch"
+  assert_contains "$out" "records no ship branch" "the brief gap should be reported, not silent"
+  assert_contains "$out" "recorded branch fix/rl42" "the relaunch should name the branch it adopted"
+  [ "$(meta_field "$dir" rl42 branch)" = "fix/rl42" ] \
+    || fail "the recorded branch must survive the relaunch"
+  pass "fm-spawn --relaunch: a promoted scout with a recorded custom branch relaunches on it instead of being refused"
 }
 
 test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
@@ -1489,7 +1705,10 @@ test_prepublication_failure_keeps_concurrent_durable_metadata() {
     run_control "$dir" rl30 relaunch --harness codex --note "preserve concurrent metadata" \
       > "$dir/control.out" &
   control_pid=$!
-  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 200 ]; do
+  # Generous budget: the path to the endpoint check includes the supervision
+  # host gate's real harness detection, a process-tree walk that takes seconds
+  # under a deep agent process tree.
+  while [ ! -e "$dir/cwd-race-ready" ] && [ "$i" -lt 2000 ]; do
     /bin/sleep 0.01
     i=$((i + 1))
   done
@@ -1708,18 +1927,73 @@ test_secondmate_checkpoint_refuses_unreadable_child_state() {
   expect_code 1 "$rc" "a non-readable child record should refuse"
   assert_contains "$out" "not a readable regular file" "the refusal should name the unreadable child record"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "child record failure must not stop the secondmate"
+  pass "fm-control relaunch: unreadable child records fail checkpoint"
+  if [ "$(id -u)" = 0 ]; then
+    pass "fm-control relaunch: unlistable state check skipped as root (mode 000 does not restrict root)"
+    return 0
+  fi
   rmdir "$dir/smhome/state/bad.meta"
-  cat > "$dir/fakebin/find" <<'SH'
+  printf 'window=x:c1\n' > "$dir/smhome/state/c1.meta"
+  chmod 000 "$dir/smhome/state"
+  out=$(run_control "$dir" sm5 relaunch); rc=$?
+  chmod 755 "$dir/smhome/state"
+  expect_code 1 "$rc" "an unlistable state directory should refuse"
+  assert_contains "$out" "no readable state directory" \
+    "the refusal should name the unlistable home state directory"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "unlistable child state must not stop the secondmate"
+  pass "fm-control relaunch: unlistable state fails checkpoint"
+}
+
+test_secondmate_checkpoint_ignores_a_vanished_scratch_find_walk() {
+  local dir home out rc real_find
+  dir=$(new_case smfindrace sm6)
+  home="$dir/home"
+  mkdir -p "$home/config"
+  printf 'claude\n' > "$home/config/secondmate-harness"
+  fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
+  mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
+  printf 'sm6\n' > "$dir/smhome/.fm-secondmate-home"
+  printf '# charter\n' > "$dir/smhome/data/charter.md"
+  printf '# agents\n' > "$dir/smhome/AGENTS.md"
+  printf 'window=x:fm-c1\n' > "$dir/smhome/state/c1.meta"
+  printf 'window=x:fm-c2\n' > "$dir/smhome/state/c2.meta"
+  : > "$dir/smhome/state/.hash-0"
+  : > "$dir/smhome/state/.count-0"
+  : > "$dir/smhome/state/.last-0"
+  {
+    echo "window=fmses:fm-sm6"
+    echo "endpoint_task_id=sm6"
+    echo "worktree=$dir/smhome"
+    echo "project=$dir/smhome"
+    echo "harness=claude"
+    echo "kind=secondmate"
+    echo "mode=secondmate"
+    echo "yolo=off"
+    echo "model=default"
+    echo "effort=default"
+    echo "home=$dir/smhome"
+    echo "projects="
+  } > "$home/state/sm6.meta"
+  printf '%s\n' "fm-sm6" > "$dir/fake/windows"
+  printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+  real_find=$(command -v find)
+  cat > "$dir/fakebin/find" <<SH
 #!/usr/bin/env bash
-exit 1
+for arg in "\$@"; do
+  if [ "\$arg" = "$dir/smhome/state" ]; then
+    echo "find: \$arg/.hash-0: No such file or directory" >&2
+    exit 1
+  fi
+done
+exec "$real_find" "\$@"
 SH
   chmod +x "$dir/fakebin/find"
-  out=$(run_control "$dir" sm5 relaunch); rc=$?
-  expect_code 1 "$rc" "failed child-state traversal should refuse"
-  assert_contains "$out" "child records cannot be traversed" \
-    "the refusal should preserve a find traversal failure"
-  [ "$(cat "$dir/fake/command")" = claude ] || fail "child traversal failure must not stop the secondmate"
-  pass "fm-control relaunch: unreadable and untraversable child state fails checkpoint"
+  out=$(run_control "$dir" sm6 relaunch); rc=$?
+  expect_code 0 "$rc" "a vanished watcher scratch file must not refuse relaunch"$'\n'"$out"
+  assert_contains "$out" "relaunched sm6" "readable child metas must still allow the replacement launch"
+  [ "$(journal_field "$dir" sm6 children)" = 2 ] \
+    || fail "readable child metas must still be counted, got '$(journal_field "$dir" sm6 children)'"
+  pass "fm-control relaunch: a vanished watcher scratch file does not fail the child-record checkpoint"
 }
 
 test_concurrent_relaunch_is_refused() {
@@ -1742,6 +2016,7 @@ test_concurrent_relaunch_is_refused() {
     i=$((i + 1))
   done
   [ -e "$lock" ] || { kill "$holder" 2>/dev/null; fail "could not stage a held control lock"; }
+  printf 'held\n' > "$dir/home/state/rl19.composer-dialog"
   out=$(run_control "$dir" rl19 relaunch --note "concurrent"); rc=$?
   kill "$holder" 2>/dev/null || true
   wait "$holder" 2>/dev/null || true
@@ -1750,6 +2025,8 @@ test_concurrent_relaunch_is_refused() {
     "the refusal should name the concurrent action"
   [ "$(cat "$dir/fake/command")" = claude ] \
     || fail "a refused concurrent relaunch must not stop the agent"
+  [ "$(cat "$dir/home/state/rl19.composer-dialog" 2>/dev/null)" = held ] \
+    || fail "a refused concurrent relaunch must not remove the lock holder's dialog file"
   pass "fm-control relaunch: two control actions on one task serialize instead of interleaving"
 }
 
@@ -2095,7 +2372,9 @@ case "${1:-} ${2:-}" in
     fi
     exit 0 ;;
   'agent get')
-    if [ -f "$D/herdr-agent-live" ]; then
+    if [ -f "$D/herdr-agent-registration" ]; then
+      cat "$D/herdr-agent-registration"
+    elif [ -f "$D/herdr-agent-live" ]; then
       # The agent came back with its server. Nothing here is reclaimable.
       printf '{"result":{"agent":{"agent_status":"idle"}}}\n'
     else
@@ -2104,9 +2383,15 @@ case "${1:-} ${2:-}" in
     fi
     exit 0 ;;
   'pane process-info')
-    # Only asked for once an agent IS registered, to prove it at process level.
-    printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":4242,"foreground_processes":[{"pid":4243,"name":"claude","argv":["claude"],"cmdline":"claude"}]}}}\n' \
-      "$(cat "$D/herdr-pane")"
+    # A retained registration with a shell-only pane models an exited agent
+    # whose Herdr status authority still belongs to its previous session.
+    if [ -f "$D/herdr-agent-registration" ]; then
+      printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":4242,"foreground_processes":[]}}}\n' \
+        "$(cat "$D/herdr-pane")"
+    else
+      printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":4242,"foreground_processes":[{"pid":4243,"name":"claude","argv":["claude"],"cmdline":"claude"}]}}}\n' \
+        "$(cat "$D/herdr-pane")"
+    fi
     exit 0 ;;
   'pane send-text')
     # Mirrors the tmux fake's `becomes`: delivering the launch brief is what
@@ -2120,7 +2405,9 @@ case "${1:-} ${2:-}" in
       ". '"*"'") staged=${payload#". '"}; staged=${staged%"'"}; [ ! -f "$staged" ] || payload=$(cat "$staged") ;;
     esac
     case "$payload" in
-      *'encode launch-brief'*) : > "$D/herdr-agent-live" ;;
+      *'encode launch-brief'* | *'Firstmate operational input waiting: read'*)
+        printf '%s\n' "$payload" > "$D/launched-command"
+        : > "$D/herdr-agent-live" ;;
     esac
     exit 0 ;;
   'workspace list')
@@ -2148,6 +2435,19 @@ esac
 exit 0
 SH
   chmod +x "$fb/herdr"
+  cat > "$fb/ps" <<'SH'
+#!/usr/bin/env bash
+if [ -f "$FM_FAKE_DIR/herdr-agent-registration" ]; then
+  case "$*" in
+    '-axo pid=,ppid=,comm=') printf '4242 1 bash\n' ;;
+    '-p 4242 -o args=') printf 'bash\n' ;;
+    *) exec /bin/ps "$@" ;;
+  esac
+else
+  exec /bin/ps "$@"
+fi
+SH
+  chmod +x "$fb/ps"
 }
 
 # add_herdr_ship_task <case-dir> <id> [session] [surviving-pane]: a ship task
@@ -2206,6 +2506,35 @@ herdr_case_or_skip() {  # <name> <id> [session] [surviving-pane]
   add_herdr_ship_task "$HERDR_CASE_DIR" "$2" "${3:-fmlab}" "${4:-%7}"
   make_herdr_stub "$HERDR_CASE_DIR"
   return 0
+}
+
+test_herdr_relaunch_resumes_only_the_registered_pi_session() {
+  local dir out rc=0 command registered
+  for registered in pi claude; do
+    herdr_case_or_skip "resume-$registered" "resume-$registered" || {
+      echo "skip - herdr relaunch needs jq (the herdr adapter parses JSON with it)"
+      return 0
+    }
+    dir=$HERDR_CASE_DIR
+    rm -f "$dir/fake/herdr-stopped"
+    sed -i 's/^harness=claude$/harness=pi/' "$dir/home/state/resume-$registered.meta"
+    # Keep the pane's status authority registered to an existing Pi session,
+    # while process-info proves that its previous agent has exited.
+    printf '{"result":{"agent":{"agent":"%s","agent_status":"idle","agent_session":{"kind":"path","value":"/tmp/pi-bound-session.jsonl"}}}}\n' \
+      "$registered" > "$dir/fake/herdr-agent-registration"
+    out=$(run_spawn "$dir" "resume-$registered" --relaunch --harness pi) || rc=$?
+    expect_code 0 "$rc" "Herdr Pi relaunch should complete ($registered registration)"$'\n'"$out"
+    command=$(cat "$dir/fake/launched-command")
+    if [ "$registered" = pi ]; then
+      assert_contains "$command" "--session '/tmp/pi-bound-session.jsonl'" \
+        "the replacement Pi must resume the session that owns Herdr status authority"
+    else
+      assert_not_contains "$command" "--session" \
+        "a Pi replacement must not resume a foreign adapter's conversation"
+    fi
+    rc=0
+  done
+  pass "fm-spawn --relaunch: resumes the bound Pi session only for a Pi registration"
 }
 
 test_herdr_reclaim_adopts_a_pane_that_outlived_its_server() {
@@ -2412,6 +2741,10 @@ test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it() {
     pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
     return 0
   }
+  fm_tasks_axi_compatible || {
+    pass "skipped: installed tasks-axi predates ${FM_TASKS_AXI_MIN}, so dispatch refuses automatic backlog transitions"
+    return 0
+  }
   dir=$(new_case reverify rl40)
   add_ship_task "$dir" rl40 claude
   seed_backlog "$dir" rl40 in_flight
@@ -2430,6 +2763,10 @@ test_relaunch_moves_a_drifted_item_back_in_flight() {
     pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
     return 0
   }
+  fm_tasks_axi_compatible || {
+    pass "skipped: installed tasks-axi predates ${FM_TASKS_AXI_MIN}, so dispatch refuses automatic backlog transitions"
+    return 0
+  }
   dir=$(new_case drifted rl41)
   add_ship_task "$dir" rl41 claude
   seed_backlog "$dir" rl41 queued
@@ -2441,6 +2778,57 @@ test_relaunch_moves_a_drifted_item_back_in_flight() {
   pass "relaunch heals an item that drifted out of In flight while the task stayed live"
 }
 
+test_exit_and_relaunch_remove_the_dialog_file() {
+  local dir out rc
+  dir=$(new_case dialog-file-exit rl70)
+  add_ship_task "$dir" rl70 claude
+  out=$(run_control "$dir" rl70 exit); rc=$?
+  expect_code 0 "$rc" "exit should stop the agent"$'\n'"$out"
+  [ ! -e "$dir/home/state/rl70.composer-dialog" ] \
+    || fail "exit should remove the dialog file"
+
+  dir=$(new_case dialog-file-relaunch rl71)
+  add_ship_task "$dir" rl71 claude
+  out=$(run_control "$dir" rl71 relaunch --note "replace the agent"); rc=$?
+  expect_code 0 "$rc" "relaunch should replace the agent"$'\n'"$out"
+  [ ! -e "$dir/home/state/rl71.composer-dialog" ] \
+    || fail "relaunch should remove the dialog file"
+  pass "fm-control removes the dialog file after exit and after relaunch"
+}
+
+# The lock release removes paths at or under the control lock with rm, so a
+# recording rm sees the state directory at the moment of release without a
+# second overlapping command.
+test_exit_removes_the_dialog_file_before_releasing_the_lock() {
+  local dir out rc lock sink trace
+  dir=$(new_case dialog-file-order rl72)
+  add_ship_task "$dir" rl72 claude
+  lock="$dir/home/state/.control-rl72.lock"
+  sink="$dir/home/state/rl72.composer-dialog"
+  trace="$dir/fake/rm-trace"
+  cat > "$dir/fakebin/rm" <<SH
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  case "\$arg" in
+    "$lock"|"$lock"/*)
+      if [ -e "$sink" ]; then echo present; else echo absent; fi >> "$trace"
+      break
+      ;;
+  esac
+done
+exec "$(command -v rm)" "\$@"
+SH
+  chmod +x "$dir/fakebin/rm"
+  out=$(run_control "$dir" rl72 exit); rc=$?
+  expect_code 0 "$rc" "exit should stop the agent"$'\n'"$out"
+  [ ! -e "$lock" ] || fail "exit should release the control lock"
+  [ "$(tail -n 1 "$trace" 2>/dev/null)" = absent ] \
+    || fail "the dialog file must be gone when the control lock is released, got: $(cat "$trace" 2>/dev/null)"
+  pass "fm-control exit removes the dialog file before it releases the control lock"
+}
+
+test_exit_and_relaunch_remove_the_dialog_file
+test_exit_removes_the_dialog_file_before_releasing_the_lock
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
@@ -2456,6 +2844,11 @@ test_harness_switch_resolves_a_prefixed_recorded_harness
 test_prefixed_recorded_harness_requires_explicit_replacement
 test_same_harness_relaunch_keeps_the_profile_axes
 test_native_ultra_relaunch_preserves_profile_and_rejects_before_stop
+test_signed_out_worker_account_pin_refuses_before_stop
+test_worker_account_pin_follows_the_relaunch
+test_pinned_relaunch_shapes_only_the_pinned_store
+test_pi_exclude_tools_follow_the_relaunch
+test_exclude_tools_refusals_happen_before_the_agent_stops
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
 test_prior_harness_turnend_registry_entry_is_cleared
@@ -2467,6 +2860,7 @@ test_secondmate_relaunch_onto_a_crewmate_only_adapter_refuses_before_stop
 test_explicit_secondmate_harness_ignores_configured_profile_axes
 test_ship_relaunch_ignores_the_crew_harness_config
 test_spawn_relaunch_without_a_harness_reuses_the_recorded_one
+test_spawn_relaunch_of_promoted_scout_uses_the_recorded_branch
 test_promoted_scout_relaunch_receives_the_current_delivery_contract
 test_prefixed_prior_harness_wiring_is_still_retired
 test_muse_session_binding_is_retired_on_a_harness_switch
@@ -2492,6 +2886,7 @@ test_journal_records_the_checkpoint_it_proved
 test_secondmate_relaunch_checkpoints_child_work_and_spares_the_charter
 test_secondmate_relaunch_refuses_an_unmarked_home
 test_secondmate_checkpoint_refuses_unreadable_child_state
+test_secondmate_checkpoint_ignores_a_vanished_scratch_find_walk
 test_concurrent_relaunch_is_refused
 test_direct_spawn_relaunch_participates_in_the_lifecycle_lock
 test_promotion_participates_in_the_lifecycle_lock_before_metadata_resolution
@@ -2506,6 +2901,7 @@ test_tmux_refuses_a_window_missing_from_its_session
 test_tmux_refuses_a_session_that_cannot_be_found
 test_tmux_refuses_when_the_server_is_gone
 test_reclaim_refuses_an_unreadable_endpoint
+test_herdr_relaunch_resumes_only_the_registered_pi_session
 test_herdr_reclaim_adopts_a_pane_that_outlived_its_server
 test_herdr_exit_reports_already_stopped_when_the_pane_outlived_its_server
 test_herdr_rebind_stays_in_the_recorded_session

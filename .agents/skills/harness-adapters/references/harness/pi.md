@@ -9,9 +9,10 @@ Verified on 2026-07-27 with Pi and Pi-signed 0.82.0 unless a fact gives another 
 |---|---|
 | Busy state | The Firstmate-owned extension's `agent_start` marks busy and `agent_settled`, confirmed by `ctx.isIdle()`, marks idle; this covers retries, compaction, tool loops, and queued continuations. |
 | Exit command | `/quit`. |
+| Resume | `--session <path-or-id>` resumes that exact session, and creates it at that path when the file is gone. `../../../bin/fm-spawn.sh` passes it on a relaunch so a Herdr pane's already-bound status authority keeps applying (`../../../bin/fm-control-lib.sh`'s `fm_control_relaunch_resume_flag`; `../../../docs/herdr-backend.md` "Agent status authority and relaunch"). There is still no `resume` control verb. |
 | Interrupt | Single Escape. |
 | Skill invocation | No separate verified form beyond normal command behavior; use natural language when the exact command is uncertain. |
-| Model flag | `--model <model>`; a task worker splits `<provider>/<model>` into `--provider` and `--model`, as `../../../bin/fm-spawn.sh --help` owns. |
+| Model flag | `--model <model>`; a task worker splits `<provider>/<model>` into `--provider` and `--model`, as `../../../bin/fm-spawn.sh --help` owns. A configured home worker pin is authoritative and requires a declared provider (`../../../docs/configuration.md` "Worker account pin"). |
 | Effort flag | `--thinking <level>`; both identities expose the same flag, while each installed model map decides supported levels. `../../../bin/fm-spawn.sh --help` owns worker validation. |
 | Model discovery | Run the selected executable as `<executable> --list-models [search]`; Pi's installed `docs/models.md` owns how built-in, extension-registered, and custom provider/model entries reach that list. |
 
@@ -20,7 +21,6 @@ Known gap: a spawn given a RAW launch command whose basename is `pi` still arms 
 Native Codex sessions may request `ultra` through the native extension flag described by `../../../bin/fm-spawn.sh`; it is separate from Pi's thinking levels.
 Pi's installed GLM-5.3 maps accept only `low`, `high`, and `max`, so a GLM worker never carries generic `medium` or `xhigh` through to launch.
 Pi has no permission system, so workers are always autonomous.
-Pi's installed `packages/coding-agent/docs/settings.md` UI and display section documents `regular` as the `tuiMode` default and `fullscreen` as experimental.
 Fullscreen can bury steering messages by rewriting scrollback, so Firstmate avoids it when the installed CLI supports the override.
 `../../../bin/fm-spawn.sh --help` owns the executable-pinning and version-safe launch mechanics.
 
@@ -37,6 +37,7 @@ Pi shows a project trust dialog on the first run in any not-yet-trusted director
 The decision persists per realpath in `trust.json` inside the launch's agent dir (`PI_CODING_AGENT_DIR`, default `~/.pi/agent`).
 `../../../../../bin/fm-spawn.sh` pre-registers every pi and pi-signed crewmate or scout worktree there through `../../../../../bin/fm-pi-trust.sh`, whose header owns the format, lock, and scope test.
 A failed registration only warns, so if the dialog renders anyway, accept it with Enter and verify the instructions begin processing.
+For unattended seeded-secondmate launches, `../../../bin/fm-spawn.sh --help` owns the capability-gated project-trust approval mechanics; [runtime verification](../../../../../docs/verification/runtime-backends.md#pi-seeded-secondmate-project-trust) owns the regression evidence.
 
 ## Worker turn-end extension
 
