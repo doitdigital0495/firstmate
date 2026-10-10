@@ -786,6 +786,9 @@ pass "the page ages its own data from live to stale to out of date"
 
 # --- Refresh timing and failure retention --------------------------------------
 board="$home/data/live-board/board.html"
+# The board was built many sections ago; make it fresh again so "not yet due"
+# does not depend on how long those sections took on a busy machine.
+touch "$board"
 before=$(mtime "$board")
 in_home "$home" "$LIVE" refresh
 [ "$(mtime "$board")" = "$before" ] || fail "refresh rebuilt a board that was not yet due"
