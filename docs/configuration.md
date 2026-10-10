@@ -1634,7 +1634,7 @@ Each environment then shows the newest of the project's changes merged into it, 
 A change is seen in an environment when that environment's branch holds its merge commit or a cherry-pick of it that git recorded (`git cherry-pick -x`), so a change redone there by hand stays listed as not yet seen.
 A project in a repository the file does not list says it has no separate environments, and a repository whose pull requests or branch history could not be read shows "Not known" with the reason instead of a count.
 The branch history is fetched read-only into `state/.live-board-git`, never into the project's clone; [`bin/fm-live-board.sh`](../bin/fm-live-board.sh)'s header owns the file's schema and what the card shows, and [`bin/fm-live-board-prs.sh`](../bin/fm-live-board-prs.sh)'s header owns how a change is recognised in an environment.
-Set `enabled` to false or delete the file to stop refreshing; the published page and any recorded answers stay in place.
+Set `enabled` to false in `config/live-board.json` or delete that file to stop refreshing; the published page and any recorded answers stay in place.
 
 ## Mail plane (.env)
 
