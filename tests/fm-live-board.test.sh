@@ -179,6 +179,9 @@ in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ln-ask --reason "Pick a cour
   || fail "could not hold the courier question"
 in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ln-later --reason "Decide after the summer." --until 2099-01-01 >/dev/null \
   || fail "could not defer the loyalty question"
+tasks_in "$home" add ln-later-gated "Pick a gift wrap" --repo shop --kind captain --blocked-by ln-doing
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ln-later-gated --reason "Decide after the checkout." --until 2099-02-01 >/dev/null \
+  || fail "could not defer the gift wrap question"
 in_home "$home" "$LIVE" build >/dev/null || fail "the lanes board did not build"
 out=$(render "$home")
 check "$out" '.projects[0].lanes
@@ -187,22 +190,26 @@ check "$out" '.projects[0].lanes
     and (.next | .count == 5 and .more == 2 and (.say | test("starts these without you"))
       and (.cards | map(.id)) == ["ln-next-top","ln-next-low","ln-expired","ln-next-b","ln-next-c"]
       and (.cards | map(.folded)) == [false,false,false,true,true] and (.cards | all(.reason == null)))
-    and (.charted | .count == 8 and (.say | test("will not start on their own"))
+    and (.charted | .count == 9 and (.say | test("will not start on their own"))
       and (.cards | map([.id,.why])) == [["ln-stuck","stuck"],["ln-ask","your-answer"],["ln-gated","other-work"],
-        ["ln-held","on-hold"],["ln-later","deferred"],["ln-paused","paused"],["ln-finished","wrap-up"],["ln-lost","unclear"]]
+        ["ln-held","on-hold"],["ln-later","deferred"],["ln-later-gated","deferred"],["ln-paused","paused"],
+        ["ln-finished","wrap-up"],["ln-lost","unclear"]]
       and (.cards | map(.reason)) == ["Stuck, needs help","Waits for your answer","Waits for other work to finish first",
-        "Waiting until 2099-01-01","You put this off until 2099-01-01","Waiting on something outside the team",
+        "Waiting until 2099-01-01","You put this off until 2099-01-01","You put this off until 2099-02-01",
+        "Waiting on something outside the team",
         "Finished, waiting to be wrapped up","Started, but its current status cannot be read"]
       and (.cards[2].note == "Waits for: Build the new checkout")
       and (.cards[3].note | test("supplier contract")))' \
   "the lane rules did not put each kind of open work in its one lane with its plain reason"
-check "$out" '[.projects[].lanes[].cards[].id] | length == 14 and (unique | length) == 14' \
+check "$out" '[.projects[].lanes[].cards[].id] | length == 15 and (unique | length) == 15' \
   "a task appeared in no lane or in more than one"
-check "$out" '.stats.doing == 1 and .stats.next == 5 and .stats.charted == 8 and .stats.questions == 2
-  and (.projects[0].questions | map(.id) | sort) == ["ln-ask","ln-later"]
+check "$out" '.stats.doing == 1 and .stats.next == 5 and .stats.charted == 9 and .stats.questions == 3
+  and (.projects[0].questions | map(.id) | sort) == ["ln-ask","ln-later","ln-later-gated"]
   and (.projects[0].questions[] | select(.id == "ln-later") | .answerable
     and (.badges | index("you deferred this until 2099-01-01") != null))
-  and .projects[0].status == "2 questions wait for you, 1 being done now, 5 starting next, 8 not starting on their own (1 stuck)"
+  and (.projects[0].questions[] | select(.id == "ln-later-gated")
+    | .badges | index("you deferred this until 2099-02-01") != null)
+  and .projects[0].status == "3 questions wait for you, 1 being done now, 5 starting next, 9 not starting on their own (1 stuck)"
   and ([.projects[].text] | join(" ") | test("ln-[a-z]") | not)' \
   "a question the captain put off lost its answerable card and deferred badge, or the lane totals were wrong"
 pass "doing now, next and charted next each follow one rule, and every task sits in exactly one lane"

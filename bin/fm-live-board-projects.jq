@@ -69,10 +69,11 @@ def lb_title($ids):
 #   charted  will not start or move on its own; `why` says what it waits for
 # $today is the collection date; a dated hold that is not the captain's lapses
 # on that date, exactly as the backlog stops treating it as a hold.
+def lb_deferred($today): .hold.until != null and .hold.until > $today;
 def lb_lane($today):
   if .worker_present == true and .state == "working" then {lane:"doing",why:"working"}
   elif .hold.kind == "captain" and .hold.reason != null then
-    {lane:"charted",why:(if .hold.bucket == "dated" then "deferred" else "your-answer" end)}
+    {lane:"charted",why:(if lb_deferred($today) then "deferred" else "your-answer" end)}
   elif (.hold.kind != null or .hold.reason != null) and (.hold.until == null or .hold.until > $today) then
     {lane:"charted",why:"on-hold"}
   elif ((.unresolved_blockers // []) | length) > 0 then {lane:"charted",why:"other-work"}
@@ -176,7 +177,7 @@ def lb_view($map):
            about:($ctx.about // null),purpose:($ctx.purpose // null),
            needs_explanation:($ctx.about == null or $ctx.purpose == null),
            why:($q.hold.reason | lb_clean($ids)),
-           asked:($q.hold.set // $q.since),deferred_until:(if $q.hold.until != null and $q.hold.bucket != "live" then $q.hold.until else null end),
+           asked:($q.hold.set // $q.since),deferred_until:(if $q | lb_deferred($today) then $q.hold.until else null end),
            waiting_on_other_work:(($q.unresolved_blockers // []) | length > 0),
            mode:(if $q.answerable and $ctx != null and ($ctx.close | IN("done","release")) and $ctx.lifecycle != null then
                (if ($ctx.options | length) > 0 then "options" else "text" end)
