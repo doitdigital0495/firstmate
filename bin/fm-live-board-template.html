@@ -304,18 +304,9 @@ __FM_LIVE_BOARD_DATA__
   function paintTray() {
     clear(tray);
     if (!cards.length) return;
-    var canSend = !!(window.lavish && typeof window.lavish.sendQueuedPrompts === "function");
     var bar = el("div", "tray");
     bar.setAttribute("data-tray", "");
-    bar.appendChild(el("div", "tray-text", "Answers you queue are delivered to Firstmate when you press Send "
-      + (canSend ? "here or " : "") + "in the Lavish panel."));
-    if (canSend) {
-      var send = el("button", "btn", "Send answers to Firstmate");
-      send.type = "button";
-      send.setAttribute("data-send", "");
-      send.addEventListener("click", function () { window.lavish.sendQueuedPrompts(); });
-      bar.appendChild(send);
-    }
+    bar.appendChild(el("div", "tray-text", "Answers you queue are delivered to Firstmate when you press Send in the Lavish panel."));
     tray.appendChild(bar);
   }
   function syncAnswers() {

@@ -1611,7 +1611,7 @@ A question card is written for a manager who did not build the work: it shows it
 Those words come from the structured context its owner recorded with `bin/fm-captain-hold.sh hold --context-file`, which refuses a context without them.
 A question stored without that explanation still shows and can still be answered, under a visible "Needs a plain-language explanation" marker and a matching board note.
 A captain hold with no recorded context gets a free-text answer box that feeds the same captain-hold intake; stale, malformed or ambiguous questions stay visible but read-only.
-The captain picks an option, optionally adds a note, and queues the answer; the card shrinks to "Answer queued in Lavish" with that answer, and answers are delivered when the captain presses the one send control at the top of the page or Send in the Lavish panel.
+The captain picks an option, optionally adds a note, and queues the answer; the card shrinks to "Answer queued in Lavish" with that answer, and answers are delivered when the captain presses Send in the Lavish panel.
 A shrunken card always keeps Change answer, which reopens it; a new answer replaces the earlier one if Lavish has not sent it yet.
 The page cannot see what Lavish still holds or has sent, so it shows no queued count and never marks a card sent.
 An answered question leaves the page on the first refresh after its answer is recorded; a question the captain put off until a later day keeps its card, badged with that day, beside its Charted next card.

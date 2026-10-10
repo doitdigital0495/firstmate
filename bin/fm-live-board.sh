@@ -91,8 +91,8 @@
 # A queued card shrinks to "Answer queued in Lavish" and its answer, and always
 # keeps Change answer, which reopens it; a new answer is queued under the same
 # Lavish question key, so it replaces an earlier one Lavish has not yet sent.
-# Delivery is Lavish's alone: the one send control at the top of the page and
-# the Lavish panel's own Send both send what Lavish holds. The page cannot see
+# Delivery is Lavish's alone: the Lavish panel's own Send sends what Lavish
+# holds, and the page has no send control of its own. The page cannot see
 # what Lavish holds or has sent, so it counts nothing and never marks a card
 # sent. The shrunken state lives in a hidden field of the card's own form,
 # which Lavish restores after each live reload, keyed to the hold's lifecycle

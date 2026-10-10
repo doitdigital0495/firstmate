@@ -5,8 +5,7 @@
 // Usage: node live-board-render-harness.mjs <board.html> [now-epoch] [answer-spec...]
 // An answer spec is `<question-id>=<option-value>[:<note>]` (empty value for a
 // note-only answer); each is applied to that card's form and submitted.
-// Three more specs drive the rest of the answer flow, in argument order:
-//   `!send`               press the page's send control at the top
+// Two more specs drive the rest of the answer flow, in argument order:
 //   `!change=<id>`        press that answered card's Change answer control
 //   `!restore=<id>=<kept>` put <kept> back in that card's hidden answer field and
 //                         deliver a parent message, as Lavish does after a reload
@@ -18,7 +17,7 @@
 //         submit,answer,answered,kept,change,status}],
 //       lanes:{doing|next|charted:{count,say,none,more,
 //         cards:[{id,why,reason,title,note,links,folded}]}}}],
-//     submits:[{id,status}], queued:[{prompt,tag,data}], sends, tray:{text,send}, tickers }
+//     submits:[{id,status}], queued:[{prompt,tag,data}], tray:{text,buttons}, tickers }
 import { readFileSync } from "node:fs";
 
 const [file, nowArg, ...answers] = process.argv.slice(2);
@@ -67,10 +66,9 @@ const queued = [];
 const tickers = [];
 const nowMs = (nowArg ? Number(nowArg) : Date.now() / 1000) * 1000;
 const document = { getElementById: (id) => byId.get(id) || null, createElement: (t) => new Node(t) };
-let sends = 0;
 const messageListeners = [];
 const window = {
-  lavish: { queuePrompt: (prompt, options) => queued.push({ prompt, options }), sendQueuedPrompts: () => { sends += 1; } },
+  lavish: { queuePrompt: (prompt, options) => queued.push({ prompt, options }) },
   addEventListener: (type, fn) => { if (type === "message") messageListeners.push(fn); },
 };
 const FakeDate = { now: () => nowMs, parse: (s) => Date.parse(s) };
@@ -90,12 +88,6 @@ const root = byId.get("lb-projects");
 const submits = [];
 const cardOf = (id) => root.find((c) => c.getAttribute("data-question") === id)[0];
 for (const spec of answers) {
-  if (spec === "!send") {
-    const send = byId.get("lb-tray").find((c) => c.getAttribute("data-send") !== null)[0];
-    if (send) send.dispatch("click");
-    submits.push({ id: spec, status: send ? "sent" : "no-send-control" });
-    continue;
-  }
   if (spec.startsWith("!change=")) {
     const target = cardOf(spec.slice(8));
     const change = target && target.find((c) => c.getAttribute("data-change") !== null)[0];
@@ -217,9 +209,8 @@ console.log(JSON.stringify({
   projects,
   submits,
   queued: queued.map((q) => ({ prompt: q.prompt, tag: q.options.tag, data: q.options.data })),
-  sends,
   tray: ((bar) => bar ? { text: text(bar.children[0]),
-    send: (bar.find((c) => c.getAttribute("data-send") !== null)[0] || null) && text(bar.find((c) => c.getAttribute("data-send") !== null)[0]) } : null)(
+    buttons: bar.find((c) => c.tagName === "BUTTON").map(text) } : null)(
     byId.get("lb-tray").children[0]),
   tickers,
 }));

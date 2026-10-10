@@ -359,25 +359,19 @@ check "$out" '(.queued | length == 3)
   "a queued answer lost its close mode or lifecycle, an empty answer queued, or free text was not sent"
 pass "Queue answer emits one choice with the owner close mode and lifecycle, or plain free text"
 
-# --- Choose, queue, send; answered cards shrink and stay answered -------------
-tray='{text:"Answers you queue are delivered to Firstmate when you press Send here or in the Lavish panel.",send:"Send answers to Firstmate"}'
+# --- Choose and queue; answered cards shrink and stay answered ----------------
+tray='{text:"Answers you queue are delivered to Firstmate when you press Send in the Lavish panel.",buttons:[]}'
 check "$(render "$home" "$now")" ".tray == $tray"'
   and ([.projects[].questions[] | select(.answerable)] | length == 4 and all(.submit == "Queue answer" and .answer == "open" and .answered == null))' \
-  "an unanswered board lacked the one send control, or a card did not offer Queue answer"
+  "an unanswered board did not say how answers are sent or offered its own send control, or a card did not offer Queue answer"
 check "$out" ".tray == $tray"'
-  and .sends == 0
   and (.projects[0].questions[0] | .answer == "queued" and .change == "Change answer"
     and (.answered | test("^Answer queued in Lavish") and test("Who should ship the spring orders\\? - PostNL - cheaper")))
   and (.projects[1].questions[] | select(.id == "data-window") | .answer == "open" and .answered == null)
   and (.projects[0].questions[1] | .answer == "queued" and (.answered | test("Use the new logo")))' \
-  "a queued answer did not shrink its card to the answer, or the send control claimed a count"
+  "a queued answer did not shrink its card to the answer, or the page offered its own send control"
 kept=$(printf '%s\n' "$out" | jq -r '.projects[0].questions[0].kept')
-out=$(render "$home" "$now" 'ws-carrier=postnl:cheaper' 'data-note-only=:Call it Tidewater' '!send')
-check "$out" ".sends == 1 and .tray == $tray"' and (.queued | length == 2)
-  and ([.projects[].questions[] | select(.id == "ws-carrier" or .id == "data-note-only")]
-    | all(.answer == "queued" and .change == "Change answer" and (.answered | test("^Answer queued in Lavish"))))' \
-  "sending did not hand the queued answers to Lavish once, or a card lost Change answer afterwards"
-out=$(render "$home" "$now" 'ws-carrier=dhl' 'data-note-only=:Call it Tidewater' '!send' '!change=ws-carrier')
+out=$(render "$home" "$now" 'ws-carrier=dhl' 'data-note-only=:Call it Tidewater' '!change=ws-carrier')
 check "$out" ".tray == $tray"'
   and (.projects[0].questions[0] | .answer == "open" and .answered == null and .submit == "Queue answer"
     and (.status | test("Queue a new answer")))
@@ -393,7 +387,7 @@ check "$out" '(.queued | length == 0)
   and (.projects[0].questions[0] | .answer == "queued" and (.answered | test("PostNL - cheaper")))
   and (.projects[0].questions[1] | .answer == "open")' \
   "an answered card did not stay answered after a reload, or an answer to an earlier asking was shown"
-pass "the captain picks an option, optionally adds a note, queues, and sends once; answered cards shrink, keep Change answer and survive a reload"
+pass "the captain picks an option, optionally adds a note and queues; answered cards shrink, keep Change answer and survive a reload"
 
 # --- Local freshness ----------------------------------------------------------
 check "$(render "$home" "$((now + 400))")" '.freshness == "stale" and .banner == ""' \
