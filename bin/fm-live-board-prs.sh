@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # fm-live-board-prs.sh - read each project's recent pull requests and the
-# deploy runs their merges started, for the live board's timelines.
+# runs their merges started, for the live board's timelines.
 #
 # Usage: fm-live-board-prs.sh [--json]
 #
@@ -21,18 +21,22 @@
 #           merges landed on (the 400 newest runs, at most four branches).
 # A local-only project, a project without a clone, a remote on another forge
 # and a missing CLI are reported as status `none` with that reason; a failed or
-# timed-out read is status `failed`. Each forge call is bounded by
-# FM_LIVE_BOARD_PR_CALL_TIMEOUT seconds (default 25) and the projects are read
-# side by side.
+# timed-out read is status `failed`. Each forge call is bounded by 25 seconds
+# and each source by 70 in total, and the projects are read side by side, so
+# the whole read stays inside the 90 seconds bin/fm-live-board.sh allows it: an
+# Azure DevOps branch whose runs were not read in time is unreadable for its
+# merges only.
 #
-# DEPLOY RUNS. A merged pull request's runs are the ones on its merge commit
-# on the branch it merged into: every Azure DevOps pipeline run there except
-# timer and pull-request validation runs, and on GitHub every check suite that
-# reported at least one check plus every commit status, keeping workflow runs
-# a merge sets off or someone starts by hand and dropping timer runs. No
-# pipeline or workflow name is assumed. The newest run per name counts, so a
-# re-run replaces the run it retried. An Azure DevOps merge older than the
-# oldest run read on its branch is marked `out-of-window`, never "no deploy".
+# RUNS AFTER MERGE. A merged pull request's runs are the ones on its merge
+# commit on the branch it merged into: every Azure DevOps pipeline run there
+# except timer and pull-request validation runs, and on GitHub every check
+# suite that reported at least one check plus every commit status, keeping
+# workflow runs a merge sets off or someone starts by hand and dropping timer
+# runs. No pipeline or workflow name is assumed, so these are every run a
+# merge started, a deploy or not. The newest run per name counts, so a re-run
+# replaces the run it retried. A cancelled run is `superseded` on both forges,
+# never failed. An Azure DevOps merge older than the oldest run read on its
+# branch is marked `out-of-window`, never "no run".
 #
 # OUTPUT. One fm-live-board-prs.v1 document on stdout:
 #   {schema, collected_at, collected_at_epoch, repos:[{project, forge,
@@ -42,7 +46,9 @@
 #    items:[{name, result: succeeded|failed|running|skipped|superseded}]}}]}]}
 # Times are epoch seconds. body is the description, cut to 4000 characters; it
 # is private working data that bin/fm-live-board-snapshot.sh reduces to a short
-# plain summary and never republishes. Remote URLs are never printed.
+# plain summary and never republishes, so bin/fm-live-board.sh caches this
+# document under the home's state directory, never beside the served board.
+# Remote URLs are never printed.
 set -u
 LC_ALL=C
 export LC_ALL
@@ -51,16 +57,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-$FM_ROOT}"
 PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
-CALL_TIMEOUT=${FM_LIVE_BOARD_PR_CALL_TIMEOUT:-25}
+CALL_TIMEOUT=25
+SOURCE_BUDGET=70
 GITHUB_FETCH=50
 ADO_FETCH=200
 ADO_RUNS=400
 ADO_BRANCHES=4
 BODY_CAP=4000
-
-case "$CALL_TIMEOUT" in
-  ''|*[!0-9]*|0) CALL_TIMEOUT=25 ;;
-esac
 
 # shellcheck source=bin/fm-timeout-lib.sh
 # shellcheck disable=SC1091
@@ -102,7 +105,7 @@ collect_github() {  # <project> <prefix> <owner> <name> <out>
   local project=$1 prefix=$2 owner=$3 name=$4 out=$5 raw="$5.raw"
   command -v gh >/dev/null 2>&1 || { repo_note "$project" github none no-cli "$prefix" > "$out"; return 0; }
   if GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 fm_run_timed "$CALL_TIMEOUT" gh api graphql -f query="$GITHUB_QUERY" \
-      -F owner="$owner" -F name="$name" -F n="$GITHUB_FETCH" > "$raw" 2>/dev/null \
+      -f owner="$owner" -f name="$name" -F n="$GITHUB_FETCH" > "$raw" 2>/dev/null \
     && jq -L "$SCRIPT_DIR" -c --arg project "$project" --arg prefix "$prefix" --argjson cap "$BODY_CAP" '
         include "fm-live-board-prs";
         {project:$project,forge:"github",status:"ok",reason:null,branch_prefix:$prefix,prs:lbp_github_prs($cap)}' \
@@ -116,6 +119,7 @@ collect_github() {  # <project> <prefix> <owner> <name> <out>
 collect_ado() {  # <project> <prefix> <org> <ado-project> <repo> <out>
   local project=$1 prefix=$2 org=$3 ado_project=$4 repo=$5 out=$6
   local az_bin org_url base branch index=0 list="$6.prs" branches="$6.branches"
+  local deadline=$((SECONDS + SOURCE_BUDGET)) left
   az_bin=$(fm_ado_az_bin) || { repo_note "$project" ado none no-cli "$prefix" > "$out"; return 0; }
   org_url="https://dev.azure.com/$org"
   base="$org_url/$ado_project/_git/$repo"
@@ -131,7 +135,9 @@ collect_ado() {  # <project> <prefix> <org> <ado-project> <repo> <out>
   while IFS= read -r branch; do
     [ -n "$branch" ] || continue
     index=$((index + 1))
-    if fm_run_timed "$CALL_TIMEOUT" "$az_bin" pipelines runs list --organization "$org_url" --project "$ado_project" \
+    left=$((deadline - SECONDS))
+    [ "$left" -lt "$CALL_TIMEOUT" ] || left=$CALL_TIMEOUT
+    if [ "$left" -gt 0 ] && fm_run_timed "$left" "$az_bin" pipelines runs list --organization "$org_url" --project "$ado_project" \
         --branch "$branch" --top "$ADO_RUNS" --query-order QueueTimeDesc --output json \
         --query '[].{id:id,name:definition.name,status:status,result:result,reason:reason,sha:sourceVersion,repo:repository.name,queued:queueTime}' \
         > "$out.runs.$index" 2>/dev/null \

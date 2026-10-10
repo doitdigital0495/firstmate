@@ -111,6 +111,7 @@ gh_pr 3 MERGED fm/docs-typo 'Fix a typo' '' '2026-10-02T09:00:00Z' "[$(suite QUE
 
 SHA_OK=$(printf 'a%.0s' {1..40}); SHA_RED=$(printf 'b%.0s' {1..40}); SHA_OLD=$(printf 'c%.0s' {1..40})
 SHA_UAT=$(printf 'd%.0s' {1..40}); SHA_RERUN=$(printf 'e%.0s' {1..40})
+SHA_REPLACED=$(printf 'f%.0s' {1..40}); SHA_PARTIAL=$(printf '9%.0s' {1..40})
 ado_pr() {  # <id> <status> <source> <target> <closed|null> <sha|null> <title>
   jq -cn --argjson id "$1" --arg status "$2" --arg source "$3" --arg target "$4" --arg closed "$5" \
     --arg sha "$6" --arg title "$7" '{id:$id,title:$title,description:"Stock managers see the weekly total on the first page.",
@@ -126,6 +127,8 @@ ado_pr() {  # <id> <status> <source> <target> <closed|null> <sha|null> <title>
   ado_pr 25 completed ship/stock-rerun main '2026-10-03T13:00:00.5+02:00' "$SHA_RERUN" 'Retried deploy'
   ado_pr 26 active ship/stock-open main null null 'Still open'
   ado_pr 27 abandoned feature/by-hand main '2026-10-03T12:00:00.5+00:00' null 'Dropped'
+  ado_pr 28 completed ship/stock-replaced main '2026-10-03T14:00:00.5+00:00' "$SHA_REPLACED" 'Replaced run'
+  ado_pr 29 completed ship/stock-partial main '2026-10-03T15:00:00.5+00:00' "$SHA_PARTIAL" 'Partly done'
 } | jq -cs . > "$TMP_ROOT/forge/az-prs-reports.json"
 ado_run() {  # <id> <name> <status> <result> <reason> <sha> [<repo>]
   jq -cn --argjson id "$1" --arg name "$2" --arg status "$3" --arg result "$4" --arg reason "$5" --arg sha "$6" \
@@ -142,6 +145,8 @@ ado_run() {  # <id> <name> <status> <result> <reason> <sha> [<repo>]
   ado_run 107 functions-deploy inProgress null individualCI "$SHA_RED"
   ado_run 108 reports-deploy completed failed individualCI "$SHA_RERUN"
   ado_run 109 reports-deploy completed succeeded manual "$SHA_RERUN"
+  ado_run 110 reports-deploy completed canceled individualCI "$SHA_REPLACED"
+  ado_run 111 reports-deploy completed partiallySucceeded individualCI "$SHA_PARTIAL"
 } | jq -cs . > "$TMP_ROOT/forge/az-runs-main.json"
 # The fixture reads at most 400 runs; a full page proves older runs exist.
 jq -c '. as $runs | [range(0; 400) | $runs[. % ($runs | length)] + {id:(1000 + .)}] | . + []' \
@@ -179,6 +184,8 @@ fi
 if grep -Eq -e ' (-X|--method) |mutation|pipelines run |pr (update|create|set-vote)|runs (tag|artifact)' "$CALLS"; then
   fail "the collector issued a write-shaped forge call"
 fi
+assert_grep ' -f owner=acme -f name=shop -F n=50 ' "$CALLS" \
+  "the owner and repository name did not reach gh as plain strings, so an all-digit name would be sent as a number"
 pass "the collector only lists pull requests and runs"
 
 # --- Deploy runs and outcomes --------------------------------------------------
@@ -186,15 +193,15 @@ project "$TMP_ROOT/prs.json" "$TMP_ROOT/board.json"
 check "$TMP_ROOT/board.json" "$(pr shop 11)"' | .state == "merged" and .task == "shop-checkout"
   and .deploy.outcome == "failed" and .deploy.why == "run-failed"
   and .deploy.runs == [{"name":"Deploy","result":"failed"},{"name":"Checks","result":"succeeded"}]' \
-  "a merge whose deploy run failed was not reported as a failed deploy with the failed run first"
+  "a merge whose run failed was not reported as failed with the failed run first"
 check "$TMP_ROOT/board.json" "$(pr shop 12)"' | .deploy.outcome == "succeeded" and (.deploy.runs | length) == 1' \
   "a deploy re-run by hand that succeeded did not replace the run it retried"
 check "$TMP_ROOT/board.json" "$(pr shop 13)"' | .deploy.outcome == "running" and (.deploy.runs | map(.name)) == ["Deploy"]' \
   "an unfinished deploy was not reported as still running, or an app that never reported counted as one"
-check "$TMP_ROOT/board.json" "$(pr shop 14)"' | .deploy.outcome == "none" and .deploy.why == "change" and .deploy.runs == []' \
-  "a timer run or a superseded run was counted as this change's deploy"
+check "$TMP_ROOT/board.json" "$(pr shop 14)"' | .deploy.outcome == "none" and .deploy.why == "superseded" and .deploy.runs == []' \
+  "a timer run was counted for this change, or a merge whose only run was cancelled was not read as replaced by a newer run"
 check "$TMP_ROOT/board.json" "$(pr shop 15)"' | .deploy.outcome == "failed" and .deploy.runs == [{"name":"vercel","result":"failed"}]' \
-  "a failed commit status was not read as a failed deploy"
+  "a failed commit status was not read as a failed run after merge"
 check "$TMP_ROOT/board.json" "$(pr shop 16)"' | .state == "open" and .deploy.outcome == "not-deployed" and .deploy.why == "open"' \
   "an open pull request was not reported as not deployed yet"
 check "$TMP_ROOT/board.json" "$(pr shop 17)"' | .state == "closed" and .deploy.outcome == "not-deployed" and .deploy.why == "closed"' \
@@ -211,10 +218,13 @@ check "$TMP_ROOT/board.json" "$(pr reports 21)"' | .url == "https://dev.azure.co
   and (.deploy.runs | map(.name)) == ["infra-deploy","reports-deploy"]
   and .summary == "Stock managers see the weekly total on the first page."' \
   "an Azure DevOps merge did not read its own branch's runs, or counted a timer run or another repository's run"
-check "$TMP_ROOT/board.json" "$(pr reports 22)"' | .deploy.outcome == "failed"
-  and .deploy.runs == [{"name":"infra-deploy","result":"failed"},{"name":"functions-deploy","result":"running"},
-    {"name":"reports-deploy","result":"succeeded"}]' \
-  "a cancelled Azure DevOps deploy run was not reported as failed ahead of the unfinished one"
+check "$TMP_ROOT/board.json" "$(pr reports 22)"' | .deploy.outcome == "running"
+  and .deploy.runs == [{"name":"functions-deploy","result":"running"},{"name":"reports-deploy","result":"succeeded"}]' \
+  "a cancelled Azure DevOps run was counted as failed instead of superseded, as a cancelled GitHub run is"
+check "$TMP_ROOT/board.json" "$(pr reports 28)"' | .deploy.outcome == "none" and .deploy.why == "superseded" and .deploy.runs == []' \
+  "an Azure DevOps merge whose only run was cancelled was not read as replaced by a newer run"
+check "$TMP_ROOT/board.json" "$(pr reports 29)"' | .deploy.outcome == "failed" and .deploy.runs == [{"name":"reports-deploy","result":"failed"}]' \
+  "a partially succeeded Azure DevOps run was not reported as failed"
 check "$TMP_ROOT/board.json" "$(pr reports 25)"' | .deploy.outcome == "succeeded" and .at == 1791025200' \
   "an Azure DevOps re-run did not replace the failed run, or its offset close time was misread"
 check "$TMP_ROOT/board.json" "$(pr reports 24)"' | .deploy.outcome == "unknown" and .deploy.why == "unreadable"' \

@@ -351,7 +351,7 @@ pr_doc "$TMP_ROOT/deploy-prs.json" "$TMP_ROOT/deploy.jsonl"
 render_prs "$TMP_ROOT/deploy-prs.json" "$TMP_ROOT/deploy.json"
 check "$TMP_ROOT/deploy.json" "$(shop 11)"' | .deploy == {outcome:"failed",why:"run-failed",more_runs:0,
   runs:[{name:"api",result:"failed"},{name:"db",result:"running"},{name:"site",result:"succeeded"}]}' \
-  'a failed deploy run did not decide the outcome, or a superseded run was listed'
+  'a failed run did not decide the outcome, or a superseded run was listed'
 check "$TMP_ROOT/deploy.json" "$(shop 12)"' | .deploy.outcome == "running" and .deploy.why == "run-unfinished"' \
   'an unfinished deploy with no failure was not still running'
 check "$TMP_ROOT/deploy.json" "$(shop 13)"' | .deploy.outcome == "succeeded" and (.deploy.runs | length) == 8 and .deploy.more_runs == 2' \

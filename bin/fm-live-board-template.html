@@ -567,7 +567,7 @@ __FM_LIVE_BOARD_DATA__
     return row;
   }
 
-  /* The projection decides each pull request's deploy outcome and its words;
+  /* The projection decides the outcome of each pull request's runs after merge and its words;
      the page only draws the strip and shows one pull request's detail. */
   var TL_RING = '<svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="14" ';
   var TL_ICON = {
@@ -620,7 +620,7 @@ __FM_LIVE_BOARD_DATA__
     else if (tl.status !== "ok") say = "Pull requests have not been read yet.";
     else if (!items.length) say = "No pull requests were found for this project.";
     else {
-      say = "Oldest on the left. Point at one, or press it, to see what changed and whether it was deployed.";
+      say = "Oldest on the left. Point at one, or press it, to see what changed and whether the runs after its merge succeeded.";
       if (typeof prs.collected_at_epoch === "number") say += " Read " + ago(Date.now() / 1000 - prs.collected_at_epoch) + ".";
     }
     head.appendChild(el("p", "lane-say", say));
@@ -662,7 +662,7 @@ __FM_LIVE_BOARD_DATA__
       detail.setAttribute("data-pr-shown", shown.key);
       detail.setAttribute("data-pr-pinned", isPinned ? "true" : "false");
       var top = el("div", "tl-d-top");
-      var verdict = badge(TL_BADGE[kind] || "b-muted", deploy.label || "Deploy result could not be read");
+      var verdict = badge(TL_BADGE[kind] || "b-muted", deploy.label || "Runs after merge could not be read");
       verdict.setAttribute("data-pr-deploy", deploy.outcome || "unknown");
       top.appendChild(verdict);
       var day = dayText(shown.at);
@@ -671,7 +671,7 @@ __FM_LIVE_BOARD_DATA__
       detail.appendChild(el("h4", "tl-d-title", shown.title));
       if (shown.summary) detail.appendChild(el("p", "tl-d-sum", shown.summary));
       var dep = el("p", "tl-d-dep");
-      dep.appendChild(el("b", "", "Deploy: "));
+      dep.appendChild(el("b", "", "Runs after merge: "));
       dep.appendChild(el("span", "", deploy.detail || ""));
       detail.appendChild(dep);
       if ((deploy.runs || []).length) {
@@ -805,7 +805,7 @@ __FM_LIVE_BOARD_DATA__
     if (c.urgent) title.appendChild(badge("b-danger", plural(c.urgent, "urgent question")));
     if (c.questions - (c.urgent || 0) > 0) title.appendChild(badge("b-warn", plural(c.questions - (c.urgent || 0), "question")));
     if (c.stuck) title.appendChild(badge("b-danger", c.stuck + " stuck"));
-    if (c.failed_deploys) title.appendChild(badge("b-danger", plural(c.failed_deploys, "failed deploy")));
+    if (c.failed_deploys) title.appendChild(badge("b-danger", c.failed_deploys + " failed after merge"));
     head.appendChild(title);
     if (p.description) head.appendChild(el("p", "proj-desc", p.description));
     head.appendChild(el("p", "proj-status", p.status));
@@ -857,7 +857,7 @@ __FM_LIVE_BOARD_DATA__
       li.appendChild(el("b", "", p.name));
       var extra = [];
       if (p.counts && p.counts.finished) extra.push(p.counts.finished + " done in the last 2 weeks");
-      if (p.counts && p.counts.failed_deploys) extra.push(plural(p.counts.failed_deploys, "failed deploy"));
+      if (p.counts && p.counts.failed_deploys) extra.push(p.counts.failed_deploys + " failed after merge");
       if (extra.length) li.appendChild(el("span", "", " - " + extra.join(" · ")));
       if (p.timeline && ((p.timeline.items || []).length || (p.timeline.unread || []).length)) li.appendChild(timelineSection(p));
       ul.appendChild(li);

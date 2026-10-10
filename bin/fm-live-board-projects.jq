@@ -103,20 +103,21 @@ def lb_why_rank:
 
 def lb_plural($n; $one; $many): "\($n) \(if $n == 1 then $one else $many end)";
 
-# TIMELINE. The snapshot decides each pull request's deploy outcome and why;
+# TIMELINE. The snapshot decides the outcome of each pull request's runs after merge and why;
 # these words are the only thing the page says about it.
 def lb_deploy_words:
-  {"runs-succeeded":["deployed","Deploy succeeded","Every deploy run this change started finished well."],
-   "run-failed":["failed","Deploy failed","At least one deploy run this change started has failed."],
-   "run-unfinished":["running","Deploy still running","A deploy run this change started has not finished yet."],
-   "open":["open","Not deployed yet","This change is still open; it has not been merged."],
-   "waiting":["waiting","Not deployed yet","Merged moments ago; its deploy has not started yet."],
-   "closed":["closed","Not deployed","This change was closed without being merged."],
-   "project":["no deploy","No deploy for this project","Merged. This project has no deploy run to check."],
-   "change":["no deploy","No deploy ran for this change","Merged, but no deploy run was started for it."],
-   "unreadable":["unknown","Deploy result could not be read","The deploy runs could not be fetched, so the result is not known."],
-   "too-old":["unknown","Deploy result not available","This change is older than the deploy history the board reads."]}[.why]
-  // ["unknown","Deploy result could not be read","The deploy result is not known."];
+  {"runs-succeeded":["passed","Runs after merge succeeded","Every run this change's merge started finished well."],
+   "run-failed":["failed","Runs after merge failed","At least one run this change's merge started has failed."],
+   "run-unfinished":["running","Runs after merge still running","A run this change's merge started has not finished yet."],
+   "open":["open","Not merged yet","This change is still open; it has not been merged."],
+   "waiting":["waiting","Runs after merge not started yet","Merged moments ago; its runs have not started yet."],
+   "closed":["closed","Not merged","This change was closed without being merged."],
+   "project":["no runs","No runs after merge for this project","Merged. This project starts no run after a merge, so there is nothing to check."],
+   "change":["no runs","No run after merge for this change","Merged, but no run was started for it."],
+   "superseded":["replaced","Replaced by a newer run","Merged. Its own run was cancelled because a newer run replaced it."],
+   "unreadable":["unknown","Runs after merge could not be read","The runs could not be fetched, so the result is not known."],
+   "too-old":["unknown","Runs after merge not available","This change is older than the run history the board reads."]}[.why]
+  // ["unknown","Runs after merge could not be read","The result of the runs after merge is not known."];
 def lb_run_words:
   {"succeeded":"succeeded","failed":"failed","running":"still running"}[.] // "unknown";
 def lb_forge_name: {"github":"GitHub","ado":"Azure DevOps"}[.] // "the forge";

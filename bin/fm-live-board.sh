@@ -107,18 +107,20 @@
 # TIMELINE. Each project shows its 15 newest pull requests as a strip, oldest
 # on the left. Pointing at one, moving keyboard focus to it, or pressing it
 # shows the same detail under the strip: the cleaned title, a plain summary of
-# what changed when the description yields one, and whether its deploy runs
-# succeeded; pressing pins that detail, with a link to the pull request on its
-# forge, until it is pressed again or closed. The pin lives in a hidden field
-# of the timeline that Lavish restores after each live reload, as a card's
-# queued answer does, and it queues nothing. A failed deploy is marked by
-# colour, shape and the word "failed", and counted in the project's heading.
-# bin/fm-live-board-prs.sh reads the pull requests and runs, read-only, and
-# its header owns what is read and what counts as a deploy run. build and
-# refresh run it at most once per FM_LIVE_BOARD_PR_REFRESH seconds (default
-# 600), bounded by FM_LIVE_BOARD_PR_TIMEOUT seconds (default 90), into the
-# home-private data/live-board/prs.json, and hand that file to the snapshot;
-# a failed or timed-out read keeps the previous file, is retried after the
+# what changed when the description yields one, and whether the runs its merge
+# started succeeded; pressing pins that detail, with a link to the pull request
+# on its forge, until it is pressed again or closed. The pin lives in a hidden
+# field of the timeline that Lavish restores after each live reload, as a
+# card's queued answer does, and it queues nothing. A merge with a failed run
+# is marked by colour, shape and the word "failed", and counted in the
+# project's heading; one whose only runs were cancelled reads "Replaced by a
+# newer run". bin/fm-live-board-prs.sh reads the pull requests and runs,
+# read-only, and its header owns what is read and which runs count. build and
+# refresh run it at most once per 600 seconds, bounded by 90 seconds, into
+# state/.live-board-prs.json, and hand that file to the snapshot. The file
+# holds pull request descriptions, so it lives in the state directory, never
+# in data/live-board, whose files Lavish serves beside the board. A failed or
+# timed-out read keeps the previous file, is retried after the
 # same interval, and never fails the build. The page says when the pull
 # requests were last read, names a project whose read failed, and says so
 # when nothing was read at all. A pull request belongs to the project its
@@ -146,20 +148,15 @@ PROJECTS_MAX_BYTES=65536
 TEMPLATE="$SCRIPT_DIR/fm-live-board-template.html"
 PLACEHOLDER='__FM_LIVE_BOARD_DATA__'
 BUILD_TIMEOUT=${FM_LIVE_BOARD_TIMEOUT:-45}
-PR_REFRESH=${FM_LIVE_BOARD_PR_REFRESH:-600}
-PR_TIMEOUT=${FM_LIVE_BOARD_PR_TIMEOUT:-90}
+PR_REFRESH=600
+PR_TIMEOUT=90
+PRS_FILE="$STATE/.live-board-prs.json"
 REFRESH_LOCK="$STATE/.live-board-refresh.lock"
 REFRESH_LOG="$STATE/.live-board-refresh.log"
 REFRESH_LOG_MAX_BYTES=65536
 
 case "$BUILD_TIMEOUT" in
   ''|*[!0-9]*|0) BUILD_TIMEOUT=45 ;;
-esac
-case "$PR_REFRESH" in
-  ''|*[!0-9]*) PR_REFRESH=600 ;;
-esac
-case "$PR_TIMEOUT" in
-  ''|*[!0-9]*|0) PR_TIMEOUT=90 ;;
 esac
 
 # shellcheck source=bin/fm-timeout-lib.sh
@@ -225,19 +222,20 @@ project_map_json() {
   printf '"unreadable"\n'
 }
 
-# Refresh data/live-board/prs.json when the last attempt is PR_REFRESH seconds
-# old. The attempt stamp, not the file, paces retries, so a forge that keeps
-# failing is asked once per interval while the last good file stays in use.
-refresh_prs() {  # <board-dir>
-  local dir=$1 stamp="$1/.prs-attempt" out="$1/prs.json" staged age
+# Refresh PRS_FILE when the last attempt is PR_REFRESH seconds old. The
+# attempt stamp, not the file, paces retries, so a forge that keeps failing is
+# asked once per interval while the last good file stays in use.
+refresh_prs() {
+  local stamp="$STATE/.live-board-prs-attempt" staged age
   if age=$(file_age "$stamp"); then
     [ "$age" -ge "$PR_REFRESH" ] || return 0
   fi
+  (umask 077; mkdir -p "$STATE") 2>/dev/null || return 0
   : > "$stamp" 2>/dev/null || return 0
-  staged=$(umask 077; mktemp "$dir/.prs.XXXXXX") || return 0
+  staged=$(umask 077; mktemp "$STATE/.live-board-prs.XXXXXX") || return 0
   if fm_run_timed "$PR_TIMEOUT" "$SCRIPT_DIR/fm-live-board-prs.sh" --json > "$staged" 2>/dev/null \
     && jq -e '.schema == "fm-live-board-prs.v1"' "$staged" >/dev/null 2>&1 \
-    && chmod 0600 "$staged" && mv -f -- "$staged" "$out"; then
+    && chmod 0600 "$staged" && mv -f -- "$staged" "$PRS_FILE"; then
     return 0
   fi
   rm -f -- "$staged"
@@ -258,8 +256,8 @@ build_board() {  # <refresh-seconds>
   tmp=$(umask 077; mktemp "${board%/*}/.board.XXXXXX") || { rm -f -- "$snap"; fail "cannot stage the board"; }
   # shellcheck disable=SC2064 # Expand the staged paths now; they are fixed.
   trap "rm -f -- '$snap' '$tmp'" EXIT
-  refresh_prs "${board%/*}"
-  [ ! -f "${board%/*}/prs.json" ] || [ -L "${board%/*}/prs.json" ] || prs=(--prs "${board%/*}/prs.json")
+  refresh_prs
+  [ ! -f "$PRS_FILE" ] || [ -L "$PRS_FILE" ] || prs=(--prs "$PRS_FILE")
   if ! fm_run_timed "$BUILD_TIMEOUT" "$SCRIPT_DIR/fm-live-board-snapshot.sh" --json ${prs[@]+"${prs[@]}"} > "$snap"; then
     fail "the live-board snapshot failed or exceeded ${BUILD_TIMEOUT}s; the previous board is unchanged"
   fi

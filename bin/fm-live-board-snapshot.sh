@@ -47,8 +47,9 @@
 # the cleaned title and summary a one-to-three-sentence manager note drawn
 # from the description, or null when the description is missing or too
 # technical; lbp_summary in bin/fm-live-board-prs.jq is the one rule. deploy is
-# {outcome, why, runs[{name,result}], more_runs}, decided by lbp_deploy there:
-# succeeded, failed, running, not-deployed, none or unknown. No description
+# {outcome, why, runs[{name,result}], more_runs}, the result of the runs its
+# merge started, decided by lbp_deploy there: succeeded, failed, running,
+# not-deployed, none or unknown. No description
 # text beyond that summary leaves this projection, and only canonical GitHub
 # /pull/<number> and Azure DevOps /pullrequest/<number> links are kept.
 # Only allowlisted fields leave this projection: no backlog bodies, raw status,

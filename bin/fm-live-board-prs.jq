@@ -59,7 +59,8 @@ def lbp_ado_branch($repo; $top):
   {status:"ok",truncated:(length >= $top),oldest:([.[].queued | lbp_epoch // empty] | min),
    items:[.[] | select(.repo == $repo and .reason != "schedule" and .reason != "pullRequest")
      | {name:(.name // "run \(.id)"),at:.id,sha:.sha,
-        result:(if .status != "completed" then "running" elif .result == "succeeded" then "succeeded" else "failed" end)}]};
+        result:(if .status != "completed" then "running" elif .result == "succeeded" then "succeeded"
+          elif .result == "canceled" then "superseded" else "failed" end)}]};
 
 # Input: the Azure DevOps pull requests; $branches maps a target ref to its
 # lbp_ado_branch value, or to {status:"failed"} when its runs were unreadable.
@@ -227,13 +228,15 @@ def lbp_summary($ids; $truncated):
       elif test("[.!?][\"')]?$") then . else . + "." end
   end;
 
-# DEPLOY OUTCOME. The one rule that reads a pull request's deploy result:
+# DEPLOY OUTCOME. The one rule that reads the result of the runs a pull
+# request's merge started:
 #   not-deployed  open or closed unmerged, or merged under $grace seconds ago
-#                 in a repository whose merges do start deploy runs
+#                 in a repository whose merges do start runs
 #   failed        a counted run failed; running: none failed, one is unfinished
 #   succeeded     every counted run succeeded
-#   none          merged with no run: `project` when no merge in the window
-#                 started one, `change` when other merges did
+#   none          merged with no counted run: `superseded` when a run of its
+#                 own was cancelled or replaced, else `project` when no merge
+#                 in the window started one and `change` when other merges did
 #   unknown       the runs could not be read, or are older than the window
 def lbp_deploy($has_runs; $now; $grace):
   ([(.runs.items // [])[] | select(.result | IN("failed","running","succeeded"))]
@@ -244,6 +247,7 @@ def lbp_deploy($has_runs; $now; $grace):
      elif any($counted[]; .result == "failed") then {outcome:"failed",why:"run-failed"}
      elif any($counted[]; .result == "running") then {outcome:"running",why:"run-unfinished"}
      elif ($counted | length) > 0 then {outcome:"succeeded",why:"runs-succeeded"}
+     elif any((.runs.items // [])[]; .result == "superseded") then {outcome:"none",why:"superseded"}
      elif .runs.status == "out-of-window" then {outcome:"unknown",why:"too-old"}
      elif $has_runs | not then {outcome:"none",why:"project"}
      elif .merged_at != null and $now - .merged_at < $grace then {outcome:"not-deployed",why:"waiting"}
