@@ -183,45 +183,50 @@ collect_source() {  # <project> <dir> <prefix> <out>
   repo_note "$project" none none unsupported-forge "$prefix" > "$out"
 }
 
-started=$(date +%s)
-count=0
-pids=()
+collect_all() {
+  local started count=0 home_real registry name mode prefix pid index=0
+  local -a pids=() files=()
+  started=$(date +%s)
 
-# The home's own checkout is a source only when the home is the repository
-# root, so a home that merely sits inside another repository adds nothing.
-home_real=$(cd "$FM_HOME" 2>/dev/null && pwd -P) || home_real=
-if [ -n "$home_real" ] && [ "$(git -C "$home_real" rev-parse --show-toplevel 2>/dev/null)" = "$home_real" ]; then
-  count=$((count + 1))
-  collect_source "${home_real##*/}" "$home_real" fm/ "$tmp/repo.$count" &
-  pids+=("$!")
-fi
-
-if registry=$("$SCRIPT_DIR/fm-project-mode.sh" --list-json 2>/dev/null); then
-  while IFS=$'\t' read -r name mode; do
-    case "$name" in
-      ''|.|..|*/*) continue ;;
-    esac
+  # The home's own checkout is a source only when the home is the repository
+  # root, so a home that merely sits inside another repository adds nothing.
+  home_real=$(cd "$FM_HOME" 2>/dev/null && pwd -P) || home_real=
+  if [ -n "$home_real" ] && [ "$(git -C "$home_real" rev-parse --show-toplevel 2>/dev/null)" = "$home_real" ]; then
     count=$((count + 1))
-    prefix=$("$SCRIPT_DIR/fm-project-mode.sh" --branch-prefix "$name" 2>/dev/null) || prefix=fm/
-    if [ "$mode" = local-only ]; then
-      repo_note "$name" none none local-only "$prefix" > "$tmp/repo.$count"
-      continue
-    fi
-    collect_source "$name" "$PROJECTS/$name" "$prefix" "$tmp/repo.$count" &
+    collect_source "${home_real##*/}" "$home_real" fm/ "$tmp/repo.$count" &
     pids+=("$!")
-  done < <(printf '%s' "$registry" | jq -r '.projects[]? | [.name, (.mode // "")] | @tsv')
+  fi
+
+  if registry=$("$SCRIPT_DIR/fm-project-mode.sh" --list-json 2>/dev/null); then
+    while IFS=$'\t' read -r name mode; do
+      case "$name" in
+        ''|.|..|*/*) continue ;;
+      esac
+      count=$((count + 1))
+      prefix=$("$SCRIPT_DIR/fm-project-mode.sh" --branch-prefix "$name" 2>/dev/null) || prefix=fm/
+      if [ "$mode" = local-only ]; then
+        repo_note "$name" none none local-only "$prefix" > "$tmp/repo.$count"
+        continue
+      fi
+      collect_source "$name" "$PROJECTS/$name" "$prefix" "$tmp/repo.$count" &
+      pids+=("$!")
+    done < <(printf '%s' "$registry" | jq -r '.projects[]? | [.name, (.mode // "")] | @tsv')
+  fi
+
+  for pid in ${pids[@]+"${pids[@]}"}; do
+    wait "$pid" 2>/dev/null || true
+  done
+
+  while [ "$index" -lt "$count" ]; do
+    index=$((index + 1))
+    [ -s "$tmp/repo.$index" ] && files+=("$tmp/repo.$index")
+  done
+  jq -cn --argjson epoch "$started" '
+    {schema:"fm-live-board-prs.v1",collected_at:($epoch | todate),collected_at_epoch:$epoch,
+     repos:([inputs] | unique_by(.project))}' ${files[@]+"${files[@]}"} < /dev/null
+}
+
+# A test that sources this file gets the functions and constants above only.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  collect_all
 fi
-
-for pid in ${pids[@]+"${pids[@]}"}; do
-  wait "$pid" 2>/dev/null || true
-done
-
-files=()
-index=0
-while [ "$index" -lt "$count" ]; do
-  index=$((index + 1))
-  [ -s "$tmp/repo.$index" ] && files+=("$tmp/repo.$index")
-done
-jq -cn --argjson epoch "$started" '
-  {schema:"fm-live-board-prs.v1",collected_at:($epoch | todate),collected_at_epoch:$epoch,
-   repos:([inputs] | unique_by(.project))}' ${files[@]+"${files[@]}"} < /dev/null

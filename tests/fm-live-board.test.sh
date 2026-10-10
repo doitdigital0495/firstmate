@@ -402,7 +402,7 @@ shop_pr() { printf 'https://github.com/acme/web-shop/pull/%s' "$1"; }
 in_home "$tl" "$LIVE" build >/dev/null || fail "a board with pull requests did not build"
 [ "$(calls)" = 3 ] || fail "the first build did not read each project's pull requests once: $(calls)"
 out=$(TZ=UTC render "$tl" "$tl_now")
-check "$out" '(.projects | map(.label)) == ["web-shop"] and (.projects[0].badges | index("1 failed after merge") != null)
+check "$out" '(.projects | map(.label)) == ["web-shop"] and (.projects[0].badges | any(test("failed after merge")) | not)
   and (.projects[0].timeline | .status == "ok" and .count == "5" and .gaps == []
     and (.say | test("Oldest on the left") and test("Read "))
     and (.marks | map(.key | split("/") | .[-1])) == ["5","2","1","4","3"]
@@ -469,8 +469,8 @@ pass "pressing a pull request pins its detail with a link to it, across reloads,
 
 check "$out" '.idle.names == ["data","docs-site"]
   and (.idle.timelines.data | .count == "1" and (.marks | map(.tag)) == ["no runs"])
-  and (.idle.timelines["docs-site"] | .gaps == ["docs-site"] and .marks == [] and (.say | test("No pull requests were found")))
-  and (.notes | any(test("Pull requests for docs-site could not be read")))' \
+  and (.idle.timelines["docs-site"] | .gaps == ["docs-site"] and .marks == [] and .say == "No pull requests can be shown for this project.")
+  and (.notes | index("Pull requests for docs-site could not be read: the read failed or took too long.") != null)' \
   "a quiet project lost its timeline, or a project whose pull requests could not be read did not say so"
 check "$(TZ=UTC render "$tl" "$tl_now" "!pr=click=data=https://github.com/acme/data/pull/7")" \
   '.idle.timelines.data.detail | .pinned == true and .badges[0] == "No runs after merge for this project" and .runs == []
@@ -508,8 +508,21 @@ due() { touch -t 202001010000 "$tl/state/.live-board-prs-attempt"; }
 due
 in_home "$tl" "$LIVE" build >/dev/null || fail "a due pull request read failed the build"
 [ "$(calls)" = 6 ] || fail "a due pull request read did not ask the forge again: $(calls)"
-# A copy of the scripts whose collector fails stands in for a read that dies or times out.
+# A copy of the scripts whose collector answers with nothing, late, stands in
+# for a read that hangs: only the time bound keeps the last good timeline.
 cp -R "$ROOT/bin" "$tl/bin-down"
+cat > "$tl/bin-down/fm-live-board-prs.sh" <<'SH'
+#!/usr/bin/env bash
+sleep 6
+printf '%s\n' '{"schema":"fm-live-board-prs.v1","collected_at":"2026-01-01T00:00:00Z","collected_at_epoch":1767225600,"repos":[]}'
+SH
+due
+out=$(in_home "$tl" bash -c ". '$tl/bin-down/fm-live-board.sh'; PR_TIMEOUT=1; command_build" 2>&1) \
+  || fail "a pull request read that hung also failed the build: $out"
+assert_contains "$out" "the timelines keep their previous data" "a pull request read that outlasted its time bound was not reported"
+check "$(TZ=UTC render "$tl" "$tl_now")" '.projects[0].timeline.marks | length == 5' \
+  "a pull request read that outlasted its time bound replaced the last good timeline"
+# The same copy with a collector that fails stands in for a read that dies.
 printf '#!/usr/bin/env bash\nexit 1\n' > "$tl/bin-down/fm-live-board-prs.sh"
 due
 out=$(in_home "$tl" "$tl/bin-down/fm-live-board.sh" build 2>&1) \
@@ -531,7 +544,50 @@ in_home "$tl" "$tl/bin-down/fm-live-board.sh" build >/dev/null 2>&1 \
 check "$(TZ=UTC render "$tl" "$tl_now")" '.projects[0].timeline | .status == "not-collected" and .marks == []
   and (.say | test("have not been read yet"))' \
   "a board whose pull requests were never read did not say so"
-pass "pull requests are read at most once per interval, and a failed read keeps the last good timeline and says so"
+pass "pull requests are read at most once per interval, and a failed or hung read keeps the last good timeline and says so"
+
+# A merge whose runs have not started is not drawn as open, and one whose only
+# run was cancelled reads as replaced.
+{
+  tl_pr web-shop 1 MERGED fm/ws-redesign 7200 'One-step checkout' '' 'Deploy shop=SUCCESS'
+  tl_pr web-shop 6 MERGED fm/ws-banner 3600 'Sale banner' '' 'Deploy shop=CANCELLED'
+  tl_pr web-shop 8 MERGED fm/ws-footer 60 'New footer' ''
+} | jq -cs '{data:{repository:{pullRequests:{nodes:.}}}}' > "$tl/forge/web-shop.json"
+# A project with no pull requests at all, and one kept on a forge the board cannot read.
+printf '%s\n' '{"data":{"repository":{"pullRequests":{"nodes":[]}}}}' > "$tl/forge/data.json"
+git -C "$tl/projects/docs-site" remote set-url origin 'https://gitlab.example.com/acme/docs-site.git'
+due
+in_home "$tl" "$LIVE" build >/dev/null || fail "the board did not rebuild after the forge changed"
+out=$(TZ=UTC render "$tl" "$tl_now" "!pr=focus=web-shop=$(shop_pr 6)")
+check "$out" '.projects[0].timeline | (.marks | map(.tag)) == ["passed","replaced","waiting"]
+  and (.marks | map(.kind)) == ["succeeded","none","running"]
+  and .detail.badges[0] == "Replaced by a newer run" and (.detail.deployText | test("a newer run replaced it"))' \
+  "a merge waiting for its runs was drawn as open, or a merge whose only run was cancelled was not shown as replaced"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=focus=web-shop=$(shop_pr 8)")" \
+  '.projects[0].timeline.detail.badges[0] == "Runs after merge not started yet"' \
+  "a merge waiting for its runs was not named as waiting"
+pass "a merge waiting for its runs is drawn as running, and one whose only run was cancelled as replaced"
+
+check "$out" '.idle.timelines.data == null
+  and (.idle.timelines["docs-site"] | .gaps == ["docs-site"] and .say == "No pull requests can be shown for this project.")
+  and (.notes | index("Pull requests for docs-site could not be read: its repository is kept somewhere the board cannot read.") != null)
+  and (.notes | any(test("Pull requests for data")) | not)' \
+  "an unsupported forge read as a project with no pull requests, or a truly empty project was called unread"
+# A read that found no forge tool, as the collector records it.
+jq -c '.repos |= map(if .project == "data" then . + {status:"none",reason:"no-cli"} else . end)' \
+  "$tl/state/.live-board-prs.json" > "$tl/state/prs.next" && mv -f "$tl/state/prs.next" "$tl/state/.live-board-prs.json"
+in_home "$tl" "$LIVE" build >/dev/null || fail "the board did not rebuild from the cached pull request read"
+check "$(TZ=UTC render "$tl" "$tl_now")" \
+  '(.idle.timelines.data | .gaps == ["data"] and .say == "No pull requests can be shown for this project.")
+  and (.notes | index("Pull requests for data could not be read: the tool that reads GitHub is not installed on this machine.") != null)' \
+  "a project whose forge tool is missing read as a project with no pull requests"
+cp "$tl/forge/data.json" "$tl/forge/web-shop.json"
+due
+in_home "$tl" "$LIVE" build >/dev/null || fail "the board did not rebuild after the forge emptied"
+check "$(TZ=UTC render "$tl" "$tl_now")" \
+  '.projects[0].timeline | .gaps == [] and .marks == [] and .say == "No pull requests were found for this project."' \
+  "a read that found no pull requests did not say so"
+pass "a project that could not be read says why, and only a read that found nothing says no pull requests were found"
 
 # --- Queued answers carry the owner's guard ------------------------------------
 out=$(render "$home" "$now" 'ws-carrier=postnl:cheaper' 'data-window=' 'data-note-only=:Call it Tidewater' \

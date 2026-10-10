@@ -121,6 +121,15 @@ def lb_deploy_words:
 def lb_run_words:
   {"succeeded":"succeeded","failed":"failed","running":"still running"}[.] // "unknown";
 def lb_forge_name: {"github":"GitHub","ado":"Azure DevOps"}[.] // "the forge";
+# Why a source's pull requests were not read, or null when they were. A
+# local-only project has none to read.
+def lb_unread_why:
+  if .status == "failed" then "the read failed or took too long"
+  elif .status != "none" or .reason == "local-only" then null
+  elif .reason == "no-cli" then "the tool that reads \(.forge | lb_forge_name) is not installed on this machine"
+  elif .reason == "unsupported-forge" then "its repository is kept somewhere the board cannot read"
+  elif .reason == "no-clone" then "this home has no copy of its repository"
+  else "the reason is not known" end;
 # A project shows its newest pull requests, oldest first so time reads left to right.
 def lb_timeline_shown: 15;
 
@@ -145,7 +154,8 @@ def lb_view($map):
 | [($board.recently_finished // [])[] | . as $f | group_of(.id; .project) + {finished:$f}] as $done
 | [($board.pull_requests.repos // [])[] | . as $repo | ($repo.prs // [])[] | . as $pr
    | group_of($pr.task // ""; $repo.project) + {pr:($pr + {forge:$repo.forge})}] as $merged
-| [($board.pull_requests.repos // [])[] | select(.status == "failed") | .project] as $unread
+| [($board.pull_requests.repos // [])[] | lb_unread_why as $why | select($why != null)
+   | {repo:.project,say:"Pull requests for \(.project | lb_repo // "a project") could not be read: \($why)."}] as $unread
 | ([$asked[], $placed[], $done[], $merged[] | {key,index,repo}]
    + if $named != null then [$named.projects | to_entries[] | {key:"project:\(.key)",index:.key,repo:null}]
      else [$board.projects[] | (.name | lb_repo) as $repo | {key:"repo:\($repo // "")",index:null,repo:$repo}] end
@@ -171,15 +181,14 @@ def lb_view($map):
       charted:([$rows[] | select(.lane == "charted")] | sort_by([(.why | lb_why_rank),.since // "9999",.id,.key]))}
      | map_values(map(del(.priority,.since))) as $lanes
    | ([$merged[] | select(.key == $g.key) | .pr] | sort_by([-(.at // 0),-.number,.url])) as $pulls
-   # A repository whose read failed may hold this project's pull requests when
+   # A repository that was not read may hold this project's pull requests when
    # it is this repository, a rule names it, or a rule matches by task id alone.
-   | [$unread[] | . as $name | select(($name | lb_repo) as $repo
+   | [$unread[] | select((.repo | lb_repo) as $repo
         | if $g.index == null then $g.repo == $repo
           else any($named.projects[$g.index].match[]; (has("repo") | not) or .repo == $repo) end)] as $gaps
    | {questions:($questions|length),urgent:([$questions[] | select(.urgent)]|length),
       doing:($lanes.doing|length),next:($lanes.next|length),charted:($lanes.charted|length),
-      stuck:([$lanes.charted[] | select(.why == "stuck")]|length),finished:($finished|length),
-      failed_deploys:([$pulls[:lb_timeline_shown][] | select(.deploy.outcome == "failed")]|length)} as $c
+      stuck:([$lanes.charted[] | select(.why == "stuck")]|length),finished:($finished|length)} as $c
    | ([$rows[] | select(.note != null and .at != null)] | max_by(.at)) as $latest
    | {key:$g.key,source:(if $g.index != null then "map" else "repo" end),
       name:(if $g.index != null then $named.projects[$g.index].name else ($g.repo // "Unsorted work") end),
@@ -248,7 +257,7 @@ def lb_view($map):
          + " a plain-language explanation from Firstmate." else empty end,
      (if $board.pull_requests.status == "unreadable" then
         "The pull request data could not be read, so the timelines are empty." else empty end),
-     ($unread[] | "Pull requests for \(lb_repo // "a project") could not be read, so its timeline may be missing changes."),
+     $unread[].say,
      ($board.omissions[]? | .kind as $k
        | if $k == "backlog-unavailable" then "The task list could not be read, so some work may be missing."
          elif $k == "registry-unavailable" then "The project registry could not be read."

@@ -112,9 +112,8 @@
 # on its forge, until it is pressed again or closed. The pin lives in a hidden
 # field of the timeline that Lavish restores after each live reload, as a
 # card's queued answer does, and it queues nothing. A merge with a failed run
-# is marked by colour, shape and the word "failed", and counted in the
-# project's heading; one whose only runs were cancelled reads "Replaced by a
-# newer run". bin/fm-live-board-prs.sh reads the pull requests and runs,
+# is marked by colour, shape and the word "failed"; one whose only runs were
+# cancelled reads "Replaced by a newer run". bin/fm-live-board-prs.sh reads the pull requests and runs,
 # read-only, and its header owns what is read and which runs count. build and
 # refresh run it at most once per 600 seconds, bounded by 90 seconds, into
 # state/.live-board-prs.json, and hand that file to the snapshot. The file
@@ -122,8 +121,10 @@
 # in data/live-board, whose files Lavish serves beside the board. A failed or
 # timed-out read keeps the previous file, is retried after the
 # same interval, and never fails the build. The page says when the pull
-# requests were last read, names a project whose read failed, and says so
-# when nothing was read at all. A pull request belongs to the project its
+# requests were last read, names each project whose pull requests were not
+# read and why - a failed read, a missing forge tool, a forge it cannot read
+# or a missing clone - instead of calling its timeline empty, and says so when
+# nothing was read at all. A pull request belongs to the project its
 # ship branch's task id or its repository matches, by the PROJECTS rules;
 # bin/fm-live-board-snapshot.sh's header owns the fields and
 # bin/fm-live-board-prs.jq the summary and deploy-outcome rules.
@@ -343,11 +344,14 @@ command_open() {
   fm_lavish_board_serve "$(board_path)"
 }
 
-case "${1-}" in
-  build) shift; command_build "$@" ;;
-  refresh) shift; (command_refresh "$@") || true ;;
-  open) shift; command_open "$@" ;;
-  path) board_path ;;
-  -h|--help|help) usage ;;
-  *) usage >&2; exit 2 ;;
-esac
+# A test that sources this file gets the functions and constants above only.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "${1-}" in
+    build) shift; command_build "$@" ;;
+    refresh) shift; (command_refresh "$@") || true ;;
+    open) shift; command_open "$@" ;;
+    path) board_path ;;
+    -h|--help|help) usage ;;
+    *) usage >&2; exit 2 ;;
+  esac
+fi

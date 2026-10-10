@@ -48,10 +48,12 @@ cat > "$HOME_DIR/data/projects.md" <<'REG'
 - missing [direct-PR] - fixture (added 2026-01-01)
 REG
 
-# GitHub answers per repository name; a missing file is a failed read.
+# GitHub answers per repository name; a missing file is a failed read. A
+# slow-* marker in the forge directory makes that kind of call answer late.
 cat > "$FAKEBIN/gh" <<'SH'
 #!/usr/bin/env bash
 printf 'gh %s\n' "$(printf '%s ' "$@" | tr '\n' ' ')" >> "$FM_TEST_CALLS"
+[ ! -f "$FM_TEST_FORGE/slow-gh" ] || sleep 6
 name=
 for arg in "$@"; do
   case "$arg" in name=*) name=${arg#name=} ;; esac
@@ -72,6 +74,8 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 if [ -n "$repo" ]; then file="$FM_TEST_FORGE/az-prs-$repo.json"; else file="$FM_TEST_FORGE/az-runs-$branch.json"; fi
+if [ -n "$repo" ]; then slow=slow-az-prs; else slow=slow-az-runs; fi
+[ ! -f "$FM_TEST_FORGE/$slow" ] || sleep 6
 [ -f "$file" ] || exit 1
 cat "$file"
 SH
@@ -248,3 +252,45 @@ check "$TMP_ROOT/board-full.json" "$(pr reports 23)"' | .deploy.outcome == "unkn
 check "$TMP_ROOT/board-full.json" "$(pr reports 21)"' | .deploy.outcome == "succeeded"' \
   "a full page of runs lost a merge whose runs were on it"
 pass "a merge older than the deploy history that was read is unknown, never 'no deploy'"
+
+# --- Time bounds ---------------------------------------------------------------
+# The collector with one second per forge call and two per Azure DevOps source,
+# against forge tools that would answer correctly a few seconds later.
+collect_bounded() {  # <out>
+  PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$ROOT" FM_TEST_CALLS="$CALLS" \
+    FM_TEST_FORGE="$TMP_ROOT/forge" bash -c 'prs=$1; shift; . "$prs"; CALL_TIMEOUT=1; SOURCE_BUDGET=2; collect_all' _ "$PRS" \
+    > "$1" || fail "the bounded collector failed"
+}
+status_of() { printf '[.repos[] | select(.project == "%s")][0] | "\\(.forge)/\\(.status)/\\(.reason)"' "$1"; }
+: > "$TMP_ROOT/forge/slow-gh"
+: > "$TMP_ROOT/forge/slow-az-prs"
+collect_bounded "$TMP_ROOT/prs-slow.json"
+check "$TMP_ROOT/prs-slow.json" "$(status_of shop)"' == "github/failed/fetch-failed"' \
+  "a GitHub read that outlasted its time bound was waited for"
+check "$TMP_ROOT/prs-slow.json" "$(status_of reports)"' == "ado/failed/fetch-failed"' \
+  "an Azure DevOps pull request read that outlasted its time bound was waited for"
+rm -f "$TMP_ROOT/forge/slow-gh" "$TMP_ROOT/forge/slow-az-prs" "$TMP_ROOT/forge/az-prs-ledger.json"
+
+# Four target branches whose run lists each outlast the call bound: every merge
+# is unreadable, and the source budget stops the reads before the last branch.
+index=0
+for sha in "$SHA_OK" "$SHA_RED" "$SHA_OLD" "$SHA_UAT"; do
+  index=$((index + 1))
+  ado_pr "4$index" completed "ship/slow-$index" "slow$index" '2026-10-03T10:00:00.5+00:00' "$sha" "Slow $index"
+  ado_run "20$index" reports-deploy completed succeeded individualCI "$sha" | jq -cs . > "$TMP_ROOT/forge/az-runs-slow$index.json"
+done | jq -cs . > "$TMP_ROOT/forge/az-prs-reports.json"
+: > "$TMP_ROOT/forge/slow-az-runs"
+: > "$CALLS"
+collect_bounded "$TMP_ROOT/prs-budget.json"
+project "$TMP_ROOT/prs-budget.json" "$TMP_ROOT/board-budget.json"
+check "$TMP_ROOT/prs-budget.json" "$(status_of reports)"' == "ado/ok/null"' \
+  "slow run lists failed the whole Azure DevOps source"
+check "$TMP_ROOT/board-budget.json" '[.pull_requests.repos[] | select(.project == "reports")][0].prs
+  | length == 4 and all(.[]; .deploy.outcome == "unknown" and .deploy.why == "unreadable")' \
+  "a run list that outlasted its time bound was waited for, or a branch the budget skipped was given a verdict"
+check "$TMP_ROOT/board-budget.json" '[.pull_requests.repos[] | select(.project == "shop")][0] | .status == "ok" and (.prs | length) == 7' \
+  "a slow Azure DevOps source cost another project its pull requests"
+runs_read=$(grep -c '^az pipelines runs list ' "$CALLS")
+[ "$runs_read" -ge 1 ] && [ "$runs_read" -lt 4 ] \
+  || fail "the source budget did not stop the run-list reads before the last branch: $runs_read of 4 were made"
+pass "each forge call and each Azure DevOps source is cut off at its time bound, and what was not read is unknown"

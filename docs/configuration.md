@@ -1618,8 +1618,8 @@ An answered question leaves the page on the first refresh after its answer is re
 Each project also shows a timeline of its 15 newest pull requests, oldest on the left, read from the forge of each registered project's clone (GitHub through `gh`, Azure DevOps through `az`) and from the home's own checkout.
 Pointing at a pull request, moving keyboard focus to it, or pressing it shows what changed in one to three plain sentences drawn from its description, or its cleaned title when the description is missing or too technical, and whether the runs its merge started succeeded, failed, are still running, were replaced by a newer run, have not happened yet, or do not exist for that project.
 Those are every run a merge started, whether or not it deploys anything, so the page calls them runs after merge.
-Pressing a pull request pins that detail with a link to it on its forge, and a merge with a failed run is marked by colour, shape and the word "failed" and counted in the project's heading.
-The pull requests are read at most once every ten minutes and never written to; a project whose read failed is named on the page instead of being shown as empty, and [`bin/fm-live-board-prs.sh`](../bin/fm-live-board-prs.sh)'s header owns what is read and which runs count.
+Pressing a pull request pins that detail with a link to it on its forge, and a merge with a failed run is marked by colour, shape and the word "failed".
+The pull requests are read at most once every ten minutes and never written to; a project whose pull requests were not read (a failed read, a missing `gh` or `az`, a forge the board cannot read, or a missing clone) is named on the page with that reason instead of being shown as empty, and [`bin/fm-live-board-prs.sh`](../bin/fm-live-board-prs.sh)'s header owns what is read and which runs count.
 The read is cached in `state/.live-board-prs.json`, outside the directory Lavish serves, because it holds pull request descriptions.
 Set `enabled` to false or delete the file to stop refreshing; the published page and any recorded answers stay in place.
 
