@@ -4170,13 +4170,16 @@ test_context_must_explain_itself_to_a_manager() {
 no explanation	{"schema":"fm-captain-question.v1","close":"done","question":"Ship the widget?"}
 missing purpose	{"schema":"fm-captain-question.v1","close":"done","about":"The synthetic widget is ready and waits for a decision."}
 missing about	{"schema":"fm-captain-question.v1","close":"done","purpose":"Your answer lets the team ship the widget this week."}
-label instead of a sentence	{"schema":"fm-captain-question.v1","close":"done","about":"Widget release","purpose":"Your answer lets the team ship the widget this week."}
-file name	{"schema":"fm-captain-question.v1","close":"done","about":"The widget settings in widget.json are ready for a decision.","purpose":"Your answer lets the team ship the widget this week."}
 link	{"schema":"fm-captain-question.v1","close":"done","about":"The synthetic widget is ready and waits for a decision.","purpose":"Your answer lets the team ship what https://example.invalid/pull/7 changed."}
-path	{"schema":"fm-captain-question.v1","close":"done","about":"The widget code under src/widgets/new is ready for a decision.","purpose":"Your answer lets the team ship the widget this week."}
+backtick	{"schema":"fm-captain-question.v1","close":"done","about":"The synthetic \`widget\` is ready and waits for a decision.","purpose":"Your answer lets the team ship the widget this week."}
+GUID	{"schema":"fm-captain-question.v1","close":"done","about":"Report 123e4567-e89b-12d3-a456-426614174000 is ready and waits for a decision.","purpose":"Your answer lets the team ship the widget this week."}
 option without consequence	{"schema":"fm-captain-question.v1","close":"done",$PLAIN,"options":[{"value":"go","label":"Go","detail":"Ships today."},{"value":"wait","label":"Wait"}]}
 CASES
   assert_grep 'what happens when he picks it' "$home/bare.err" "an option without a consequence was refused for another reason"
+
+  printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done","about":"Monthly/quarterly/yearly reporting.","purpose":"The team can report monthly/quarterly/yearly from now on."}' > "$home/slashes.json"
+  run_captain "$home" hold sample-slashes --title "Choose the reporting rhythm" --reason "choose" --repo sample \
+    --context-file "$home/slashes.json" >/dev/null || fail "plain words with slashes were refused as internal names"
 
   # A call stored before the rule keeps working and may gain exactly what it lacks.
   FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-old \
