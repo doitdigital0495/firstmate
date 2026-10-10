@@ -67,6 +67,12 @@ new Function("window", "document", "setInterval", "Date", code)(
 
 const text = (n) => n.textContent.replace(/\s+/g, " ").trim();
 const badges = (n) => n.find((c) => c.hasClass("badge")).map(text);
+// The words of one named card part, or of the given tag inside it.
+const say = (q, part, tag) => {
+  const box = q.find((c) => c.getAttribute("data-part") === part)[0];
+  const node = box && tag ? box.find((c) => c.tagName === tag)[0] : box;
+  return node ? text(node) : null;
+};
 const root = byId.get("lb-projects");
 
 const submits = [];
@@ -109,6 +115,11 @@ const projects = root.children.filter((c) => c.getAttribute("data-project") !== 
         title: text(q.find((c) => c.tagName === "H3")[0]),
         topic: topic ? text(topic) : null,
         why: why ? text(why) : null,
+        parts: q.find((c) => c.getAttribute("data-part") !== null).map((c) => c.getAttribute("data-part")),
+        project: say(q, "project", "B"),
+        about: say(q, "about", "P"),
+        purpose: say(q, "purpose", "P"),
+        needsExplanation: say(q, "needs-explanation"),
         urgent: q.hasClass("q-urgent"),
         badges: badges(q.children[0]),
         answerable: Boolean(form),

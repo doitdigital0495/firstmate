@@ -1606,7 +1606,9 @@ Projects are named the way the captain talks about them through a second local, 
 ```
 
 Each task belongs to the first project with a matching task-id pattern or repo; without the file, or for work no rule matches, the page groups by repository instead, and an invalid file falls back the same way with a note on the page.
-A question shows its owner-written question text and each option's explanation, with the recommended option marked, when its owner recorded structured context with `bin/fm-captain-hold.sh hold --context-file`.
+A question card is written for a manager who did not build the work: it shows its project, what the question is about, what answering it is for, the question, and then each option with what happens if it is picked, the recommended one highlighted.
+Those words come from the structured context its owner recorded with `bin/fm-captain-hold.sh hold --context-file`, which refuses a context without them.
+A question stored without that explanation still shows and can still be answered, under a visible "Needs a plain-language explanation" marker and a matching board note.
 A captain hold with no recorded context gets a free-text answer box that feeds the same captain-hold intake; stale, malformed or ambiguous questions stay visible but read-only.
 Set `enabled` to false or delete the file to stop refreshing; the published page and any recorded answers stay in place.
 

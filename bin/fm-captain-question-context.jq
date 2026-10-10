@@ -25,10 +25,12 @@ def fm_question_text($max; $newlines):
   and (test(if $newlines then "[\\x00-\\x09\\x0b-\\x1f\\x7f]" else "[\\x00-\\x1f\\x7f]" end) | not);
 def fm_question_valid($stored):
   type == "object"
-  and ((keys - (["schema","close","question","options","recommendation","subject"]
+  and ((keys - (["schema","close","about","purpose","question","options","recommendation","subject"]
     + if $stored then ["lifecycle"] else [] end)) | length == 0)
   and .schema == "fm-captain-question.v1" and (.close | IN("done","release"))
   and (if $stored then (.lifecycle | fm_question_lifecycle_valid) else true end)
+  and (.about == null or (.about | fm_question_text(600; false)))
+  and (.purpose == null or (.purpose | fm_question_text(600; false)))
   and (.question == null or (.question | fm_question_text(600; true)))
   and ((.options // []) | type == "array" and length <= 12
     and all(.[]; type == "object" and (keys == ["label","value"] or keys == ["detail","label","value"])
@@ -41,8 +43,27 @@ def fm_question_valid($stored):
   and (.subject == null or (.subject | type == "object" and keys == ["artifact","version"]
     and (.artifact | fm_question_slug(128))
     and (.version | type == "string" and length <= 64 and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))));
+# Authoring gate only: a stored call that predates it stays valid and the board
+# marks it instead.
+# The first unmet plain-language rule, or null when a manager can read the call.
+def fm_question_explanation_problem:
+  if .about == null or .purpose == null then "missing"
+  elif any(.about, .purpose;
+    test("https?://|`|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
+    then "markup"
+  elif any((.options // [])[]; .detail == null) then "option"
+  else null end;
+# An active call may gain the explanation it lacks; nothing already published changes.
+def fm_question_adds_explanation_only($old):
+  def bare: del(.about, .purpose) | .options |= map(del(.detail));
+  . as $new
+  | ($new | bare) == ($old | bare)
+  and all("about", "purpose"; . as $field | $old[$field] == null or $new[$field] == $old[$field])
+  and all(range(0; $old.options | length);
+    . as $i | $old.options[$i].detail == null or $new.options[$i].detail == $old.options[$i].detail);
 def fm_question_normalize:
   {schema,close,options:(.options // []),recommendation:(.recommendation // null),subject:(.subject // null)}
+  + (if .about == null then {} else {about} end) + (if .purpose == null then {} else {purpose} end)
   + if .question == null then {} else {question} end;
 def fm_question_lifecycle:
   if (.hold_set | fm_question_timestamp) then

@@ -149,13 +149,30 @@ tasks_in "$home" add ws-carrier "Which carrier?" --repo web-shop --kind captain 
 tasks_in "$home" add data-window "Move the window?" --repo data --kind captain
 tasks_in "$home" add ws-legacy 'Logo </script><b>x</b>' --repo web-shop --kind captain
 tasks_in "$home" add data-note-only "Name the release" --repo data --kind captain
-printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done","question":"Who should ship the spring orders?","options":[{"value":"dhl","label":"DHL","detail":"Next-day delivery, about 8 percent dearer."},{"value":"postnl","label":"PostNL"}],"recommendation":"postnl"}' > "$home/ctx-done.json"
-printf '%s\n' '{"schema":"fm-captain-question.v1","close":"release","options":[{"value":"keep","label":"Keep"},{"value":"move","label":"Move"}]}' > "$home/ctx-release.json"
-printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done"}' > "$home/ctx-note.json"
+cat > "$home/ctx-done.json" <<'JSON'
+{"schema":"fm-captain-question.v1","close":"done",
+ "about":"The web shop needs one company to deliver the spring orders to customers.",
+ "purpose":"Your pick lets the team book the deliveries. Until you pick, spring orders cannot be sent out.",
+ "question":"Who should ship the spring orders?",
+ "options":[{"value":"dhl","label":"DHL","detail":"Next-day delivery, about 8 percent dearer."},
+  {"value":"postnl","label":"PostNL","detail":"Two-day delivery at today's price, which is why it is recommended."}],
+ "recommendation":"postnl"}
+JSON
+cat > "$home/ctx-note.json" <<'JSON'
+{"schema":"fm-captain-question.v1","close":"done",
+ "about":"The next release of the data platform still has no name.",
+ "purpose":"The name goes on the announcement to the business. Without it the announcement waits."}
+JSON
 in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --reason "Pick a carrier." --context-file "$home/ctx-done.json" >/dev/null \
   || fail "could not hold the carrier question"
-in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold data-window --reason "Load overlaps." --context-file "$home/ctx-release.json" >/dev/null \
+# data-window is a call stored before the plain-language rule: the writer no
+# longer produces that shape, so the fixture records it the way it sits in a body.
+FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold data-window --reason "Load overlaps." >/dev/null \
   || fail "could not hold the window question"
+printf '%s\n' 'Captain hold set: 2026-07-14T12:00:00Z' \
+  'Captain question context: {"close":"release","lifecycle":"2026-07-14T12:00:00Z#0","options":[{"label":"Keep","value":"keep"},{"label":"Move","value":"move"}],"recommendation":null,"schema":"fm-captain-question.v1","subject":null}' \
+  > "$home/old-shape.body"
+tasks_in "$home" update data-window --body-file "$home/old-shape.body"
 in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-legacy --reason "Old hold." >/dev/null \
   || fail "could not hold the legacy question"
 in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold data-note-only --reason "Free answer." --context-file "$home/ctx-note.json" >/dev/null \
@@ -176,10 +193,9 @@ check "$out" '.stats.questions == 4 and .stats.urgent == 1 and .stats.active_pro
   "without a project map, work did not group by repository with questions first"
 check "$out" '(.projects[0].questions[0] | .answerable and .mode == "options"
     and .title == "Who should ship the spring orders?" and .topic == "Which carrier?"
-    and (.why | test("Pick a carrier"))
     and .modeText == "Answering closes this question."
     and .options == [{value:"dhl",label:"DHL",detail:"Next-day delivery, about 8 percent dearer.",recommended:false},
-      {value:"postnl",label:"PostNL",detail:null,recommended:true}]
+      {value:"postnl",label:"PostNL",detail:"Two-day delivery at today\u0027s price, which is why it is recommended.",recommended:true}]
     and (.lavishQuestion | startswith("live-board:ws-carrier#")))
   and (.projects[1].questions[] | select(.id == "data-window") | .answerable
     and .modeText == "Answering lets the paused work continue.")
@@ -201,6 +217,26 @@ check "$out" '[.projects[].text] | join(" ")
   | test("ws-redesign|ws-retry|data-export|ws-carrier|data-window|ws-legacy|data-note-only|web-shop/pull") | not' \
   "the page face showed task ids or raw links"
 pass "repository fallback leads with real questions and explained options, and lists only workers"
+
+# --- A manager can place every question ---------------------------------------
+check "$out" '(.projects[0].questions[0]
+    | .parts == ["project","about","purpose","question","options"] and .project == "web-shop"
+    and .about == "The web shop needs one company to deliver the spring orders to customers."
+    and (.purpose | test("^Your pick lets the team book the deliveries")) and .needsExplanation == null
+    and .why == null and (.options | map(.recommended)) == [false,true])
+  and (.projects[1].questions[] | select(.id == "data-note-only")
+    | .parts == ["project","about","purpose","question"] and .needsExplanation == null)' \
+  "an explained question did not lead with its project, what it is about and what it is for"
+check "$out" '(.projects[1].questions[] | select(.id == "data-window")
+    | .parts == ["project","needs-explanation","question","options"] and .about == null and .purpose == null
+    and (.needsExplanation | test("^Needs a plain-language explanation"))
+    and (.why | test("Load overlaps")) and .answerable and (.options | map(.value)) == ["keep","move"])
+  and (.projects[0].questions[1]
+    | .parts == ["project","needs-explanation","question"]
+    and (.needsExplanation | test("^Needs a plain-language explanation")) and .answerable)
+  and (.notes | index("2 questions still need a plain-language explanation from Firstmate.") != null)' \
+  "a question stored without its explanation did not stay answerable under a visible marker"
+pass "each card leads with project, what it is about and what it is for; an unexplained one says so and still answers"
 
 # --- The captain's named projects ----------------------------------------------
 cat > "$home/config/live-board-projects.json" <<'JSON'

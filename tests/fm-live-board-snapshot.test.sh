@@ -218,7 +218,8 @@ context='{"schema":"fm-captain-question.v1","close":"release","lifecycle":"2026-
     case "$id" in
       valid-release|ambiguous) printf '  Captain question context: %s\n' "$context" ;;
       valid-done) printf '  Captain question context: %s\n' "$(printf '%s' "$context" \
-        | jq -c '.close = "done" | .question = "Ship the widget now?" | .options[0].detail = "Ships today."')" ;;
+        | jq -c '.close = "done" | .question = "Ship the widget now?" | .options[0].detail = "Ships today."
+          | .about = "The widget is ready to go out." | .purpose = "Your answer lets it ship."')" ;;
       invalid) printf '%s\n' '  Captain question context: {not JSON}' ;;
       unsupported) printf '  Captain question context: %s\n' "$(printf '%s' "$context" | jq -c '.schema = "future.v2"')" ;;
       duplicate) printf '  Captain question context: %s\n  Captain question context: %s\n' "$context" "$context" ;;
@@ -239,7 +240,9 @@ check "$TMP_ROOT/context-board.json" '.counts.questions == 10
     and .context.options == [{value:"go",label:"Go café"}]
     and .context.recommendation == "go" and .context.subject.version == "1.2.3")
   and any(.projects[].questions[]; .id == "valid-done" and .context.question == "Ship the widget now?"
+    and .context.about == "The widget is ready to go out." and .context.purpose == "Your answer lets it ship."
     and .context.options == [{value:"go",label:"Go café",detail:"Ships today."}])
+  and any(.projects[].questions[]; .id == "valid-release" and (.context | has("about") or has("purpose") | not))
   and any(.projects[].questions[]; .id == "duplicate" and .context_status == "duplicate")
   and any(.projects[].questions[]; .id == "stale" and .context_status == "stale")
   and any(.projects[].questions[]; .id == "legacy" and .context_status == "legacy")

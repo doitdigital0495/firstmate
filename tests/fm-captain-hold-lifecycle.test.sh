@@ -15,6 +15,8 @@ TEARDOWN="$ROOT/bin/fm-teardown.sh"
 BEARINGS="$ROOT/bin/fm-bearings-snapshot.sh"
 TMP_ROOT=$(fm_test_tmproot fm-captain-hold)
 TASKS_AXI_BIN=$(command -v tasks-axi || true)
+# The plain-language members every authored question context must carry.
+PLAIN='"about":"The synthetic widget is ready and waits for a decision to go out.","purpose":"Your answer lets the team ship it. Until then the widget stays where it is."'
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
@@ -618,7 +620,7 @@ SH
   rm -f "$fb/tasks-axi.bak"
   chmod +x "$fb/tasks-axi"
 
-  printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done"}' > "$home/context.json"
+  printf '{"schema":"fm-captain-question.v1","close":"done",%s}\n' "$PLAIN" > "$home/context.json"
   PATH="$fb:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" \
     FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
     FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
@@ -4637,7 +4639,7 @@ test_structured_context_and_guarded_answers() {
   home=$(make_home structured-context)
   for mode in "done" release; do
     id=sample-context-$mode
-    printf '{"schema":"fm-captain-question.v1","close":"%s","question":"Ship the widget\\nthis week?","options":[{"value":"go","label":"Go café","detail":"Ships today."}],"recommendation":"go","subject":{"artifact":"widget","version":"1.2.3"}}\n' "$mode" > "$home/context.json"
+    printf '{"schema":"fm-captain-question.v1","close":"%s",%s,"question":"Ship the widget\\nthis week?","options":[{"value":"go","label":"Go café","detail":"Ships today."}],"recommendation":"go","subject":{"artifact":"widget","version":"1.2.3"}}\n' "$mode" "$PLAIN" > "$home/context.json"
     FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold "$id" \
       --title "Choose the widget option" --reason "Choose go or revise" --repo sample \
       --context-file "$home/context.json" >/dev/null || fail "structured hold failed"
@@ -4648,6 +4650,8 @@ test_structured_context_and_guarded_answers() {
     assert_contains "$show" 'Go café' "context label lost its UTF-8 bytes"
     assert_contains "$show" 'Ships today.' "context option detail was not stored"
     assert_contains "$show" 'Ship the widget' "context question text was not stored"
+    assert_contains "$show" 'waits for a decision to go out' "context about text was not stored"
+    assert_contains "$show" 'Your answer lets the team ship it' "context purpose text was not stored"
     cp "$home/data/backlog.md" "$home/before"
     FM_CAPTAIN_HOLD_NOW=2026-07-15T12:00:00Z run_captain "$home" hold "$id" \
       --reason "Choose go or revise" --context-file "$home/context.json" >/dev/null \
@@ -4715,37 +4719,111 @@ test_structured_context_and_guarded_answers() {
 test_context_input_refuses_before_mutation() {
   local home value
   home=$(make_home invalid-context)
+  # Each value is fully explained, so only its own defect can refuse it.
   for value in \
     '{"schema":"future.v2","close":"done"}' \
     '{"schema":"fm-captain-question.v1"}' \
     '{"schema":"fm-captain-question.v1","close":"merge"}' \
     '{"schema":"fm-captain-question.v1","close":"done","actions":"not allowed"}' \
     '{"schema":"fm-captain-question.v1","close":"done","clo\u0073e":"release"}' \
-    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"reconcile","label":"Close"}]}' \
-    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go"},{"value":"go","label":"Again"}]}' \
-    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go","label":"Again"}]}' \
+    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"reconcile","label":"Close","detail":"Closes it."}]}' \
+    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go","detail":"Ships."},{"value":"go","label":"Again","detail":"Ships."}]}' \
+    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go","label":"Again","detail":"Ships."}]}' \
     '{"schema":"fm-captain-question.v1","close":"done","recommendation":"invented"}' \
-    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"bad\tlabel"}]}' \
+    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"bad\tlabel","detail":"Ships."}]}' \
     '{"schema":"fm-captain-question.v1","close":"done","lifecycle":"caller-forged"}' \
     '{"schema":"fm-captain-question.v1","close":"done","question":"   "}' \
     '{"schema":"fm-captain-question.v1","close":"done","question":"bad\u0007bell"}' \
     "$(jq -nc '{schema:"fm-captain-question.v1",close:"done",question:("x" * 601)}')" \
     '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go","detail":""}]}' \
-    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go","explain":"Why"}]}' \
+    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go","detail":"Ships.","explain":"Why"}]}' \
+    '{"schema":"fm-captain-question.v1","close":"done","about":"a bad\nline that is still long enough to count as a sentence","purpose":"Your answer lets the team ship the widget this week."}' \
+    "$(jq -nc '{schema:"fm-captain-question.v1",close:"done",about:"The synthetic widget is ready and waits for a decision.",purpose:("word " * 121)}')" \
     '{"schema":"fm-captain-question.v1","close":"done"} {}'; do
-    printf '%s\n' "$value" > "$home/invalid.json"
+    case "$value" in
+      *'"about"'*) printf '%s\n' "$value" > "$home/invalid.json" ;;
+      *) printf '{%s,%s\n' "$PLAIN" "${value#\{}" > "$home/invalid.json" ;;
+    esac
     cp "$home/data/backlog.md" "$home/before"
     if run_captain "$home" hold sample-invalid --title "Never created" --reason "choose" \
-      --context-file "$home/invalid.json" >/dev/null 2>&1; then fail "invalid context accepted: $value"; fi
+      --context-file "$home/invalid.json" >/dev/null 2>"$home/invalid.err"; then fail "invalid context accepted: $value"; fi
+    assert_grep 'unsupported or malformed question context' "$home/invalid.err" \
+      "a malformed context was refused for another reason: $value"
     cmp "$home/before" "$home/data/backlog.md" || fail "invalid input created/mutated a task"
   done
   pass "unknown, malformed, duplicate-member/option and unsafe context refuses before any mutation"
 }
 
+test_context_must_explain_itself_to_a_manager() {
+  local home value reason stored
+  home=$(make_home plain-language)
+  # reason<TAB>context: each is well formed and fails only the plain-language gate.
+  while IFS=$'\t' read -r reason value; do
+    printf '%s\n' "$value" > "$home/bare.json"
+    cp "$home/data/backlog.md" "$home/before"
+    if run_captain "$home" hold sample-bare --title "Never created" --reason "choose" \
+      --context-file "$home/bare.json" >/dev/null 2>"$home/bare.err"; then fail "unexplained context accepted: $reason"; fi
+    assert_grep 'non-technical manager' "$home/bare.err" "the $reason refusal did not name its reader"
+    assert_no_grep 'malformed' "$home/bare.err" "the $reason refusal read as a malformed context"
+    cmp "$home/before" "$home/data/backlog.md" || fail "an unexplained context created/mutated a task"
+  done <<CASES
+no explanation	{"schema":"fm-captain-question.v1","close":"done","question":"Ship the widget?"}
+missing purpose	{"schema":"fm-captain-question.v1","close":"done","about":"The synthetic widget is ready and waits for a decision."}
+missing about	{"schema":"fm-captain-question.v1","close":"done","purpose":"Your answer lets the team ship the widget this week."}
+link	{"schema":"fm-captain-question.v1","close":"done","about":"The synthetic widget is ready and waits for a decision.","purpose":"Your answer lets the team ship what https://example.invalid/pull/7 changed."}
+backtick	{"schema":"fm-captain-question.v1","close":"done","about":"The synthetic \`widget\` is ready and waits for a decision.","purpose":"Your answer lets the team ship the widget this week."}
+GUID	{"schema":"fm-captain-question.v1","close":"done","about":"Report 123e4567-e89b-12d3-a456-426614174000 is ready and waits for a decision.","purpose":"Your answer lets the team ship the widget this week."}
+option without consequence	{"schema":"fm-captain-question.v1","close":"done",$PLAIN,"options":[{"value":"go","label":"Go","detail":"Ships today."},{"value":"wait","label":"Wait"}]}
+CASES
+  assert_grep 'what happens when he picks it' "$home/bare.err" "an option without a consequence was refused for another reason"
+
+  printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done","about":"Monthly/quarterly/yearly reporting.","purpose":"The team can report monthly/quarterly/yearly from now on."}' > "$home/slashes.json"
+  run_captain "$home" hold sample-slashes --title "Choose the reporting rhythm" --reason "choose" --repo sample \
+    --context-file "$home/slashes.json" >/dev/null || fail "plain words with slashes were refused as internal names"
+
+  # A call stored before the rule keeps working and may gain exactly what it lacks.
+  FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-old \
+    --title "Choose the widget option" --reason "Choose go or wait" --repo sample >/dev/null || fail "legacy hold failed"
+  stored='{"close":"done","lifecycle":"2026-07-14T12:00:00Z#0","options":[{"detail":"Ships today.","label":"Go","value":"go"},{"label":"Wait","value":"wait"}],"question":"Ship the widget?","recommendation":"go","schema":"fm-captain-question.v1","subject":null}'
+  printf 'Captain hold set: 2026-07-14T12:00:00Z\nCaptain question context: %s\n\nEarlier note.\n' "$stored" > "$home/old.body"
+  tasks_in "$home" update sample-old --body-file "$home/old.body" >/dev/null || fail "could not store the pre-rule context"
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-live-board-snapshot.sh" > "$home/board.json"
+  jq -e 'any(.projects[].questions[]; .id == "sample-old" and .answerable and .context_status == "ready"
+    and (.context | has("about") or has("purpose") | not))' "$home/board.json" >/dev/null \
+    || fail "a context stored before the plain-language rule stopped being answerable"
+  cp "$home/data/backlog.md" "$home/before"
+  for value in '.question = "Ship the other widget?"' '.options[0].detail = "Ships next week."' \
+    '.options[1].label = "Hold"' '.recommendation = "wait"' '.close = "release"'; do
+    printf '{%s,%s\n' "$PLAIN" "${stored#\{}" \
+      | jq -c "del(.lifecycle) | .options[1].detail = \"Nothing ships yet.\" | $value" > "$home/changed.json"
+    if run_captain "$home" hold sample-old --reason "Choose go or wait" \
+      --context-file "$home/changed.json" >/dev/null 2>&1; then fail "explaining a call also changed it: $value"; fi
+    cmp "$home/before" "$home/data/backlog.md" || fail "a refused explanation mutated the row: $value"
+  done
+  printf '{%s,%s\n' "$PLAIN" "${stored#\{}" \
+    | jq -c 'del(.lifecycle) | .options[1].detail = "Nothing ships yet."' > "$home/explained.json"
+  FM_CAPTAIN_HOLD_NOW=2026-07-20T12:00:00Z run_captain "$home" hold sample-old --reason "Choose go or wait" \
+    --context-file "$home/explained.json" >/dev/null || fail "a stored call could not gain its missing explanation"
+  [ "$(run_captain "$home" open sample-old --identity)" = '2026-07-14T12:00:00Z#0' ] \
+    || fail "explaining a call started a new lifecycle"
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-live-board-snapshot.sh" > "$home/board.json"
+  jq -e 'any(.projects[].questions[]; .id == "sample-old" and .answerable and .context_status == "ready"
+    and (.context.about | test("waits for a decision")) and (.context.purpose | test("lets the team ship"))
+    and .context.question == "Ship the widget?" and .context.lifecycle == "2026-07-14T12:00:00Z#0"
+    and .context.options == [{value:"go",label:"Go",detail:"Ships today."},{value:"wait",label:"Wait",detail:"Nothing ships yet."}])' \
+    "$home/board.json" >/dev/null || fail "the explained call is not one ready context in its original lifecycle"
+  assert_contains "$(tasks_in "$home" show sample-old --full)" 'Earlier note.' "explaining a call lost the rest of its body"
+  cp "$home/data/backlog.md" "$home/before"
+  run_captain "$home" hold sample-old --reason "Choose go or wait" --context-file "$home/explained.json" >/dev/null \
+    || fail "repeating the explained context was refused"
+  cmp "$home/before" "$home/data/backlog.md" || fail "repeating the explained context rewrote the row"
+  pass "an authored context must tell a non-technical manager what it is about and for; a stored one may only gain that"
+}
+
 test_guarded_answer_retries_interrupted_close_and_normalization() {
   local home identity show
   home=$(make_home guarded-interruption)
-  printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done"}' > "$home/context.json"
+  printf '{"schema":"fm-captain-question.v1","close":"done",%s}\n' "$PLAIN" > "$home/context.json"
   FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-pending \
     --title "Choose once" --reason "choose" --repo sample --context-file "$home/context.json" >/dev/null
   identity=$(run_captain "$home" open sample-pending --identity)
@@ -4785,7 +4863,7 @@ SH
 test_reholding_expired_context_preserves_history_not_authority() {
   local home board show id kind
   home=$(make_home expired-context)
-  printf '%s\n' '{"schema":"fm-captain-question.v1","close":"release","options":[{"value":"go","label":"Go café"}]}' > "$home/context.json"
+  printf '{"schema":"fm-captain-question.v1","close":"release",%s,"options":[{"value":"go","label":"Go café","detail":"Ships today."}]}\n' "$PLAIN" > "$home/context.json"
   for kind in annotated legacy; do
     id=sample-expired-$kind
     FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold "$id" \
@@ -4837,6 +4915,7 @@ test_structured_context_keeps_origin_and_encoded_reason
 test_reholding_expired_context_preserves_history_not_authority
 test_structured_context_and_guarded_answers
 test_context_input_refuses_before_mutation
+test_context_must_explain_itself_to_a_manager
 test_guarded_answer_retries_interrupted_close_and_normalization
 test_hold_reason_round_trips_awkward_characters
 test_hold_origins_precede_backend_holds
