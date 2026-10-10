@@ -15,7 +15,9 @@
 # forge is read from that remote URL, never guessed from a name or a mode:
 #   github  github.com, read with one `gh api graphql` call: the 50 newest pull
 #           requests, each merged one with the check suites and commit
-#           statuses on its merge commit.
+#           statuses on its merge commit. A read that fails is tried once
+#           more for the 15 newest, which GitHub still answers for a
+#           repository whose merges carry too many check suites for 50.
 #   ado     dev.azure.com, read with `az repos pr list` (the 200 newest, all
 #           states) and one `az pipelines runs list` per target branch those
 #           merges landed on (the 400 newest runs, at most four branches).
@@ -60,6 +62,7 @@ PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 CALL_TIMEOUT=25
 SOURCE_BUDGET=70
 GITHUB_FETCH=50
+GITHUB_FETCH_SMALL=15
 ADO_FETCH=200
 ADO_RUNS=400
 ADO_BRANCHES=4
@@ -102,17 +105,22 @@ GITHUB_QUERY='query($owner:String!,$name:String!,$n:Int!){repository(owner:$owne
       status{contexts{context state createdAt}}}}}}}'
 
 collect_github() {  # <project> <prefix> <owner> <name> <out>
-  local project=$1 prefix=$2 owner=$3 name=$4 out=$5 raw="$5.raw"
+  local project=$1 prefix=$2 owner=$3 name=$4 out=$5 raw="$5.raw" n
   command -v gh >/dev/null 2>&1 || { repo_note "$project" github none no-cli "$prefix" > "$out"; return 0; }
-  if GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 fm_run_timed "$CALL_TIMEOUT" gh api graphql -f query="$GITHUB_QUERY" \
-      -f owner="$owner" -f name="$name" -F n="$GITHUB_FETCH" > "$raw" 2>/dev/null \
-    && jq -L "$SCRIPT_DIR" -c --arg project "$project" --arg prefix "$prefix" --argjson cap "$BODY_CAP" '
-        include "fm-live-board-prs";
-        {project:$project,forge:"github",status:"ok",reason:null,branch_prefix:$prefix,prs:lbp_github_prs($cap)}' \
-        "$raw" > "$out" 2>/dev/null \
-    && [ -s "$out" ]; then
-    return 0
-  fi
+  # GitHub rejects the full query on a repository whose merges carry many
+  # check suites ("Resource limits for this query exceeded"), so a failed read
+  # is asked once more for the pull requests the board shows.
+  for n in "$GITHUB_FETCH" "$GITHUB_FETCH_SMALL"; do
+    if GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 fm_run_timed "$CALL_TIMEOUT" gh api graphql -f query="$GITHUB_QUERY" \
+        -f owner="$owner" -f name="$name" -F n="$n" > "$raw" 2>/dev/null \
+      && jq -L "$SCRIPT_DIR" -c --arg project "$project" --arg prefix "$prefix" --argjson cap "$BODY_CAP" '
+          include "fm-live-board-prs";
+          {project:$project,forge:"github",status:"ok",reason:null,branch_prefix:$prefix,prs:lbp_github_prs($cap)}' \
+          "$raw" > "$out" 2>/dev/null \
+      && [ -s "$out" ]; then
+      return 0
+    fi
+  done
   repo_note "$project" github failed fetch-failed "$prefix" > "$out"
 }
 

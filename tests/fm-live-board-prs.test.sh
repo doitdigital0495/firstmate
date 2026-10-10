@@ -54,10 +54,13 @@ cat > "$FAKEBIN/gh" <<'SH'
 #!/usr/bin/env bash
 printf 'gh %s\n' "$(printf '%s ' "$@" | tr '\n' ' ')" >> "$FM_TEST_CALLS"
 [ ! -f "$FM_TEST_FORGE/slow-gh" ] || sleep 6
-name=
+name= n=
 for arg in "$@"; do
-  case "$arg" in name=*) name=${arg#name=} ;; esac
+  case "$arg" in name=*) name=${arg#name=} ;; n=*) n=${arg#n=} ;; esac
 done
+# A heavy-<name> marker stands in for GitHub's resource limit: the full
+# 50-pull-request query is rejected and only a smaller one is answered.
+[ ! -f "$FM_TEST_FORGE/heavy-$name" ] || [ "$n" -le 15 ] || exit 1
 [ -f "$FM_TEST_FORGE/gh-$name.json" ] || exit 1
 cat "$FM_TEST_FORGE/gh-$name.json"
 SH
@@ -252,6 +255,14 @@ check "$TMP_ROOT/board-full.json" "$(pr reports 23)"' | .deploy.outcome == "unkn
 check "$TMP_ROOT/board-full.json" "$(pr reports 21)"' | .deploy.outcome == "succeeded"' \
   "a full page of runs lost a merge whose runs were on it"
 pass "a merge older than the deploy history that was read is unknown, never 'no deploy'"
+
+# --- A repository GitHub will not answer in full ------------------------------
+: > "$TMP_ROOT/forge/heavy-docs"
+collect "$TMP_ROOT/prs-heavy.json"
+rm -f "$TMP_ROOT/forge/heavy-docs"
+check "$TMP_ROOT/prs-heavy.json" '[.repos[] | select(.project == "docs")][0] | .status == "ok" and (.prs | map(.number)) == [3]' \
+  "a repository whose 50-pull-request query GitHub rejects got no timeline instead of a smaller read"
+pass "a GitHub repository too heavy for the full query is still read with a smaller one"
 
 # --- Time bounds ---------------------------------------------------------------
 # The collector with one second per forge call and two per Azure DevOps source,
