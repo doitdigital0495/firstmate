@@ -103,6 +103,26 @@ def lb_why_rank:
 
 def lb_plural($n; $one; $many): "\($n) \(if $n == 1 then $one else $many end)";
 
+# TIMELINE. The snapshot decides each pull request's deploy outcome and why;
+# these words are the only thing the page says about it.
+def lb_deploy_words:
+  {"runs-succeeded":["deployed","Deploy succeeded","Every deploy run this change started finished well."],
+   "run-failed":["failed","Deploy failed","At least one deploy run this change started has failed."],
+   "run-unfinished":["running","Deploy still running","A deploy run this change started has not finished yet."],
+   "open":["open","Not deployed yet","This change is still open; it has not been merged."],
+   "waiting":["waiting","Not deployed yet","Merged moments ago; its deploy has not started yet."],
+   "closed":["closed","Not deployed","This change was closed without being merged."],
+   "project":["no deploy","No deploy for this project","Merged. This project has no deploy run to check."],
+   "change":["no deploy","No deploy ran for this change","Merged, but no deploy run was started for it."],
+   "unreadable":["unknown","Deploy result could not be read","The deploy runs could not be fetched, so the result is not known."],
+   "too-old":["unknown","Deploy result not available","This change is older than the deploy history the board reads."]}[.why]
+  // ["unknown","Deploy result could not be read","The deploy result is not known."];
+def lb_run_words:
+  {"succeeded":"succeeded","failed":"failed","running":"still running"}[.] // "unknown";
+def lb_forge_name: {"github":"GitHub","ado":"Azure DevOps"}[.] // "the forge";
+# A project shows its newest pull requests, oldest first so time reads left to right.
+def lb_timeline_shown: 15;
+
 def lb_view($map):
 . as $board
 | ($map | if . != null and lb_valid_map then . else null end) as $named
@@ -122,7 +142,10 @@ def lb_view($map):
   [$board.projects[] | .questions[] | . as $q | group_of(.id; .project) + {question:$q}] as $asked
 | [$board.projects[] | .tasks[] | . as $t | group_of(.id; .project) + {task:$t}] as $placed
 | [($board.recently_finished // [])[] | . as $f | group_of(.id; .project) + {finished:$f}] as $done
-| ([$asked[], $placed[], $done[] | {key,index,repo}]
+| [($board.pull_requests.repos // [])[] | . as $repo | ($repo.prs // [])[] | . as $pr
+   | group_of($pr.task // ""; $repo.project) + {pr:($pr + {forge:$repo.forge})}] as $merged
+| [($board.pull_requests.repos // [])[] | select(.status == "failed") | .project] as $unread
+| ([$asked[], $placed[], $done[], $merged[] | {key,index,repo}]
    + if $named != null then [$named.projects | to_entries[] | {key:"project:\(.key)",index:.key,repo:null}]
      else [$board.projects[] | (.name | lb_repo) as $repo | {key:"repo:\($repo // "")",index:null,repo:$repo}] end
    | unique_by(.key)) as $keys
@@ -146,9 +169,16 @@ def lb_view($map):
       next:([$rows[] | select(.lane == "next")] | sort_by([.priority // 5,.since // "9999",.id,.key])),
       charted:([$rows[] | select(.lane == "charted")] | sort_by([(.why | lb_why_rank),.since // "9999",.id,.key]))}
      | map_values(map(del(.priority,.since))) as $lanes
+   | ([$merged[] | select(.key == $g.key) | .pr] | sort_by([-(.at // 0),-.number,.url])) as $pulls
+   # A repository whose read failed may hold this project's pull requests when
+   # it is this repository, a rule names it, or a rule matches by task id alone.
+   | [$unread[] | . as $name | select(($name | lb_repo) as $repo
+        | if $g.index == null then $g.repo == $repo
+          else any($named.projects[$g.index].match[]; (has("repo") | not) or .repo == $repo) end)] as $gaps
    | {questions:($questions|length),urgent:([$questions[] | select(.urgent)]|length),
       doing:($lanes.doing|length),next:($lanes.next|length),charted:($lanes.charted|length),
-      stuck:([$lanes.charted[] | select(.why == "stuck")]|length),finished:($finished|length)} as $c
+      stuck:([$lanes.charted[] | select(.why == "stuck")]|length),finished:($finished|length),
+      failed_deploys:([$pulls[:lb_timeline_shown][] | select(.deploy.outcome == "failed")]|length)} as $c
    | ([$rows[] | select(.note != null and .at != null)] | max_by(.at)) as $latest
    | {key:$g.key,source:(if $g.index != null then "map" else "repo" end),
       name:(if $g.index != null then $named.projects[$g.index].name else ($g.repo // "Unsorted work") end),
@@ -188,6 +218,16 @@ def lb_view($map):
            close:($ctx.close // null),lifecycle:($ctx.lifecycle // null),
            recommendation:($ctx.recommendation // null),
            options:[($ctx.options // [])[] | {value:.value,label:.label,detail:(.detail // null)}]}],
+      timeline:{
+        status:(if $board.pull_requests.status == "collected" then "ok"
+          else ($board.pull_requests.status // "not-collected") end),
+        total:($pulls|length),unread:$gaps,
+        items:[$pulls[:lb_timeline_shown] | reverse[] | (.deploy | lb_deploy_words) as $words
+          | {key:.url,number,url,forge:(.forge | lb_forge_name),state,draft,title,summary,at,
+             state_label:(if .state == "merged" then "Merged" elif .state == "closed" then "Closed without merging"
+               elif .draft then "Open, still a draft" else "Open" end),
+             deploy:{outcome:.deploy.outcome,tag:$words[0],label:$words[1],detail:$words[2],
+               runs:[.deploy.runs[] | {name,result,label:(.result | lb_run_words)}],more_runs:.deploy.more_runs}}]},
       lanes:$lanes}]
 | sort_by([(if .counts.urgent > 0 then 0 elif .counts.questions > 0 then 1
       elif .counts.stuck > 0 then 2 elif .counts.doing > 0 then 3 elif .active then 4 else 5 end),
@@ -205,6 +245,9 @@ def lb_view($map):
      ([$groups[].questions[] | select(.needs_explanation)] | length) as $bare
      | if $bare > 0 then lb_plural($bare; "question still needs"; "questions still need")
          + " a plain-language explanation from Firstmate." else empty end,
+     (if $board.pull_requests.status == "unreadable" then
+        "The pull request data could not be read, so the timelines are empty." else empty end),
+     ($unread[] | "Pull requests for \(lb_repo // "a project") could not be read, so its timeline may be missing changes."),
      ($board.omissions[]? | .kind as $k
        | if $k == "backlog-unavailable" then "The task list could not be read, so some work may be missing."
          elif $k == "registry-unavailable" then "The project registry could not be read."

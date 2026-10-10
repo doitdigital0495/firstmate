@@ -1615,6 +1615,10 @@ The captain picks an option, optionally adds a note, and queues the answer; the 
 A shrunken card always keeps Change answer, which reopens it; a new answer replaces the earlier one if Lavish has not sent it yet.
 The page cannot see what Lavish still holds or has sent, so it shows no queued count and never marks a card sent.
 An answered question leaves the page on the first refresh after its answer is recorded; a question the captain put off until a later day keeps its card, badged with that day, beside its Charted next card.
+Each project also shows a timeline of its 15 newest pull requests, oldest on the left, read from the forge of each registered project's clone (GitHub through `gh`, Azure DevOps through `az`) and from the home's own checkout.
+Pointing at a pull request, moving keyboard focus to it, or pressing it shows what changed in one to three plain sentences drawn from its description, or its cleaned title when the description is missing or too technical, and whether the deploy runs its merge started succeeded, failed, are still running, have not happened yet, or do not exist for that project.
+Pressing a pull request pins that detail with a link to it on its forge, and a failed deploy is marked by colour, shape and the word "failed" and counted in the project's heading.
+The pull requests are read at most once every ten minutes and never written to; a project whose read failed is named on the page instead of being shown as empty, and [`bin/fm-live-board-prs.sh`](../bin/fm-live-board-prs.sh)'s header owns what is read and what counts as a deploy run.
 Set `enabled` to false or delete the file to stop refreshing; the published page and any recorded answers stay in place.
 
 ## Mail plane (.env)

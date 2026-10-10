@@ -10,15 +10,17 @@
 # The live board is a separate captain-facing browser page, never a Bearings
 # mode: the shipped dark template (bin/fm-live-board-template.html) plus one
 # injected payload {refresh_seconds, board, view}, where board is exactly one
-# `fm-live-board-snapshot.sh --json` document (schema fm-live-board.v1) and view
-# is its fm-live-board-view.v1 grouping into the captain's named projects (see
-# PROJECTS). The snapshot owns every fact; bin/fm-live-board-projects.jq owns
+# `fm-live-board-snapshot.sh --json` document (schema fm-live-board.v1) less its
+# per-repository pull request lists, and view is the whole document's
+# fm-live-board-view.v1 grouping into the captain's named projects (see
+# PROJECTS), carrying the pull requests each project shows. The snapshot owns every fact; bin/fm-live-board-projects.jq owns
 # the grouping, ordering and captain-facing wording; this script reads no other
 # home state and the page computes nothing beyond display and local freshness.
 #
-# build    Collect one snapshot, bounded by FM_LIVE_BOARD_TIMEOUT seconds
-#          (default 45), inject it, and atomically replace the stable board
-#          file. A failed or timed-out build leaves the previous board intact.
+# build    Refresh the pull request data when it is due (see TIMELINE), collect
+#          one snapshot, bounded by FM_LIVE_BOARD_TIMEOUT seconds (default 45),
+#          inject it, and atomically replace the stable board file. A failed or
+#          timed-out build leaves the previous board intact.
 #          Prints `board: <path>`. Starts no session and arms nothing.
 # refresh  The periodic entry point bin/fm-watch.sh calls on every poll. When
 #          the board is enabled (see CONFIG) and the board file is missing or
@@ -102,6 +104,28 @@
 # its lane. A call the captain put off until a later day is not answered: it
 # keeps its card, badged with that day, beside its Charted next row.
 #
+# TIMELINE. Each project shows its 15 newest pull requests as a strip, oldest
+# on the left. Pointing at one, moving keyboard focus to it, or pressing it
+# shows the same detail under the strip: the cleaned title, a plain summary of
+# what changed when the description yields one, and whether its deploy runs
+# succeeded; pressing pins that detail, with a link to the pull request on its
+# forge, until it is pressed again or closed. The pin lives in a hidden field
+# of the timeline that Lavish restores after each live reload, as a card's
+# queued answer does, and it queues nothing. A failed deploy is marked by
+# colour, shape and the word "failed", and counted in the project's heading.
+# bin/fm-live-board-prs.sh reads the pull requests and runs, read-only, and
+# its header owns what is read and what counts as a deploy run. build and
+# refresh run it at most once per FM_LIVE_BOARD_PR_REFRESH seconds (default
+# 600), bounded by FM_LIVE_BOARD_PR_TIMEOUT seconds (default 90), into the
+# home-private data/live-board/prs.json, and hand that file to the snapshot;
+# a failed or timed-out read keeps the previous file, is retried after the
+# same interval, and never fails the build. The page says when the pull
+# requests were last read, names a project whose read failed, and says so
+# when nothing was read at all. A pull request belongs to the project its
+# ship branch's task id or its repository matches, by the PROJECTS rules;
+# bin/fm-live-board-snapshot.sh's header owns the fields and
+# bin/fm-live-board-prs.jq the summary and deploy-outcome rules.
+#
 # CARDS. Each card reads top to bottom as its project, what it is about, what
 # it is for, the question, then every option with what picking it does and the
 # recommended one highlighted. A card whose context carries no about or no
@@ -122,12 +146,20 @@ PROJECTS_MAX_BYTES=65536
 TEMPLATE="$SCRIPT_DIR/fm-live-board-template.html"
 PLACEHOLDER='__FM_LIVE_BOARD_DATA__'
 BUILD_TIMEOUT=${FM_LIVE_BOARD_TIMEOUT:-45}
+PR_REFRESH=${FM_LIVE_BOARD_PR_REFRESH:-600}
+PR_TIMEOUT=${FM_LIVE_BOARD_PR_TIMEOUT:-90}
 REFRESH_LOCK="$STATE/.live-board-refresh.lock"
 REFRESH_LOG="$STATE/.live-board-refresh.log"
 REFRESH_LOG_MAX_BYTES=65536
 
 case "$BUILD_TIMEOUT" in
   ''|*[!0-9]*|0) BUILD_TIMEOUT=45 ;;
+esac
+case "$PR_REFRESH" in
+  ''|*[!0-9]*) PR_REFRESH=600 ;;
+esac
+case "$PR_TIMEOUT" in
+  ''|*[!0-9]*|0) PR_TIMEOUT=90 ;;
 esac
 
 # shellcheck source=bin/fm-timeout-lib.sh
@@ -193,8 +225,28 @@ project_map_json() {
   printf '"unreadable"\n'
 }
 
+# Refresh data/live-board/prs.json when the last attempt is PR_REFRESH seconds
+# old. The attempt stamp, not the file, paces retries, so a forge that keeps
+# failing is asked once per interval while the last good file stays in use.
+refresh_prs() {  # <board-dir>
+  local dir=$1 stamp="$1/.prs-attempt" out="$1/prs.json" staged age
+  if age=$(file_age "$stamp"); then
+    [ "$age" -ge "$PR_REFRESH" ] || return 0
+  fi
+  : > "$stamp" 2>/dev/null || return 0
+  staged=$(umask 077; mktemp "$dir/.prs.XXXXXX") || return 0
+  if fm_run_timed "$PR_TIMEOUT" "$SCRIPT_DIR/fm-live-board-prs.sh" --json > "$staged" 2>/dev/null \
+    && jq -e '.schema == "fm-live-board-prs.v1"' "$staged" >/dev/null 2>&1 \
+    && chmod 0600 "$staged" && mv -f -- "$staged" "$out"; then
+    return 0
+  fi
+  rm -f -- "$staged"
+  echo "fm-live-board: the pull request read failed or exceeded ${PR_TIMEOUT}s; the timelines keep their previous data" >&2
+}
+
 build_board() {  # <refresh-seconds>
   local refresh=$1 board tmp snap json extracted map
+  local -a prs=()
   command -v jq >/dev/null 2>&1 || fail "jq is required"
   [ -f "$TEMPLATE" ] && [ ! -L "$TEMPLATE" ] || fail "board template is missing: $TEMPLATE"
   [ "$(grep -cxF "$PLACEHOLDER" "$TEMPLATE")" -eq 1 ] \
@@ -206,14 +258,18 @@ build_board() {  # <refresh-seconds>
   tmp=$(umask 077; mktemp "${board%/*}/.board.XXXXXX") || { rm -f -- "$snap"; fail "cannot stage the board"; }
   # shellcheck disable=SC2064 # Expand the staged paths now; they are fixed.
   trap "rm -f -- '$snap' '$tmp'" EXIT
-  if ! fm_run_timed "$BUILD_TIMEOUT" "$SCRIPT_DIR/fm-live-board-snapshot.sh" --json > "$snap"; then
+  refresh_prs "${board%/*}"
+  [ ! -f "${board%/*}/prs.json" ] || [ -L "${board%/*}/prs.json" ] || prs=(--prs "${board%/*}/prs.json")
+  if ! fm_run_timed "$BUILD_TIMEOUT" "$SCRIPT_DIR/fm-live-board-snapshot.sh" --json ${prs[@]+"${prs[@]}"} > "$snap"; then
     fail "the live-board snapshot failed or exceeded ${BUILD_TIMEOUT}s; the previous board is unchanged"
   fi
   map=$(project_map_json)
   json=$(jq -c -L "$SCRIPT_DIR" --argjson refresh "$refresh" --argjson map "$map" '
     include "fm-live-board-projects";
     if .schema == "fm-live-board.v1" and (.projects | type == "array")
-    then {refresh_seconds:$refresh, board:., view:lb_view($map)} else error("not fm-live-board.v1") end' "$snap" 2>/dev/null) \
+    then {refresh_seconds:$refresh, view:lb_view($map),
+      board:(if (.pull_requests.repos | type) == "array" then .pull_requests.repos |= map(del(.prs)) else . end)}
+    else error("not fm-live-board.v1") end' "$snap" 2>/dev/null) \
     || fail "the snapshot is not a readable fm-live-board.v1 document"
   # `<` never appears in JSON syntax outside strings, so escaping every
   # occurrence keeps the payload valid JSON while making </script> inert.
@@ -274,9 +330,9 @@ command_refresh() {
   . "$SCRIPT_DIR/fm-wake-lib.sh"
   mkdir -p "$STATE" 2>/dev/null || return 0
   fm_lock_try_acquire "$REFRESH_LOCK" || return 0
-  if ! err=$(build_board "$refresh" 2>&1 >/dev/null); then
-    refresh_log "$(printf '%s' "$err" | tail -n 1 | tr '\t\r\n' '   ' | cut -c1-500)"
-  fi
+  # A build that published may still have warned that the pull request read failed.
+  err=$(build_board "$refresh" 2>&1 >/dev/null) || [ -n "$err" ] || err='the board build failed'
+  [ -z "$err" ] || refresh_log "$(printf '%s' "$err" | tail -n 1 | tr '\t\r\n' '   ' | cut -c1-500)"
   fm_lock_release "$REFRESH_LOCK" || true
   return 0
 }

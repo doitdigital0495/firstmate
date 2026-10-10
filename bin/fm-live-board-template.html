@@ -132,6 +132,42 @@ textarea.q-note { min-height: 88px; resize: vertical; }
 .w-title { color: var(--text-strong); overflow-wrap: anywhere; }
 .w-note { color: var(--text-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
 .w-when { color: var(--text-faint); font-size: 0.78rem; }
+.tl { display: grid; gap: 8px; min-width: 0; padding: 10px; border: 1px solid var(--line-soft); border-top: 3px solid var(--text-faint); border-radius: 10px; background: var(--bg-inset); }
+.tl-gap { margin: 0; color: var(--rust); font-size: 0.8rem; overflow-wrap: anywhere; }
+.tl-track { display: flex; flex-wrap: wrap; gap: 6px 0; min-width: 0; }
+.tl-item { position: relative; flex: 0 0 auto; }
+.tl-item::before { content: ""; position: absolute; left: 0; right: 0; top: 22px; height: 2px; background: var(--line); }
+.tl-item:first-child::before { left: 50%; }
+.tl-item:last-child::before { right: 50%; }
+.tl-pr { position: relative; display: grid; justify-items: center; align-content: start; gap: 2px; width: 66px; min-height: 76px; padding: 5px 2px 6px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--text-muted); font: inherit; cursor: pointer; }
+.tl-pr:hover, .tl-pr.is-shown { background: var(--bg-card); border-color: var(--ocean); box-shadow: 0 0 0 1px var(--ocean); }
+.tl-pr.is-pinned { background: var(--bg-card); border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+.tl-mark { display: block; width: 34px; height: 34px; border-radius: 50%; background: var(--bg-inset); }
+.tl-mark svg { display: block; }
+.tl-tag { font-size: 0.7rem; font-weight: 600; line-height: 1.2; }
+.tl-date { font-size: 0.68rem; line-height: 1.2; color: var(--text-faint); }
+.tl-pr.tl-succeeded .tl-tag { color: var(--sea); }
+.tl-pr.tl-running .tl-tag { color: var(--gold); }
+.tl-pr.tl-open .tl-tag { color: var(--ocean); }
+.tl-pr.tl-failed { background: var(--rust-soft); border-color: #6b3527; }
+.tl-pr.tl-failed .tl-tag { color: var(--rust); text-transform: uppercase; letter-spacing: 0.04em; }
+.tl-pr.tl-failed:hover, .tl-pr.tl-failed.is-shown { background: var(--rust-soft); border-color: var(--ocean); }
+.tl-pr.tl-failed.is-pinned { background: var(--rust-soft); border-color: var(--gold); }
+.tl-detail { min-height: 44px; min-width: 0; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 9px; background: var(--bg-card); color: var(--text-muted); font-size: 0.88rem; overflow-wrap: anywhere; }
+.tl-detail.is-on { border-style: solid; color: var(--text); }
+.tl-detail.is-pinned { border-color: #6b5326; }
+.tl-detail.tl-failed { border-color: #6b3527; border-left: 4px solid var(--rust); }
+.tl-d-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tl-d-top .badge { white-space: normal; }
+.tl-d-title { margin: 8px 0 0; font-size: 1rem; line-height: 1.35; color: var(--text-strong); }
+.tl-d-sum { margin: 6px 0 0; color: var(--text); }
+.tl-d-dep { margin: 8px 0 0; color: var(--text); }
+.tl-d-dep b { color: var(--text-muted); font-weight: 600; }
+.tl-d-runs { margin: 4px 0 0; padding-left: 18px; color: var(--text-muted); font-size: 0.84rem; }
+.tl-d-runs .is-failed { color: var(--rust); font-weight: 600; }
+.tl-d-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 10px; color: var(--text-muted); font-size: 0.82rem; }
+.tl-d-foot .btn { min-height: 36px; padding: 4px 14px; font-size: 0.85rem; }
+.idle .tl { margin: 6px 0 10px; }
 .idle { background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 14px; padding: 10px 16px; margin: 0 0 14px; }
 .idle summary, .lb-notes summary { cursor: pointer; color: var(--text-muted); min-height: 28px; }
 .idle ul, .lb-notes ul { margin: 8px 0 0; padding-left: 20px; color: var(--text-muted); }
@@ -531,6 +567,184 @@ __FM_LIVE_BOARD_DATA__
     return row;
   }
 
+  /* The projection decides each pull request's deploy outcome and its words;
+     the page only draws the strip and shows one pull request's detail. */
+  var TL_RING = '<svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="14" ';
+  var TL_ICON = {
+    succeeded: TL_RING + 'fill="#1f3a30" stroke="#7cc4a0" stroke-width="2"/><path d="M10.5 17.5 L15 22 L23.5 12.5" fill="none" stroke="#7cc4a0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    failed: TL_RING + 'fill="#e08365" stroke="#e08365" stroke-width="2"/><path d="M11.5 11.5 L22.5 22.5 M22.5 11.5 L11.5 22.5" fill="none" stroke="#11172a" stroke-width="3.2" stroke-linecap="round"/></svg>',
+    running: TL_RING + 'fill="#3a3020" stroke="#e0a52e" stroke-width="2"/><circle cx="11" cy="17" r="2.2" fill="#e0a52e"/><circle cx="17" cy="17" r="2.2" fill="#e0a52e"/><circle cx="23" cy="17" r="2.2" fill="#e0a52e"/></svg>',
+    open: TL_RING + 'fill="#1d3346" stroke="#8cc0dd" stroke-width="2" stroke-dasharray="4 3"/></svg>',
+    closed: TL_RING + 'fill="#161d33" stroke="#7f89a6" stroke-width="2"/><path d="M11 17 L23 17" fill="none" stroke="#7f89a6" stroke-width="3" stroke-linecap="round"/></svg>',
+    none: TL_RING + 'fill="#161d33" stroke="#7f89a6" stroke-width="2"/><circle cx="17" cy="17" r="4" fill="#7f89a6"/></svg>',
+    unknown: TL_RING + 'fill="#161d33" stroke="#a7afc6" stroke-width="2"/><path d="M13 13.5 C13 9.5 21 9.5 21 13.5 C21 16.5 17 16 17 19.5" fill="none" stroke="#a7afc6" stroke-width="2.6" stroke-linecap="round"/><circle cx="17" cy="24" r="1.7" fill="#a7afc6"/></svg>'
+  };
+  var TL_BADGE = { succeeded: "b-live", failed: "b-danger", running: "b-warn", open: "b-info" };
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function dayText(epoch) {
+    if (typeof epoch !== "number") return "";
+    var d = new Date(epoch * 1000);
+    return isNaN(d.getTime()) ? "" : d.getDate() + " " + MONTHS[d.getMonth()];
+  }
+  function safeForgeLink(url) {
+    return typeof url === "string" && (/^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/pull\/[0-9]+$/.test(url)
+      || /^https:\/\/dev\.azure\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/_git\/[A-Za-z0-9._-]+\/pullrequest\/[0-9]+$/.test(url)) ? url : null;
+  }
+  function tlKind(item) {
+    var outcome = item.deploy && item.deploy.outcome;
+    if (outcome === "succeeded" || outcome === "failed" || outcome === "running" || outcome === "none") return outcome;
+    if (outcome === "not-deployed") return item.state === "closed" ? "closed" : "open";
+    return "unknown";
+  }
+  /* A pinned pull request lives in a hidden field of its timeline, which
+     Lavish restores after each live reload exactly as it does a card's
+     answer, so the pin stays put while the board refreshes under it. */
+  var pinSyncs = [];
+  var prs = board.pull_requests || {};
+
+  function timelineSection(p) {
+    var tl = p.timeline || {};
+    var items = Array.isArray(tl.items) ? tl.items : [];
+    var box = el("section", "tl");
+    box.setAttribute("data-timeline", tl.status || "not-collected");
+    var head = el("div", "lane-head");
+    var name = el("h3", "lane-name");
+    name.appendChild(el("span", "", "Pull requests"));
+    if (items.length) {
+      name.appendChild(el("span", "lane-count", tl.total > items.length
+        ? items.length + " newest of " + tl.total : String(items.length)));
+    }
+    head.appendChild(name);
+    var say;
+    if (tl.status === "unreadable") say = "The pull request data could not be read, so nothing can be shown here.";
+    else if (tl.status !== "ok") say = "Pull requests have not been read yet.";
+    else if (!items.length) say = "No pull requests were found for this project.";
+    else {
+      say = "Oldest on the left. Point at one, or press it, to see what changed and whether it was deployed.";
+      if (typeof prs.collected_at_epoch === "number") say += " Read " + ago(Date.now() / 1000 - prs.collected_at_epoch) + ".";
+    }
+    head.appendChild(el("p", "lane-say", say));
+    (tl.unread || []).forEach(function (repo) {
+      var gap = el("p", "tl-gap", "Pull requests for " + repo + " could not be read, so this timeline may be missing changes.");
+      gap.setAttribute("data-timeline-gap", repo);
+      head.appendChild(gap);
+    });
+    box.appendChild(head);
+    if (!items.length) return box;
+
+    var track = el("div", "tl-track");
+    track.setAttribute("role", "list");
+    var detail = el("div", "tl-detail");
+    detail.setAttribute("data-pr-detail", "");
+    detail.setAttribute("aria-live", "polite");
+    var pinned = null, preview = null, marks = [];
+    var kept = el("input");
+    kept.type = "hidden"; kept.name = "pinned"; kept.value = "";
+    box.setAttribute("data-lavish-question", "live-board-pin:" + p.key);
+    box.appendChild(kept);
+
+    function paint() {
+      var shown = preview || pinned;
+      marks.forEach(function (m) {
+        m.node.className = "tl-pr tl-" + m.kind + (m.item === pinned ? " is-pinned" : "") + (m.item === shown ? " is-shown" : "");
+        m.node.setAttribute("aria-pressed", m.item === pinned ? "true" : "false");
+      });
+      clear(detail);
+      if (!shown) {
+        detail.className = "tl-detail";
+        detail.setAttribute("data-pr-shown", "");
+        detail.setAttribute("data-pr-pinned", "false");
+        detail.appendChild(el("span", "", "Point at a pull request to see it here, or press it to keep it open."));
+        return;
+      }
+      var kind = tlKind(shown), isPinned = shown === pinned, deploy = shown.deploy || {};
+      detail.className = "tl-detail is-on tl-" + kind + (isPinned ? " is-pinned" : "");
+      detail.setAttribute("data-pr-shown", shown.key);
+      detail.setAttribute("data-pr-pinned", isPinned ? "true" : "false");
+      var top = el("div", "tl-d-top");
+      var verdict = badge(TL_BADGE[kind] || "b-muted", deploy.label || "Deploy result could not be read");
+      verdict.setAttribute("data-pr-deploy", deploy.outcome || "unknown");
+      top.appendChild(verdict);
+      var day = dayText(shown.at);
+      top.appendChild(badge("b-muted", (shown.state_label || "") + (day ? " · " + day : "")));
+      detail.appendChild(top);
+      detail.appendChild(el("h4", "tl-d-title", shown.title));
+      if (shown.summary) detail.appendChild(el("p", "tl-d-sum", shown.summary));
+      var dep = el("p", "tl-d-dep");
+      dep.appendChild(el("b", "", "Deploy: "));
+      dep.appendChild(el("span", "", deploy.detail || ""));
+      detail.appendChild(dep);
+      if ((deploy.runs || []).length) {
+        var runs = el("ul", "tl-d-runs");
+        deploy.runs.forEach(function (r) {
+          var li = el("li", r.result === "failed" ? "is-failed" : "", r.name + " - " + r.label);
+          li.setAttribute("data-pr-run", r.result);
+          runs.appendChild(li);
+        });
+        if (deploy.more_runs) runs.appendChild(el("li", "", "and " + deploy.more_runs + " more"));
+        detail.appendChild(runs);
+      }
+      var foot = el("div", "tl-d-foot");
+      if (isPinned) {
+        var href = safeForgeLink(shown.url);
+        if (href) {
+          var a = el("a", "", "Open this pull request on " + shown.forge);
+          a.href = href; a.target = "_blank"; a.rel = "noopener";
+          foot.appendChild(a);
+        }
+        var close = el("button", "btn btn-quiet", "Close");
+        close.type = "button";
+        close.setAttribute("data-pr-close", "");
+        close.addEventListener("click", function () { pin(null); });
+        foot.appendChild(close);
+      } else {
+        foot.appendChild(el("span", "", "Press it to keep this open and get its link."));
+      }
+      detail.appendChild(foot);
+    }
+    function pin(item) {
+      pinned = item;
+      preview = null;
+      kept.value = item ? item.key : "";
+      announce(kept);
+      paint();
+    }
+    pinSyncs.push(function () {
+      var found = null;
+      items.forEach(function (item) { if (item.key === kept.value) found = item; });
+      if (found !== pinned) { pinned = found; paint(); }
+    });
+
+    items.forEach(function (item) {
+      var kind = tlKind(item), deploy = item.deploy || {};
+      var cell = el("div", "tl-item");
+      cell.setAttribute("role", "listitem");
+      var mark = el("button", "tl-pr tl-" + kind);
+      mark.type = "button";
+      mark.setAttribute("data-pr", item.key);
+      mark.setAttribute("data-pr-kind", kind);
+      mark.setAttribute("aria-label", (item.state_label || "") + (dayText(item.at) ? " " + dayText(item.at) : "") +
+        ": " + item.title + ". " + (deploy.label || "") + ".");
+      var icon = el("span", "tl-mark");
+      icon.innerHTML = TL_ICON[kind];
+      mark.appendChild(icon);
+      mark.appendChild(el("span", "tl-tag", deploy.tag || "unknown"));
+      mark.appendChild(el("span", "tl-date", dayText(item.at)));
+      mark.addEventListener("mouseenter", function () { preview = item; paint(); });
+      mark.addEventListener("mouseleave", function () { preview = null; paint(); });
+      mark.addEventListener("focus", function () { preview = item; paint(); });
+      mark.addEventListener("blur", function () { preview = null; paint(); });
+      mark.addEventListener("click", function () { pin(pinned === item ? null : item); });
+      marks.push({ node: mark, item: item, kind: kind });
+      cell.appendChild(mark);
+      track.appendChild(cell);
+    });
+    box.appendChild(track);
+    box.appendChild(detail);
+    paint();
+    return box;
+  }
+
   function laneSection(lane, rows) {
     var box = el("section", "lane lane-" + lane[0]);
     box.setAttribute("data-lane-box", lane[0]);
@@ -591,6 +805,7 @@ __FM_LIVE_BOARD_DATA__
     if (c.urgent) title.appendChild(badge("b-danger", plural(c.urgent, "urgent question")));
     if (c.questions - (c.urgent || 0) > 0) title.appendChild(badge("b-warn", plural(c.questions - (c.urgent || 0), "question")));
     if (c.stuck) title.appendChild(badge("b-danger", c.stuck + " stuck"));
+    if (c.failed_deploys) title.appendChild(badge("b-danger", plural(c.failed_deploys, "failed deploy")));
     head.appendChild(title);
     if (p.description) head.appendChild(el("p", "proj-desc", p.description));
     head.appendChild(el("p", "proj-status", p.status));
@@ -612,6 +827,7 @@ __FM_LIVE_BOARD_DATA__
     var lanes = el("div", "lanes");
     LANES.forEach(function (lane) { lanes.appendChild(laneSection(lane, (p.lanes || {})[lane[0]] || [])); });
     body.appendChild(lanes);
+    body.appendChild(timelineSection(p));
     sec.appendChild(body);
     return sec;
   }
@@ -641,20 +857,26 @@ __FM_LIVE_BOARD_DATA__
       li.appendChild(el("b", "", p.name));
       var extra = [];
       if (p.counts && p.counts.finished) extra.push(p.counts.finished + " done in the last 2 weeks");
+      if (p.counts && p.counts.failed_deploys) extra.push(plural(p.counts.failed_deploys, "failed deploy"));
       if (extra.length) li.appendChild(el("span", "", " - " + extra.join(" · ")));
+      if (p.timeline && ((p.timeline.items || []).length || (p.timeline.unread || []).length)) li.appendChild(timelineSection(p));
       ul.appendChild(li);
     });
     box.appendChild(ul);
     host.appendChild(box);
   }
 
+  function syncRestored() {
+    syncAnswers();
+    pinSyncs.forEach(function (sync) { sync(); });
+  }
   syncAnswers();
   paintTray();
   /* Lavish restores form fields by message after a reload, so repaint then. */
   if (typeof window.addEventListener === "function") {
     window.addEventListener("message", function () {
-      setTimeout(syncAnswers, 0);
-      setTimeout(syncAnswers, 300);
+      setTimeout(syncRestored, 0);
+      setTimeout(syncRestored, 300);
     });
   }
 
