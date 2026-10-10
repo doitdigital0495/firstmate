@@ -35,7 +35,9 @@
 //         marks:[{key,kind,tag,date,label,pressed,shown}],
 //         detail:{shown,pinned,deploy,badges,title,summary,deployText,runs:[{result,text}],
 //           links:[{href,text}],close,text}}}],
-//     idle.timelines:{<name>:timeline},
+//       environments:null|{mode,say,strips:[{repo,status,why,notes:[],
+//         cells:[{name,kind,label,last,waiting,wait,titles:[],direct}]}]}}],
+//     idle.timelines:{<name>:timeline}, idle.environments:{<name>:environments},
 //     submits:[{id,status}], queued:[{prompt,tag,data}], tray:{text,buttons}, tickers }
 import { readFileSync } from "node:fs";
 
@@ -109,6 +111,34 @@ const root = byId.get("lb-projects");
 // A project's section, or its line among the quiet projects.
 const projectNode = (name) => root.find((c) =>
   c.getAttribute("data-project") === name || c.getAttribute("data-quiet-project") === name)[0];
+const environmentsOf = (holder) => {
+  const box = holder && holder.find((c) => c.getAttribute("data-environments") !== null)[0];
+  if (!box) return null;
+  const words = (node, cls) => node.find((c) => c.hasClass(cls)).map(text);
+  return {
+    mode: box.getAttribute("data-environments"),
+    say: words(box, "lane-say")[0] || null,
+    strips: box.find((c) => c.getAttribute("data-environment-repo") !== null).map((strip) => ({
+      repo: strip.getAttribute("data-environment-repo"),
+      status: strip.getAttribute("data-environment-status"),
+      why: words(strip, "stage-why")[0] || null,
+      notes: strip.find((c) => c.hasClass("stage-note") && !c.hasClass("stage-direct")).map(text),
+      cells: strip.find((c) => c.getAttribute("data-environment") !== null).map((cell) => {
+        const wait = cell.find((c) => c.getAttribute("data-environment-waiting") !== null)[0];
+        return {
+          name: cell.getAttribute("data-environment"),
+          kind: cell.getAttribute("data-environment-kind"),
+          label: badges(cell)[0] || null,
+          last: words(cell, "stage-last")[0] || null,
+          waiting: wait ? Number(wait.getAttribute("data-environment-waiting")) : null,
+          wait: wait ? text(wait) : null,
+          titles: cell.find((c) => c.tagName === "LI").map(text),
+          direct: words(cell, "stage-direct")[0] || null,
+        };
+      }),
+    })),
+  };
+};
 const timelineOf = (holder) => {
   const tl = holder && holder.find((c) => c.getAttribute("data-timeline") !== null)[0];
   if (!tl) return null;
@@ -277,10 +307,12 @@ const projects = root.children.filter((c) => c.getAttribute("data-project") !== 
       }];
     })),
     timeline: timelineOf(p),
+    environments: environmentsOf(p),
     text: text(p),
   };
 });
 const idle = root.find((c) => c.getAttribute("data-idle") !== null)[0];
+const idleProjects = idle ? idle.find((c) => c.getAttribute("data-quiet-project") !== null) : [];
 
 console.log(JSON.stringify({
   freshness: fresh ? fresh.getAttribute("data-freshness") : null,
@@ -293,8 +325,8 @@ console.log(JSON.stringify({
   idle: idle ? { count: Number(idle.getAttribute("data-idle")),
     names: idle.find((c) => c.getAttribute("data-quiet-project") !== null).map((c) => c.getAttribute("data-quiet-project")),
     lines: idle.find((c) => c.getAttribute("data-quiet-project") !== null).map(text),
-    timelines: Object.fromEntries(idle.find((c) => c.getAttribute("data-quiet-project") !== null)
-      .map((c) => [c.getAttribute("data-quiet-project"), timelineOf(c)])) } : null,
+    timelines: Object.fromEntries(idleProjects.map((c) => [c.getAttribute("data-quiet-project"), timelineOf(c)])),
+    environments: Object.fromEntries(idleProjects.map((c) => [c.getAttribute("data-quiet-project"), environmentsOf(c)])) } : null,
   foot: text(byId.get("lb-foot")),
   projects,
   submits,

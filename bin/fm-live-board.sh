@@ -129,6 +129,33 @@
 # bin/fm-live-board-snapshot.sh's header owns the fields and
 # bin/fm-live-board-prs.jq the summary and deploy-outcome rules.
 #
+# ENVIRONMENTS. config/live-board-environments.json is an optional,
+# home-private list of the repositories whose changes move through more than
+# one environment, each environment being one branch, in the order a change
+# travels:
+#   {"schema":"fm-live-board-environments.v1","repos":[{"repo":"reports",
+#     "environments":[{"name":"DEV","branch":"main"},
+#       {"name":"UAT","branch":"release/uat"},{"name":"PROD","branch":"release/prod"}]}]}
+# repo is a registered project's name or the home's own directory name, unique
+# in the file; a repository has 2-6 environments, each with a unique name (16
+# characters at most) and a unique branch. With the file absent the page says
+# nothing about environments. With it present, every project that has work in
+# a listed repository shows one strip per such repository, a cell per
+# environment: the newest of the project's changes merged into it, when, and
+# how the runs that merge started went; and, from the second environment on,
+# how many of the project's changes are in the environment before but not yet
+# seen in this one, with the titles of the newest five, and how many arrived
+# in this one with no recorded link to the one before, because a change redone
+# by hand arrives that way and so may still be on that list. A project whose
+# repositories are all unlisted says it has no separate environments, and one
+# with no known repository says nothing. A repository whose pull requests or
+# branch history could not be read shows every environment as "Not known" with
+# the reason, never a count; an invalid file shows no strip and is named in
+# the board notes. bin/fm-live-board-prs.sh's header owns how "seen in an
+# environment" is read from the branches' history, and `lb_environments` in
+# bin/fm-live-board-projects.jq owns the strip. build and refresh keep the
+# fetched branch history under state/.live-board-git.
+#
 # CARDS. Each card reads top to bottom as its project, what it is about, what
 # it is for, the question, then every option with what picking it does and the
 # recommended one highlighted. A card whose context carries no about or no
@@ -152,6 +179,7 @@ BUILD_TIMEOUT=${FM_LIVE_BOARD_TIMEOUT:-45}
 PR_REFRESH=600
 PR_TIMEOUT=90
 PRS_FILE="$STATE/.live-board-prs.json"
+PRS_GIT="$STATE/.live-board-git"
 REFRESH_LOCK="$STATE/.live-board-refresh.lock"
 REFRESH_LOG="$STATE/.live-board-refresh.log"
 REFRESH_LOG_MAX_BYTES=65536
@@ -234,7 +262,7 @@ refresh_prs() {
   (umask 077; mkdir -p "$STATE") 2>/dev/null || return 0
   : > "$stamp" 2>/dev/null || return 0
   staged=$(umask 077; mktemp "$STATE/.live-board-prs.XXXXXX") || return 0
-  if fm_run_timed "$PR_TIMEOUT" "$SCRIPT_DIR/fm-live-board-prs.sh" --json > "$staged" 2>/dev/null \
+  if fm_run_timed "$PR_TIMEOUT" "$SCRIPT_DIR/fm-live-board-prs.sh" --json --git-cache "$PRS_GIT" > "$staged" 2>/dev/null \
     && jq -e '.schema == "fm-live-board-prs.v1"' "$staged" >/dev/null 2>&1 \
     && chmod 0600 "$staged" && mv -f -- "$staged" "$PRS_FILE"; then
     return 0

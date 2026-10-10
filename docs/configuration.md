@@ -1623,6 +1623,17 @@ Those are every run a merge started, whether or not it deploys anything, so the 
 Pressing a pull request pins that detail with a link to it on its forge, and a merge with a failed run is marked by colour, shape and the word "failed".
 The pull requests are read at most once every ten minutes and never written to; a project whose pull requests were not read (a failed read, a missing `gh` or `az`, a forge the board cannot read, or a missing clone) is named on the page with that reason instead of being shown as empty, and [`bin/fm-live-board-prs.sh`](../bin/fm-live-board-prs.sh)'s header owns what is read and which runs count.
 The read is cached in `state/.live-board-prs.json`, outside the directory Lavish serves, because it holds pull request descriptions.
+A project whose changes move through more than one environment shows them on its card once a third local, gitignored file, `config/live-board-environments.json`, lists each such repository's environments in the order a change travels, each with the branch it is:
+
+```json
+{"schema":"fm-live-board-environments.v1","repos":[{"repo":"reports","environments":[
+  {"name":"DEV","branch":"main"},{"name":"UAT","branch":"release/uat"},{"name":"PROD","branch":"release/prod"}]}]}
+```
+
+Each environment then shows the newest of the project's changes merged into it, when, and how the runs that merge started went, and every environment after the first shows how many of the project's changes are in the one before but not yet seen in it, with the titles of the newest.
+A change is seen in an environment when that environment's branch holds its merge commit or a cherry-pick of it that git recorded (`git cherry-pick -x`), so a change redone there by hand stays listed as not yet seen.
+A project in a repository the file does not list says it has no separate environments, and a repository whose pull requests or branch history could not be read shows "Not known" with the reason instead of a count.
+The branch history is fetched read-only into `state/.live-board-git`, never into the project's clone; [`bin/fm-live-board.sh`](../bin/fm-live-board.sh)'s header owns the file's schema and what the card shows, and [`bin/fm-live-board-prs.sh`](../bin/fm-live-board-prs.sh)'s header owns how a change is recognised in an environment.
 Set `enabled` to false or delete the file to stop refreshing; the published page and any recorded answers stay in place.
 
 ## Mail plane (.env)

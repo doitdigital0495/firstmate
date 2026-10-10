@@ -621,6 +621,118 @@ check "$(TZ=UTC render "$tl" "$tl_now")" \
   "a read that found no pull requests did not say so"
 pass "a project that could not be read says why, and only a read that found nothing says no pull requests were found"
 
+# --- Environments on each card --------------------------------------------------
+# A project whose repository has environments shows, per environment, the last
+# change merged into it, how its runs went, and what is in the one before but
+# not yet in it. The pull request read is laid down ready-made, so the page is
+# asserted on what a read like bin/fm-live-board-prs.sh's would have placed.
+ev=$(make_home stages)
+printf '%s\n' "$ENABLED" > "$ev/config/live-board.json"
+for repo in reports ledger claims site; do
+  printf -- '- %s [direct-PR] - fixture (added 2026-01-01)\n' "$repo" >> "$ev/data/projects.md"
+  tasks_in "$ev" add "$repo-task" "Open work in $repo" --repo "$repo" --kind ship
+done
+ev_now=$(date +%s)
+ev_doc() {  # <environment_config> <out>
+  jq -n --argjson now "$ev_now" --arg config "$1" '
+    def change($number; $repo; $branch; $age; $title; $run; $stage; $reached; $copies):
+      {number:$number,url:"https://dev.azure.com/acme/Insights/_git/\($repo)/pullrequest/\($number)",title:$title,body:"",
+       body_truncated:false,state:"merged",draft:false,branch:$branch,target:"main",merge_commit:null,
+       opened_at:($now - $age - 60),closed_at:($now - $age),merged_at:($now - $age),
+       runs:{status:"ok",items:(if $run == null then [] else [{name:"deploy",result:$run}] end)},
+       environment:{stage:$stage,reached:$reached,copy_of:$copies}};
+    [{name:"DEV",branch:"main"},{name:"UAT",branch:"release/uat"},{name:"PROD",branch:"release/prod"}] as $three
+    | {schema:"fm-live-board-prs.v1",collected_at:($now | todate),collected_at_epoch:$now,environment_config:$config,repos:[
+      {project:"reports",forge:"ado",status:"ok",reason:null,branch_prefix:"fm/",window_full:true,
+       environments:{status:"ok",reason:null,stages:$three},prs:([
+         change(1; "reports"; "fm/stock-weekly"; 1000; "Weekly total"; "succeeded"; 0; [true,false,false]; []),
+         change(2; "reports"; "fm/stock-monthly"; 9000; "Monthly total"; "succeeded"; 0; [true,true,false]; []),
+         change(3; "reports"; "cherry/uat-2"; 8000; "Promote the monthly total to UAT"; "failed"; 1; [true,true,false]; [2]),
+         change(4; "reports"; "fm/stock-yearly"; 20000; "Yearly total"; "succeeded"; 0; [true,true,true]; []),
+         change(5; "reports"; "fm/stock-yearly-prod"; 15000; "Yearly total to PROD"; "running"; 2; [true,true,true]; [4]),
+         change(6; "reports"; "fm/stock-lost"; 30000; "Lost one"; "succeeded"; 0; null; []),
+         change(7; "reports"; "fm/stock-redo-prod"; 16000; "Redone by hand on PROD"; "succeeded"; 2; [false,false,true]; [])]
+         + [range(1; 7) | change(10 + .; "reports"; "fm/stock-extra-\(.)"; 2000 + . * 100; "Extra change \(.)"; "succeeded"; 0; [true,false,false]; [])])},
+      {project:"ledger",forge:"ado",status:"ok",reason:null,branch_prefix:"fm/",window_full:false,
+       environments:{status:"failed",reason:"fetch-failed",stages:$three[:2]},
+       prs:[change(21; "ledger"; "fm/ledger-fix"; 4000; "Ledger fix"; "succeeded"; 0; [true,false]; []) | .environment = null]},
+      {project:"claims",forge:"ado",status:"failed",reason:"fetch-failed",branch_prefix:"fm/",
+       environments:{status:"failed",reason:"prs-unread",stages:$three},prs:[]},
+      {project:"site",forge:"ado",status:"ok",reason:null,branch_prefix:"fm/",window_full:false,environments:null,
+       prs:[change(31; "site"; "fm/site-banner"; 5000; "New banner"; null; 0; null; []) | .environment = null]}]}' > "$2"
+  : > "$ev/state/.live-board-prs-attempt"
+}
+strip() { printf '([.projects[] | select(.label == "%s")][0].environments)' "$1"; }
+ev_doc ok "$ev/state/.live-board-prs.json"
+in_home "$ev" "$LIVE" build >/dev/null || fail "a board with environments did not build"
+out=$(TZ=UTC render "$ev" "$ev_now")
+check "$out" "$(strip reports)"' | .mode == "strip" and (.strips | length) == 1 and .strips[0].status == "ok" and .strips[0].why == null
+  and (.strips[0].cells | map(.name)) == ["DEV","UAT","PROD"]
+  and (.strips[0].cells | map(.kind)) == ["succeeded","failed","running"]
+  and (.strips[0].cells | map(.label)) == ["Runs after merge succeeded","Runs after merge failed","Runs after merge still running"]
+  and (.strips[0].cells[0].last | test("^Last change: Weekly total \\([0-9]{1,2} [A-Z][a-z]{2}\\)$"))
+  and (.strips[0].cells[1].last | test("^Last change: Promote the monthly total to UAT \\("))
+  and (.strips[0].cells[2].last | test("^Last change: Yearly total to PROD \\("))' \
+  "a project with environments did not show each one with its last change and how the runs after that merge went"
+check "$out" "$(strip reports)"' | .strips[0].cells
+  | .[0].waiting == null and .[0].titles == []
+    and .[1].waiting == 7 and .[1].wait == "7 changes are in DEV but not yet seen in UAT."
+    and (.[1].titles | length == 6 and (.[0] | test("^Weekly total \\(")) and (.[1] | test("^Extra change 1 \\(")) and .[5] == "and 2 more")
+    and .[2].waiting == 1 and .[2].wait == "1 change is in UAT but not yet seen in PROD."
+    and (.[2].titles | length == 1 and (.[0] | test("^Monthly total \\(")))
+    and .[1].direct == null
+    and .[2].direct == "1 change was merged into PROD with no recorded link to UAT, so some of those listed may already be there."' \
+  "the changes still waiting in the environment before were not counted once each and named newest first, or a change that arrived with no recorded link was not owned up to"
+check "$out" "$(strip reports)"' | .strips[0].notes | length == 3
+  and (.[0] | test("redone there by hand still shows as not yet seen"))
+  and (.[1] | test("Only the newest pull requests are read"))
+  and .[2] == "1 merged change could not be placed: the merge is not in the history that was read."' \
+  "the strip did not say how a change is recognised, that older changes may be missing, or that one could not be placed"
+check "$out" "$(strip ledger)"' | .strips[0] | .status == "unknown"
+  and .why == "Not known, because the history of its environment branches could not be fetched."
+  and (.cells | map(.name) == ["DEV","UAT"] and all(.[]; .kind == "unknown" and .label == "Not known" and .last == null and .waiting == null))' \
+  "environments whose branch history was not fetched were given a verdict instead of unknown with the reason"
+check "$out" "$(strip claims)"' | .strips[0] | .status == "unknown" and (.cells | length) == 3
+  and .why == "Not known, because the pull requests of claims could not be read: the read failed or took too long."' \
+  "environments of a project whose pull requests were not read did not say so"
+check "$out" "$(strip site)"' | .mode == "none" and .strips == []
+  and .say == "No separate environments are set up for this project, so nothing waits to move from one to the next."' \
+  "a project with no environments showed a strip, or did not say plainly that it has none"
+pass "each card shows its environments: the last change in each, its runs, what still waits before it, and unknown with the reason"
+
+# The captain's project names split one repository's changes between cards,
+# and a promotion made from a branch outside the ship prefix follows its change.
+cat > "$ev/config/live-board-projects.json" <<'JSON'
+{"schema":"fm-live-board-projects.v1","projects":[
+  {"name":"Stock report","match":[{"id":"stock-monthly"},{"id":"stock-yearly*"}]},
+  {"name":"Chores","match":[{"id":"chores-*"}]}]}
+JSON
+in_home "$ev" "$LIVE" build >/dev/null || fail "a board with environments and a project map did not build"
+out=$(TZ=UTC render "$ev" "$ev_now")
+check "$out" '.idle.environments["Stock report"].strips[0].cells
+  | map(.waiting) == [null,0,1] and (.[1].last | test("Promote the monthly total to UAT")) and .[1].kind == "failed"
+    and .[1].wait == "Nothing in DEV is waiting to go to UAT." and (.[2].titles | length) == 1' \
+  "a named project did not show only its own changes, or a promotion did not follow the change it carries"
+check "$out" "$(strip reports)"' | .strips[0].cells | .[1].waiting == 7 and .[1].last == "None of this project'"'"'s changes was merged into UAT in the pull requests that were read."
+  and .[1].kind == "empty" and .[1].label == "No change yet" and .[2].waiting == 0' \
+  "work left unsorted kept changes that belong to a named project"
+check "$out" '.idle.environments["Chores"] == null' "a project with no known repository said something about environments"
+rm -f "$ev/config/live-board-projects.json"
+pass "environments follow the captain's project names, and a project with no repository says nothing"
+
+ev_doc invalid "$ev/state/.live-board-prs.json"
+in_home "$ev" "$LIVE" build >/dev/null || fail "a board with an invalid environment list did not build"
+out=$(TZ=UTC render "$ev" "$ev_now")
+check "$out" 'all(.projects[]; .environments == null)
+  and (.notes | any(. == "The environment list is invalid, so no project shows its environments until Firstmate fixes it."))' \
+  "an invalid environment list still drew strips, or was not named in the board notes"
+ev_doc absent "$ev/state/.live-board-prs.json"
+in_home "$ev" "$LIVE" build >/dev/null || fail "a board without an environment list did not build"
+out=$(TZ=UTC render "$ev" "$ev_now")
+check "$out" 'all(.projects[]; .environments == null) and (.notes | any(test("environment")) | not)' \
+  "a home with no environment list said something about environments"
+pass "an invalid environment list is named in the board notes, and a home without one says nothing about environments"
+
 # --- Queued answers carry the owner's guard ------------------------------------
 out=$(render "$home" "$now" 'ws-carrier=postnl:cheaper' 'data-window=' 'data-note-only=:Call it Tidewater' \
   'ws-legacy=:Use the new logo')
