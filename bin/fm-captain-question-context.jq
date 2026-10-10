@@ -45,16 +45,12 @@ def fm_question_valid($stored):
     and (.version | type == "string" and length <= 64 and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))));
 # Authoring gate only: a stored call that predates it stays valid and the board
 # marks it instead.
-def fm_question_internal_name:
-  test("https?://|`|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-    + "|[A-Za-z0-9_-]\\.(sh|jq|json|md|py|ts|js|sql|tf|ya?ml|html|toml|csv)\\b"
-    + "|(^|[\\s(\"'])[~.]?/?([0-9._-]*[A-Za-z][A-Za-z0-9._-]*/){2}[A-Za-z0-9._-]");
 # The first unmet plain-language rule, or null when a manager can read the call.
 def fm_question_explanation_problem:
-  def words: [splits("[[:space:]]+") | select(test("[[:alnum:]]"))] | length;
   if .about == null or .purpose == null then "missing"
-  elif (.about | words) < 6 or (.purpose | words) < 6 then "label"
-  elif any(.about, .purpose; fm_question_internal_name) then "internal"
+  elif any(.about, .purpose;
+    test("https?://|`|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
+    then "markup"
   elif any((.options // [])[]; .detail == null) then "option"
   else null end;
 # An active call may gain the explanation it lacks; nothing already published changes.

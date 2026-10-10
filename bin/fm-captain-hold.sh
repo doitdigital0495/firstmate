@@ -94,12 +94,13 @@
 # PLAIN LANGUAGE: the reader is a non-technical manager who did not build the
 # work and must understand the card at once. `about` says what this is and
 # `purpose` says what answering it unlocks or prevents and what happens while
-# it stays unanswered: each one printable line of <=600 chars and at least six
-# words, with no link, code formatting, GUID, path or code file name, and by
-# the author's care no jargon and no task id, branch or other internal name.
+# it stays unanswered: each one printable line of <=600 chars with no link,
+# backtick or GUID, and by the author's care no jargon and no task id, branch,
+# path or other internal name.
 # Each option's `detail` is the plain consequence of picking it, and the
 # recommended option's detail also says why it is recommended. `hold` refuses a
-# context that lacks about, purpose or any option detail, naming that reader.
+# context that lacks about, purpose or any option detail, or whose about or
+# purpose carries a link, backtick or GUID, naming that reader.
 # A context stored before this rule stays valid and answerable, and the live
 # board marks it as needing a plain-language explanation.
 # The owner adds lifecycle, the exact `open --identity` stamp#answer-count.
@@ -862,8 +863,7 @@ load_question_context() {  # <path>; sets QUESTION_CONTEXT
     'include "fm-captain-question-context"; fm_question_explanation_problem // "ok"')" in
     ok) : ;;
     missing) fail "question context needs \"about\" and \"purpose\": the captain is a non-technical manager who did not build this, so say in plain words what this is about, and what answering it unlocks or what happens while it stays unanswered" ;;
-    label) fail "\"about\" and \"purpose\" must each be a full plain sentence a non-technical manager understands at once, not a label" ;;
-    internal) fail "\"about\" and \"purpose\" are read by a non-technical manager: drop links, code formatting, ids, paths and file names and say it in plain words" ;;
+    markup) fail "\"about\" and \"purpose\" are read by a non-technical manager: drop links, backticks and GUIDs and say it in plain words" ;;
     option) fail "every option needs a \"detail\" telling a non-technical manager what happens when he picks it" ;;
     *) fail "cannot check the question context's plain-language explanation" ;;
   esac
