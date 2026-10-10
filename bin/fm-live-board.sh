@@ -54,16 +54,31 @@
 # invalid map never fails the build: the page groups by repository and says
 # the map needs fixing. Firstmate maintains the file; it is never tracked.
 # The view leads with projects that have questions for the captain, then
-# stuck, then running work, in map order; projects with no question and no
-# in-flight work fold away. Queued, unstarted work is only a per-project
-# count. Worker status, titles and reasons drop links, paths, branches, run
-# ids and task ids, so ids appear only in data attributes.
+# stuck, then work being done now, then other open work, in map order;
+# projects with no question and no open work fold away. Worker status, titles
+# and reasons drop links, paths, branches, run ids and task ids, so ids appear
+# only in data attributes.
+#
+# LANES. Every open task sits in exactly one of three lanes per project, and
+# `lb_lane` in bin/fm-live-board-projects.jq is the one rule that decides it:
+#   Doing now     a worker is on the task and its current state is working.
+#   Next          queued, not held and with no unfinished prerequisite - the
+#                 same "ready queued (dispatchable now)" set session start
+#                 lists - so a worker starts it without the captain.
+#   Charted next  everything else, each card naming why it will not start or
+#                 move on its own: waiting for the captain's answer, put off
+#                 by the captain until a date, on another hold, waiting for
+#                 other work, stuck, paused, finished but not yet wrapped up,
+#                 an umbrella row, or a started task whose state is unreadable.
+# A working worker wins over a hold or prerequisite on its task; a dated hold
+# that is not the captain's lapses on its date, as the backlog treats it.
+# Doing now lists every card; the other two show three and fold the rest.
 #
 # ANSWERS. A question card offers answer controls when the snapshot marks it
 # answerable with owner-authored context (bin/fm-captain-hold.sh owns that
 # contract, including the plain-language about and purpose, the question text
-# and the per-option detail the card shows); its Queue answer control emits
-# one Lavish `choice` carrying
+# and the per-option detail the card shows): the captain picks an option, may
+# add a note, and its Queue answer control emits one Lavish `choice` carrying
 # fm-bearings-answer.v1 context with the task id, selection, note, the owner's
 # close mode and lifecycle. A captain hold with no owner context at all and an
 # unambiguous identity gets a free-text answer box instead, emitting the same
@@ -73,6 +88,16 @@
 # is no longer held and, for guarded cards, one queued for an earlier hold.
 # Stale, malformed, duplicate or ambiguous calls stay read-only. The page never
 # calls a command or invents options.
+# A queued card shrinks to its answer with Change answer and one send control
+# that delivers every queued answer through Lavish, the only delivery there
+# is; the top of the page repeats that control with the queued count. The
+# shrunken state lives in a hidden field of the card's own form, which Lavish
+# restores after each live reload, keyed to the hold's lifecycle so an answer
+# to an earlier asking never shows on a later one.
+# REMOVAL. An answered or otherwise closed call is no longer an open captain
+# hold, so the next build has no card for it; work an answer released moves to
+# its lane. A call the captain put off until a later day has no card either
+# until that day - only its Charted next row saying until when.
 #
 # CARDS. Each card reads top to bottom as its project, what it is about, what
 # it is for, the question, then every option with what picking it does and the

@@ -62,14 +62,47 @@ def lb_title($ids):
   elif $ids[.] then (gsub("[-_.]+"; " ") | (.[:1] | ascii_upcase) + .[1:])
   else lb_clean($ids) end;
 
-def lb_state_label:
-  if . == "working" then "In progress"
-  elif . == "blocked" or . == "parked" then "Stuck"
-  elif . == "paused" then "Paused"
-  elif . == "finished-awaiting-processing" then "Finished, being wrapped up"
-  elif . == "held" then "On hold"
-  elif . == "program" then "Program"
-  else "In flight" end;
+# LANES. The one rule that puts every open task in exactly one lane, read top
+# down; `why` names the reason and is the only thing the wording below keys on.
+#   doing    a worker is working on it right now
+#   next     not started and nothing in its way, so a worker starts it on its own
+#   charted  will not start or move on its own; `why` says what it waits for
+# $today is the collection date; a dated hold that is not the captain's lapses
+# on that date, exactly as the backlog stops treating it as a hold.
+def lb_lane($today):
+  if .worker_present == true and .state == "working" then {lane:"doing",why:"working"}
+  elif .hold.kind == "captain" and .hold.reason != null then
+    {lane:"charted",why:(if .hold.bucket == "dated" then "deferred" else "your-answer" end)}
+  elif (.hold.kind != null or .hold.reason != null) and (.hold.until == null or .hold.until > $today) then
+    {lane:"charted",why:"on-hold"}
+  elif ((.unresolved_blockers // []) | length) > 0 then {lane:"charted",why:"other-work"}
+  elif .state == "queued" then {lane:"next",why:"ready"}
+  elif .state == "blocked" or .state == "parked" then {lane:"charted",why:"stuck"}
+  elif .state == "paused" then {lane:"charted",why:"paused"}
+  elif .state == "finished-awaiting-processing" then {lane:"charted",why:"wrap-up"}
+  elif .state == "program" then {lane:"charted",why:"program"}
+  else {lane:"charted",why:"unclear"} end;
+
+# A captain call the captain put off to a later day is answered for now: it
+# has no card until that day, only its deferred row in the charted lane.
+def lb_is_question: (.hold.bucket == "dated") | not;
+
+def lb_why_label($until):
+  if . == "working" then "Being done now"
+  elif . == "ready" then "Starts on its own"
+  elif . == "your-answer" then "Waits for your answer"
+  elif . == "deferred" then "You put this off until \($until // "later")"
+  elif . == "on-hold" then (if $until != null then "Waiting until \($until)" else "Set aside for now" end)
+  elif . == "other-work" then "Waits for other work to finish first"
+  elif . == "stuck" then "Stuck, needs help"
+  elif . == "paused" then "Waiting on something outside the team"
+  elif . == "wrap-up" then "Finished, waiting to be wrapped up"
+  elif . == "program" then "Umbrella for other work"
+  else "Started, but its current status cannot be read" end;
+
+def lb_why_rank:
+  {"stuck":0,"your-answer":1,"other-work":2,"on-hold":3,"deferred":4,"paused":5,
+   "wrap-up":6,"unclear":7,"program":8}[.] // 9;
 
 def lb_plural($n; $one; $many): "\($n) \(if $n == 1 then $one else $many end)";
 
@@ -78,6 +111,8 @@ def lb_view($map):
 | ($map | if . != null and lb_valid_map then . else null end) as $named
 | ([$board.projects[].tasks[].id, $board.recently_finished[]?.id]
    | map({key:.,value:true}) | from_entries) as $ids
+| ([$board.projects[].tasks[] | {key:.id,value:.title}] | from_entries) as $titles
+| (($board.collected_at // "") | .[:10]) as $today
 | def group_of($id; $project):
     ($project | lb_repo) as $repo
     | (if $named == null then null
@@ -87,9 +122,8 @@ def lb_view($map):
          | .key) // null end) as $index
     | if $index != null then {key:"project:\($index)",index:$index}
       else {key:"repo:\($repo // "")",index:null,repo:$repo} end;
-  [$board.projects[] | .questions[] | . as $q | group_of(.id; .project) + {question:$q}] as $asked
-| ([$asked[].question.key] | map({key:.,value:true}) | from_entries) as $asked_keys
-| [$board.projects[] | .tasks[] | select($asked_keys[.key] | not) | . as $t | group_of(.id; .project) + {task:$t}] as $placed
+  [$board.projects[] | .questions[] | select(lb_is_question) | . as $q | group_of(.id; .project) + {question:$q}] as $asked
+| [$board.projects[] | .tasks[] | . as $t | group_of(.id; .project) + {task:$t}] as $placed
 | [($board.recently_finished // [])[] | . as $f | group_of(.id; .project) + {finished:$f}] as $done
 | ([$asked[], $placed[], $done[] | {key,index,repo}]
    + if $named != null then [$named.projects | to_entries[] | {key:"project:\(.key)",index:.key,repo:null}]
@@ -97,38 +131,42 @@ def lb_view($map):
    | unique_by(.key)) as $keys
 | [$keys[] as $g
    | [$asked[] | select(.key == $g.key) | .question] as $questions
-   | [$placed[] | select(.key == $g.key) | .task] as $tasks
-   | [$tasks[] | select(.worker_present or .backlog_state == "in_flight")] as $working_rows
-   | [$tasks[] | select((.worker_present or .backlog_state == "in_flight") | not)] as $waiting
    | [$done[] | select(.key == $g.key) | .finished] as $finished
-   | [$working_rows[] | . as $t
-      | {key:$t.key,id:$t.id,title:($t.title | lb_title($ids) // "Untitled work"),state:$t.state,
-         state_label:($t.state | lb_state_label),
-         note:(($t.last_meaningful_event.note // $t.current_state.detail) | lb_note($ids)),
-         at:($t.last_meaningful_event.emitted_at_epoch // $t.last_meaningful_event.observed_at_epoch // null),
-         pr:$t.pr.url}] as $workers
+   | [$placed[] | select(.key == $g.key) | .task | . as $t | lb_lane($today) as $l
+      | {key:$t.key,id:$t.id,title:($t.title | lb_title($ids) // "Untitled work"),
+         lane:$l.lane,why:$l.why,why_label:($l.why | lb_why_label($t.hold.until)),state:$t.state,
+         note:(if $l.why == "on-hold" then ($t.hold.reason | lb_note($ids))
+           elif $l.why == "other-work" then
+             ([($t.unresolved_blockers // [])[] | $titles[.] // empty | lb_title($ids) // empty] | .[:2]
+              | if length > 0 then "Waits for: " + join("; ") else null end)
+           elif $l.why | IN("your-answer","deferred","ready","program") then null
+           else (($t.last_meaningful_event.note // $t.current_state.detail) | lb_note($ids)) end),
+         at:(if $t.worker_present then
+             ($t.last_meaningful_event.emitted_at_epoch // $t.last_meaningful_event.observed_at_epoch // null)
+           else null end),
+         pr:$t.pr.url,priority:$t.priority,since:$t.since}] as $rows
+   | {doing:([$rows[] | select(.lane == "doing")] | sort_by([-(.at // 0),.title,.key])),
+      next:([$rows[] | select(.lane == "next")] | sort_by([.priority // 5,.since // "9999",.id,.key])),
+      charted:([$rows[] | select(.lane == "charted")] | sort_by([(.why | lb_why_rank),.since // "9999",.id,.key]))}
+     | map_values(map(del(.priority,.since))) as $lanes
    | {questions:($questions|length),urgent:([$questions[] | select(.urgent)]|length),
-      workers:($workers|length),working:([$workers[] | select(.state == "working")]|length),
-      stuck:([$workers[] | select(.state | IN("blocked","parked"))]|length),
-      wrapping_up:([$workers[] | select(.state == "finished-awaiting-processing")]|length),
-      finished:($finished|length),waiting:($waiting|length)} as $c
-   | ([$workers[] | select(.note != null and .at != null)] | max_by(.at)) as $latest
+      doing:($lanes.doing|length),next:($lanes.next|length),charted:($lanes.charted|length),
+      stuck:([$lanes.charted[] | select(.why == "stuck")]|length),finished:($finished|length)} as $c
+   | ([$rows[] | select(.note != null and .at != null)] | max_by(.at)) as $latest
    | {key:$g.key,source:(if $g.index != null then "map" else "repo" end),
       name:(if $g.index != null then $named.projects[$g.index].name else ($g.repo // "Unsorted work") end),
       description:(if $g.index != null then ($named.projects[$g.index].description // null)
         elif $named != null then "Not yet sorted into a named project" else null end),
-      order:$g.index,counts:$c,active:($c.questions > 0 or $c.workers > 0),
+      order:$g.index,counts:$c,active:($c.questions + $c.doing + $c.next + $c.charted > 0),
       status:([
           if $c.questions > 0 then lb_plural($c.questions; "question waits"; "questions wait") + " for you"
             + if $c.urgent > 0 then " (\($c.urgent) urgent)" else "" end
           else empty end,
-          if $c.stuck > 0 then "\($c.stuck) stuck" else empty end,
-          if $c.working > 0 then "\($c.working) busy" else empty end,
-          if $c.wrapping_up > 0 then "\($c.wrapping_up) finished and being wrapped up" else empty end,
-          ([$workers[] | select(.state == "paused")] | length) as $paused
-          | if $paused > 0 then "\($paused) paused" else empty end,
-          ($c.workers - $c.stuck - $c.working - $c.wrapping_up - ([$workers[] | select(.state == "paused")] | length)) as $other
-          | if $other > 0 then "\($other) in flight" else empty end]
+          if $c.doing > 0 then "\($c.doing) being done now" else empty end,
+          if $c.next > 0 then "\($c.next) starting next" else empty end,
+          if $c.charted > 0 then "\($c.charted) not starting on \(if $c.charted == 1 then "its" else "their" end) own"
+            + if $c.stuck > 0 then " (\($c.stuck) stuck)" else "" end
+          else empty end]
         | if length == 0 then (if $c.finished > 0 then "Quiet, recent work finished" else "Nothing running" end)
           else join(", ") | (.[:1] | ascii_upcase) + .[1:] end),
       latest:(if $latest == null then null else {title:$latest.title,note:$latest.note,at:$latest.at} end),
@@ -153,15 +191,16 @@ def lb_view($map):
            close:($ctx.close // null),lifecycle:($ctx.lifecycle // null),
            recommendation:($ctx.recommendation // null),
            options:[($ctx.options // [])[] | {value:.value,label:.label,detail:(.detail // null)}]}],
-      workers:$workers}]
+      lanes:$lanes}]
 | sort_by([(if .counts.urgent > 0 then 0 elif .counts.questions > 0 then 1
-      elif .counts.stuck > 0 then 2 elif .active then 3 else 4 end),
+      elif .counts.stuck > 0 then 2 elif .counts.doing > 0 then 3 elif .active then 4 else 5 end),
     (if .order == null then 1 else 0 end),(.order // 0),(.name | ascii_downcase),.key]) as $groups
 | {schema:"fm-live-board-view.v1",
    grouping:(if $map == null then "repo" elif $named == null then "invalid-map" else "map" end),
    counts:{questions:([$groups[].counts.questions]|add // 0),urgent:([$groups[].counts.urgent]|add // 0),
      active_projects:([$groups[] | select(.active)]|length),
-     working:([$groups[].counts.working]|add // 0),stuck:([$groups[].counts.stuck]|add // 0),
+     doing:([$groups[].counts.doing]|add // 0),next:([$groups[].counts.next]|add // 0),
+     charted:([$groups[].counts.charted]|add // 0),stuck:([$groups[].counts.stuck]|add // 0),
      finished:([$groups[].counts.finished]|add // 0)},
    notes:[
      if $map != null and $named == null then

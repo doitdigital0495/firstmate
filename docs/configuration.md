@@ -1584,8 +1584,9 @@ Arm the check once per home with `bin/fm-tool-update-check.sh arm`.
 
 ## Live board (config/live-board.json)
 
-The live board is an opt-in browser page that shows the captain's projects in this home, each with its open captain questions first, its progress across workers, and what those workers last reported, and refreshes about once a minute.
-Queued work that has not started is never listed; each project shows only a count of it, and projects with no question and nothing in progress fold away.
+The live board is an opt-in browser page that shows the captain's projects in this home, each with its open captain questions first and then its open work in three lanes, and refreshes about once a minute.
+Doing now holds only what a worker is working on at that moment, Next holds queued work with no hold and no unfinished prerequisite that a worker will start without the captain, and Charted next holds everything that will not start or move on its own, each card saying what it waits for.
+Every open task sits in exactly one lane; Next and Charted next show three cards and fold the rest, and projects with no question and no open work fold away.
 It is separate from `/bearings lavish` and renders only the canonical `bin/fm-live-board-snapshot.sh` projection; [`bin/fm-live-board.sh`](../bin/fm-live-board.sh)'s header owns its commands, config schemas, grouping, freshness thresholds, and answer path.
 
 To enable it in a home, create the local, gitignored `config/live-board.json`:
@@ -1610,6 +1611,8 @@ A question card is written for a manager who did not build the work: it shows it
 Those words come from the structured context its owner recorded with `bin/fm-captain-hold.sh hold --context-file`, which refuses a context without them.
 A question stored without that explanation still shows and can still be answered, under a visible "Needs a plain-language explanation" marker and a matching board note.
 A captain hold with no recorded context gets a free-text answer box that feeds the same captain-hold intake; stale, malformed or ambiguous questions stay visible but read-only.
+The captain picks an option, optionally adds a note, and queues the answer; the card shrinks to that answer, and one send control delivers every queued answer at once.
+An answered question leaves the page on the first refresh after its answer is recorded, and a question the captain put off until a later day has no card until that day, only a Charted next card saying until when.
 Set `enabled` to false or delete the file to stop refreshing; the published page and any recorded answers stay in place.
 
 ## Mail plane (.env)

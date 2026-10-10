@@ -81,6 +81,17 @@ render() {  # <home> [now-epoch] [answer-spec...]
   node "$HARNESS" "$home/data/live-board/board.html" "$@"
 }
 check() { printf '%s\n' "$1" | jq -e "$2" >/dev/null || fail "$3: $1"; }
+# Give a task a worker whose own busy-state record says what it is doing now.
+worker() {  # <home> <id> <busy|idle> [meta-line...]
+  local home=$1 id=$2 now=$3 gen event=stop
+  shift 3
+  mkdir -p "$home/projects/wt-$id"
+  fm_write_meta "$home/state/$id.meta" 'kind=ship' 'harness=claude' "window=firstmate:fm-$id" \
+    "worktree=$home/projects/wt-$id" "$@"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" "$id")
+  [ "$now" = idle ] || event=user-prompt-submit
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" "$id" "$now" --gen "$gen" --source claude-hook --event "$event"
+}
 mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"; }
 
 # --- Config gate ---------------------------------------------------------------
@@ -120,7 +131,8 @@ in_home "$home" "$LIVE" build | grep -q '^board: ' || fail "build did not report
 out=$(render "$home")
 check "$out" '.empty != null and (.empty | test("Nothing running"))
   and (.projects | length == 0) and .idle.count == 1 and .idle.names == ["quiet"]
-  and .stats.questions == 0 and .stats.active_projects == 0 and .freshness == "live"' \
+  and .stats.questions == 0 and .stats.doing == 0 and .stats.next == 0 and .stats.charted == 0
+  and .tray == null and .freshness == "live"' \
   "an empty fleet did not render the explicit empty state"
 pass "an empty fleet renders its empty state with idle registered projects folded away"
 
@@ -133,10 +145,65 @@ tasks_in "$home" add big-b "$long" --repo big --kind ship
 out=$(in_home "$home" "$LIVE" build 2>&1) || fail "a board past the env-string limit did not build: $out"
 [ "$(wc -c < "$home/data/live-board/board.html")" -gt 140000 ] \
   || fail "the large-fleet fixture did not produce a payload past the env-string limit"
-check "$(render "$home")" '(.projects | length == 0) and .idle.names == ["big"]
-  and (.idle.lines[0] | test("2 waiting to start"))' \
-  "a large board lost its queued count"
+check "$(render "$home")" '(.projects | map(.label)) == ["big"] and .idle == null
+  and (.projects[0].lanes.next | .count == 2 and (.cards | map(.id)) == ["big-a","big-b"])' \
+  "a large board lost its waiting work"
 pass "a board whose payload exceeds one environment string still builds and renders"
+
+# --- Three lanes: doing now, next, charted next -------------------------------
+home=$(make_home lanes)
+printf -- '- shop [no-mistakes] - fixture (added 2026-01-01)\n' > "$home/data/projects.md"
+for row in 'ln-doing|busy|Build the new checkout' 'ln-stuck|idle|Fix the payment error' \
+  'ln-paused|idle|Wait for the supplier release' 'ln-finished|idle|Tidy the product page' 'ln-lost|idle|Speed up search'; do
+  id=${row%%|*}; row=${row#*|}
+  tasks_in "$home" add "$id" "${row#*|}" --repo shop --kind ship --start
+  worker "$home" "$id" "${row%%|*}" 'project=shop'
+done
+stamp=$(date +%s)
+printf 'working [at=%s]: wiring the basket into the new checkout page\n' "$stamp" > "$home/state/ln-doing.status"
+printf 'blocked [at=%s]: the payment sandbox keeps refusing our test card\n' "$stamp" > "$home/state/ln-stuck.status"
+printf 'paused [at=%s]: waiting for the supplier to publish their release\n' "$stamp" > "$home/state/ln-paused.status"
+printf 'done [at=%s]: product page tidied and checked on a phone\n' "$stamp" > "$home/state/ln-finished.status"
+tasks_in "$home" add ln-next-low "Polish the footer" --repo shop --kind ship --priority 3
+tasks_in "$home" add ln-next-top "Add order tracking" --repo shop --kind ship --priority 1
+tasks_in "$home" add ln-next-b "Rename the basket" --repo shop --kind ship
+tasks_in "$home" add ln-next-c "Refresh the icons" --repo shop --kind ship
+tasks_in "$home" add ln-expired "Reopen the winter sale" --repo shop --kind ship
+tasks_in "$home" hold ln-expired --reason "Start after the launch" --kind future --until 2020-01-01
+tasks_in "$home" add ln-gated "Launch the loyalty scheme" --repo shop --kind ship --blocked-by ln-doing
+tasks_in "$home" add ln-held "Switch payment provider" --repo shop --kind ship
+tasks_in "$home" hold ln-held --reason "The supplier contract is still being signed" --kind external --until 2099-01-01
+tasks_in "$home" add ln-ask "Which courier?" --repo shop --kind captain
+tasks_in "$home" add ln-later "Pick a loyalty partner" --repo shop --kind captain
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ln-ask --reason "Pick a courier." >/dev/null \
+  || fail "could not hold the courier question"
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ln-later --reason "Decide after the summer." --until 2099-01-01 >/dev/null \
+  || fail "could not defer the loyalty question"
+in_home "$home" "$LIVE" build >/dev/null || fail "the lanes board did not build"
+out=$(render "$home")
+check "$out" '.projects[0].lanes
+  | (.doing | .count == 1 and (.cards | map(.id)) == ["ln-doing"] and (.say | test("A worker is on this right now"))
+      and (.cards[0].note | test("wiring the basket")))
+    and (.next | .count == 5 and .more == 2 and (.say | test("starts these without you"))
+      and (.cards | map(.id)) == ["ln-next-top","ln-next-low","ln-expired","ln-next-b","ln-next-c"]
+      and (.cards | map(.folded)) == [false,false,false,true,true] and (.cards | all(.reason == null)))
+    and (.charted | .count == 8 and (.say | test("will not start on their own"))
+      and (.cards | map([.id,.why])) == [["ln-stuck","stuck"],["ln-ask","your-answer"],["ln-gated","other-work"],
+        ["ln-held","on-hold"],["ln-later","deferred"],["ln-paused","paused"],["ln-finished","wrap-up"],["ln-lost","unclear"]]
+      and (.cards | map(.reason)) == ["Stuck, needs help","Waits for your answer","Waits for other work to finish first",
+        "Waiting until 2099-01-01","You put this off until 2099-01-01","Waiting on something outside the team",
+        "Finished, waiting to be wrapped up","Started, but its current status cannot be read"]
+      and (.cards[2].note == "Waits for: Build the new checkout")
+      and (.cards[3].note | test("supplier contract")))' \
+  "the lane rules did not put each kind of open work in its one lane with its plain reason"
+check "$out" '[.projects[].lanes[].cards[].id] | length == 14 and (unique | length) == 14' \
+  "a task appeared in no lane or in more than one"
+check "$out" '.stats.doing == 1 and .stats.next == 5 and .stats.charted == 8 and .stats.questions == 1
+  and (.projects[0].questions | map(.id)) == ["ln-ask"]
+  and .projects[0].status == "1 question waits for you, 1 being done now, 5 starting next, 8 not starting on their own (1 stuck)"
+  and ([.projects[].text] | join(" ") | test("ln-[a-z]") | not)' \
+  "a question the captain put off still had a card, or the lane totals were wrong"
+pass "doing now, next and charted next each follow one rule, and every task sits in exactly one lane"
 
 # --- Projects, questions and workers -------------------------------------------
 home=$(make_home fleet)
@@ -177,15 +244,14 @@ in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-legacy --reason "Old hold
   || fail "could not hold the legacy question"
 in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold data-note-only --reason "Free answer." --context-file "$home/ctx-note.json" >/dev/null \
   || fail "could not hold the note-only question"
-fm_write_meta "$home/state/ws-redesign.meta" 'kind=ship' 'harness=claude' 'project=web-shop' \
-  'pr=https://github.com/example/web-shop/pull/42'
+worker "$home" ws-redesign busy 'project=web-shop' 'pr=https://github.com/example/web-shop/pull/42'
 printf 'working [at=%s]: checkout tests pass on fm/ws-redesign, see data/ws-redesign/report.md run=01ABCDEFGHJKMNPQRSTVWXYZ01\n' \
   "$(date +%s)" > "$home/state/ws-redesign.status"
 printf '%s\n' "$ENABLED" > "$home/config/live-board.json"
 in_home "$home" "$LIVE" build >/dev/null || fail "the fleet board did not build"
 now=$(date +%s)
 out=$(render "$home" "$now")
-check "$out" '.stats.questions == 4 and .stats.urgent == 1 and .stats.active_projects == 2
+check "$out" '.stats.questions == 4 and .stats.urgent == 1
   and (.projects | map(.label)) == ["web-shop","data"]
   and (.projects[0].questions | map(.id)) == ["ws-carrier","ws-legacy"]
   and .projects[0].questions[0].urgent
@@ -204,19 +270,23 @@ check "$out" '(.projects[0].questions[0] | .answerable and .mode == "options"
     and .options == [] and .noteField == "textarea" and .lavishQuestion == "live-board:ws-legacy"
     and .title == "Logo </script><b>x</b>" and (.modeText | test("records your words")))' \
   "owner context did not drive the real question, its explained options, or the free-text fallback"
-check "$out" '(.projects[0].workers | map(.id)) == ["ws-redesign"]
-  and (.projects[0].workers[0] | .title == "Redesign checkout"
+check "$out" '(.projects[0].lanes.doing.cards | map(.id)) == ["ws-redesign"]
+  and (.projects[0].lanes.doing.cards[0] | .title == "Redesign checkout" and .reason == null
     and .links == [{href:"https://github.com/example/web-shop/pull/42",text:"pull request"}]
     and (.note | test("checkout tests pass")) and (.note | test("fm/|data/|run=|01ABC") | not))
   and (.projects[0].latest | test("Redesign checkout - checkout tests pass"))
-  and (.projects[0].progress | test("1 in progress")) and (.projects[0].progress | test("1 waiting to start"))
-  and (.projects[1].workers == []) and (.projects[1].progress | test("1 waiting to start"))
-  and ([.projects[].text] | join(" ") | test("Retry payments|Nightly export") | not)' \
-  "workers lost their plain progress, or queued work was listed"
+  and (.projects[0].lanes.next.cards | map(.title)) == ["Retry payments"]
+  and (.projects[0].lanes.charted.cards | map(.id)) == ["ws-carrier","ws-legacy"]
+  and (.projects[0].lanes.charted.cards | all(.reason == "Waits for your answer"))
+  and .projects[0].status == "2 questions wait for you (1 urgent), 1 being done now, 1 starting next, 2 not starting on their own"
+  and (.projects[1].lanes | .doing.cards == [] and (.doing.none | test("Nothing is being worked on"))
+    and (.next.cards | map(.title)) == ["Nightly export"])
+  and .stats.doing == 1 and .stats.next == 2 and .stats.charted == 4' \
+  "open work did not land in its doing, next and charted lanes"
 check "$out" '[.projects[].text] | join(" ")
   | test("ws-redesign|ws-retry|data-export|ws-carrier|data-window|ws-legacy|data-note-only|web-shop/pull") | not' \
   "the page face showed task ids or raw links"
-pass "repository fallback leads with real questions and explained options, and lists only workers"
+pass "repository fallback leads with real questions and explained options, then the three lanes"
 
 # --- A manager can place every question ---------------------------------------
 check "$out" '(.projects[0].questions[0]
@@ -250,8 +320,8 @@ out=$(render "$home" "$now")
 check "$out" '(.projects | map(.label)) == ["Checkout","Data platform","web-shop"]
   and .projects[0].description == "The new checkout."
   and (.projects[0].questions | map(.id)) == ["ws-carrier"]
-  and (.projects[0].workers | map(.id)) == ["ws-redesign"]
-  and .projects[0].status == "1 question waits for you (1 urgent), 1 in flight"
+  and (.projects[0].lanes.doing.cards | map(.id)) == ["ws-redesign"]
+  and .projects[0].status == "1 question waits for you (1 urgent), 1 being done now, 1 starting next, 1 not starting on its own"
   and (.projects[2].questions | map(.id)) == ["ws-legacy"]
   and (.projects[2].description | test("Not yet sorted"))
   and .idle.names == ["Unused effort"] and (.notes | any(test("project map")) | not)' \
@@ -278,7 +348,38 @@ check "$out" '(.queued | length == 3)
   and (.queued[2].data == {schema:"fm-bearings-answer.v1",question:"ws-legacy",selection:"",note:"Use the new logo"})
   and (.submits[] | select(.id == "data-window") | .queuedClass == false)' \
   "a queued answer lost its close mode or lifecycle, an empty answer queued, or free text was not sent"
-pass "Send answer emits one choice with the owner close mode and lifecycle, or plain free text"
+pass "Queue answer emits one choice with the owner close mode and lifecycle, or plain free text"
+
+# --- Choose, queue, send; answered cards shrink and stay answered -------------
+check "$(render "$home" "$now")" '.tray == null
+  and ([.projects[].questions[] | select(.answerable)] | length == 4 and all(.submit == "Queue answer" and .answer == "open" and .answered == null))' \
+  "an unanswered board showed a send control, or a card did not offer Queue answer"
+check "$out" '.tray == {count:3,text:"3 answers queuedNothing reaches Firstmate until you send. Queue as many as you like first.",send:"Send 3 answers to Firstmate"}
+  and .sends == 0
+  and (.projects[0].questions[0] | .answer == "queued" and .canChange and .sendHere == "Send 3 answers to Firstmate"
+    and (.answered | test("^Answer queued") and test("Who should ship the spring orders\\? - PostNL - cheaper")))
+  and (.projects[1].questions[] | select(.id == "data-window") | .answer == "open" and .answered == null)
+  and (.projects[0].questions[1] | .answer == "queued" and (.answered | test("Use the new logo")))' \
+  "a queued answer did not shrink its card to the answer, or the send control miscounted"
+kept=$(printf '%s\n' "$out" | jq -r '.projects[0].questions[0].kept')
+out=$(render "$home" "$now" 'ws-carrier=postnl:cheaper' 'data-note-only=:Call it Tidewater' '!send')
+check "$out" '.sends == 1 and .tray == null and (.queued | length == 2)
+  and ([.projects[].questions[] | select(.id == "ws-carrier" or .id == "data-note-only")]
+    | all(.answer == "sent" and (.canChange | not) and .sendHere == null and (.answered | test("^Answer sent"))))' \
+  "sending did not deliver the queued answers once and mark their cards sent"
+check "$(render "$home" "$now" 'ws-carrier=postnl' 'ws-legacy=:Use the new logo' '!send=ws-legacy')" '.sends == 1 and .tray == null
+  and ([.projects[].questions[] | select(.id == "ws-carrier" or .id == "ws-legacy")] | all(.answer == "sent"))' \
+  "the send control on an answered card did not send every queued answer"
+out=$(render "$home" "$now" 'ws-carrier=dhl' 'data-note-only=:Call it Tidewater' '!change=ws-carrier')
+check "$out" '.tray.count == 1 and .tray.send == "Send answer to Firstmate"
+  and (.projects[0].questions[0] | .answer == "open" and .answered == null)' \
+  "Change answer did not reopen its card"
+out=$(render "$home" "$now" "!restore=ws-carrier=$kept" "!restore=ws-legacy=$(printf 'queued\t2020-01-01T00:00:00Z#0\tOld words')")
+check "$out" '(.queued | length == 0) and .tray.count == 1
+  and (.projects[0].questions[0] | .answer == "queued" and (.answered | test("PostNL - cheaper")))
+  and (.projects[0].questions[1] | .answer == "open")' \
+  "an answered card did not stay answered after a reload, or an answer to an earlier asking was shown"
+pass "the captain picks an option, optionally adds a note, queues, and sends once; answered cards shrink and survive a reload"
 
 # --- Local freshness ----------------------------------------------------------
 check "$(render "$home" "$((now + 400))")" '.freshness == "stale" and .banner == ""' \
@@ -344,7 +445,7 @@ assert_contains "$show" "held: yes" "a refused stale answer released the newer h
 [ "$window_lifecycle" != "2020-01-01T00:00:00Z#0" ] || fail "the fixture lifecycle collided with the stale guard"
 touch -t 202001010000 "$board"
 in_home "$home" "$LIVE" refresh
-check "$(render "$home")" '[.projects[].questions[].id] | index("ws-carrier") == null' \
+check "$(render "$home")" '[.projects[] | .questions[].id, .lanes[].cards[].id] | index("ws-carrier") == null' \
   "the next refresh still showed an answered question"
 result="$TMP_ROOT/free-text.result"
 {
@@ -360,9 +461,24 @@ show=$(cd "$home" && tasks-axi show ws-legacy --full)
 assert_contains "$show" "Use the new logo" "the free-text answer did not record the captain's words"
 touch -t 202001010000 "$board"
 in_home "$home" "$LIVE" refresh
-check "$(render "$home")" '[.projects[].questions[].id] | index("ws-carrier") == null and index("ws-legacy") == null' \
+check "$(render "$home")" '[.projects[] | .questions[].id, .lanes[].cards[].id] | index("ws-carrier") == null and index("ws-legacy") == null' \
   "the next refresh still showed an answered question"
-pass "guarded and free-text answers close their questions, stale ones are refused, and cards clear on refresh"
+result="$TMP_ROOT/release.result"
+{
+  printf 'status: feedback\nprompts[1]{id,prompt,selector,tag,text}:\n'
+  row 1 data-window move ", \\\"close\\\": \\\"release\\\", \\\"lifecycle\\\": \\\"$window_lifecycle\\\""
+} > "$result"
+rows=$(in_home "$home" "$ROOT/bin/fm-procevent-lavish.sh" answers "$result")
+out=$(printf '%s\n' "$rows" | in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answers --any-origin --source "fixture capture" 2>&1)
+show=$(cd "$home" && tasks-axi show data-window --full)
+assert_contains "$show" "held: no" "an answer that lets the work continue left it held: $out"
+touch -t 202001010000 "$board"
+in_home "$home" "$LIVE" refresh
+check "$(render "$home")" '([.projects[].questions[].id] | index("data-window") == null)
+  and ([.projects[].lanes.next.cards[].id] | index("data-window") != null)
+  and ([.projects[].lanes.charted.cards[].id] | index("data-window") == null)' \
+  "work the captain's answer let continue kept its question card or stayed in the charted lane"
+pass "answered questions leave the page on the next refresh, and work an answer lets continue moves to its lane"
 
 # --- The watcher drives refresh -----------------------------------------------
 home=$(make_home watched)
