@@ -5,13 +5,19 @@
 // Usage: node live-board-render-harness.mjs <board.html> [now-epoch] [answer-spec...]
 // An answer spec is `<question-id>=<option-value>[:<note>]` (empty value for a
 // note-only answer); each is applied to that card's form and submitted.
+// Two more specs drive the rest of the answer flow, in argument order:
+//   `!change=<id>`        press that answered card's Change answer control
+//   `!restore=<id>=<kept>` put <kept> back in that card's hidden answer field and
+//                         deliver a parent message, as Lavish does after a reload
 // Prints one JSON document:
 //   { freshness, banner, stats:{}, notes:[], empty, idle:{count,names,lines}, foot,
 //     projects:[{label, key, badges, description, status, progress, latest, text,
 //       questions:[{id,mode,title,topic,why,urgent,badges,answerable,lavishQuestion,
-//         readonly,options:[{value,label,detail,recommended}],noteField,modeText}],
-//       workers:[{id,state,label,title,note,links}]}],
-//     submits:[{id,status}], queued:[{prompt,tag,data}], tickers }
+//         readonly,options:[{value,label,detail,recommended}],noteField,modeText,
+//         submit,answer,answered,kept,change,status}],
+//       lanes:{doing|next|charted:{count,say,none,more,
+//         cards:[{id,why,reason,title,note,links,folded}]}}}],
+//     submits:[{id,status}], queued:[{prompt,tag,data}], tray:{text,buttons}, tickers }
 import { readFileSync } from "node:fs";
 
 const [file, nowArg, ...answers] = process.argv.slice(2);
@@ -49,7 +55,7 @@ class Node {
   }
 }
 
-const ids = ["lb-root", "lb-home", "lb-fresh", "lb-banner", "lb-stats", "lb-notes", "lb-projects", "lb-foot"];
+const ids = ["lb-root", "lb-home", "lb-fresh", "lb-banner", "lb-stats", "lb-notes", "lb-projects", "lb-tray", "lb-foot"];
 const byId = new Map(ids.map((id) => [id, new Node("div")]));
 const data = new Node("script");
 data.textContent = html.split('<script id="live-board-data" type="application/json">')[1].split("</script>")[0];
@@ -60,10 +66,14 @@ const queued = [];
 const tickers = [];
 const nowMs = (nowArg ? Number(nowArg) : Date.now() / 1000) * 1000;
 const document = { getElementById: (id) => byId.get(id) || null, createElement: (t) => new Node(t) };
-const window = { lavish: { queuePrompt: (prompt, options) => queued.push({ prompt, options }) } };
+const messageListeners = [];
+const window = {
+  lavish: { queuePrompt: (prompt, options) => queued.push({ prompt, options }) },
+  addEventListener: (type, fn) => { if (type === "message") messageListeners.push(fn); },
+};
 const FakeDate = { now: () => nowMs, parse: (s) => Date.parse(s) };
-new Function("window", "document", "setInterval", "Date", code)(
-  window, document, (fn, ms) => tickers.push(ms), FakeDate);
+new Function("window", "document", "setInterval", "setTimeout", "Date", code)(
+  window, document, (fn, ms) => tickers.push(ms), (fn) => fn(), FakeDate);
 
 const text = (n) => n.textContent.replace(/\s+/g, " ").trim();
 const badges = (n) => n.find((c) => c.hasClass("badge")).map(text);
@@ -76,10 +86,25 @@ const say = (q, part, tag) => {
 const root = byId.get("lb-projects");
 
 const submits = [];
+const cardOf = (id) => root.find((c) => c.getAttribute("data-question") === id)[0];
 for (const spec of answers) {
+  if (spec.startsWith("!change=")) {
+    const target = cardOf(spec.slice(8));
+    const change = target && target.find((c) => c.getAttribute("data-change") !== null)[0];
+    if (change) change.dispatch("click");
+    submits.push({ id: spec, status: change ? "changed" : "no-change-control" });
+    continue;
+  }
+  if (spec.startsWith("!restore=")) {
+    const [target, value] = spec.slice(9).split(/=(.*)/s);
+    const field = cardOf(target) && cardOf(target).find((c) => c.name === "queued")[0];
+    if (field) { field.value = value; for (const fn of messageListeners) fn({}); }
+    submits.push({ id: spec, status: field ? "restored" : "no-answer-field" });
+    continue;
+  }
   const [id, rest] = spec.split(/=(.*)/s);
   const [value, note] = rest.split(/:(.*)/s);
-  const card = root.find((c) => c.getAttribute("data-question") === id)[0];
+  const card = cardOf(id);
   const form = card && card.find((c) => c.tagName === "FORM")[0];
   if (!form) { submits.push({ id, status: "no-form" }); continue; }
   for (const r of form.find((c) => c.type === "radio")) r.checked = r.value === value;
@@ -133,15 +158,36 @@ const projects = root.children.filter((c) => c.getAttribute("data-project") !== 
         })) : [],
         noteField: note ? note.tagName.toLowerCase() : null,
         modeText: form ? text(form.find((c) => c.hasClass("q-mode"))[0]) : null,
+        submit: form ? text(form.find((c) => c.tagName === "BUTTON" && c.type === "submit")[0]) : null,
+        answer: q.getAttribute("data-answer"),
+        answered: form && !form.find((c) => c.hasClass("q-answered"))[0].hidden
+          ? text(form.find((c) => c.hasClass("q-answered-main"))[0]) : null,
+        kept: form ? form.find((c) => c.name === "queued")[0].value : null,
+        change: q.getAttribute("data-answer") === "queued"
+          ? text(form.find((c) => c.getAttribute("data-change") !== null)[0]) : null,
+        status: form ? text(form.find((c) => c.hasClass("q-status"))[0]) : null,
       };
     }),
-    workers: p.find((c) => c.getAttribute("data-worker") !== null).map((w) => ({
-      id: w.getAttribute("data-worker"),
-      state: w.getAttribute("data-state"),
-      label: text(w.children[0]),
-      title: text(w.find((c) => c.hasClass("w-title"))[0]),
-      note: (w.find((c) => c.hasClass("w-note"))[0] || null) && text(w.find((c) => c.hasClass("w-note"))[0]),
-      links: w.find((c) => c.tagName === "A").map((a) => ({ href: a.href, text: text(a) })),
+    lanes: Object.fromEntries(p.find((c) => c.getAttribute("data-lane-box") !== null).map((lane) => {
+      const more = lane.find((c) => c.getAttribute("data-lane-more") !== null)[0];
+      const folded = new Set(more ? more.find((c) => c.getAttribute("data-task") !== null) : []);
+      const none = lane.find((c) => c.hasClass("lane-none"))[0];
+      return [lane.getAttribute("data-lane-box"), {
+        count: Number(text(lane.find((c) => c.hasClass("lane-count"))[0])),
+        say: text(lane.find((c) => c.hasClass("lane-say"))[0]),
+        none: none ? text(none) : null,
+        more: more ? Number(more.getAttribute("data-lane-more")) : 0,
+        cards: lane.find((c) => c.getAttribute("data-task") !== null).map((w) => ({
+          id: w.getAttribute("data-task"),
+          lane: w.getAttribute("data-lane"),
+          why: w.getAttribute("data-why"),
+          reason: badges(w)[0] || null,
+          title: text(w.find((c) => c.hasClass("w-title"))[0]),
+          note: (w.find((c) => c.hasClass("w-note"))[0] || null) && text(w.find((c) => c.hasClass("w-note"))[0]),
+          links: w.find((c) => c.tagName === "A").map((a) => ({ href: a.href, text: text(a) })),
+          folded: folded.has(w),
+        })),
+      }];
     })),
     text: text(p),
   };
@@ -163,5 +209,8 @@ console.log(JSON.stringify({
   projects,
   submits,
   queued: queued.map((q) => ({ prompt: q.prompt, tag: q.options.tag, data: q.options.data })),
+  tray: ((bar) => bar ? { text: text(bar.children[0]),
+    buttons: bar.find((c) => c.tagName === "BUTTON").map(text) } : null)(
+    byId.get("lb-tray").children[0]),
   tickers,
 }));

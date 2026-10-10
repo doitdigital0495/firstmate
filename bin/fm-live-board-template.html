@@ -60,7 +60,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visibl
 .prog { display: grid; gap: 4px; }
 .prog-bar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: var(--bg-inset); border: 1px solid var(--line-soft); }
 .prog-bar span { display: block; height: 100%; }
-.pb-done { background: var(--sea); } .pb-run { background: var(--ocean); } .pb-stuck { background: var(--rust); }
+.pb-done { background: var(--sea); } .pb-doing { background: var(--ocean); } .pb-next { background: var(--text-faint); } .pb-charted { background: var(--gold); }
 .prog-text { color: var(--text-muted); font-size: 0.82rem; overflow-wrap: anywhere; }
 .prog-text .quiet { color: var(--text-faint); }
 .proj-latest { margin: 0; font-size: 0.85rem; color: var(--text); overflow-wrap: anywhere; }
@@ -69,7 +69,14 @@ a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visibl
 .sec-label { margin: 2px 4px 0; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-faint); }
 .q { background: var(--bg-card); border: 1px solid #6b5326; border-left: 4px solid var(--gold); border-radius: 10px; padding: 12px 14px; min-width: 0; }
 .q.q-urgent { border-color: #6b3527; border-left-color: var(--rust); }
-.q.is-queued { border-left-color: var(--sea); }
+.q.is-queued { border-color: #2f6b4f; border-left-color: var(--sea); padding: 8px 14px; }
+.q.is-queued > *, .q.is-queued .q-form > * { display: none; }
+.q.is-queued > .q-form, .q.is-queued .q-form > .q-answered { display: grid; margin-top: 0; }
+.q-answered { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; min-width: 0; }
+.q-answered-main { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.q-answered-main b { color: var(--sea); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.q-answered-main span { color: var(--text-strong); }
+.q-answered-acts { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
 .q-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .q h3 { margin: 0; font-size: 1.02rem; line-height: 1.4; color: var(--text-strong); overflow-wrap: anywhere; white-space: pre-wrap; }
 .q-project { margin: 8px 0 0; color: var(--text-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
@@ -100,12 +107,28 @@ textarea.q-note { min-height: 88px; resize: vertical; }
 .q-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .btn { min-height: 44px; padding: 8px 18px; border-radius: 9px; border: 1px solid #6b5326; background: var(--gold); color: #1a2238; font: 600 0.95rem var(--font); cursor: pointer; }
 .btn:hover { background: #f0d38c; }
+.btn-quiet { background: transparent; color: var(--text); border-color: var(--line); font-weight: 500; }
+.btn-quiet:hover { background: var(--bg-inset); }
+.tray { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; margin: 0 0 14px; padding: 10px 14px; border-radius: 12px; border: 1px solid #2f6b4f; background: var(--sea-soft); color: var(--text-strong); min-width: 0; }
+.tray-text { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .q-mode { color: var(--text-muted); font-size: 0.8rem; }
 .q-status { font-size: 0.85rem; color: var(--sea); }
 .q-status.err { color: var(--rust); }
 .q-readonly { margin-top: 8px; padding: 8px 12px; border-radius: 9px; background: var(--bg-inset); border: 1px dashed var(--line); color: var(--text-muted); font-size: 0.85rem; }
-.w { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 9px; background: var(--bg-card); min-width: 0; }
-.w-main { display: grid; gap: 2px; min-width: 0; }
+.lanes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: start; min-width: 0; }
+.lane { display: grid; gap: 8px; align-content: start; min-width: 0; padding: 10px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--bg-inset); }
+.lane-head { display: grid; gap: 2px; min-width: 0; }
+.lane-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 0; font-size: 0.95rem; color: var(--text-strong); }
+.lane-count { color: var(--text-muted); font-weight: 500; font-size: 0.82rem; }
+.lane-say { margin: 0; color: var(--text-muted); font-size: 0.8rem; overflow-wrap: anywhere; }
+.lane-doing { border-top: 3px solid var(--sea); } .lane-next { border-top: 3px solid var(--ocean); } .lane-charted { border-top: 3px solid var(--gold); }
+.lane-none { margin: 0; color: var(--text-faint); font-size: 0.85rem; }
+.lane-more { min-width: 0; }
+.lane-more summary { cursor: pointer; color: var(--text-muted); font-size: 0.85rem; min-height: 28px; }
+.lane-more-body { display: grid; gap: 8px; margin-top: 8px; min-width: 0; }
+.lane-more:not([open]) > .lane-more-body { display: none; }
+.w { display: grid; gap: 4px; padding: 9px 11px; border: 1px solid var(--line-soft); border-radius: 9px; background: var(--bg-card); min-width: 0; }
+.w .badge { justify-self: start; white-space: normal; }
 .w-title { color: var(--text-strong); overflow-wrap: anywhere; }
 .w-note { color: var(--text-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
 .w-when { color: var(--text-faint); font-size: 0.78rem; }
@@ -116,6 +139,7 @@ textarea.q-note { min-height: 88px; resize: vertical; }
 .idle li b { color: var(--text); font-weight: 600; }
 .lb-notes { margin: 0 0 14px; border: 1px solid var(--line-soft); background: var(--bg-raised); border-radius: 10px; padding: 8px 14px; font-size: 0.85rem; }
 .lb-foot { margin-top: 20px; color: var(--text-faint); font-size: 0.78rem; overflow-wrap: anywhere; }
+@media (max-width: 900px) { .lanes { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 640px) {
   .lb { padding: 14px 10px 40px; }
   .proj-head { padding: 12px; }
@@ -124,6 +148,7 @@ textarea.q-note { min-height: 88px; resize: vertical; }
   .q-opt { grid-template-columns: auto minmax(0, 1fr); }
   .q-opt .rec { grid-column: 2; justify-self: start; }
   .lb-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .q-answered { grid-template-columns: minmax(0, 1fr); }
   .lb-stat span { font-size: 0.68rem; letter-spacing: 0.04em; }
 }
 </style>
@@ -142,6 +167,7 @@ textarea.q-note { min-height: 88px; resize: vertical; }
   </header>
   <div id="lb-banner"></div>
   <section class="lb-stats" id="lb-stats" aria-label="Totals"></section>
+  <div id="lb-tray" aria-live="polite"></div>
   <div id="lb-projects"></div>
   <div id="lb-notes"></div>
   <p class="lb-foot" id="lb-foot"></p>
@@ -157,10 +183,14 @@ __FM_LIVE_BOARD_DATA__
     warn: '<svg class="dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#e0a52e"/></svg>',
     danger: '<svg class="dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#e08365"/></svg>'
   };
-  var STATE_CLASS = {
-    working: "b-live", blocked: "b-danger", parked: "b-danger", paused: "b-warn",
-    "finished-awaiting-processing": "b-info", held: "b-warn"
-  };
+  /* The projection decides each task's lane and reason; the page only words them. */
+  var LANES = [
+    ["doing", "Doing now", "A worker is on this right now.", "Nothing is being worked on right now."],
+    ["next", "Next", "A worker starts these without you; nothing is in their way.", "Nothing is lined up to start on its own."],
+    ["charted", "Charted next", "These will not start on their own. Each one says what it waits for.", "Nothing is waiting."]
+  ];
+  var LANE_SHOWN = 3;
+  var WHY_CLASS = { stuck: "b-danger", "your-answer": "b-warn", deferred: "b-warn" };
   var READONLY = {
     stale: "This question changed after its answer options were written. Firstmate must refresh it before you can answer here.",
     duplicate: "This question carries conflicting answer options. Firstmate must review it before you can answer here.",
@@ -253,14 +283,35 @@ __FM_LIVE_BOARD_DATA__
 
   var counts = view.counts || {};
   var stats = document.getElementById("lb-stats");
-  [["questions", "questions for you"], ["urgent", "urgent"], ["active_projects", "active projects"],
-   ["working", "workers busy"], ["stuck", "stuck"], ["finished", "done, last 2 weeks"]].forEach(function (s) {
+  [["questions", "questions for you"], ["urgent", "urgent"], ["doing", "doing now"],
+   ["next", "next"], ["charted", "charted next"], ["finished", "done, last 2 weeks"]].forEach(function (s) {
     var box = el("div", "lb-stat" + ((s[0] === "questions" || s[0] === "urgent") && counts[s[0]] ? " is-hot" : ""));
     box.setAttribute("data-stat", s[0]);
     box.appendChild(el("b", "", counts[s[0]] || 0));
     box.appendChild(el("span", "", s[1]));
     stats.appendChild(box);
   });
+
+  /* A queued answer shrinks its card to one line. That lives in a hidden field
+     of the card's own form, which Lavish restores after each live reload, so
+     the card stays shrunk until the next board no longer has it. The page
+     cannot see what Lavish still holds or has sent, so it claims neither. */
+  var cards = [];
+  var tray = document.getElementById("lb-tray");
+  function announce(node) {
+    try { node.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) { /* the state stays page-local */ }
+  }
+  function paintTray() {
+    clear(tray);
+    if (!cards.length) return;
+    var bar = el("div", "tray");
+    bar.setAttribute("data-tray", "");
+    bar.appendChild(el("div", "tray-text", "Answers you queue are delivered to Firstmate when you press Send in the Lavish panel."));
+    tray.appendChild(bar);
+  }
+  function syncAnswers() {
+    cards.forEach(function (paint) { paint(); });
+  }
 
   function cardPart(name, label, node) {
     var box = el("div", "q-part");
@@ -272,7 +323,8 @@ __FM_LIVE_BOARD_DATA__
 
   function questionCard(q, project) {
     var urgent = q.urgent === true;
-    var card = el("article", "q" + (urgent ? " q-urgent" : ""));
+    var base = "q" + (urgent ? " q-urgent" : "");
+    var card = el("article", base);
     card.setAttribute("data-question", q.id);
     card.setAttribute("data-mode", q.mode);
     var top = el("div", "q-top");
@@ -368,7 +420,7 @@ __FM_LIVE_BOARD_DATA__
     note.name = "note"; note.className = "q-note";
     form.appendChild(note);
     var foot = el("div", "q-foot");
-    var btn = el("button", "btn", "Send answer");
+    var btn = el("button", "btn", "Queue answer");
     btn.type = "submit";
     foot.appendChild(btn);
     foot.appendChild(el("span", "q-mode", !guarded
@@ -380,6 +432,46 @@ __FM_LIVE_BOARD_DATA__
     status.setAttribute("role", "status");
     foot.appendChild(status);
     form.appendChild(foot);
+
+    var kept = document.createElement("input");
+    kept.type = "hidden"; kept.name = "queued"; kept.value = "";
+    form.appendChild(kept);
+    var answered = el("div", "q-answered");
+    answered.hidden = true;
+    var said = el("div", "q-answered-main");
+    var saidText = el("span");
+    said.appendChild(el("b", "", "Answer queued in Lavish")); said.appendChild(saidText);
+    answered.appendChild(said);
+    var acts = el("div", "q-answered-acts");
+    var change = el("button", "btn btn-quiet", "Change answer");
+    change.type = "button";
+    change.setAttribute("data-change", "");
+    acts.appendChild(change);
+    answered.appendChild(acts);
+    form.appendChild(answered);
+    /* stamp TAB answer; a stamp from an earlier asking is ignored. */
+    var stamp = String(q.lifecycle || q.asked || "");
+    function keptAnswer() {
+      var value = String(kept.value || ""), at = value.indexOf("\t");
+      return at >= 0 && value.slice(0, at) === stamp ? value.slice(at + 1) : "";
+    }
+    function setKept(shown) {
+      kept.value = shown ? stamp + "\t" + shown : "";
+      announce(kept);
+      syncAnswers();
+    }
+    cards.push(function () {
+      var shown = keptAnswer();
+      card.className = base + (shown ? " is-queued" : "");
+      card.setAttribute("data-answer", shown ? "queued" : "open");
+      answered.hidden = !shown;
+      saidText.textContent = q.text + " - " + shown;
+    });
+    change.addEventListener("click", function () {
+      setKept("");
+      status.className = "q-status";
+      status.textContent = "Queue a new answer; it replaces the earlier one if that has not been sent yet.";
+    });
 
     form.addEventListener("submit", function (ev) {
       if (ev && ev.preventDefault) ev.preventDefault();
@@ -410,43 +502,71 @@ __FM_LIVE_BOARD_DATA__
       window.lavish.queuePrompt(
         "Live board answer - " + q.text + ": " + shown,
         { tag: "choice", text: q.text + " -> " + shown, element: form, data: data });
-      card.className += " is-queued";
-      status.textContent = "Queued. Press Send in the Lavish panel; the card clears after the answer is recorded.";
+      status.textContent = "";
+      setKept(shown);
     });
     card.appendChild(form);
     return card;
   }
 
-  function workerRow(w) {
+  function taskCard(t) {
     var row = el("div", "w");
-    row.setAttribute("data-worker", w.id);
-    row.setAttribute("data-state", w.state || "unknown");
-    row.appendChild(badge(STATE_CLASS[w.state] || "b-muted", w.state_label || "In flight"));
-    var main = el("div", "w-main");
-    main.appendChild(el("span", "w-title", w.title));
-    if (w.note) main.appendChild(el("span", "w-note", w.note));
+    row.setAttribute("data-task", t.id);
+    row.setAttribute("data-lane", t.lane);
+    row.setAttribute("data-why", t.why || "");
+    row.appendChild(el("span", "w-title", t.title));
+    // Only a charted card needs its reason; the other lanes say theirs once.
+    if (t.lane === "charted") row.appendChild(badge(WHY_CLASS[t.why] || "b-muted", t.why_label || "Waiting"));
+    if (t.note) row.appendChild(el("span", "w-note", t.note));
     var when = [];
-    if (typeof w.at === "number") when.push("last update " + ago(Date.now() / 1000 - w.at));
+    if (typeof t.at === "number") when.push("last update " + ago(Date.now() / 1000 - t.at));
     var line = el("span", "w-when", when.join(" · "));
-    var pr = safePr(w.pr);
+    var pr = safePr(t.pr);
     if (pr) {
       if (when.length) line.appendChild(el("span", "", " · "));
       var a = el("a", "", "pull request"); a.href = pr; a.target = "_blank"; a.rel = "noopener";
       line.appendChild(a);
     }
-    if (when.length || pr) main.appendChild(line);
-    row.appendChild(main);
+    if (when.length || pr) row.appendChild(line);
     return row;
+  }
+
+  function laneSection(lane, rows) {
+    var box = el("section", "lane lane-" + lane[0]);
+    box.setAttribute("data-lane-box", lane[0]);
+    var head = el("div", "lane-head");
+    var name = el("h3", "lane-name");
+    name.appendChild(el("span", "", lane[1]));
+    name.appendChild(el("span", "lane-count", String(rows.length)));
+    head.appendChild(name);
+    head.appendChild(el("p", "lane-say", lane[2]));
+    box.appendChild(head);
+    if (!rows.length) {
+      box.appendChild(el("p", "lane-none", lane[3]));
+      return box;
+    }
+    var shown = lane[0] === "doing" ? rows.length : LANE_SHOWN;
+    rows.slice(0, shown).forEach(function (t) { box.appendChild(taskCard(t)); });
+    if (rows.length > shown) {
+      var more = el("details", "lane-more");
+      more.setAttribute("data-lane-more", String(rows.length - shown));
+      more.appendChild(el("summary", "", "Show " + (rows.length - shown) + " more"));
+      var body = el("div", "lane-more-body");
+      rows.slice(shown).forEach(function (t) { body.appendChild(taskCard(t)); });
+      more.appendChild(body);
+      box.appendChild(more);
+    }
+    return box;
   }
 
   function progress(c) {
     var box = el("div", "prog");
-    var running = (c.workers || 0) - (c.stuck || 0);
-    var total = (c.finished || 0) + (c.workers || 0);
+    var segs = [["pb-done", c.finished || 0], ["pb-doing", c.doing || 0], ["pb-next", c.next || 0], ["pb-charted", c.charted || 0]];
+    var total = segs.reduce(function (sum, seg) { return sum + seg[1]; }, 0);
     if (total > 0) {
       var bar = el("div", "prog-bar");
       bar.setAttribute("aria-hidden", "true");
-      [["pb-done", c.finished || 0], ["pb-run", running], ["pb-stuck", c.stuck || 0]].forEach(function (seg) {
+      segs.forEach(function (seg) {
         if (!seg[1]) return;
         var s = el("span", seg[0]);
         s.style = "width:" + (100 * seg[1] / total).toFixed(1) + "%";
@@ -455,11 +575,7 @@ __FM_LIVE_BOARD_DATA__
       box.appendChild(bar);
     }
     var text = el("div", "prog-text");
-    var parts = [];
-    parts.push((c.finished || 0) + " done in the last 2 weeks");
-    parts.push((c.workers || 0) + " in progress" + (c.stuck ? " (" + c.stuck + " stuck)" : ""));
-    text.appendChild(el("span", "", parts.join(" · ")));
-    if (c.waiting) text.appendChild(el("span", "quiet", " · " + c.waiting + " waiting to start"));
+    text.appendChild(el("span", "", (c.finished || 0) + " done in the last 2 weeks"));
     box.appendChild(text);
     return box;
   }
@@ -493,11 +609,10 @@ __FM_LIVE_BOARD_DATA__
       body.appendChild(el("div", "sec-label", "Questions for you"));
       p.questions.forEach(function (q) { body.appendChild(questionCard(q, p.name)); });
     }
-    if ((p.workers || []).length) {
-      body.appendChild(el("div", "sec-label", "Work in progress"));
-      p.workers.forEach(function (w) { body.appendChild(workerRow(w)); });
-    }
-    if (body.firstChild) sec.appendChild(body);
+    var lanes = el("div", "lanes");
+    LANES.forEach(function (lane) { lanes.appendChild(laneSection(lane, (p.lanes || {})[lane[0]] || [])); });
+    body.appendChild(lanes);
+    sec.appendChild(body);
     return sec;
   }
 
@@ -510,15 +625,15 @@ __FM_LIVE_BOARD_DATA__
     empty.innerHTML = '<svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="18" fill="#1f3a30"/><path d="M12 20 L18 26 L29 14" fill="none" stroke="#7cc4a0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     empty.appendChild(el("h2", "", "Nothing running and no questions for you"));
     empty.appendChild(el("p", "", (board.coverage && board.coverage.local && board.coverage.local.trustworthy)
-      ? "No project has work in progress right now."
-      : "No work in progress was found, but the board could not see everything - see the board notes below."));
+      ? "No project has open work right now."
+      : "No open work was found, but the board could not see everything - see the board notes below."));
     host.appendChild(empty);
   }
   active.forEach(function (p) { host.appendChild(projectSection(p)); });
   if (quiet.length) {
     var box = el("details", "idle");
     box.setAttribute("data-idle", String(quiet.length));
-    box.appendChild(el("summary", "", plural(quiet.length, "quiet project") + " with nothing in progress"));
+    box.appendChild(el("summary", "", plural(quiet.length, "quiet project") + " with no open work"));
     var ul = el("ul");
     quiet.forEach(function (p) {
       var li = el("li");
@@ -526,12 +641,21 @@ __FM_LIVE_BOARD_DATA__
       li.appendChild(el("b", "", p.name));
       var extra = [];
       if (p.counts && p.counts.finished) extra.push(p.counts.finished + " done in the last 2 weeks");
-      if (p.counts && p.counts.waiting) extra.push(p.counts.waiting + " waiting to start");
       if (extra.length) li.appendChild(el("span", "", " - " + extra.join(" · ")));
       ul.appendChild(li);
     });
     box.appendChild(ul);
     host.appendChild(box);
+  }
+
+  syncAnswers();
+  paintTray();
+  /* Lavish restores form fields by message after a reload, so repaint then. */
+  if (typeof window.addEventListener === "function") {
+    window.addEventListener("message", function () {
+      setTimeout(syncAnswers, 0);
+      setTimeout(syncAnswers, 300);
+    });
   }
 
   if ((view.notes || []).length) {
