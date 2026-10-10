@@ -9,6 +9,20 @@
 //   `!change=<id>`        press that answered card's Change answer control
 //   `!restore=<id>=<kept>` put <kept> back in that card's hidden answer field and
 //                         deliver a parent message, as Lavish does after a reload
+// One spec drives a project's pull request timeline:
+//   `!pr=<event>=<project>=<pr-key>` deliver mouseenter, mouseleave, focus, blur
+//                         or click to that pull request's marker; `close` (no
+//                         key needed) presses the pinned detail's Close; and
+//                         `restore` puts <pr-key> back in the timeline's hidden
+//                         pin field and delivers a parent message, as Lavish
+//                         does after a reload. `press` is a real pointer press
+//                         on a marker (mouseenter, focus, click, and it keeps
+//                         focus); `presslink` and `pressclose` (no key needed)
+//                         are a real pointer press on the pinned detail's link
+//                         or Close: mouse-down takes focus off the marker
+//                         (mouseleave, blur) and the click on mouse-up lands
+//                         only if that node is still on the page, else the
+//                         spec's status is `replaced`
 // Prints one JSON document:
 //   { freshness, banner, stats:{}, notes:[], empty, idle:{count,names,lines}, foot,
 //     projects:[{label, key, badges, description, status, progress, latest, text,
@@ -16,7 +30,12 @@
 //         readonly,options:[{value,label,detail,recommended}],noteField,modeText,
 //         submit,answer,answered,kept,change,status}],
 //       lanes:{doing|next|charted:{count,say,none,more,
-//         cards:[{id,why,reason,title,note,links,folded}]}}}],
+//         cards:[{id,why,reason,title,note,links,folded}]}},
+//       timeline:{status,count,say,gaps:[],lavishQuestion,kept,
+//         marks:[{key,kind,tag,date,label,pressed,shown}],
+//         detail:{shown,pinned,deploy,badges,title,summary,deployText,runs:[{result,text}],
+//           links:[{href,text}],close,text}}}],
+//     idle.timelines:{<name>:timeline},
 //     submits:[{id,status}], queued:[{prompt,tag,data}], tray:{text,buttons}, tickers }
 import { readFileSync } from "node:fs";
 
@@ -71,7 +90,9 @@ const window = {
   lavish: { queuePrompt: (prompt, options) => queued.push({ prompt, options }) },
   addEventListener: (type, fn) => { if (type === "message") messageListeners.push(fn); },
 };
-const FakeDate = { now: () => nowMs, parse: (s) => Date.parse(s) };
+function FakeDate(...args) { return new Date(...args); }
+FakeDate.now = () => nowMs;
+FakeDate.parse = (s) => Date.parse(s);
 new Function("window", "document", "setInterval", "setTimeout", "Date", code)(
   window, document, (fn, ms) => tickers.push(ms), (fn) => fn(), FakeDate);
 
@@ -85,7 +106,51 @@ const say = (q, part, tag) => {
 };
 const root = byId.get("lb-projects");
 
+// A project's section, or its line among the quiet projects.
+const projectNode = (name) => root.find((c) =>
+  c.getAttribute("data-project") === name || c.getAttribute("data-quiet-project") === name)[0];
+const timelineOf = (holder) => {
+  const tl = holder && holder.find((c) => c.getAttribute("data-timeline") !== null)[0];
+  if (!tl) return null;
+  const one = (node, cls) => { const n = node && node.find((c) => c.hasClass(cls))[0]; return n ? text(n) : null; };
+  const detail = tl.find((c) => c.getAttribute("data-pr-detail") !== null)[0];
+  const verdict = detail && detail.find((c) => c.getAttribute("data-pr-deploy") !== null)[0];
+  return {
+    status: tl.getAttribute("data-timeline"),
+    count: one(tl.children[0], "lane-count"),
+    say: one(tl.children[0], "lane-say"),
+    gaps: tl.find((c) => c.getAttribute("data-timeline-gap") !== null).map((c) => c.getAttribute("data-timeline-gap")),
+    lavishQuestion: tl.getAttribute("data-lavish-question"),
+    kept: ((field) => (field ? field.value : null))(tl.find((c) => c.name === "pinned")[0]),
+    marks: tl.find((c) => c.getAttribute("data-pr") !== null).map((m) => ({
+      key: m.getAttribute("data-pr"),
+      kind: m.getAttribute("data-pr-kind"),
+      tag: one(m, "tl-tag"),
+      date: one(m, "tl-date"),
+      label: m.getAttribute("aria-label"),
+      pressed: m.getAttribute("aria-pressed") === "true",
+      shown: m.hasClass("is-shown"),
+      failedClass: m.hasClass("tl-failed"),
+    })),
+    detail: detail ? {
+      shown: detail.getAttribute("data-pr-shown") || null,
+      pinned: detail.getAttribute("data-pr-pinned") === "true",
+      deploy: verdict ? verdict.getAttribute("data-pr-deploy") : null,
+      badges: badges(detail),
+      title: one(detail, "tl-d-title"),
+      summary: one(detail, "tl-d-sum"),
+      deployText: one(detail, "tl-d-dep"),
+      runs: detail.find((c) => c.getAttribute("data-pr-run") !== null)
+        .map((r) => ({ result: r.getAttribute("data-pr-run"), text: text(r) })),
+      links: detail.find((c) => c.tagName === "A").map((a) => ({ href: a.href, text: text(a), target: a.target, rel: a.rel })),
+      close: detail.find((c) => c.getAttribute("data-pr-close") !== null).length > 0,
+      text: text(detail),
+    } : null,
+  };
+};
+
 const submits = [];
+let focused = null;  // the pull request marker the pointer last pressed
 const cardOf = (id) => root.find((c) => c.getAttribute("data-question") === id)[0];
 for (const spec of answers) {
   if (spec.startsWith("!change=")) {
@@ -93,6 +158,28 @@ for (const spec of answers) {
     const change = target && target.find((c) => c.getAttribute("data-change") !== null)[0];
     if (change) change.dispatch("click");
     submits.push({ id: spec, status: change ? "changed" : "no-change-control" });
+    continue;
+  }
+  if (spec.startsWith("!pr=")) {
+    const [event, name] = spec.slice(4).split("=");
+    const key = spec.slice(4 + event.length + name.length + 2);
+    const holder = projectNode(name);
+    const detail = holder && holder.find((c) => c.getAttribute("data-pr-detail") !== null)[0];
+    const target = holder && (event === "close" || event === "pressclose" ? holder.find((c) => c.getAttribute("data-pr-close") !== null)[0]
+      : event === "presslink" ? detail && detail.find((c) => c.tagName === "A")[0]
+      : event === "restore" ? holder.find((c) => c.name === "pinned")[0]
+      : holder.find((c) => c.getAttribute("data-pr") === key)[0]);
+    let status = target ? "delivered" : "no-target";
+    if (target && event === "restore") { target.value = key; for (const fn of messageListeners) fn({}); }
+    else if (target && event === "press") {
+      for (const e of ["mouseenter", "focus", "click"]) target.dispatch(e);
+      focused = target;
+    } else if (target && event.startsWith("press")) {
+      if (focused) { focused.dispatch("mouseleave"); focused.dispatch("blur"); focused = null; }
+      if (holder.find((c) => c === target).length) target.dispatch("click");
+      else status = "replaced";
+    } else if (target) target.dispatch(event === "close" ? "click" : event);
+    submits.push({ id: spec, status });
     continue;
   }
   if (spec.startsWith("!restore=")) {
@@ -189,6 +276,7 @@ const projects = root.children.filter((c) => c.getAttribute("data-project") !== 
         })),
       }];
     })),
+    timeline: timelineOf(p),
     text: text(p),
   };
 });
@@ -204,7 +292,9 @@ console.log(JSON.stringify({
   empty: root.find((c) => c.getAttribute("data-empty") !== null).map(text)[0] || null,
   idle: idle ? { count: Number(idle.getAttribute("data-idle")),
     names: idle.find((c) => c.getAttribute("data-quiet-project") !== null).map((c) => c.getAttribute("data-quiet-project")),
-    lines: idle.find((c) => c.tagName === "LI").map(text) } : null,
+    lines: idle.find((c) => c.getAttribute("data-quiet-project") !== null).map(text),
+    timelines: Object.fromEntries(idle.find((c) => c.getAttribute("data-quiet-project") !== null)
+      .map((c) => [c.getAttribute("data-quiet-project"), timelineOf(c)])) } : null,
   foot: text(byId.get("lb-foot")),
   projects,
   submits,

@@ -410,7 +410,7 @@ family_for_basename() {
       ;;
     fm-bearings-board-render.test.sh|fm-bearings-snapshot.test.sh|fm-contributions.test.sh|\
     fm-fleet-snapshot-view.test.sh|fm-live-board-snapshot.test.sh|fm-home-summary-refresh.test.sh|\
-    fm-live-board.test.sh)
+    fm-live-board.test.sh|fm-live-board-prs.test.sh)
       printf '%s\n' snapshot-bearings
       ;;
     fm-backend-cmux.test.sh|fm-backend-cmux-smoke.test.sh)
@@ -1671,6 +1671,12 @@ families_for_changed_path() {
       printf '%s\n' snapshot-bearings
       ;;
     bin/fm-live-board.sh|bin/fm-live-board-template.html|bin/fm-live-board-projects.jq)
+      printf '%s\n' __script__:fm-live-board.test.sh
+      ;;
+    bin/fm-live-board-prs.sh|bin/fm-live-board-prs.jq)
+      # The pull request collector and its rules feed the snapshot and the page.
+      printf '%s\n' __script__:fm-live-board-prs.test.sh
+      printf '%s\n' __script__:fm-live-board-snapshot.test.sh
       printf '%s\n' __script__:fm-live-board.test.sh
       ;;
     bin/fm-lavish-board-lib.sh)

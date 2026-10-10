@@ -271,3 +271,123 @@ check "$TMP_ROOT/context-malformed-board.json" 'all(.projects[].questions[]; .an
   and ([.. | strings | select(contains("private context sentinel"))] | length == 0)' \
   'replayed context bypassed the validator or leaked non-allowlisted data'
 pass 'canonical owner context preserves explicit modes and summaries; legacy, stale, duplicate and malformed calls stay read-only'
+
+# Pull request timelines: the plain summary and the deploy outcome are decided
+# here, from one collected document, and no description text leaves with them.
+h=$(home prs)
+collect "$h" "$TMP_ROOT/prs-input.json"
+now=$(jq -r '.generated_epoch' "$TMP_ROOT/prs-input.json")
+pr_doc() {  # <out> <pr-json-lines-file>; one repository `shop` whose merges start runs, one `quiet` whose do not
+  jq -cs --argjson now "$now" '
+    def pr: {state:"merged",draft:false,title:"Change",body:"",body_truncated:false,branch:"fm/x",
+      opened_at:($now - 90000),closed_at:($now - 86400),merged_at:($now - 86400),runs:{status:"ok",items:[]}} + .
+      | .url //= "https://github.com/acme/shop/pull/\(.number)";
+    {schema:"fm-live-board-prs.v1",collected_at:"2026-07-25T00:00:00Z",collected_at_epoch:($now - 60),repos:[
+      {project:"shop",forge:"github",status:"ok",reason:null,branch_prefix:"fm/",prs:[.[] | select(.repo != "quiet") | del(.repo) | pr]},
+      {project:"quiet",forge:"ado",status:"ok",reason:null,branch_prefix:"",prs:[.[] | select(.repo == "quiet") | del(.repo) | pr]},
+      {project:"down",forge:"github",status:"failed",reason:"fetch-failed",branch_prefix:"fm/",prs:[]}]}' "$2" > "$1"
+}
+render_prs() { "$BOARD" --json --input "$TMP_ROOT/prs-input.json" --prs "$1" > "$2"; }
+shop() { printf '[.pull_requests.repos[] | select(.project == "shop") | .prs[] | select(.number == %s)][0]' "$1"; }
+
+cat > "$TMP_ROOT/wording.jsonl" <<'PRS'
+{"number":1,"branch":"fm/late-orders","title":"feat(orders)!: add the late orders page (#45)","body":"Fixes #123\n\n## Summary\n\n- [x] tests pass\n- [ ] docs\n\nSecond choice text that the intent outranks.\n\n## Intent\n\nManagers can see late orders on one page. It replaces the weekly email. Nobody has to ask the planner any more. This fourth sentence is dropped, private body sentinel.\n\n| a | b |\n|---|---|\n\n🤖 Generated with [Claude Code](https://example.invalid)\n\nCo-authored-by: Someone <s@example.invalid>"}
+{"number":2,"branch":"fm/stock-speed","title":"fix: stock page opens at once","body":"Planners waited half a minute for the stock page to open, and now it opens at once (see late-orders).\n\n```\nprivate body sentinel\n```"}
+{"number":3,"title":"refactor(core): move fm_foo() into bin/x.sh","body":"## Summary\n\nRefactors `fm_foo()` in bin/x.sh to call jq --slurpfile with FM_VAR=1 and the v2 schema_id."}
+{"number":4,"title":"   ","body":""}
+{"number":5,"title":"Export the weekly plan","body_truncated":true,"body":"Planners can now export the weekly plan to a spreadsheet. The export keeps the colours and the totals of the pl"}
+{"number":6,"title":"Cut off early","body_truncated":true,"body":"Planners can now export the whole weekly plan to a spreadsheet with the colours and the totals of the pl"}
+{"number":7,"title":"Three small things","body":"## What changed\n\nThis change does three things:\n\n- one thing\n- another thing"}
+{"number":8,"title":"[WIP] Revert: fix(ui): hide the old menu","body":"**Why**\n\n> The old menu confused new colleagues, so it is hidden until the new one is ready.\n\n## Notes\n\nprivate body sentinel"}
+{"number":9,"title":"Long explanation","body":"The planning team asked for one place where every late order of the week is listed together with the customer, the promised date, the reason it is late and the person who is looking into it, because today that information lives in four different spreadsheets that are updated by hand on different days by different people and nobody trusts any of them."}
+PRS
+pr_doc "$TMP_ROOT/wording-prs.json" "$TMP_ROOT/wording.jsonl"
+render_prs "$TMP_ROOT/wording-prs.json" "$TMP_ROOT/wording.json"
+check "$TMP_ROOT/wording.json" '.pull_requests.status == "collected" and (.pull_requests.collected_at_epoch | type == "number")' \
+  'a collected pull request document was not projected'
+check "$TMP_ROOT/wording.json" "$(shop 1)"' | .title == "Add the late orders page" and .task == "late-orders"
+  and .summary == "Managers can see late orders on one page. It replaces the weekly email. Nobody has to ask the planner any more."' \
+  'the summary did not come from the intent section as at most three plain sentences under a cleaned title'
+check "$TMP_ROOT/wording.json" "$(shop 2)"' | .title == "Stock page opens at once"
+  and .summary == "Planners waited half a minute for the stock page to open, and now it opens at once."' \
+  'a description without headings lost its first paragraph, or kept a task id'
+check "$TMP_ROOT/wording.json" "$(shop 3)"' | .summary == null and .title == "Move fm_foo() into bin/x.sh"' \
+  'a technical description was not replaced by the cleaned title'
+check "$TMP_ROOT/wording.json" "$(shop 4)"' | .summary == null and .title == "Untitled change"' \
+  'a missing title and description were not named plainly'
+check "$TMP_ROOT/wording.json" "$(shop 5)"' | .summary == "Planners can now export the weekly plan to a spreadsheet."' \
+  'a description the forge cut off kept its broken last sentence'
+check "$TMP_ROOT/wording.json" "$(shop 6)"' | .summary | endswith("the totals of the pl...")' \
+  'a single cut-off sentence did not end in an ellipsis'
+check "$TMP_ROOT/wording.json" "$(shop 7)"' | .summary == null' 'a sentence that only introduces a list was kept as the summary'
+check "$TMP_ROOT/wording.json" "$(shop 8)"' | .title == "Hide the old menu"
+  and .summary == "The old menu confused new colleagues, so it is hidden until the new one is ready."' \
+  'a bold heading, a quoted paragraph or a stacked title prefix was not read plainly'
+check "$TMP_ROOT/wording.json" "$(shop 9)"' | (.summary | length) <= 303 and (.summary | endswith("..."))' \
+  'one overlong sentence was not cut to a short note'
+check "$TMP_ROOT/wording.json" '([.. | strings | select(test("private body sentinel|Generated with|Co-authored|tests pass|Fixes #"))] | length) == 0
+  and ([.. | objects | select(has("body") or has("branch"))] | length) == 0' \
+  'description text beyond the summary left the projection'
+render_prs "$TMP_ROOT/wording-prs.json" "$TMP_ROOT/wording-again.json"
+cmp "$TMP_ROOT/wording.json" "$TMP_ROOT/wording-again.json" || fail 'the summary derivation is not deterministic'
+pass 'pull request summaries are short plain manager notes, or the cleaned title when the description cannot give one'
+
+jq -cn --argjson now "$now" '
+  def runs($n): [range(0; $n) | {name:"step \(.)",result:"succeeded"}];
+  {number:11,runs:{status:"ok",items:[{name:"site",result:"succeeded"},{name:"api",result:"failed"},{name:"db",result:"running"},{name:"old",result:"superseded"}]}},
+  {number:12,runs:{status:"ok",items:[{name:"site",result:"succeeded"},{name:"db",result:"running"},{name:"lint",result:"skipped"}]}},
+  {number:13,runs:{status:"ok",items:runs(10)}},
+  {number:14,runs:{status:"ok",items:[{name:"lint",result:"skipped"}]}},
+  {number:15,merged_at:($now - 120),closed_at:($now - 120)},
+  {number:16,runs:{status:"failed",items:[]}},
+  {number:17,runs:{status:"out-of-window",items:[]}},
+  {number:18,state:"open",draft:true,closed_at:null,merged_at:null,runs:{status:"not-merged",items:[]}},
+  {number:19,state:"closed",merged_at:null,runs:{status:"not-merged",items:[]}},
+  {number:20,url:"https://example.invalid/acme/shop/pull/20"},
+  {number:21,url:"https://github.com/acme/shop/pull/21?x=<script>"},
+  {number:30,repo:"quiet",branch:"anything",url:"https://dev.azure.com/acme-org/Insights/_git/quiet/pullrequest/30"}' \
+  > "$TMP_ROOT/deploy.jsonl"
+pr_doc "$TMP_ROOT/deploy-prs.json" "$TMP_ROOT/deploy.jsonl"
+render_prs "$TMP_ROOT/deploy-prs.json" "$TMP_ROOT/deploy.json"
+check "$TMP_ROOT/deploy.json" "$(shop 11)"' | .deploy == {outcome:"failed",why:"run-failed",more_runs:0,
+  runs:[{name:"api",result:"failed"},{name:"db",result:"running"},{name:"site",result:"succeeded"}]}' \
+  'a failed run did not decide the outcome, or a superseded run was listed'
+check "$TMP_ROOT/deploy.json" "$(shop 12)"' | .deploy.outcome == "running" and .deploy.why == "run-unfinished"' \
+  'an unfinished deploy with no failure was not still running'
+check "$TMP_ROOT/deploy.json" "$(shop 13)"' | .deploy.outcome == "succeeded" and (.deploy.runs | length) == 8 and .deploy.more_runs == 2' \
+  'a fully successful deploy was not succeeded with a bounded run list'
+check "$TMP_ROOT/deploy.json" "$(shop 14)"' | .deploy.outcome == "none" and .deploy.why == "change"' \
+  'a merge with only skipped runs, in a repository that does deploy, was not "no deploy ran for this change"'
+check "$TMP_ROOT/deploy.json" "$(shop 15)"' | .deploy.outcome == "not-deployed" and .deploy.why == "waiting"' \
+  'a merge two minutes old with no run yet was not "not deployed yet"'
+check "$TMP_ROOT/deploy.json" "$(shop 16)"' | .deploy.outcome == "unknown" and .deploy.why == "unreadable"' \
+  'unreadable deploy runs were given a verdict'
+check "$TMP_ROOT/deploy.json" "$(shop 17)"' | .deploy.outcome == "unknown" and .deploy.why == "too-old"' \
+  'a merge older than the deploy history was given a verdict'
+check "$TMP_ROOT/deploy.json" "$(shop 18)"' | .draft == true and .deploy.outcome == "not-deployed" and .deploy.why == "open"' \
+  'an open draft was not "not deployed yet"'
+check "$TMP_ROOT/deploy.json" "$(shop 19)"' | .deploy.outcome == "not-deployed" and .deploy.why == "closed"' \
+  'a pull request closed unmerged was not "not deployed"'
+check "$TMP_ROOT/deploy.json" '[.pull_requests.repos[] | select(.project == "quiet") | .prs[]]
+  | length == 1 and .[0].task == "anything" and .[0].deploy.outcome == "none" and .[0].deploy.why == "project"' \
+  'a repository whose merges start no run was not "no deploy for this project"'
+check "$TMP_ROOT/deploy.json" '([.pull_requests.repos[] | .prs[] | select(.number == 20 or .number == 21)] | length) == 0
+  and ([.. | strings | select(contains("example.invalid") or contains("<script>"))] | length) == 0' \
+  'a pull request with a link that is not a canonical forge link was kept'
+check "$TMP_ROOT/deploy.json" '[.pull_requests.repos[] | select(.project == "down")][0] | .status == "failed" and .reason == "fetch-failed"' \
+  'a repository whose read failed was dropped instead of disclosed'
+pass 'deploy outcomes cover failed, running, succeeded, none, waiting, unreadable, too old, open and closed without guessing'
+
+"$BOARD" --json --input "$TMP_ROOT/prs-input.json" > "$TMP_ROOT/no-prs.json"
+check "$TMP_ROOT/no-prs.json" '.pull_requests == {status:"not-collected",collected_at_epoch:null,repos:[]}' \
+  'a snapshot without a pull request document did not say none was collected'
+for bad in 'not json' '[]' '{"schema":"fm-live-board-prs.v2","collected_at_epoch":1,"repos":[]}' \
+  '{"schema":"fm-live-board-prs.v1","collected_at_epoch":1,"repos":[{"project":"x","status":"weird"}]}'; do
+  printf '%s\n' "$bad" > "$TMP_ROOT/bad-prs.json"
+  render_prs "$TMP_ROOT/bad-prs.json" "$TMP_ROOT/bad-prs-board.json" || fail "an unreadable pull request document failed the snapshot: $bad"
+  check "$TMP_ROOT/bad-prs-board.json" '.schema == "fm-live-board.v1" and .pull_requests.status == "unreadable" and .pull_requests.repos == []' \
+    "an unreadable pull request document was not disclosed: $bad"
+done
+render_prs "$TMP_ROOT/missing-file.json" "$TMP_ROOT/missing-prs-board.json" || fail 'a missing pull request file failed the snapshot'
+check "$TMP_ROOT/missing-prs-board.json" '.pull_requests.status == "unreadable"' 'a missing pull request file was not disclosed'
+pass 'a missing, malformed or unsupported pull request document is disclosed and never fails the snapshot'

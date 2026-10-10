@@ -103,6 +103,36 @@ def lb_why_rank:
 
 def lb_plural($n; $one; $many): "\($n) \(if $n == 1 then $one else $many end)";
 
+# TIMELINE. The snapshot decides the outcome of each pull request's runs after merge and why;
+# these words are the only thing the page says about it.
+def lb_deploy_words:
+  {"runs-succeeded":["passed","Runs after merge succeeded","Every run this change's merge started finished well."],
+   "run-failed":["failed","Runs after merge failed","At least one run this change's merge started has failed."],
+   "run-unfinished":["running","Runs after merge still running","A run this change's merge started has not finished yet."],
+   "open":["open","Not merged yet","This change is still open; it has not been merged."],
+   "waiting":["waiting","Runs after merge not started yet","Merged moments ago; its runs have not started yet."],
+   "closed":["closed","Not merged","This change was closed without being merged."],
+   "project":["no runs","No runs after merge for this project","Merged. This project starts no run after a merge, so there is nothing to check."],
+   "change":["no runs","No run after merge for this change","Merged, but no run was started for it."],
+   "superseded":["replaced","Replaced by a newer run","Merged. Its own run was cancelled because a newer run replaced it."],
+   "unreadable":["unknown","Runs after merge could not be read","The runs could not be fetched, so the result is not known."],
+   "too-old":["unknown","Runs after merge not available","This change is older than the run history the board reads."]}[.why]
+  // ["unknown","Runs after merge could not be read","The result of the runs after merge is not known."];
+def lb_run_words:
+  {"succeeded":"succeeded","failed":"failed","running":"still running"}[.] // "unknown";
+def lb_forge_name: {"github":"GitHub","ado":"Azure DevOps"}[.] // "the forge";
+# Why a source's pull requests were not read, or null when they were. A
+# local-only project has none to read.
+def lb_unread_why:
+  if .status == "failed" then "the read failed or took too long"
+  elif .status != "none" or .reason == "local-only" then null
+  elif .reason == "no-cli" then "the tool that reads \(.forge | lb_forge_name) is not installed on this machine"
+  elif .reason == "unsupported-forge" then "its repository is kept somewhere the board cannot read"
+  elif .reason == "no-clone" then "this home has no copy of its repository"
+  else "the reason is not known" end;
+# A project shows its newest pull requests, oldest first so time reads left to right.
+def lb_timeline_shown: 15;
+
 def lb_view($map):
 . as $board
 | ($map | if . != null and lb_valid_map then . else null end) as $named
@@ -122,7 +152,11 @@ def lb_view($map):
   [$board.projects[] | .questions[] | . as $q | group_of(.id; .project) + {question:$q}] as $asked
 | [$board.projects[] | .tasks[] | . as $t | group_of(.id; .project) + {task:$t}] as $placed
 | [($board.recently_finished // [])[] | . as $f | group_of(.id; .project) + {finished:$f}] as $done
-| ([$asked[], $placed[], $done[] | {key,index,repo}]
+| [($board.pull_requests.repos // [])[] | . as $repo | ($repo.prs // [])[] | . as $pr
+   | group_of($pr.task // ""; $repo.project) + {pr:($pr + {forge:$repo.forge})}] as $merged
+| [($board.pull_requests.repos // [])[] | lb_unread_why as $why | select($why != null)
+   | {repo:.project,say:"Pull requests for \(.project | lb_repo // "a project") could not be read: \($why)."}] as $unread
+| ([$asked[], $placed[], $done[], $merged[] | {key,index,repo}]
    + if $named != null then [$named.projects | to_entries[] | {key:"project:\(.key)",index:.key,repo:null}]
      else [$board.projects[] | (.name | lb_repo) as $repo | {key:"repo:\($repo // "")",index:null,repo:$repo}] end
    | unique_by(.key)) as $keys
@@ -146,6 +180,12 @@ def lb_view($map):
       next:([$rows[] | select(.lane == "next")] | sort_by([.priority // 5,.since // "9999",.id,.key])),
       charted:([$rows[] | select(.lane == "charted")] | sort_by([(.why | lb_why_rank),.since // "9999",.id,.key]))}
      | map_values(map(del(.priority,.since))) as $lanes
+   | ([$merged[] | select(.key == $g.key) | .pr] | sort_by([-(.at // 0),-.number,.url])) as $pulls
+   # A repository that was not read may hold this project's pull requests when
+   # it is this repository, a rule names it, or a rule matches by task id alone.
+   | [$unread[] | select((.repo | lb_repo) as $repo
+        | if $g.index == null then $g.repo == $repo
+          else any($named.projects[$g.index].match[]; (has("repo") | not) or .repo == $repo) end)] as $gaps
    | {questions:($questions|length),urgent:([$questions[] | select(.urgent)]|length),
       doing:($lanes.doing|length),next:($lanes.next|length),charted:($lanes.charted|length),
       stuck:([$lanes.charted[] | select(.why == "stuck")]|length),finished:($finished|length)} as $c
@@ -188,6 +228,16 @@ def lb_view($map):
            close:($ctx.close // null),lifecycle:($ctx.lifecycle // null),
            recommendation:($ctx.recommendation // null),
            options:[($ctx.options // [])[] | {value:.value,label:.label,detail:(.detail // null)}]}],
+      timeline:{
+        status:(if $board.pull_requests.status == "collected" then "ok"
+          else ($board.pull_requests.status // "not-collected") end),
+        total:($pulls|length),unread:$gaps,
+        items:[$pulls[:lb_timeline_shown] | reverse[] | (.deploy | lb_deploy_words) as $words
+          | {key:.url,number,url,forge:(.forge | lb_forge_name),state,draft,title,summary,at,
+             state_label:(if .state == "merged" then "Merged" elif .state == "closed" then "Closed without merging"
+               elif .draft then "Open, still a draft" else "Open" end),
+             deploy:{outcome:.deploy.outcome,tag:$words[0],label:$words[1],detail:$words[2],
+               runs:[.deploy.runs[] | {name,result,label:(.result | lb_run_words)}],more_runs:.deploy.more_runs}}]},
       lanes:$lanes}]
 | sort_by([(if .counts.urgent > 0 then 0 elif .counts.questions > 0 then 1
       elif .counts.stuck > 0 then 2 elif .counts.doing > 0 then 3 elif .active then 4 else 5 end),
@@ -205,6 +255,9 @@ def lb_view($map):
      ([$groups[].questions[] | select(.needs_explanation)] | length) as $bare
      | if $bare > 0 then lb_plural($bare; "question still needs"; "questions still need")
          + " a plain-language explanation from Firstmate." else empty end,
+     (if $board.pull_requests.status == "unreadable" then
+        "The pull request data could not be read, so the timelines are empty." else empty end),
+     $unread[].say,
      ($board.omissions[]? | .kind as $k
        | if $k == "backlog-unavailable" then "The task list could not be read, so some work may be missing."
          elif $k == "registry-unavailable" then "The project registry could not be read."

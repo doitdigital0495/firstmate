@@ -345,6 +345,282 @@ rm -f "$home/config/live-board-projects.json"
 in_home "$home" "$LIVE" build >/dev/null || fail "the fleet board did not rebuild"
 pass "a project map groups work under the captain's names; unmatched work and bad maps fall back by repository"
 
+# --- Pull request timelines ----------------------------------------------------
+# Each project shows its pull requests; pointing at one shows what changed and
+# whether its deploy went well, and pressing it pins that with a link.
+tl=$(make_home timeline)
+printf '%s\n' "$ENABLED" > "$tl/config/live-board.json"
+printf -- '- web-shop [no-mistakes] - fixture (added 2026-01-01)\n- data [direct-PR] - fixture (added 2026-01-01)\n- docs-site [direct-PR] - fixture (added 2026-01-01)\n' \
+  > "$tl/data/projects.md"
+tasks_in "$tl" add ws-redesign "Redesign checkout" --repo web-shop --kind ship
+for repo in web-shop data docs-site; do
+  git init -q "$tl/projects/$repo"
+  git -C "$tl/projects/$repo" remote add origin "https://github.com/acme/$repo.git"
+done
+mkdir -p "$tl/forge"
+# A forge stub that logs each call and answers per repository, in the order
+# and up to the number the query asks for.
+cat > "$tl/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+name= field=createdAt n=50
+for arg in "$@"; do
+  case "$arg" in
+    name=*) name=${arg#name=} ;;
+    n=*) n=${arg#n=} ;;
+    query=*UPDATED_AT*) field=updatedAt ;;
+  esac
+done
+printf '%s\n' "$name" >> "$FM_HOME/forge/calls.log"
+[ -f "$FM_HOME/forge/$name.json" ] || exit 1
+jq -c --arg field "$field" --argjson n "$n" \
+  '.data.repository.pullRequests.nodes |= (sort_by(.[$field] // .createdAt) | reverse | .[:$n])' "$FM_HOME/forge/$name.json"
+SH
+chmod +x "$tl/fakebin/gh"
+tl_now=$(date +%s)
+tl_pr() {  # <repo> <number> <state> <head> <age-seconds> <title> <body> <suite-conclusions...>
+  local repo=$1 number=$2 state=$3 head=$4 age=$5 title=$6 body=$7
+  shift 7
+  jq -cn --arg repo "$repo" --argjson number "$number" --arg state "$state" --arg head "$head" \
+    --argjson at "$((tl_now - age))" --arg title "$title" --arg body "$body" '
+    ($at | todate) as $when
+    | {number:$number,title:$title,body:$body,url:"https://github.com/acme/\($repo)/pull/\($number)",state:$state,
+       isDraft:false,createdAt:$when,headRefName:$head,
+       closedAt:(if $state == "OPEN" then null else $when end),mergedAt:(if $state == "MERGED" then $when else null end),
+       mergeCommit:(if $state != "MERGED" then null else {status:{contexts:[]},checkSuites:{nodes:[
+         $ARGS.positional[] | split("=") | {status:(if .[1] == "RUNNING" then "IN_PROGRESS" else "COMPLETED" end),
+           conclusion:(if .[1] == "RUNNING" then null else .[1] end),createdAt:$when,app:{slug:"github-actions",name:"GitHub Actions"},
+           checkRuns:{totalCount:1},workflowRun:{event:"push",workflow:{name:.[0]}}}]}} end)}' --args "$@"
+}
+{
+  tl_pr web-shop 1 MERGED fm/ws-redesign 7200 'feat(checkout): one-step checkout' \
+    $'## Intent\n\nCustomers pay in one step instead of three, so fewer of them give up half way.\n\n## Notes\n\nprivate body sentinel' \
+    'Deploy shop=FAILURE' 'Publish docs=SUCCESS'
+  tl_pr web-shop 2 MERGED fm/ws-colours 90000 'Fresh colours' '' 'Deploy shop=SUCCESS'
+  tl_pr web-shop 3 OPEN fm/ws-search 600 'Search by order number' ''
+  tl_pr web-shop 4 MERGED fm/pay-refunds 3600 'Refunds in one click' 'Support staff refund an order with one click instead of filling in a form.' 'Deploy shop=RUNNING'
+  tl_pr web-shop 5 CLOSED fm/ws-dropped 180000 'Dropped idea' ''
+} | jq -cs '{data:{repository:{pullRequests:{nodes:.}}}}' > "$tl/forge/web-shop.json"
+tl_pr data 7 MERGED fm/data-export 86400 'Nightly export' '' \
+  | jq -cs '{data:{repository:{pullRequests:{nodes:.}}}}' > "$tl/forge/data.json"
+# One read is four calls: web-shop and data answer at once, and docs-site, which
+# has no answer, is asked once more with the smaller query before it is a gap.
+calls() { wc -l < "$tl/forge/calls.log" | tr -d '[:space:]'; }
+shop_pr() { printf 'https://github.com/acme/web-shop/pull/%s' "$1"; }
+
+in_home "$tl" "$LIVE" build >/dev/null || fail "a board with pull requests did not build"
+[ "$(calls)" = 4 ] || fail "the first build did not read each project's pull requests once: $(calls)"
+out=$(TZ=UTC render "$tl" "$tl_now")
+check "$out" '(.projects | map(.label)) == ["web-shop"] and (.projects[0].badges | any(test("failed after merge")) | not)
+  and (.projects[0].timeline | .status == "ok" and .count == "5" and .gaps == []
+    and (.say | test("Oldest on the left") and test("Read "))
+    and (.marks | map(.key | split("/") | .[-1])) == ["5","2","1","4","3"]
+    and (.marks | map(.kind)) == ["closed","succeeded","failed","running","open"]
+    and (.marks | map(.tag)) == ["closed","passed","failed","running","open"]
+    and (.marks | map(.failedClass)) == [false,false,true,false,false]
+    and all(.marks[]; .pressed == false and (.date | test("^[0-9]{1,2} [A-Z][a-z]{2}$")))
+    and (.marks[2].label | test("^Merged .*: One-step checkout\\. Runs after merge failed\\.$"))
+    and .detail.shown == null and (.detail.text | test("Point at a pull request")))' \
+  "a project did not show its pull requests as a timeline, oldest first, with the failed runs after merge marked in words"
+pass "each project shows a timeline of its pull requests, and a merge with a failed run is marked by shape and word"
+
+out=$(TZ=UTC render "$tl" "$tl_now" "!pr=mouseenter=web-shop=$(shop_pr 1)")
+check "$out" '.projects[0].timeline | .detail.shown == "'"$(shop_pr 1)"'" and .detail.pinned == false
+  and .detail.title == "One-step checkout"
+  and .detail.summary == "Customers pay in one step instead of three, so fewer of them give up half way."
+  and .detail.deploy == "failed" and (.detail.badges[0] == "Runs after merge failed") and (.detail.badges[1] | test("^Merged"))
+  and (.detail.deployText | test("^Runs after merge: At least one run this change.s merge started has failed"))
+  and .detail.runs == [{"result":"failed","text":"Deploy shop - failed"},{"result":"succeeded","text":"Publish docs - succeeded"}]
+  and .detail.links == [] and .detail.close == false and (.detail.text | test("Press it to keep this open"))
+  and (.marks | map(.shown)) == [false,false,true,false,false]' \
+  "pointing at a pull request did not show in plain words what changed and that a run after its merge failed"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=mouseenter=web-shop=$(shop_pr 1)" "!pr=mouseleave=web-shop=$(shop_pr 1)")" \
+  '.projects[0].timeline.detail | .shown == null and .pinned == false' "moving off a pull request left its detail showing"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=focus=web-shop=$(shop_pr 4)")" \
+  '.projects[0].timeline.detail | .shown == "'"$(shop_pr 4)"'" and .deploy == "running" and .badges[0] == "Runs after merge still running"
+    and .summary == "Support staff refund an order with one click instead of filling in a form."' \
+  "keyboard focus did not show a pull request, or an unfinished run was not named as still running"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=focus=web-shop=$(shop_pr 2)")" \
+  '.projects[0].timeline.detail | .deploy == "succeeded" and .badges[0] == "Runs after merge succeeded" and .summary == null and .title == "Fresh colours"' \
+  "runs after merge that went well were not named, or a pull request without a description did not fall back to its title"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=focus=web-shop=$(shop_pr 3)")" \
+  '.projects[0].timeline.detail | .badges == ["Not merged yet","Open · '"$(TZ=UTC node -e 'const d=new Date(Number(process.argv[1])*1000);console.log(d.getDate()+" "+["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()])' "$((tl_now - 600))")"'"]' \
+  "an open pull request was not shown as not merged yet"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=focus=web-shop=$(shop_pr 5)")" \
+  '.projects[0].timeline.detail | .badges[0] == "Not merged" and (.deployText | test("closed without being merged"))' \
+  "a pull request closed without merging was not explained"
+pass "pointing at or focusing a pull request shows what changed in plain words and whether the runs after its merge succeeded"
+
+out=$(TZ=UTC render "$tl" "$tl_now" "!pr=click=web-shop=$(shop_pr 1)")
+check "$out" '.projects[0].timeline | .detail.pinned == true and .detail.shown == "'"$(shop_pr 1)"'"
+  and .detail.links == [{"href":"'"$(shop_pr 1)"'","text":"Open this pull request on GitHub","target":"_blank","rel":"noopener"}]
+  and .detail.close == true and (.marks | map(.pressed)) == [false,false,true,false,false]' \
+  "pressing a pull request did not pin its detail with a link to the forge"
+check "$out" '.projects[0].timeline | .kept == "'"$(shop_pr 1)"'" and (.lavishQuestion | startswith("live-board-pin:"))' \
+  "a pinned pull request was not kept in the field Lavish restores after a reload"
+check "$out" '.queued == [] and .tray == null' "pinning a pull request queued something for Firstmate"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=restore=web-shop=$(shop_pr 1)")" \
+  '.projects[0].timeline | .detail.pinned == true and .detail.shown == "'"$(shop_pr 1)"'" and (.detail.links | length) == 1
+    and (.marks | map(.pressed)) == [false,false,true,false,false]' \
+  "a pinned pull request did not stay pinned across a reload"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=click=web-shop=$(shop_pr 1)" "!pr=mouseenter=web-shop=$(shop_pr 2)")" \
+  '.projects[0].timeline.detail | .shown == "'"$(shop_pr 2)"'" and .pinned == false and .links == []' \
+  "pointing at another pull request did not preview it over the pinned one"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=click=web-shop=$(shop_pr 1)" "!pr=mouseenter=web-shop=$(shop_pr 2)" "!pr=mouseleave=web-shop=$(shop_pr 2)")" \
+  '.projects[0].timeline.detail | .shown == "'"$(shop_pr 1)"'" and .pinned == true' \
+  "the pinned pull request did not come back after a preview"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=click=web-shop=$(shop_pr 1)" "!pr=click=web-shop=$(shop_pr 1)")" \
+  '.projects[0].timeline | .detail.shown == null and .kept == ""' "pressing a pinned pull request again did not unpin it"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=click=web-shop=$(shop_pr 1)" "!pr=close=web-shop")" \
+  '.projects[0].timeline | .detail.shown == null and .kept == "" and all(.marks[]; .pressed == false)' \
+  "Close did not unpin the pull request"
+# A real pointer press: the pressed pull request keeps focus, and mouse-down on
+# the link or on Close takes it away before the click lands.
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=press=web-shop=$(shop_pr 1)" "!pr=presslink=web-shop")" \
+  '.submits[1].status == "delivered" and (.projects[0].timeline.detail | .pinned == true and (.links | length) == 1)' \
+  "the first pointer press on a pinned pull request's link did not land"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=press=web-shop=$(shop_pr 1)" "!pr=pressclose=web-shop")" \
+  '.submits[1].status == "delivered" and (.projects[0].timeline | .detail.shown == null and .kept == "")' \
+  "the first pointer press on Close did not unpin the pull request"
+pass "pressing a pull request pins its detail with a link to it, across reloads, until it is pressed again or closed"
+
+check "$out" '.idle.names == ["data","docs-site"]
+  and (.idle.timelines.data | .count == "1" and (.marks | map(.tag)) == ["no runs"])
+  and (.idle.timelines["docs-site"] | .gaps == ["docs-site"] and .marks == [] and .say == "No pull requests can be shown for this project.")
+  and (.notes | index("Pull requests for docs-site could not be read: the read failed or took too long.") != null)' \
+  "a quiet project lost its timeline, or a project whose pull requests could not be read did not say so"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=click=data=https://github.com/acme/data/pull/7")" \
+  '.idle.timelines.data.detail | .pinned == true and .badges[0] == "No runs after merge for this project" and .runs == []
+    and (.deployText | test("starts no run after a merge"))' \
+  "a project whose merges start no run was not named as having none"
+if grep -q 'private body sentinel' "$tl/data/live-board/board.html"; then
+  fail "pull request description text beyond the summary reached the page"
+fi
+pass "a project whose merges start no run says so, and a project whose pull requests could not be read is named"
+
+cat > "$tl/config/live-board-projects.json" <<'JSON'
+{"schema":"fm-live-board-projects.v1","projects":[
+  {"name":"Payments","match":[{"id":"pay-*"}]},
+  {"name":"Shop front","match":[{"repo":"web-shop"}]}]}
+JSON
+in_home "$tl" "$LIVE" build >/dev/null || fail "the mapped timeline board did not build"
+[ "$(calls)" = 4 ] || fail "a rebuild inside the pull request interval read the forge again: $(calls)"
+out=$(TZ=UTC render "$tl" "$tl_now")
+check "$out" '(.projects | map(.label)) == ["Shop front"]
+  and (.projects[0].timeline.marks | map(.key | split("/") | .[-1])) == ["5","2","1","3"]
+  and (.idle.timelines.Payments.marks | map(.key | split("/") | .[-1])) == ["4"]
+  and (.idle.timelines.Payments.gaps == ["docs-site"]) and (.projects[0].timeline.gaps == [])
+  and (.idle.timelines.data.marks | length) == 1' \
+  "pull requests did not follow their task into the captain's named project"
+rm -f "$tl/config/live-board-projects.json"
+pass "a pull request belongs to the named project its task belongs to"
+
+assert_present "$tl/state/.live-board-prs.json" "the pull request read was not cached in the state directory"
+[ "$(ls -A "$tl/data/live-board")" = board.html ] \
+  || fail "pull request data was left beside the served board: $(ls -A "$tl/data/live-board")"
+pass "the pull request read is cached outside the directory Lavish serves"
+
+# The attempt stamp paces the reads, so an old stamp makes the next build read.
+due() { touch -t 202001010000 "$tl/state/.live-board-prs-attempt"; }
+due
+in_home "$tl" "$LIVE" build >/dev/null || fail "a due pull request read failed the build"
+[ "$(calls)" = 8 ] || fail "a due pull request read did not ask the forge again: $(calls)"
+# A copy of the scripts whose collector answers with nothing, late, stands in
+# for a read that hangs: only the time bound keeps the last good timeline.
+cp -R "$ROOT/bin" "$tl/bin-down"
+cat > "$tl/bin-down/fm-live-board-prs.sh" <<'SH'
+#!/usr/bin/env bash
+sleep 6
+printf '%s\n' '{"schema":"fm-live-board-prs.v1","collected_at":"2026-01-01T00:00:00Z","collected_at_epoch":1767225600,"repos":[]}'
+SH
+due
+out=$(in_home "$tl" bash -c ". '$tl/bin-down/fm-live-board.sh'; PR_TIMEOUT=1; command_build" 2>&1) \
+  || fail "a pull request read that hung also failed the build: $out"
+assert_contains "$out" "the timelines keep their previous data" "a pull request read that outlasted its time bound was not reported"
+check "$(TZ=UTC render "$tl" "$tl_now")" '.projects[0].timeline.marks | length == 5' \
+  "a pull request read that outlasted its time bound replaced the last good timeline"
+# The same copy with a collector that fails stands in for a read that dies.
+printf '#!/usr/bin/env bash\nexit 1\n' > "$tl/bin-down/fm-live-board-prs.sh"
+due
+out=$(in_home "$tl" "$tl/bin-down/fm-live-board.sh" build 2>&1) \
+  || fail "a pull request read that failed also failed the build: $out"
+assert_contains "$out" "the timelines keep their previous data" "a failed pull request read was not reported"
+check "$(TZ=UTC render "$tl" "$tl_now")" '.projects[0].timeline.marks | length == 5' \
+  "a failed pull request read dropped the last good timeline"
+touch -t 202001010000 "$tl/data/live-board/board.html"
+due
+in_home "$tl" "$tl/bin-down/fm-live-board.sh" refresh || fail "refresh changed its exit status"
+assert_grep "the timelines keep their previous data" "$tl/state/.live-board-refresh.log" \
+  "a failed pull request read during refresh was not logged"
+[ "$(( $(date +%s) - $(mtime "$tl/data/live-board/board.html") ))" -lt 60 ] \
+  || fail "a failed pull request read stopped refresh from rebuilding the board"
+rm -f "$tl/state/.live-board-prs.json"
+due
+in_home "$tl" "$tl/bin-down/fm-live-board.sh" build >/dev/null 2>&1 \
+  || fail "a board whose pull requests were never read did not build"
+check "$(TZ=UTC render "$tl" "$tl_now")" '.projects[0].timeline | .status == "not-collected" and .marks == []
+  and (.say | test("have not been read yet"))' \
+  "a board whose pull requests were never read did not say so"
+pass "pull requests are read at most once per interval, and a failed or hung read keeps the last good timeline and says so"
+
+# A merge whose runs have not started is not drawn as open, and one whose only
+# run was cancelled reads as replaced.
+{
+  tl_pr web-shop 1 MERGED fm/ws-redesign 7200 'One-step checkout' '' 'Deploy shop=SUCCESS'
+  tl_pr web-shop 6 MERGED fm/ws-banner 3600 'Sale banner' '' 'Deploy shop=CANCELLED'
+  tl_pr web-shop 8 MERGED fm/ws-footer 60 'New footer' ''
+} | jq -cs '{data:{repository:{pullRequests:{nodes:.}}}}' > "$tl/forge/web-shop.json"
+# A project with no pull requests at all, and one kept on a forge the board cannot read.
+printf '%s\n' '{"data":{"repository":{"pullRequests":{"nodes":[]}}}}' > "$tl/forge/data.json"
+git -C "$tl/projects/docs-site" remote set-url origin 'https://gitlab.example.com/acme/docs-site.git'
+due
+in_home "$tl" "$LIVE" build >/dev/null || fail "the board did not rebuild after the forge changed"
+out=$(TZ=UTC render "$tl" "$tl_now" "!pr=focus=web-shop=$(shop_pr 6)")
+check "$out" '.projects[0].timeline | (.marks | map(.tag)) == ["passed","replaced","waiting"]
+  and (.marks | map(.kind)) == ["succeeded","none","running"]
+  and .detail.badges[0] == "Replaced by a newer run" and (.detail.deployText | test("a newer run replaced it"))' \
+  "a merge waiting for its runs was drawn as open, or a merge whose only run was cancelled was not shown as replaced"
+check "$(TZ=UTC render "$tl" "$tl_now" "!pr=focus=web-shop=$(shop_pr 8)")" \
+  '.projects[0].timeline.detail.badges[0] == "Runs after merge not started yet"' \
+  "a merge waiting for its runs was not named as waiting"
+pass "a merge waiting for its runs is drawn as running, and one whose only run was cancelled as replaced"
+
+check "$out" '.idle.timelines.data == null
+  and (.idle.timelines["docs-site"] | .gaps == ["docs-site"] and .say == "No pull requests can be shown for this project.")
+  and (.notes | index("Pull requests for docs-site could not be read: its repository is kept somewhere the board cannot read.") != null)
+  and (.notes | any(test("Pull requests for data")) | not)' \
+  "an unsupported forge read as a project with no pull requests, or a truly empty project was called unread"
+# A read that found no forge tool, as the collector records it.
+jq -c '.repos |= map(if .project == "data" then . + {status:"none",reason:"no-cli"} else . end)' \
+  "$tl/state/.live-board-prs.json" > "$tl/state/prs.next" && mv -f "$tl/state/prs.next" "$tl/state/.live-board-prs.json"
+in_home "$tl" "$LIVE" build >/dev/null || fail "the board did not rebuild from the cached pull request read"
+check "$(TZ=UTC render "$tl" "$tl_now")" \
+  '(.idle.timelines.data | .gaps == ["data"] and .say == "No pull requests can be shown for this project.")
+  and (.notes | index("Pull requests for data could not be read: the tool that reads GitHub is not installed on this machine.") != null)' \
+  "a project whose forge tool is missing read as a project with no pull requests"
+
+# A pull request opened long before fifty newer ones and merged last is still
+# the newest change on the strip.
+{
+  tl_pr web-shop 9 MERGED fm/ws-long 120 'Long-running change' '' \
+    | jq -c --arg opened "$((tl_now - 900000))" '. + {updatedAt:.mergedAt,createdAt:($opened | tonumber | todate)}'
+  for index in $(seq 1 50); do
+    tl_pr web-shop "$((100 + index))" OPEN "fm/ws-open-$index" "$((1000 + index))" "Open change $index" ''
+  done
+} | jq -cs '{data:{repository:{pullRequests:{nodes:.}}}}' > "$tl/forge/web-shop.json"
+due
+in_home "$tl" "$LIVE" build >/dev/null || fail "the board did not rebuild for a busy project"
+check "$(TZ=UTC render "$tl" "$tl_now")" \
+  '.projects[0].timeline.marks | length == 15 and (.[-1].key | endswith("/pull/9")) and .[-1].tag != "open"' \
+  "a pull request opened before fifty newer ones and merged last was missing from the strip"
+pass "the newest merge stays on the strip however long ago its pull request was opened"
+cp "$tl/forge/data.json" "$tl/forge/web-shop.json"
+due
+in_home "$tl" "$LIVE" build >/dev/null || fail "the board did not rebuild after the forge emptied"
+check "$(TZ=UTC render "$tl" "$tl_now")" \
+  '.projects[0].timeline | .gaps == [] and .marks == [] and .say == "No pull requests were found for this project."' \
+  "a read that found no pull requests did not say so"
+pass "a project that could not be read says why, and only a read that found nothing says no pull requests were found"
+
 # --- Queued answers carry the owner's guard ------------------------------------
 out=$(render "$home" "$now" 'ws-carrier=postnl:cheaper' 'data-window=' 'data-note-only=:Call it Tidewater' \
   'ws-legacy=:Use the new logo')

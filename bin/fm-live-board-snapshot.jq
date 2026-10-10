@@ -1,4 +1,5 @@
 include "fm-captain-question-context";
+include "fm-live-board-prs";
 # The fm-live-board.v1 projection; its executable wrapper owns the public contract.
 def valid_input:
   .schema == "fm-live-board-input.v1"
@@ -145,4 +146,5 @@ if valid_input then . else error("unsupported or malformed fm-live-board-input.v
      ($input.registry.duplicates[] | {kind:"duplicate-project-registration",name:.}),
      ($input.registry.projects[] | select(.recognised == false) |
        {kind:"unrecognised-project-posture",name:.name,annotation:.annotation})],
-   counts:counts($tasks;$questions),projects:$groups,recently_finished:$finished}
+   counts:counts($tasks;$questions),projects:$groups,recently_finished:$finished,
+   pull_requests:lbp_project($prs[0]; [$backlog[].id]; $input.generated_epoch)}
