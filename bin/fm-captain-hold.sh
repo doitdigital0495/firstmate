@@ -79,17 +79,29 @@
 #
 # QUESTION CONTEXT: ONE OWNER, SAME BACKLOG BODY.
 # `hold --context-file` accepts one JSON object, at most 8192 bytes, with schema
-# `fm-captain-question.v1`, mandatory close `done|release`, optional question
+# `fm-captain-question.v1`, mandatory close `done|release`, about and purpose
+# (below), optional question
 # (the full question as the captain should read it: nonblank, <=600 chars,
 # newlines allowed but no other control characters), options
-# (at most 12 unique {value,label[,detail]} objects; slug values <=64 chars, printable
-# nonblank labels <=120 chars, optional printable nonblank detail <=300 chars
-# explaining what choosing it means; `reconcile` is reserved), recommendation (null
+# (at most 12 unique {value,label,detail} objects; slug values <=64 chars, printable
+# nonblank labels <=120 chars, printable nonblank detail <=300 chars; `reconcile`
+# is reserved), recommendation (null
 # or an option value), and subject (null or {artifact:<slug <=128>,
 # version:<numeric x.y.z <=64 chars>}). Unknown fields/versions and malformed input refuse
 # before any mutation. Omitted options/recommendation/subject become []/null/null;
-# an omitted or null question stays absent. question and detail are display text
-# only and never change answer routing.
+# an omitted or null question stays absent. about, purpose, question and detail
+# are display text only and never change answer routing.
+# PLAIN LANGUAGE: the reader is a non-technical manager who did not build the
+# work and must understand the card at once. `about` says what this is and
+# `purpose` says what answering it unlocks or prevents and what happens while
+# it stays unanswered: each one printable line of <=600 chars and at least six
+# words, with no link, code formatting, GUID, path or code file name, and by
+# the author's care no jargon and no task id, branch or other internal name.
+# Each option's `detail` is the plain consequence of picking it, and the
+# recommended option's detail also says why it is recommended. `hold` refuses a
+# context that lacks about, purpose or any option detail, naming that reader.
+# A context stored before this rule stays valid and answerable, and the live
+# board marks it as needing a plain-language explanation.
 # The owner adds lifecycle, the exact `open --identity` stamp#answer-count.
 # Guarded context requires a valid full UTC stamp; legacy date-only/unknown
 # stamps remain read-only until owner review, never assigned an invented time.
@@ -98,8 +110,9 @@
 # resolution, or prefixed `Previous captain question context:`, are history,
 # never authority for a new hold. Missing,
 # malformed, misplaced, duplicate or stale active context is not answerable.
-# An active hold may acquire missing context or repeat identical context, but
-# cannot change already-published context within that lifecycle.
+# An active hold may acquire missing context, repeat identical context, or gain
+# an about, purpose or option detail it lacks with everything else identical,
+# but cannot change already-published context within that lifecycle.
 # Re-holding starts without context unless the owner explicitly supplies it.
 # `contexts` enriches canonical {records:[...]} JSON with question_context;
 # it reads no home files. The shared jq implementation is mechanical plumbing
@@ -844,10 +857,20 @@ load_question_context() {  # <path>; sets QUESTION_CONTEXT
     | if fm_question_valid(false) then fm_question_normalize
     else error("unsupported or malformed question context") end' "$1") \
     || fail "unsupported or malformed question context"
+  # The reader is a manager who did not build the work: refuse a card he cannot place.
+  case "$(printf '%s' "$QUESTION_CONTEXT" | jq -r -L "$SCRIPT_DIR" \
+    'include "fm-captain-question-context"; fm_question_explanation_problem // "ok"')" in
+    ok) : ;;
+    missing) fail "question context needs \"about\" and \"purpose\": the captain is a non-technical manager who did not build this, so say in plain words what this is about, and what answering it unlocks or what happens while it stays unanswered" ;;
+    label) fail "\"about\" and \"purpose\" must each be a full plain sentence a non-technical manager understands at once, not a label" ;;
+    internal) fail "\"about\" and \"purpose\" are read by a non-technical manager: drop links, code formatting, ids, paths and file names and say it in plain words" ;;
+    option) fail "every option needs a \"detail\" telling a non-technical manager what happens when he picks it" ;;
+    *) fail "cannot check the question context's plain-language explanation" ;;
+  esac
 }
 
 write_hold_set_stamp() {  # <id> <shown-body> <stamp> <preserve> [<normalized-context>]
-  local id=$1 body=$2 hold_set=$3 preserve=$4 context=${5:-} existing new_body tmp old_context lifecycle context_line archive_flag=''
+  local id=$1 body=$2 hold_set=$3 preserve=$4 context=${5:-} existing new_body tmp old_context lifecycle context_line archive_flag='' explained=0
   body=$(decode_shown_value "$body") || fail "could not decode the existing body for $id"
   existing=$(body_hold_set_timestamp "$body")
   if [ "$preserve" = 1 ] && [ -n "$existing" ]; then
@@ -866,9 +889,11 @@ write_hold_set_stamp() {  # <id> <shown-body> <stamp> <preserve> [<normalized-co
       || fail "question context requires a valid hold lifecycle"
     if [ "$preserve" = 1 ] && [ -n "${old_context:-}" ] \
       && [ "$(printf '%s' "$old_context" | jq -r .status)" = ready ]; then
-      [ "$(printf '%s' "$old_context" | jq -cS .context)" = "$context" ] \
+      [ "$(printf '%s' "$old_context" | jq -cS .context)" != "$context" ] || return 0
+      printf '%s' "$old_context" | jq -e -L "$SCRIPT_DIR" --argjson new "$context" \
+        'include "fm-captain-question-context"; .context as $old | $new | fm_question_adds_explanation_only($old)' >/dev/null \
         || fail "active question context differs; resolve this call before publishing new semantics"
-      return 0
+      explained=1
     fi
   fi
   if [ -n "$existing" ]; then
@@ -876,6 +901,15 @@ write_hold_set_stamp() {  # <id> <shown-body> <stamp> <preserve> [<normalized-co
     case "$body" in
       $'\n\n'*) body=${body#$'\n\n'} ;;
       $'\n'*) body=${body#$'\n'} ;;
+    esac
+  fi
+  # The explained context contains the one it replaces, so that line is
+  # superseded in place: same lifecycle, no second active marker, no history lost.
+  if [ "$explained" = 1 ]; then
+    case "$body" in
+      'Captain question context: '*$'\n'*) body=${body#*$'\n'}; body=${body#$'\n'} ;;
+      'Captain question context: '*) body='' ;;
+      *) fail "existing active question context is invalid; owner review required" ;;
     esac
   fi
   # Expired deferrals retain captain annotations/body but report held=no.

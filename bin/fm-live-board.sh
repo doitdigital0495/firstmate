@@ -61,8 +61,9 @@
 #
 # ANSWERS. A question card offers answer controls when the snapshot marks it
 # answerable with owner-authored context (bin/fm-captain-hold.sh owns that
-# contract, including the optional question text and per-option detail the
-# card shows); its Queue answer control emits one Lavish `choice` carrying
+# contract, including the plain-language about and purpose, the question text
+# and the per-option detail the card shows); its Queue answer control emits
+# one Lavish `choice` carrying
 # fm-bearings-answer.v1 context with the task id, selection, note, the owner's
 # close mode and lifecycle. A captain hold with no owner context at all and an
 # unambiguous identity gets a free-text answer box instead, emitting the same
@@ -72,6 +73,13 @@
 # is no longer held and, for guarded cards, one queued for an earlier hold.
 # Stale, malformed, duplicate or ambiguous calls stay read-only. The page never
 # calls a command or invents options.
+#
+# CARDS. Each card reads top to bottom as its project, what it is about, what
+# it is for, the question, then every option with what picking it does and the
+# recommended one highlighted. A card whose context carries no about or no
+# purpose - any call stored before that rule, and every call without context -
+# shows "Needs a plain-language explanation" in their place, and the board
+# notes count such cards, so a missing explanation is never silent.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

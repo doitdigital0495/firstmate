@@ -71,20 +71,29 @@ a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visibl
 .q.q-urgent { border-color: #6b3527; border-left-color: var(--rust); }
 .q.is-queued { border-left-color: var(--sea); }
 .q-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.q h3 { margin: 8px 0 4px; font-size: 1.02rem; line-height: 1.4; color: var(--text-strong); overflow-wrap: anywhere; white-space: pre-wrap; }
-.q-topic { margin: 0 0 4px; color: var(--text-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
-.q-why { margin: 2px 0 6px; color: var(--text); font-size: 0.88rem; overflow-wrap: anywhere; white-space: pre-wrap; }
+.q h3 { margin: 0; font-size: 1.02rem; line-height: 1.4; color: var(--text-strong); overflow-wrap: anywhere; white-space: pre-wrap; }
+.q-project { margin: 8px 0 0; color: var(--text-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+.q-project b { color: var(--text-strong); font-weight: 600; }
+.q-topic::before { content: "\00b7"; margin: 0 6px; }
+.q-part { margin: 10px 0 0; min-width: 0; }
+.q-label { margin: 0 0 2px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); }
+.q-say { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.q-missing { display: grid; gap: 2px; margin: 10px 0 0; padding: 10px 12px; border-radius: 9px; border: 1px dashed var(--rust); background: var(--rust-soft); min-width: 0; overflow-wrap: anywhere; }
+.q-missing b { color: var(--rust); }
+.q-missing span { color: var(--text); font-size: 0.86rem; }
+.q-why { margin: 8px 0 0; color: var(--text); font-size: 0.88rem; overflow-wrap: anywhere; white-space: pre-wrap; }
 .q-why b { color: var(--text-muted); font-weight: 600; }
-.meta { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--text-muted); font-size: 0.8rem; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; color: var(--text-muted); font-size: 0.8rem; }
 .q-form { margin-top: 10px; display: grid; gap: 8px; min-width: 0; }
 .q-opts { display: grid; gap: 8px; }
 .q-opt { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 4px 12px; min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-inset); cursor: pointer; min-width: 0; }
 .q-opt:hover { border-color: #6b5326; }
-.q-opt.is-rec { border-color: #2f6b4f; }
+.q-opt.is-rec { border-color: var(--sea); background: var(--sea-soft); }
 .q-opt input { width: 20px; height: 20px; accent-color: var(--gold); margin: 1px 0 0; }
 .q-opt-body { display: grid; gap: 2px; min-width: 0; }
 .q-opt-label { color: var(--text-strong); font-weight: 600; overflow-wrap: anywhere; }
-.q-opt-detail { color: var(--text-muted); font-size: 0.86rem; overflow-wrap: anywhere; }
+.q-opt-result { color: var(--text); font-size: 0.86rem; overflow-wrap: anywhere; }
+.q-opt-lead { color: var(--text-muted); }
 .q-note { width: 100%; min-height: 44px; padding: 8px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg-inset); color: var(--text); font: inherit; }
 textarea.q-note { min-height: 88px; resize: vertical; }
 .q-note::placeholder { color: var(--text-faint); }
@@ -253,7 +262,15 @@ __FM_LIVE_BOARD_DATA__
     stats.appendChild(box);
   });
 
-  function questionCard(q) {
+  function cardPart(name, label, node) {
+    var box = el("div", "q-part");
+    box.setAttribute("data-part", name);
+    box.appendChild(el("div", "q-label", label));
+    box.appendChild(node);
+    return box;
+  }
+
+  function questionCard(q, project) {
     var urgent = q.urgent === true;
     var card = el("article", "q" + (urgent ? " q-urgent" : ""));
     card.setAttribute("data-question", q.id);
@@ -263,9 +280,27 @@ __FM_LIVE_BOARD_DATA__
     if (q.deferred_until) top.appendChild(badge("b-muted", "you deferred this until " + q.deferred_until));
     if (q.waiting_on_other_work) top.appendChild(badge("b-muted", "waits on other work first"));
     card.appendChild(top);
-    card.appendChild(el("h3", "", q.text));
-    if (q.topic) card.appendChild(el("p", "q-topic", q.topic));
-    if (q.why && q.why !== q.text) {
+    var where = el("p", "q-project");
+    where.setAttribute("data-part", "project");
+    where.appendChild(el("b", "", project));
+    if (q.topic) where.appendChild(el("span", "q-topic", q.topic));
+    card.appendChild(where);
+    if (q.about) card.appendChild(cardPart("about", "What this is about", el("p", "q-say", q.about)));
+    if (q.purpose) card.appendChild(cardPart("purpose", "What it is for", el("p", "q-say", q.purpose)));
+    // A card a manager cannot place says so itself; it never just looks short.
+    var bare = q.needs_explanation !== false || !q.about || !q.purpose;
+    if (bare) {
+      var missing = el("div", "q-missing");
+      missing.setAttribute("data-part", "needs-explanation");
+      missing.setAttribute("role", "note");
+      missing.appendChild(el("b", "", "Needs a plain-language explanation"));
+      missing.appendChild(el("span", "", "Firstmate has not yet written in plain words " +
+        (q.about ? "what answering this is for" : q.purpose ? "what this is about" : "what this is about and what answering it is for") +
+        ". Ask Firstmate to explain it before you answer."));
+      card.appendChild(missing);
+    }
+    card.appendChild(cardPart("question", "The question", el("h3", "", q.text)));
+    if (bare && q.why && q.why !== q.text) {
       var why = el("p", "q-why");
       why.appendChild(el("b", "", "Why it is asked: "));
       why.appendChild(el("span", "", q.why));
@@ -293,6 +328,10 @@ __FM_LIVE_BOARD_DATA__
     form.setAttribute("data-lavish-question", "live-board:" + q.id + (guarded ? "#" + q.lifecycle : ""));
     var opts = el("div", "q-opts");
     if (!options.length) opts.hidden = true;
+    else {
+      opts.setAttribute("data-part", "options");
+      form.appendChild(el("div", "q-label", "Your options"));
+    }
     var radios = [];
     options.forEach(function (o) {
       var rec = q.recommendation && q.recommendation === o.value;
@@ -304,9 +343,14 @@ __FM_LIVE_BOARD_DATA__
       lab.appendChild(input);
       var body = el("span", "q-opt-body");
       body.appendChild(el("span", "q-opt-label", o.label));
-      if (o.detail) body.appendChild(el("span", "q-opt-detail", o.detail));
+      if (o.detail) {
+        var result = el("span", "q-opt-result");
+        result.appendChild(el("span", "q-opt-lead", "If you pick this: "));
+        result.appendChild(el("span", "q-opt-detail", o.detail));
+        body.appendChild(result);
+      }
       lab.appendChild(body);
-      if (rec) { var r = badge("b-live", "recommended"); r.className += " rec"; lab.appendChild(r); }
+      if (rec) { var r = badge("b-live", "Firstmate recommends this"); r.className += " rec"; lab.appendChild(r); }
       opts.appendChild(lab);
     });
     form.appendChild(opts);
@@ -447,7 +491,7 @@ __FM_LIVE_BOARD_DATA__
     var body = el("div", "proj-body");
     if ((p.questions || []).length) {
       body.appendChild(el("div", "sec-label", "Questions for you"));
-      p.questions.forEach(function (q) { body.appendChild(questionCard(q)); });
+      p.questions.forEach(function (q) { body.appendChild(questionCard(q, p.name)); });
     }
     if ((p.workers || []).length) {
       body.appendChild(el("div", "sec-label", "Work in progress"));
