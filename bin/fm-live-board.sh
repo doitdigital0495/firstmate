@@ -88,15 +88,15 @@
 # is no longer held and, for guarded cards, one queued for an earlier hold.
 # Stale, malformed, duplicate or ambiguous calls stay read-only. The page never
 # calls a command or invents options.
-# A queued card shrinks to its answer with Change answer; the one send control
-# at the top of the page shows the queued count and delivers every queued
-# answer through Lavish, the only delivery there is. Change answer reopens the
-# card, but Lavish keeps the earlier answer until a new one replaces it, so
-# the card says so and still counts as queued. A sent card stays shrunk with
-# Answer again, which reopens it for as long as its hold is open. The card
-# state lives in a hidden field of the card's own form, which Lavish restores
-# after each live reload, keyed to the hold's lifecycle so an answer to an
-# earlier asking never shows on a later one.
+# A queued card shrinks to "Answer queued in Lavish" and its answer, and always
+# keeps Change answer, which reopens it; a new answer is queued under the same
+# Lavish question key, so it replaces an earlier one Lavish has not yet sent.
+# Delivery is Lavish's alone: the one send control at the top of the page and
+# the Lavish panel's own Send both send what Lavish holds. The page cannot see
+# what Lavish holds or has sent, so it counts nothing and never marks a card
+# sent. The shrunken state lives in a hidden field of the card's own form,
+# which Lavish restores after each live reload, keyed to the hold's lifecycle
+# so an answer to an earlier asking never shows on a later one.
 # REMOVAL. An answered or otherwise closed call is no longer an open captain
 # hold, so the next build has no card for it; work an answer released moves to
 # its lane. A call the captain put off until a later day is not answered: it

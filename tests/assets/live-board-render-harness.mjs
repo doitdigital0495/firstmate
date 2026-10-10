@@ -7,7 +7,7 @@
 // note-only answer); each is applied to that card's form and submitted.
 // Three more specs drive the rest of the answer flow, in argument order:
 //   `!send`               press the page's send control at the top
-//   `!change=<id>`        press that answered card's Change answer or Answer again control
+//   `!change=<id>`        press that answered card's Change answer control
 //   `!restore=<id>=<kept>` put <kept> back in that card's hidden answer field and
 //                         deliver a parent message, as Lavish does after a reload
 // Prints one JSON document:
@@ -18,7 +18,7 @@
 //         submit,answer,answered,kept,change,status}],
 //       lanes:{doing|next|charted:{count,say,none,more,
 //         cards:[{id,why,reason,title,note,links,folded}]}}}],
-//     submits:[{id,status}], queued:[{prompt,tag,data}], sends, tray:{count,text,send}, tickers }
+//     submits:[{id,status}], queued:[{prompt,tag,data}], sends, tray:{text,send}, tickers }
 import { readFileSync } from "node:fs";
 
 const [file, nowArg, ...answers] = process.argv.slice(2);
@@ -171,7 +171,7 @@ const projects = root.children.filter((c) => c.getAttribute("data-project") !== 
         answered: form && !form.find((c) => c.hasClass("q-answered"))[0].hidden
           ? text(form.find((c) => c.hasClass("q-answered-main"))[0]) : null,
         kept: form ? form.find((c) => c.name === "queued")[0].value : null,
-        change: q.getAttribute("data-answer") === "queued" || q.getAttribute("data-answer") === "sent"
+        change: q.getAttribute("data-answer") === "queued"
           ? text(form.find((c) => c.getAttribute("data-change") !== null)[0]) : null,
         status: form ? text(form.find((c) => c.hasClass("q-status"))[0]) : null,
       };
@@ -218,8 +218,7 @@ console.log(JSON.stringify({
   submits,
   queued: queued.map((q) => ({ prompt: q.prompt, tag: q.options.tag, data: q.options.data })),
   sends,
-  tray: ((bar) => bar ? { count: Number(bar.getAttribute("data-tray")),
-    text: text(bar.children[0]),
+  tray: ((bar) => bar ? { text: text(bar.children[0]),
     send: (bar.find((c) => c.getAttribute("data-send") !== null)[0] || null) && text(bar.find((c) => c.getAttribute("data-send") !== null)[0]) } : null)(
     byId.get("lb-tray").children[0]),
   tickers,

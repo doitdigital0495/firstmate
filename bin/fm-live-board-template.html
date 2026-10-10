@@ -294,46 +294,34 @@ __FM_LIVE_BOARD_DATA__
     stats.appendChild(box);
   });
 
-  /* A queued answer shrinks its card to one line. That state lives in a hidden
-     field of the card's own form, which Lavish restores after each live reload,
-     so an answered card stays answered until the next board no longer has it. */
+  /* A queued answer shrinks its card to one line. That lives in a hidden field
+     of the card's own form, which Lavish restores after each live reload, so
+     the card stays shrunk until the next board no longer has it. The page
+     cannot see what Lavish still holds or has sent, so it claims neither. */
   var cards = [];
   var tray = document.getElementById("lb-tray");
   function announce(node) {
     try { node.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) { /* the state stays page-local */ }
   }
-  function canSend() { return !!(window.lavish && typeof window.lavish.sendQueuedPrompts === "function"); }
-  function sendLabel(n) { return n === 1 ? "Send answer to Firstmate" : "Send " + n + " answers to Firstmate"; }
-  function sendAll() {
-    if (!canSend()) return;
-    window.lavish.sendQueuedPrompts();
-    cards.forEach(function (c) { c.sent(); });
-    syncAnswers();
-  }
   function paintTray() {
     clear(tray);
-    var n = cards.filter(function (c) { return c.queued(); }).length;
-    if (!n) return;
+    if (!cards.length) return;
+    var canSend = !!(window.lavish && typeof window.lavish.sendQueuedPrompts === "function");
     var bar = el("div", "tray");
-    bar.setAttribute("data-tray", String(n));
-    var text = el("div", "tray-text");
-    text.appendChild(el("b", "", plural(n, "answer") + " queued"));
-    text.appendChild(el("small", "", canSend()
-      ? "Nothing reaches Firstmate until you send. Queue as many as you like first."
-      : "Press Send in the Lavish panel to deliver " + (n === 1 ? "it" : "them") + "."));
-    bar.appendChild(text);
-    if (canSend()) {
-      var send = el("button", "btn", sendLabel(n));
+    bar.setAttribute("data-tray", "");
+    bar.appendChild(el("div", "tray-text", "Answers you queue are delivered to Firstmate when you press Send "
+      + (canSend ? "here or " : "") + "in the Lavish panel."));
+    if (canSend) {
+      var send = el("button", "btn", "Send answers to Firstmate");
       send.type = "button";
       send.setAttribute("data-send", "");
-      send.addEventListener("click", sendAll);
+      send.addEventListener("click", function () { window.lavish.sendQueuedPrompts(); });
       bar.appendChild(send);
     }
     tray.appendChild(bar);
   }
   function syncAnswers() {
-    cards.forEach(function (c) { c.paint(); });
-    paintTray();
+    cards.forEach(function (paint) { paint(); });
   }
 
   function cardPart(name, label, node) {
@@ -462,8 +450,8 @@ __FM_LIVE_BOARD_DATA__
     var answered = el("div", "q-answered");
     answered.hidden = true;
     var said = el("div", "q-answered-main");
-    var saidHead = el("b"), saidText = el("span"), saidHint = el("small");
-    said.appendChild(saidHead); said.appendChild(saidText); said.appendChild(saidHint);
+    var saidText = el("span");
+    said.appendChild(el("b", "", "Answer queued in Lavish")); said.appendChild(saidText);
     answered.appendChild(said);
     var acts = el("div", "q-answered-acts");
     var change = el("button", "btn btn-quiet", "Change answer");
@@ -472,48 +460,28 @@ __FM_LIVE_BOARD_DATA__
     acts.appendChild(change);
     answered.appendChild(acts);
     form.appendChild(answered);
-    /* state TAB stamp TAB answer; a stamp from an earlier asking is ignored.
-       `changing` is a reopened card whose earlier answer Lavish still holds. */
+    /* stamp TAB answer; a stamp from an earlier asking is ignored. */
     var stamp = String(q.lifecycle || q.asked || "");
-    function kept3() {
-      var parts = String(kept.value || "").split("\t");
-      return parts.length >= 3 && parts[1] === stamp && (parts[0] === "queued" || parts[0] === "changing" || parts[0] === "sent")
-        ? [parts[0], parts.slice(2).join("\t")] : ["", ""];
+    function keptAnswer() {
+      var value = String(kept.value || ""), at = value.indexOf("\t");
+      return at >= 0 && value.slice(0, at) === stamp ? value.slice(at + 1) : "";
     }
-    function setKept(state, shown) {
-      kept.value = state ? state + "\t" + stamp + "\t" + shown : "";
+    function setKept(shown) {
+      kept.value = shown ? stamp + "\t" + shown : "";
       announce(kept);
       syncAnswers();
     }
-    function paint() {
-      var now = kept3();
-      var shut = now[0] === "queued" || now[0] === "sent";
-      card.className = base + (shut ? " is-queued" : "");
-      card.setAttribute("data-answer", now[0] || "open");
-      answered.hidden = !shut;
-      if (now[0] === "changing") {
-        status.className = "q-status";
-        status.textContent = "Your earlier answer (" + now[1] + ") is still queued and will be sent unless you queue a new one.";
-      }
-      if (!shut) return;
-      saidHead.textContent = now[0] === "sent" ? "Answer sent" : "Answer queued";
-      saidText.textContent = q.text + " - " + now[1];
-      saidHint.textContent = now[0] === "sent"
-        ? "This leaves the page as soon as Firstmate has recorded it and closed the question."
-        : canSend() ? "Queue more answers if you like, then send them all at once."
-          : "Press Send in the Lavish panel to deliver it.";
-      change.textContent = now[0] === "sent" ? "Answer again" : "Change answer";
-    }
-    cards.push({
-      queued: function () { var state = kept3()[0]; return state === "queued" || state === "changing"; },
-      paint: paint,
-      sent: function () { var now = kept3(); if (now[0] === "queued" || now[0] === "changing") setKept("sent", now[1]); }
+    cards.push(function () {
+      var shown = keptAnswer();
+      card.className = base + (shown ? " is-queued" : "");
+      card.setAttribute("data-answer", shown ? "queued" : "open");
+      answered.hidden = !shown;
+      saidText.textContent = q.text + " - " + shown;
     });
     change.addEventListener("click", function () {
-      var now = kept3();
+      setKept("");
       status.className = "q-status";
-      status.textContent = "";
-      if (now[0] === "sent") setKept("", ""); else setKept("changing", now[1]);
+      status.textContent = "Queue a new answer; it replaces the earlier one if that has not been sent yet.";
     });
 
     form.addEventListener("submit", function (ev) {
@@ -546,7 +514,7 @@ __FM_LIVE_BOARD_DATA__
         "Live board answer - " + q.text + ": " + shown,
         { tag: "choice", text: q.text + " -> " + shown, element: form, data: data });
       status.textContent = "";
-      setKept("queued", shown);
+      setKept(shown);
     });
     card.appendChild(form);
     return card;
@@ -692,6 +660,7 @@ __FM_LIVE_BOARD_DATA__
   }
 
   syncAnswers();
+  paintTray();
   /* Lavish restores form fields by message after a reload, so repaint then. */
   if (typeof window.addEventListener === "function") {
     window.addEventListener("message", function () {
