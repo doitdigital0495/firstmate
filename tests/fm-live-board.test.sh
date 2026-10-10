@@ -396,11 +396,13 @@ tl_pr() {  # <repo> <number> <state> <head> <age-seconds> <title> <body> <suite-
 } | jq -cs '{data:{repository:{pullRequests:{nodes:.}}}}' > "$tl/forge/web-shop.json"
 tl_pr data 7 MERGED fm/data-export 86400 'Nightly export' '' \
   | jq -cs '{data:{repository:{pullRequests:{nodes:.}}}}' > "$tl/forge/data.json"
+# One read is four calls: web-shop and data answer at once, and docs-site, which
+# has no answer, is asked once more with the smaller query before it is a gap.
 calls() { wc -l < "$tl/forge/calls.log" | tr -d '[:space:]'; }
 shop_pr() { printf 'https://github.com/acme/web-shop/pull/%s' "$1"; }
 
 in_home "$tl" "$LIVE" build >/dev/null || fail "a board with pull requests did not build"
-[ "$(calls)" = 3 ] || fail "the first build did not read each project's pull requests once: $(calls)"
+[ "$(calls)" = 4 ] || fail "the first build did not read each project's pull requests once: $(calls)"
 out=$(TZ=UTC render "$tl" "$tl_now")
 check "$out" '(.projects | map(.label)) == ["web-shop"] and (.projects[0].badges | any(test("failed after merge")) | not)
   and (.projects[0].timeline | .status == "ok" and .count == "5" and .gaps == []
@@ -487,7 +489,7 @@ cat > "$tl/config/live-board-projects.json" <<'JSON'
   {"name":"Shop front","match":[{"repo":"web-shop"}]}]}
 JSON
 in_home "$tl" "$LIVE" build >/dev/null || fail "the mapped timeline board did not build"
-[ "$(calls)" = 3 ] || fail "a rebuild inside the pull request interval read the forge again: $(calls)"
+[ "$(calls)" = 4 ] || fail "a rebuild inside the pull request interval read the forge again: $(calls)"
 out=$(TZ=UTC render "$tl" "$tl_now")
 check "$out" '(.projects | map(.label)) == ["Shop front"]
   and (.projects[0].timeline.marks | map(.key | split("/") | .[-1])) == ["5","2","1","3"]
@@ -507,7 +509,7 @@ pass "the pull request read is cached outside the directory Lavish serves"
 due() { touch -t 202001010000 "$tl/state/.live-board-prs-attempt"; }
 due
 in_home "$tl" "$LIVE" build >/dev/null || fail "a due pull request read failed the build"
-[ "$(calls)" = 6 ] || fail "a due pull request read did not ask the forge again: $(calls)"
+[ "$(calls)" = 8 ] || fail "a due pull request read did not ask the forge again: $(calls)"
 # A copy of the scripts whose collector answers with nothing, late, stands in
 # for a read that hangs: only the time bound keeps the last good timeline.
 cp -R "$ROOT/bin" "$tl/bin-down"
