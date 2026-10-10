@@ -1,0 +1,9 @@
+board: /tmp/fm-lab.yYPW6D/data/live-board/board.html
+session:
+  file: /tmp/fm-lab.yYPW6D/data/live-board/board.html
+  url: "https://desktop-agentic.tail1dbb2d.ts.net:8387/session/d032cf78369f1eea"
+  status: opened
+session: live
+served: /tmp/fm-lab.yYPW6D/data/live-board/board.html
+bound: lavish-d032cf78369f1eea
+armed: lavish-d032cf78369f1eea
