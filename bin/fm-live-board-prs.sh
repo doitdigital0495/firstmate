@@ -20,8 +20,8 @@
 #           read that fails is tried once more for the 15 most recently
 #           updated, which GitHub still answers for a repository whose merges
 #           carry too many check suites for 50. Comments on old pull requests
-#           use places in that read too, so the small one can still miss a
-#           merge.
+#           use places in that read too, so on such a repository the small
+#           read often omits recent merges.
 #   ado     dev.azure.com, read with `az repos pr list` (the 200 newest, all
 #           states) and one `az pipelines runs list` per target branch those
 #           merges landed on (the 400 newest runs, at most four branches).
