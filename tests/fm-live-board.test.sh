@@ -358,16 +358,22 @@ for repo in web-shop data docs-site; do
   git -C "$tl/projects/$repo" remote add origin "https://github.com/acme/$repo.git"
 done
 mkdir -p "$tl/forge"
-# A forge stub that answers per repository and logs each call.
+# A forge stub that logs each call and answers per repository, in the order
+# and up to the number the query asks for.
 cat > "$tl/fakebin/gh" <<'SH'
 #!/usr/bin/env bash
-name=
+name= field=createdAt n=50
 for arg in "$@"; do
-  case "$arg" in name=*) name=${arg#name=} ;; esac
+  case "$arg" in
+    name=*) name=${arg#name=} ;;
+    n=*) n=${arg#n=} ;;
+    query=*UPDATED_AT*) field=updatedAt ;;
+  esac
 done
 printf '%s\n' "$name" >> "$FM_HOME/forge/calls.log"
 [ -f "$FM_HOME/forge/$name.json" ] || exit 1
-cat "$FM_HOME/forge/$name.json"
+jq -c --arg field "$field" --argjson n "$n" \
+  '.data.repository.pullRequests.nodes |= (sort_by(.[$field] // .createdAt) | reverse | .[:$n])' "$FM_HOME/forge/$name.json"
 SH
 chmod +x "$tl/fakebin/gh"
 tl_now=$(date +%s)
@@ -583,6 +589,22 @@ check "$(TZ=UTC render "$tl" "$tl_now")" \
   '(.idle.timelines.data | .gaps == ["data"] and .say == "No pull requests can be shown for this project.")
   and (.notes | index("Pull requests for data could not be read: the tool that reads GitHub is not installed on this machine.") != null)' \
   "a project whose forge tool is missing read as a project with no pull requests"
+
+# A pull request opened long before fifty newer ones and merged last is still
+# the newest change on the strip.
+{
+  tl_pr web-shop 9 MERGED fm/ws-long 120 'Long-running change' '' \
+    | jq -c --arg opened "$((tl_now - 900000))" '. + {updatedAt:.mergedAt,createdAt:($opened | tonumber | todate)}'
+  for index in $(seq 1 50); do
+    tl_pr web-shop "$((100 + index))" OPEN "fm/ws-open-$index" "$((1000 + index))" "Open change $index" ''
+  done
+} | jq -cs '{data:{repository:{pullRequests:{nodes:.}}}}' > "$tl/forge/web-shop.json"
+due
+in_home "$tl" "$LIVE" build >/dev/null || fail "the board did not rebuild for a busy project"
+check "$(TZ=UTC render "$tl" "$tl_now")" \
+  '.projects[0].timeline.marks | length == 15 and (.[-1].key | endswith("/pull/9")) and .[-1].tag != "open"' \
+  "a pull request opened before fifty newer ones and merged last was missing from the strip"
+pass "the newest merge stays on the strip however long ago its pull request was opened"
 cp "$tl/forge/data.json" "$tl/forge/web-shop.json"
 due
 in_home "$tl" "$LIVE" build >/dev/null || fail "the board did not rebuild after the forge emptied"

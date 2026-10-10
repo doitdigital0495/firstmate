@@ -13,11 +13,15 @@
 # whose clone under the home's projects directory has an `origin` remote on a
 # supported forge, plus the home's own checkout under its directory name. The
 # forge is read from that remote URL, never guessed from a name or a mode:
-#   github  github.com, read with one `gh api graphql` call: the 50 newest pull
-#           requests, each merged one with the check suites and commit
-#           statuses on its merge commit. A read that fails is tried once
-#           more for the 15 newest, which GitHub still answers for a
-#           repository whose merges carry too many check suites for 50.
+#   github  github.com, read with one `gh api graphql` call: the 50 most
+#           recently updated pull requests, each merged one with the check
+#           suites and commit statuses on its merge commit. A merge or close
+#           is an update, so the newest of those are always among them. A
+#           read that fails is tried once more for the 15 most recently
+#           updated, which GitHub still answers for a repository whose merges
+#           carry too many check suites for 50. Comments on old pull requests
+#           use places in that read too, so the small one can still miss a
+#           merge.
 #   ado     dev.azure.com, read with `az repos pr list` (the 200 newest, all
 #           states) and one `az pipelines runs list` per target branch those
 #           merges landed on (the 400 newest runs, at most four branches).
@@ -97,7 +101,7 @@ repo_note() {  # <project> <forge> <status> <reason> <branch-prefix>
 
 # shellcheck disable=SC2016 # GraphQL variables, not shell expansions.
 GITHUB_QUERY='query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){
-  pullRequests(first:$n,orderBy:{field:CREATED_AT,direction:DESC}){nodes{
+  pullRequests(first:$n,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{
     number title body url state isDraft createdAt closedAt mergedAt headRefName
     mergeCommit{
       checkSuites(first:40){nodes{status conclusion createdAt app{slug name}
