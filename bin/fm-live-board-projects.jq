@@ -133,6 +133,82 @@ def lb_unread_why:
 # A project shows its newest pull requests, oldest first so time reads left to right.
 def lb_timeline_shown: 15;
 
+# ENVIRONMENTS. The snapshot says which environments each merged pull request
+# has reached; these rules turn that into one strip per repository that has
+# environments, and are the only words the page says about it.
+#   last     the newest of the project's pull requests merged into that
+#            environment's branch, with the outcome of the runs its merge started
+#   waiting  the project's merged changes whose furthest environment is the
+#            one before, newest first; a promotion is left out when the change
+#            it carries is on the same list, so one change is counted once
+#   direct   how many of the project's changes were merged into that
+#            environment without being seen in the one before: a change redone
+#            by hand arrives like this, so the waiting count may include it
+# $pulls is the project's pull requests, newest first; $staged the sources
+# with environments it has work in; $known whether it has any source at all.
+def lb_stage_listed: 5;
+def lb_stage_why:
+  {"prs-unread":"its pull requests were not read","no-clone":"this home has no copy of its repository",
+   "fetch-failed":"the history of its environment branches could not be fetched",
+   "history-unreadable":"the history of its environment branches could not be read"}[.]
+  // "the reason is not known";
+def lb_environments($pulls; $staged; $known; $config):
+  if $config != "ok" then {say:null,strips:[]}
+  elif ($staged | length) == 0 then
+    {say:(if $known then "No separate environments are set up for this project, so nothing waits to move from one to the next."
+       else null end),strips:[]}
+  else {say:null,strips:[$staged[] | . as $source | (.project | lb_repo) as $name | .environments.names as $names
+    | if .status != "ok" then
+        {repo:$name,status:"unknown",notes:[],
+         say:"Not known, because the pull requests of \($name) could not be read: \(lb_unread_why // "they were not read").",
+         stages:[$names[] | {name:.,kind:"unknown",label:"Not known",last:null,none:null,waiting:null}]}
+      elif .environments.status != "ok" then
+        {repo:$name,status:"unknown",notes:[],
+         say:"Not known, because \(.environments.reason | lb_stage_why).",
+         stages:[$names[] | {name:.,kind:"unknown",label:"Not known",last:null,none:null,waiting:null}]}
+      else
+        [$pulls[] | select(.repo == $source.project and .state == "merged" and .environment != null)] as $changes
+        | [$changes[] | select(.environment.reached != null)
+           | . + {top:([.environment.reached | to_entries[] | select(.value) | .key] | max // .environment.stage)}] as $placed
+        | ([$changes[] | select(.environment.reached == null)] | length) as $lost
+        | {repo:$name,status:"ok",say:null,
+           notes:[
+             "A change is seen in an environment when its merge, or a copy of it that git recorded, is in that environment's history. A change redone there by hand still shows as not yet seen.",
+             (if $source.window_full then
+                "Only the newest pull requests are read, so an older change that is still waiting may be missing here."
+              else empty end),
+             (if $lost > 0 then lb_plural($lost; "merged change"; "merged changes")
+                + " could not be placed: the merge is not in the history that was read."
+              else empty end)],
+           stages:[range(0; $names | length) as $i
+             | ([$changes[] | select(.environment.stage == $i)][0] // null) as $last
+             | {name:$names[$i],
+                kind:(if $last == null then "empty"
+                  else $last.deploy.outcome | if IN("succeeded","failed","running","unknown") then .
+                    elif . == "not-deployed" then "running" else "none" end end),
+                label:(if $last == null then "No change yet" else ($last.deploy | lb_deploy_words)[1] end),
+                last:(if $last == null then null else {title:$last.title,at:$last.at} end),
+                none:(if $last == null then
+                    "None of this project\u0027s changes was merged into \($names[$i]) in the pull requests that were read."
+                  else null end),
+                waiting:(if $i == 0 then null else
+                  [$placed[] | select(.environment.stage < $i and .top == $i - 1)] as $all
+                  | [$all[].number] as $numbers
+                  | [$all[] | select(any(.environment.copy_of[]; . as $copied | $numbers | index($copied) != null) | not)] as $list
+                  | ($list | length) as $count
+                  | ([$placed[] | select(.environment.stage == $i and (.environment.reached[$i - 1] | not))] | length) as $direct
+                  | {count:$count,
+                     direct:(if $count > 0 and $direct > 0 then
+                         lb_plural($direct; "change was"; "changes were") + " merged into \($names[$i]) with no recorded link to \($names[$i - 1]), so some of those listed may already be there."
+                       else null end),
+                     say:(if $count == 0 then "Nothing in \($names[$i - 1]) is waiting to go to \($names[$i])."
+                       else lb_plural($count; "change is"; "changes are")
+                         + " in \($names[$i - 1]) but not yet seen in \($names[$i])." end),
+                     titles:[$list[:lb_stage_listed][] | {title,at}],
+                     more:([$count - lb_stage_listed, 0] | max)} end)}]}
+      end]}
+  end;
+
 def lb_view($map):
 . as $board
 | ($map | if . != null and lb_valid_map then . else null end) as $named
@@ -153,7 +229,8 @@ def lb_view($map):
 | [$board.projects[] | .tasks[] | . as $t | group_of(.id; .project) + {task:$t}] as $placed
 | [($board.recently_finished // [])[] | . as $f | group_of(.id; .project) + {finished:$f}] as $done
 | [($board.pull_requests.repos // [])[] | . as $repo | ($repo.prs // [])[] | . as $pr
-   | group_of($pr.task // ""; $repo.project) + {pr:($pr + {forge:$repo.forge})}] as $merged
+   | group_of($pr.task // ""; $repo.project) + {pr:($pr + {forge:$repo.forge,repo:$repo.project})}] as $merged
+| [($board.pull_requests.repos // [])[] | select(.environments != null)] as $staged
 | [($board.pull_requests.repos // [])[] | lb_unread_why as $why | select($why != null)
    | {repo:.project,say:"Pull requests for \(.project | lb_repo // "a project") could not be read: \($why)."}] as $unread
 | ([$asked[], $placed[], $done[], $merged[] | {key,index,repo}]
@@ -186,6 +263,13 @@ def lb_view($map):
    | [$unread[] | select((.repo | lb_repo) as $repo
         | if $g.index == null then $g.repo == $repo
           else any($named.projects[$g.index].match[]; (has("repo") | not) or .repo == $repo) end)] as $gaps
+   # The repositories this project has work in, by any of the ways work is placed.
+   | ([$g.repo // empty]
+      + (if $g.index != null then [$named.projects[$g.index].match[] | .repo // empty] else [] end)
+      + [$placed[] | select(.key == $g.key) | .task.project | lb_repo // empty]
+      + [$done[] | select(.key == $g.key) | .finished.project | lb_repo // empty]
+      + [$merged[] | select(.key == $g.key) | .pr.repo | lb_repo // empty]
+      | map(select(length > 0)) | unique) as $homes
    | {questions:($questions|length),urgent:([$questions[] | select(.urgent)]|length),
       doing:($lanes.doing|length),next:($lanes.next|length),charted:($lanes.charted|length),
       stuck:([$lanes.charted[] | select(.why == "stuck")]|length),finished:($finished|length)} as $c
@@ -238,6 +322,9 @@ def lb_view($map):
                elif .draft then "Open, still a draft" else "Open" end),
              deploy:{outcome:.deploy.outcome,tag:$words[0],label:$words[1],detail:$words[2],
                runs:[.deploy.runs[] | {name,result,label:(.result | lb_run_words)}],more_runs:.deploy.more_runs}}]},
+      environments:lb_environments($pulls;
+        [$staged[] | select((.project | lb_repo) as $repo | $homes | index($repo) != null)];
+        ($homes | length) > 0; $board.pull_requests.environment_config // "absent"),
       lanes:$lanes}]
 | sort_by([(if .counts.urgent > 0 then 0 elif .counts.questions > 0 then 1
       elif .counts.stuck > 0 then 2 elif .counts.doing > 0 then 3 elif .active then 4 else 5 end),
@@ -258,6 +345,8 @@ def lb_view($map):
      (if $board.pull_requests.status == "unreadable" then
         "The pull request data could not be read, so the timelines are empty." else empty end),
      $unread[].say,
+     (if $board.pull_requests.environment_config == "invalid" then
+        "The environment list is invalid, so no project shows its environments until Firstmate fixes it." else empty end),
      ($board.omissions[]? | .kind as $k
        | if $k == "backlog-unavailable" then "The task list could not be read, so some work may be missing."
          elif $k == "registry-unavailable" then "The project registry could not be read."

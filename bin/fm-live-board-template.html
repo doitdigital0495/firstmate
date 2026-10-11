@@ -167,7 +167,26 @@ textarea.q-note { min-height: 88px; resize: vertical; }
 .tl-d-runs .is-failed { color: var(--rust); font-weight: 600; }
 .tl-d-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 10px; color: var(--text-muted); font-size: 0.82rem; }
 .tl-d-foot .btn { min-height: 36px; padding: 4px 14px; font-size: 0.85rem; }
-.idle .tl { margin: 6px 0 10px; }
+.stages { display: grid; gap: 8px; min-width: 0; margin-bottom: 10px; padding: 10px; border: 1px solid var(--line-soft); border-top: 3px solid var(--text-faint); border-radius: 10px; background: var(--bg-inset); }
+.stage-strip { display: grid; gap: 6px; min-width: 0; }
+.stage-repo { margin: 0; color: var(--text-muted); font-size: 0.8rem; font-weight: 600; overflow-wrap: anywhere; }
+.stage-why { margin: 0; color: var(--rust); font-size: 0.84rem; overflow-wrap: anywhere; }
+.stage-track { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; min-width: 0; }
+.stage-cell { display: grid; align-content: start; gap: 6px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-left: 4px solid var(--text-faint); border-radius: 9px; background: var(--bg-card); }
+.stage-cell.stage-succeeded { border-left-color: var(--sea); }
+.stage-cell.stage-running { border-left-color: var(--gold); }
+.stage-cell.stage-failed { border-color: #6b3527; border-left-color: var(--rust); background: var(--rust-soft); }
+.stage-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.stage-top .badge { white-space: normal; }
+.stage-name { font-size: 0.95rem; font-weight: 700; letter-spacing: 0.04em; color: var(--text-strong); overflow-wrap: anywhere; }
+.stage-last, .stage-wait { margin: 0; font-size: 0.86rem; overflow-wrap: anywhere; }
+.stage-last b { color: var(--text-muted); font-weight: 600; }
+.stage-wait { color: var(--text-muted); }
+.stage-wait.is-waiting { color: var(--text-strong); font-weight: 600; }
+.stage-list { margin: 0; padding-left: 18px; color: var(--text-muted); font-size: 0.82rem; }
+.stage-list li { overflow-wrap: anywhere; margin: 2px 0; }
+.stage-note { margin: 0; color: var(--text-faint); font-size: 0.78rem; overflow-wrap: anywhere; }
+.idle .tl, .idle .stages { margin: 6px 0 10px; }
 .idle { background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 14px; padding: 10px 16px; margin: 0 0 14px; }
 .idle summary, .lb-notes summary { cursor: pointer; color: var(--text-muted); min-height: 28px; }
 .idle ul, .lb-notes ul { margin: 8px 0 0; padding-left: 20px; color: var(--text-muted); }
@@ -751,6 +770,70 @@ __FM_LIVE_BOARD_DATA__
     return box;
   }
 
+  /* The view decides everything a strip says; this only lays it out. */
+  var STAGE_BADGE = { succeeded: "b-live", failed: "b-danger", running: "b-warn" };
+  function dated(row) { return row.title + (dayText(row.at) ? " (" + dayText(row.at) + ")" : ""); }
+  function stageSection(p) {
+    var env = p.environments || {};
+    var strips = Array.isArray(env.strips) ? env.strips : [];
+    if (!strips.length && !env.say) return null;
+    var box = el("section", "stages");
+    box.setAttribute("data-environments", strips.length ? "strip" : "none");
+    var head = el("div", "lane-head");
+    var name = el("h3", "lane-name");
+    name.appendChild(el("span", "", "Environments"));
+    head.appendChild(name);
+    head.appendChild(el("p", "lane-say", strips.length
+      ? "Where this project's merged changes are, left to right in the order a change travels."
+      : env.say));
+    box.appendChild(head);
+    strips.forEach(function (strip) {
+      var wrap = el("div", "stage-strip");
+      wrap.setAttribute("data-environment-repo", strip.repo || "");
+      wrap.setAttribute("data-environment-status", strip.status || "unknown");
+      if (strips.length > 1) wrap.appendChild(el("p", "stage-repo", strip.repo));
+      if (strip.say) wrap.appendChild(el("p", "stage-why", strip.say));
+      var track = el("div", "stage-track");
+      track.setAttribute("role", "list");
+      (strip.stages || []).forEach(function (stage) {
+        var kind = stage.kind || "unknown";
+        var cell = el("div", "stage-cell stage-" + kind);
+        cell.setAttribute("role", "listitem");
+        cell.setAttribute("data-environment", stage.name);
+        cell.setAttribute("data-environment-kind", kind);
+        var top = el("div", "stage-top");
+        top.appendChild(el("span", "stage-name", stage.name));
+        top.appendChild(badge(STAGE_BADGE[kind] || "b-muted", stage.label || "Not known"));
+        cell.appendChild(top);
+        if (stage.last) {
+          var last = el("p", "stage-last");
+          last.appendChild(el("b", "", "Last change: "));
+          last.appendChild(el("span", "", dated(stage.last)));
+          cell.appendChild(last);
+        } else if (stage.none) {
+          cell.appendChild(el("p", "stage-last", stage.none));
+        }
+        if (stage.waiting) {
+          var wait = el("p", "stage-wait" + (stage.waiting.count ? " is-waiting" : ""), stage.waiting.say);
+          wait.setAttribute("data-environment-waiting", String(stage.waiting.count));
+          cell.appendChild(wait);
+          if ((stage.waiting.titles || []).length) {
+            var list = el("ul", "stage-list");
+            stage.waiting.titles.forEach(function (row) { list.appendChild(el("li", "", dated(row))); });
+            if (stage.waiting.more) list.appendChild(el("li", "", "and " + stage.waiting.more + " more"));
+            cell.appendChild(list);
+          }
+          if (stage.waiting.direct) cell.appendChild(el("p", "stage-note stage-direct", stage.waiting.direct));
+        }
+        track.appendChild(cell);
+      });
+      wrap.appendChild(track);
+      (strip.notes || []).forEach(function (note) { wrap.appendChild(el("p", "stage-note", note)); });
+      box.appendChild(wrap);
+    });
+    return box;
+  }
+
   function laneSection(lane, rows) {
     var box = el("section", "lane lane-" + lane[0]);
     box.setAttribute("data-lane-box", lane[0]);
@@ -832,6 +915,8 @@ __FM_LIVE_BOARD_DATA__
     var lanes = el("div", "lanes");
     LANES.forEach(function (lane) { lanes.appendChild(laneSection(lane, (p.lanes || {})[lane[0]] || [])); });
     body.appendChild(lanes);
+    var stages = stageSection(p);
+    if (stages) body.appendChild(stages);
     body.appendChild(timelineSection(p));
     sec.appendChild(body);
     return sec;
@@ -863,6 +948,8 @@ __FM_LIVE_BOARD_DATA__
       var extra = [];
       if (p.counts && p.counts.finished) extra.push(p.counts.finished + " done in the last 2 weeks");
       if (extra.length) li.appendChild(el("span", "", " - " + extra.join(" · ")));
+      var stages = stageSection(p);
+      if (stages) li.appendChild(stages);
       if (p.timeline && ((p.timeline.items || []).length || (p.timeline.unread || []).length)) li.appendChild(timelineSection(p));
       ul.appendChild(li);
     });

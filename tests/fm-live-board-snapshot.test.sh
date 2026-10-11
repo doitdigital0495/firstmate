@@ -391,3 +391,40 @@ done
 render_prs "$TMP_ROOT/missing-file.json" "$TMP_ROOT/missing-prs-board.json" || fail 'a missing pull request file failed the snapshot'
 check "$TMP_ROOT/missing-prs-board.json" '.pull_requests.status == "unreadable"' 'a missing pull request file was not disclosed'
 pass 'a missing, malformed or unsupported pull request document is disclosed and never fails the snapshot'
+
+# Environments: only a well-formed place leaves the snapshot, a source's
+# environments keep their names and nothing else, and the costly manager note
+# is written for a source's newest pull requests only.
+jq -cn --argjson now "$now" '
+  def pr($number; $age): {number:$number,url:"https://dev.azure.com/acme/Insights/_git/reports/pullrequest/\($number)",
+    state:"merged",draft:false,title:"Change \($number)",body_truncated:false,branch:"fm/stock-\($number)",
+    body:"Planners can now see the weekly total on the first page of the stock report.",
+    opened_at:($now - $age - 60),closed_at:($now - $age),merged_at:($now - $age),runs:{status:"ok",items:[]}};
+  {schema:"fm-live-board-prs.v1",collected_at:"2026-07-25T00:00:00Z",collected_at_epoch:($now - 60),environment_config:"ok",repos:[
+    {project:"reports",forge:"ado",status:"ok",reason:null,branch_prefix:"fm/",window_full:true,
+     environments:{status:"ok",reason:null,stages:[{name:"DEV",branch:"main"},{name:"UAT",branch:"release/uat"}]},
+     prs:([pr(1; 100) + {environment:{stage:1,reached:[false,true],copy_of:[2,"x"]}},
+       pr(2; 200) + {environment:{stage:0,reached:[true],copy_of:[]}},
+       pr(3; 300) + {environment:{stage:2,reached:[true,true],copy_of:[]}},
+       pr(4; 400) + {environment:"DEV"},
+       pr(5; 500) + {branch:"cherry/uat-1",environment:{stage:1,reached:[true,true],copy_of:[1]}}]
+       + [range(0; 200) | pr(1000 + .; 600 + .)])},
+    {project:"site",forge:"github",status:"ok",reason:null,branch_prefix:"fm/",environments:{status:"weird"},prs:[]}]}' \
+  > "$TMP_ROOT/stages-prs.json"
+render_prs "$TMP_ROOT/stages-prs.json" "$TMP_ROOT/stages-board.json" || fail 'a pull request document with environments failed the snapshot'
+staged() { printf '[.pull_requests.repos[] | select(.project == "reports") | .prs[] | select(.number == %s)][0]' "$1"; }
+check "$TMP_ROOT/stages-board.json" '.pull_requests.environment_config == "ok"
+  and ([.pull_requests.repos[] | select(.project == "reports")][0] | .window_full == true and .environments == {status:"ok",reason:null,names:["DEV","UAT"]})
+  and ([.pull_requests.repos[] | select(.project == "site")][0] | .window_full == false and .environments == null)' \
+  'a source did not keep its environment names, or a malformed environment record was kept'
+check "$TMP_ROOT/stages-board.json" "$(staged 1)"' | .environment == {stage:1,reached:[false,true],copy_of:[2]}' \
+  'a well-formed place did not leave the snapshot as it was collected'
+check "$TMP_ROOT/stages-board.json" "$(staged 2)"' | .environment == {stage:0,reached:null,copy_of:[]}' \
+  'a verdict for the wrong number of environments was kept instead of unknown'
+check "$TMP_ROOT/stages-board.json" "($(staged 3) | .environment == null) and ($(staged 4) | .environment == null)" \
+  'a place outside the environments, or one that is not a record, was kept'
+check "$TMP_ROOT/stages-board.json" "$(staged 5)"' | .task == "stock-1"' \
+  'a promotion from a branch outside the ship prefix did not join the task of the change it carries'
+check "$TMP_ROOT/stages-board.json" "($(staged 1) | .summary != null) and ($(staged 1150) | .summary != null) and ($(staged 1199) | .summary == null and .title == \"Change 1199\")" \
+  'the manager note was not limited to the newest pull requests of a source, or an older one lost its title'
+pass 'only a well-formed environment place leaves the snapshot, and older pull requests keep their title without a manager note'

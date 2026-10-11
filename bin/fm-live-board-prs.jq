@@ -47,7 +47,7 @@ def lbp_github_prs($cap):
   [.data.repository.pullRequests.nodes[]
    | {number,url,title:(.title // ""),body:((.body // "")[:$cap]),body_truncated:((.body // "") | length > $cap),
       state:(if .state == "MERGED" then "merged" elif .state == "OPEN" then "open" else "closed" end),
-      draft:(.isDraft == true),branch:.headRefName,
+      draft:(.isDraft == true),branch:.headRefName,target:.baseRefName,merge_commit:(.mergeCommit.oid // null),
       opened_at:(.createdAt | lbp_epoch),closed_at:(.closedAt | lbp_epoch),merged_at:(.mergedAt | lbp_epoch),
       runs:(if .state != "MERGED" then {status:"not-merged",items:[]}
         elif .mergeCommit == null then {status:"failed",items:[]}
@@ -73,6 +73,7 @@ def lbp_ado_prs($branches; $base; $cap):
       body_truncated:((.description // "") | length >= 400),
       state:(if .status == "completed" then "merged" elif .status == "active" then "open" else "closed" end),
       draft:(.draft == true),branch:((.source // "") | ltrimstr("refs/heads/")),
+      target:((.target // "") | ltrimstr("refs/heads/")),merge_commit:(if $sha == "" then null else $sha end),
       opened_at:(.created | lbp_epoch),closed_at:$closed,
       merged_at:(if .status == "completed" then $closed else null end),
       runs:(if .status != "completed" then {status:"not-merged",items:[]}
@@ -81,6 +82,37 @@ def lbp_ado_prs($branches; $base; $cap):
           | {status:(if ($items | length) == 0 and $branch.truncated and $closed != null
                 and $branch.oldest != null and $closed < $branch.oldest then "out-of-window" else "ok" end),
              items:$items} end)}];
+
+# ENVIRONMENTS. bin/fm-live-board.sh's header owns the environment list's
+# contract and bin/fm-live-board-prs.sh's the rule that fills `environment`.
+def lbp_stages_valid:
+  type == "object" and .schema == "fm-live-board-environments.v1"
+  and ((keys - ["schema","repos"]) | length == 0)
+  and (.repos | type == "array" and length <= 64
+    and all(.[]; type == "object" and ((keys - ["repo","environments"]) | length == 0)
+      and (.repo | type == "string" and test("^[A-Za-z0-9._-]{1,128}$"))
+      and (.environments | type == "array" and length >= 2 and length <= 6
+        and all(.[]; type == "object" and ((keys - ["name","branch"]) | length == 0)
+          and (.name | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9 ._-]{0,15}$"))
+          and (.branch | type == "string" and test("^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$")
+            and (test("[.][.]|//|/$|[.]lock$") | not)))
+        and (map(.name) | length == (unique | length)) and (map(.branch) | length == (unique | length))))
+    and (map(.repo) | length == (unique | length)));
+
+# Input: one collected source; $reach holds one {number, stage, reached,
+# copy_of} per pull request merged into an environment's branch.
+def lbp_stages_attach($reach; $stages):
+  ($reach | map({key:(.number | tostring),value:{stage,reached,copy_of:(.copy_of | sort)}}) | from_entries) as $by
+  | .environments = {status:"ok",reason:null,stages:$stages}
+  | .prs |= map(. + {environment:($by[.number | tostring] // null)});
+
+# A pull request's environment as it leaves the snapshot, or null when $count
+# environments could not have produced it.
+def lbp_stage($count):
+  if type != "object" or (.stage | type) != "number" or .stage < 0 or .stage >= $count then null
+  else {stage,
+    reached:(.reached | if type == "array" and length == $count and all(.[]; type == "boolean") then . else null end),
+    copy_of:[(.copy_of // [])[]? | select(type == "number")]} end;
 
 # PROJECTION. Everything below turns the collected document into the few
 # captain-safe fields that leave the snapshot; a pull request body never does.
@@ -257,6 +289,10 @@ def lbp_deploy($has_runs; $now; $grace):
         more_runs:([($counted | length) - 8, 0] | max)}
      else {runs:[],more_runs:0} end);
 
+# A source with environments is read far back, and only its newest pull
+# requests can be on a timeline, so only those get the costly manager note.
+def lbp_summarised: 200;
+
 # $doc is the collected document, null when none was collected, or any other
 # value when the collected file could not be read.
 def lbp_project($doc; $known_ids; $now):
@@ -268,14 +304,26 @@ def lbp_project($doc; $known_ids; $now):
     | ($known_ids + [$repos[] | .prefix as $prefix | .prs[].branch | lbp_task($prefix) // empty]
        | map({key:.,value:true}) | from_entries) as $ids
     | {status:"collected",collected_at_epoch:$doc.collected_at_epoch,
+       environment_config:($doc.environment_config | if IN("ok","invalid") then . else "absent" end),
        repos:[$repos[] | .prefix as $prefix
          | any(.prs[]; any((.runs.items // [])[]; .result | IN("failed","running","succeeded"))) as $has_runs
+         | (.environments | if type == "object" and (.stages | type) == "array" and (.status | IN("ok","failed"))
+             then {status,reason:(.reason // null),names:[.stages[] | (.name // "") | tostring | .[:16]]}
+             else null end) as $environments
+         | ($environments | if . != null and .status == "ok" then (.names | length) else 0 end) as $count
+         | (.prs | map({key:(.number | tostring),value:(.branch | lbp_task($prefix))}) | from_entries) as $tasks
+         | (.prs | sort_by([-(.merged_at // .closed_at // .opened_at // 0),-.number]) | .[:lbp_summarised]
+            | map({key:(.number | tostring),value:true}) | from_entries) as $recent
          | {project,forge:(.forge // "none"),status,reason:(.reason // null),
+            window_full:(.window_full == true),environments:$environments,
             prs:[.prs[] | (.body_truncated == true) as $truncated
+              | (.environment | lbp_stage($count)) as $stage
               | {number,url,state,draft:(.draft == true),
-              task:(.branch | lbp_task($prefix)),
+              # A promotion made from a branch outside the ship prefix belongs
+              # to the task of the pull request it carries.
+              task:((.branch | lbp_task($prefix)) // first(($stage.copy_of // [])[] | $tasks[tostring] // empty) // null),
               title:((.title | lbp_title($ids)) // "Untitled change"),
-              summary:(.body | lbp_summary($ids; $truncated)),
+              summary:(if $recent[.number | tostring] then .body | lbp_summary($ids; $truncated) else null end),
               at:(.merged_at // .closed_at // .opened_at),
-              deploy:lbp_deploy($has_runs; $now; 900)}]}]}
+              deploy:lbp_deploy($has_runs; $now; 900),environment:$stage}]}]}
   end;

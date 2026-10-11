@@ -40,13 +40,19 @@
 # it); this command reads no forge itself. pull_requests is {status,
 # collected_at_epoch, repos[]} with status not-collected when no file was
 # given, unreadable when the file is not that document (neither fails the
-# snapshot), else collected. Each repo is {project, forge, status, reason,
+# snapshot), else collected with environment_config (absent, ok or invalid).
+# Each repo is {project, forge, status, reason, window_full, environments,
 # prs[]} and each pull request {number, url, state, draft, task, title,
-# summary, at, deploy}. task is the ship branch without the project's
-# registered prefix, or null; at is the merge, close or open time. title is
-# the cleaned title and summary a one-to-three-sentence manager note drawn
+# summary, at, deploy, environment}. task is the ship branch without the
+# project's registered prefix, else the task of a pull request it carries
+# recorded cherry-picks of, or null; at is the merge, close or open time. title
+# is the cleaned title and summary a one-to-three-sentence manager note drawn
 # from the description, or null when the description is missing or too
-# technical; lbp_summary in bin/fm-live-board-prs.jq is the one rule. deploy is
+# technical, or the pull request is not among its source's 200 newest;
+# lbp_summary in bin/fm-live-board-prs.jq is the one rule. environments is
+# null, or {status: ok|failed, reason, names[]} for a source with
+# environments, and a pull request's environment is null or {stage, reached,
+# copy_of} exactly as bin/fm-live-board-prs.sh's header defines them. deploy is
 # {outcome, why, runs[{name,result}], more_runs}, the result of the runs its
 # merge started, decided by lbp_deploy there: succeeded, failed, running,
 # not-deployed, none or unknown. No description

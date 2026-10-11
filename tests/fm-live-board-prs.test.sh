@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Behavior tests for bin/fm-live-board-prs.sh, the read-only pull request and
-# deploy-run collector behind the live board's timelines. Stub `gh` and `az`
-# answer from canned forge responses and log every call, so the assertions are
-# on the collected document, on the snapshot built from it, and on which forge
-# commands were run - never on source text.
+# deploy-run collector behind the live board's timelines and environment
+# strips. Stub `gh` and `az` answer from canned forge responses and log every
+# call, and a real upstream repository stands in for the forge's git history,
+# so the assertions are on the collected document, on the snapshot built from
+# it, and on which forge and fetch commands were run - never on source text.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -68,15 +69,18 @@ SH
 cat > "$FAKEBIN/az" <<'SH'
 #!/usr/bin/env bash
 printf 'az %s\n' "$(printf '%s ' "$@" | tr '\n' ' ')" >> "$FM_TEST_CALLS"
-repo= branch=
+repo= branch= project=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --repository) repo=$2; shift ;;
+    --project) project=$2; shift ;;
     --branch) branch=${2##*/}; shift ;;
   esac
   shift
 done
 if [ -n "$repo" ]; then file="$FM_TEST_FORGE/az-prs-$repo.json"; else file="$FM_TEST_FORGE/az-runs-$branch.json"; fi
+# A project with run lists of its own answers from those.
+[ -n "$repo" ] || [ ! -f "$FM_TEST_FORGE/az-runs-$project-$branch.json" ] || file="$FM_TEST_FORGE/az-runs-$project-$branch.json"
 if [ -n "$repo" ]; then slow=slow-az-prs; else slow=slow-az-runs; fi
 [ ! -f "$FM_TEST_FORGE/$slow" ] || sleep 6
 [ -f "$file" ] || exit 1
@@ -305,3 +309,192 @@ runs_read=$(grep -c '^az pipelines runs list ' "$CALLS")
 [ "$runs_read" -ge 1 ] && [ "$runs_read" -lt 4 ] \
   || fail "the source budget did not stop the run-list reads before the last branch: $runs_read of 4 were made"
 pass "each forge call and each Azure DevOps source is cut off at its time bound, and what was not read is unknown"
+
+# --- Environments ----------------------------------------------------------------
+# A real upstream repository with one branch per environment stands in for the
+# forge's git history. Its merges are the pull requests the forge stub lists:
+#   54        squash-merged into DEV, then carried up by merging the branches
+#   51        merged into DEV only
+#   52        merged into DEV, cherry-picked into UAT by 53, and 53's merge
+#             cherry-picked into PROD by 58
+#   59        merged into DEV, cherry-picked into UAT by 60
+#   61        merged into DEV, redone by hand on UAT by 62 with no recorded pick
+check "$TMP_ROOT/prs.json" '.environment_config == "absent" and all(.repos[]; .environments == null)
+  and all(.repos[].prs[]; .environment == null)' \
+  "a home with no environment list still reported environments"
+rm -f "$TMP_ROOT/forge/slow-az-runs"
+REAL_GIT=$(command -v git)
+UP="$TMP_ROOT/forge/upstream/stages"
+fm_git_identity
+mkdir -p "$UP"
+g() { git -C "$UP" "$@" >/dev/null 2>&1 || fail "fixture git $* failed"; }
+change() {  # <file> <message>
+  printf '%s\n' "$2" >> "$UP/$1"
+  g add "$1"
+  g commit -qm "$2"
+}
+land() {  # <into> <branch>; a merge commit, as a completed pull request leaves
+  g checkout -q "$1"
+  g merge -q --no-ff -m "Merge $2 into $1" "$2"
+  git -C "$UP" rev-parse HEAD
+}
+g init -q
+g checkout -q -b main
+change base.txt 'Base'
+g branch release/uat
+g branch release/prod
+change everywhere.txt 'Everywhere'
+M54=$(git -C "$UP" rev-parse HEAD)
+M55=$(land release/uat main)
+M56=$(land release/prod release/uat)
+g checkout -q -b fm/st-devonly main
+change devonly.txt 'Dev only'
+M51=$(land main fm/st-devonly)
+g checkout -q -b fm/st-picked main
+change picked.txt 'Picked one'
+change picked.txt 'Picked two'
+M52=$(land main fm/st-picked)
+g checkout -q -b cherry/uat-52 release/uat
+g cherry-pick -x fm/st-picked~1 fm/st-picked
+M53=$(land release/uat cherry/uat-52)
+g checkout -q -b cherry/prod-53 release/prod
+g cherry-pick -x -m 1 "$M53"
+M58=$(land release/prod cherry/prod-53)
+g checkout -q -b fm/st-halfway main
+change halfway.txt 'Halfway'
+M59=$(land main fm/st-halfway)
+g checkout -q -b cherry/uat-59 release/uat
+g cherry-pick -x fm/st-halfway
+M60=$(land release/uat cherry/uat-59)
+g checkout -q -b fm/st-redone main
+change redone.txt 'Redone'
+M61=$(land main fm/st-redone)
+g checkout -q -b fm/st-redone-uat release/uat
+change redone.txt 'Redone'
+M62=$(land release/uat fm/st-redone-uat)
+upstream_refs=$(git -C "$UP" for-each-ref)
+
+# The real git, with a fetch of the fixture forge's address logged and served
+# from the upstream of the same name, or refused while the forge is offline.
+cat > "$FAKEBIN/git" <<SH
+#!/usr/bin/env bash
+case " \$* " in
+  *" fetch "*)
+    printf 'git %s\n' "\$*" >> "\$FM_TEST_CALLS"
+    [ ! -f "\$FM_TEST_FORGE/git-offline" ] || exit 128
+    export GIT_CONFIG_VALUE_0="\$FM_TEST_FORGE/upstream/\${GIT_CONFIG_VALUE_0##*/}"
+    ;;
+esac
+exec "$REAL_GIT" "\$@"
+SH
+chmod +x "$FAKEBIN/git"
+clone stages 'https://someone:not-a-real-token@dev.azure.com/acme-org/Stages/_git/stages'
+printf -- '- stages [direct-PR] - fixture (added 2026-01-01)\n' >> "$HOME_DIR/data/projects.md"
+{
+  ado_pr 51 completed fm/st-devonly main '2026-10-03T10:00:00.5+00:00' "$M51" 'Dev only change'
+  ado_pr 52 completed fm/st-picked main '2026-10-03T10:10:00.5+00:00' "$M52" 'Picked change'
+  ado_pr 53 completed cherry/uat-52 release/uat '2026-10-03T10:20:00.5+00:00' "$M53" 'Promote the picked change to UAT'
+  ado_pr 54 completed fm/st-everywhere main '2026-10-03T09:00:00.5+00:00' "$M54" 'Everywhere change'
+  ado_pr 55 completed promote/uat release/uat '2026-10-03T09:10:00.5+00:00' "$M55" 'Promote to UAT'
+  ado_pr 56 completed promote/prod release/prod '2026-10-03T09:20:00.5+00:00' "$M56" 'Promote to PROD'
+  ado_pr 58 completed cherry/prod-53 release/prod '2026-10-03T10:30:00.5+00:00' "$M58" 'Promote the picked change to PROD'
+  ado_pr 59 completed fm/st-halfway main '2026-10-03T10:40:00.5+00:00' "$M59" 'Halfway change'
+  ado_pr 60 completed cherry/uat-59 release/uat '2026-10-03T10:50:00.5+00:00' "$M60" 'Promote the halfway change to UAT'
+  ado_pr 61 completed fm/st-redone main '2026-10-03T11:00:00.5+00:00' "$M61" 'Redone change'
+  ado_pr 62 completed fm/st-redone-uat release/uat '2026-10-03T11:10:00.5+00:00' "$M62" 'Redo on UAT'
+  ado_pr 63 active fm/st-open main null null 'Open one'
+  ado_pr 64 completed fm/st-side feature/side '2026-10-03T11:20:00.5+00:00' "$M51" 'Onto a side branch'
+  ado_pr 65 completed fm/st-lost main '2026-10-03T11:30:00.5+00:00' "$SHA_OLD" 'Merge the history lacks'
+} | jq -cs . > "$TMP_ROOT/forge/az-prs-stages.json"
+ado_run 301 stages-deploy completed succeeded individualCI "$M61" stages | jq -cs . > "$TMP_ROOT/forge/az-runs-Stages-main.json"
+ado_run 302 stages-deploy completed failed individualCI "$M62" stages | jq -cs . > "$TMP_ROOT/forge/az-runs-Stages-uat.json"
+STAGES='{"schema":"fm-live-board-environments.v1","repos":[{"repo":"stages","environments":[
+  {"name":"DEV","branch":"main"},{"name":"UAT","branch":"release/uat"},{"name":"PROD","branch":"release/prod"}]}]}'
+printf '%s\n' "$STAGES" > "$HOME_DIR/config/live-board-environments.json"
+collect_staged() {  # <out>
+  PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$ROOT" FM_TEST_CALLS="$CALLS" \
+    FM_TEST_FORGE="$TMP_ROOT/forge" "$PRS" --json --git-cache "$TMP_ROOT/cache" > "$1" || fail "the collector failed"
+}
+stages() { printf '[.repos[] | select(.project == "stages")][0]'; }
+
+: > "$CALLS"
+collect_staged "$TMP_ROOT/prs-stages.json"
+check "$TMP_ROOT/prs-stages.json" '.environment_config == "ok"
+  and all(.repos[] | select(.project != "stages"); .environments == null and all(.prs[]; .environment == null))' \
+  "a project the environment list does not name was given environments"
+check "$TMP_ROOT/prs-stages.json" "$(stages)"' | .status == "ok" and .window_full == false
+  and .environments == {status:"ok",reason:null,stages:[{name:"DEV",branch:"main"},{name:"UAT",branch:"release/uat"},{name:"PROD",branch:"release/prod"}]}' \
+  "a project with environments did not carry them in order"
+reach='[.prs[] | select(.environment != null)
+  | {key:(.number | tostring),value:(.environment.reached | if . == null then "unknown" else map(if . then "y" else "n" end) | join("") end)}] | from_entries'
+check "$TMP_ROOT/prs-stages.json" "$(stages) | $reach"' | .["51"] == "ynn" and .["61"] == "ynn"' \
+  "a change merged into DEV only, or one redone by hand elsewhere with no recorded pick, was said to have reached UAT"
+check "$TMP_ROOT/prs-stages.json" "$(stages) | $reach"' | .["59"] == "yyn" and .["60"] == "yyn"' \
+  "a change cherry-picked into UAT was not read as in DEV and UAT only"
+check "$TMP_ROOT/prs-stages.json" "$(stages) | $reach"' | .["52"] == "yyy" and .["53"] == "yyy" and .["58"] == "nyy"' \
+  "a change that reached PROD through a cherry-picked merge was not followed all the way"
+check "$TMP_ROOT/prs-stages.json" "$(stages) | $reach"' | .["54"] == "yyy" and .["55"] == "nyy" and .["56"] == "nny" and .["62"] == "nyn"' \
+  "a change carried up by merging the branches was not read from the branches that contain it"
+check "$TMP_ROOT/prs-stages.json" "$(stages) | $reach"' | .["65"] == "unknown" and (has("63") or has("64") | not)' \
+  "a merge the history lacks was given a verdict, or an open pull request or one onto another branch was placed in an environment"
+check "$TMP_ROOT/prs-stages.json" "$(stages)"' | [.prs[] | select(.environment != null) | {key:(.number | tostring),value:.environment}] | from_entries
+  | (map_values(.stage) | .["51"] == 0 and .["53"] == 1 and .["58"] == 2 and .["65"] == 0)
+    and (map_values(.copy_of) | .["53"] == [52] and .["58"] == [53] and .["60"] == [59] and .["62"] == [] and .["52"] == [])' \
+  "a pull request was not placed in the environment it merged into, or a promotion did not name the change it carries"
+pass "each merged change is placed from the branches' own history: DEV only, DEV and UAT, all three, and never by a guess"
+
+project "$TMP_ROOT/prs-stages.json" "$TMP_ROOT/board-stages.json"
+check "$TMP_ROOT/board-stages.json" '.pull_requests.environment_config == "ok"
+  and ([.pull_requests.repos[] | select(.project == "stages")][0].environments == {status:"ok",reason:null,names:["DEV","UAT","PROD"]})
+  and ([.pull_requests.repos[] | select(.project == "shop")][0].environments == null)' \
+  "the snapshot did not carry which projects have environments"
+check "$TMP_ROOT/board-stages.json" "$(pr stages 53)"' | .environment == {stage:1,reached:[true,true,true],copy_of:[52]} and .task == "st-picked"' \
+  "a promotion did not keep its place, or did not join the task of the change it carries"
+check "$TMP_ROOT/board-stages.json" "$(pr stages 62)"' | .deploy.outcome == "failed" and .environment.stage == 1' \
+  "a failed run on the newest merge into an environment was not reported as failed"
+check "$TMP_ROOT/board-stages.json" "$(pr stages 58)"' | .deploy.outcome == "unknown" and .deploy.why == "unreadable"' \
+  "an environment whose runs could not be read was given a deploy verdict"
+check "$TMP_ROOT/board-stages.json" "$(pr stages 63)"' | .environment == null' "an open pull request was placed in an environment"
+pass "the snapshot carries each change's place, and a failed or unreadable deploy on an environment stays what it is"
+
+if grep '^git ' "$CALLS" | grep -vE '^git --git-dir=[^ ]+ fetch --quiet --no-tags origin( \+refs/heads/[A-Za-z0-9._/-]+:refs/heads/stage-[0-9]+)+$' | grep -q .; then
+  fail "the collector ran a git command against the forge that is not a fetch of the environment branches: $(grep '^git ' "$CALLS")"
+fi
+[ "$(grep -c '^git ' "$CALLS")" = 1 ] || fail "the environment branches were not fetched exactly once: $(grep '^git ' "$CALLS")"
+assert_equals "$upstream_refs" "$(git -C "$UP" for-each-ref)" "the collector changed the upstream repository"
+[ -z "$("$REAL_GIT" -C "$HOME_DIR/projects/stages" for-each-ref)" ] || fail "the collector wrote refs into the project's clone"
+[ -d "$TMP_ROOT/cache/stages.git" ] || fail "the fetched history was not kept under the given cache directory"
+if grep -rq 'not-a-real-token' "$TMP_ROOT/cache" "$CALLS" "$TMP_ROOT/prs-stages.json"; then
+  fail "a credential in the remote URL reached the cache, a command line or the collected document"
+fi
+grep -Eq '^az repos pr list .*--repository stages .*--top 1000 ' "$CALLS" || fail "a project with environments was not read far back"
+grep -Eq '^az repos pr list .*--repository reports .*--top 200 ' "$CALLS" \
+  || fail "a project without environments was read further back than before"
+pass "environment history is fetched read-only into the cache, never into the clone, and no credential leaves the remote URL"
+
+# The forge's git is unreachable: the pull requests still read, and nothing is
+# said about environments - the history fetched a moment ago is not reused.
+: > "$TMP_ROOT/forge/git-offline"
+collect_staged "$TMP_ROOT/prs-offline.json"
+rm -f "$TMP_ROOT/forge/git-offline"
+check "$TMP_ROOT/prs-offline.json" "$(stages)"' | .status == "ok" and (.prs | length) == 14
+  and .environments.status == "failed" and .environments.reason == "fetch-failed"
+  and (.environments.stages | map(.name)) == ["DEV","UAT","PROD"] and all(.prs[]; .environment == null)' \
+  "a failed fetch of the environment branches still placed changes, or cost the project its pull requests"
+mv "$TMP_ROOT/forge/az-prs-stages.json" "$TMP_ROOT/forge/az-prs-stages.kept"
+collect_staged "$TMP_ROOT/prs-unread.json"
+mv "$TMP_ROOT/forge/az-prs-stages.kept" "$TMP_ROOT/forge/az-prs-stages.json"
+check "$TMP_ROOT/prs-unread.json" "$(stages)"' | .status == "failed" and .environments.status == "failed" and .environments.reason == "prs-unread"' \
+  "a project whose pull requests were not read did not say its environments are unknown for that reason"
+project "$TMP_ROOT/prs-offline.json" "$TMP_ROOT/board-offline.json"
+check "$TMP_ROOT/board-offline.json" '[.pull_requests.repos[] | select(.project == "stages")][0]
+  | .environments == {status:"failed",reason:"fetch-failed",names:["DEV","UAT","PROD"]} and all(.prs[]; .environment == null)' \
+  "the snapshot gave a verdict for environments whose history was not fetched"
+pass "a failed fetch or an unread project leaves its environments unknown with the reason"
+
+printf '%s\n' '{"schema":"fm-live-board-environments.v1","repos":[{"repo":"stages","environments":[{"name":"DEV","branch":"main"}]}]}' \
+  > "$HOME_DIR/config/live-board-environments.json"
+collect_staged "$TMP_ROOT/prs-invalid.json"
+check "$TMP_ROOT/prs-invalid.json" '.environment_config == "invalid" and all(.repos[]; .environments == null)' \
+  "an invalid environment list was used, or was not reported as invalid"
+pass "an invalid environment list is reported and gives no project environments"
