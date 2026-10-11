@@ -48,19 +48,33 @@ def lb_clean($ids):
     | if length == 0 then null else . end
   end;
 # A worker note is news only when it is mostly words; token soup is dropped.
-def lb_note($ids):
+def lb_words($ids; $max):
   lb_clean($ids)
   | if . == null then null else
-      (if length > 160 then .[:157] + "..." else . end)
+      (if length > $max then .[:$max - 3] + "..." else . end)
       | ([splits("\\s+") | select(length > 0)]) as $tokens
       | if ([$tokens[] | select(test("^[(\"']?[A-Za-z][a-z]*[)\"',.;:!?]*$"))] | length) * 2 < ($tokens | length)
           or length < 15 then null else . end
     end;
+def lb_note($ids): lb_words($ids; 160);
 # A title that is only a task id reads as words instead.
 def lb_title($ids):
   if type != "string" then null
   elif $ids[.] then (gsub("[-_.]+"; " ") | (.[:1] | ascii_upcase) + .[1:])
   else lb_clean($ids) end;
+
+# EXPLANATIONS. Every row the page lists says what it is in plain words, so a
+# short label never stands alone. The first source that yields words wins: the
+# task's own note, the plain-language "about" its captain call was asked with,
+# then its hold reason, each only when it is mostly words (`lb_words`); with
+# none, the literal gap text, so a missing explanation is visible. `source`
+# names which one it was.
+def lb_no_explanation: "No explanation recorded yet";
+def lb_explain($ids; $about; $context; $hold):
+  [({text:($about | lb_words($ids; 240)),source:"note"}),
+   ({text:($context | lb_words($ids; 240)),source:"call"}),
+   ({text:($hold | lb_words($ids; 240)),source:"hold"})]
+  | map(select(.text != null))[0] // {text:lb_no_explanation,source:"missing"};
 
 # LANES. The one rule that puts every open task in exactly one lane, read top
 # down; `why` names the reason and is the only thing the wording below keys on.
@@ -327,8 +341,10 @@ def lb_view($map):
    | [$placed[] | select(.key == $g.key) | .home as $home | .task as $t
       | (if $t.worker_present == true then $t | lb_worker_status else null end) as $crew
       | ($t | lb_lane($today; $crew)) as $l
+      | lb_explain($ids; $t.about; $t.question_context.about; $t.hold.reason) as $what
       | {key:$t.key,id:$t.id,title:($t.title | lb_title($ids) // "Untitled work"),home:$home,
          lane:$l.lane,why:$l.why,why_label:($l.why | lb_why_label($t.hold.until)),state:$t.state,
+         explain:$what.text,explain_source:$what.source,
          note:(if $l.lane == "doing" then ($t | lb_worker_doing($crew; $ids))
            elif $l.why == "on-hold" then ($t.hold.reason | lb_note($ids))
            elif $l.why == "other-work" then
@@ -373,6 +389,7 @@ def lb_view($map):
       name:(if $g.index != null then $named.projects[$g.index].name else ($g.repo // "Unsorted work") end),
       description:(if $g.index != null then ($named.projects[$g.index].description // null)
         elif $named != null then "Not yet sorted into a named project" else null end),
+      explain:((if $g.index != null then $named.projects[$g.index].description else null end) // lb_no_explanation),
       order:$g.index,counts:$c,active:($c.questions + $c.doing + $c.next + $c.charted > 0),
       status:([
           if $c.questions > 0 then lb_plural($c.questions; "question waits"; "questions wait") + " for you"
@@ -444,6 +461,9 @@ def lb_view($map):
      $unread[].say,
      (if $board.pull_requests.environment_config == "invalid" then
         "The environment list is invalid, so no project shows its environments until Firstmate fixes it." else empty end),
+     ([$groups[] | .lanes[][] | select(.explain_source == "missing")] | length) as $unexplained
+     | (if $unexplained > 0 then lb_plural($unexplained; "item has"; "items have")
+         + " no explanation recorded yet; Firstmate adds one by giving the task a note." else empty end),
      ($board.omissions[]? | .kind as $k
        | if $k == "backlog-unavailable" then "The task list could not be read, so some work may be missing."
          elif $k == "registry-unavailable" then "The project registry could not be read."

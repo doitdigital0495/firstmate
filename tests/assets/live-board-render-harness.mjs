@@ -55,6 +55,9 @@
 //     headings: every second-level heading the page built, in any of its parts,
 //     statusOutsideLanes: how many worker statuses sit outside a project's lanes,
 //     idle.timelines:{<name>:timeline}, idle.environments:{<name>:environments},
+//     idle.whats:[what], and what is null|{text,source,label,from} on a project,
+//     a lane card and a quiet project,
+//     asked:{hidden,title,banner,more,items:[{key,status,head,badges,question,on,answer,source,folded}]},
 //     submits:[{id,status}], queued:[{prompt,tag,data}], tray:{text,buttons}, tickers }
 import { readFileSync } from "node:fs";
 
@@ -93,7 +96,7 @@ class Node {
   }
 }
 
-const ids = ["lb-root", "lb-home", "lb-fresh", "lb-banner", "lb-stats", "lb-toc", "lb-notes", "lb-projects", "lb-tray", "lb-foot"];
+const ids = ["lb-root", "lb-home", "lb-fresh", "lb-banner", "lb-stats", "lb-toc", "lb-asked", "lb-notes", "lb-projects", "lb-tray", "lb-foot"];
 const byId = new Map();
 const data = new Node("script");
 data.textContent = html.split('<script id="live-board-data" type="application/json">')[1].split("</script>")[0];
@@ -125,6 +128,7 @@ let root;
 // Run the page's script against a fresh, empty page.
 function boot() {
   for (const id of ids) byId.set(id, new Node("div"));
+  byId.get("lb-asked").hidden = true; // as the shipped markup starts it
   byId.set("live-board-data", data);
   messageListeners.length = 0;
   tickers.length = 0;
@@ -135,6 +139,23 @@ function boot() {
 boot();
 
 const text = (n) => n.textContent.replace(/\s+/g, " ").trim();
+// The "What this is" collapsible directly inside a node: its sentence, which
+// source the page says it came from, and null when the node has none.
+const whatOf = (n) => {
+  const box = n.children.filter((c) => c.tagName === "DETAILS" && c.hasClass("what"))[0];
+  if (!box) return null;
+  const say = box.find((c) => c.tagName === "SUMMARY")[0];
+  return { text: text(say.children[1]), source: box.getAttribute("data-explain"),
+    label: text(say.children[0]), from: text(box.find((c) => c.hasClass("what-src"))[0]) };
+};
+const askedOf = (q) => ({
+  key: q.getAttribute("data-qa"), status: q.getAttribute("data-qa-status"),
+  head: text(q.find((c) => c.hasClass("qa-head"))[0]), badges: badges(q),
+  question: text(q.find((c) => c.hasClass("qa-q"))[0]),
+  on: ((n) => (n ? text(n) : null))(q.find((c) => c.hasClass("qa-on"))[0]),
+  answer: ((n) => (n ? n.textContent : null))(q.find((c) => c.hasClass("qa-a"))[0]),
+  source: ((n) => (n ? text(n) : null))(q.find((c) => c.hasClass("qa-src"))[0]),
+});
 const badges = (n) => n.find((c) => c.hasClass("badge")).map(text);
 // The words of the one node under it carrying that attribute, or null.
 const marked = (n, attribute) => ((hit) => (hit ? text(hit) : null))(n.find((c) => c.getAttribute(attribute) !== null)[0]);
@@ -309,6 +330,7 @@ const projects = root.children.filter((c) => c.getAttribute("data-project") !== 
     key: p.getAttribute("data-project-key"),
     badges: badges(head.children[0]),
     description: one("proj-desc"),
+    what: whatOf(head),
     status: one("proj-status"),
     progress: one("prog-text"),
     latest: one("proj-latest"),
@@ -367,6 +389,7 @@ const projects = root.children.filter((c) => c.getAttribute("data-project") !== 
           why: w.getAttribute("data-why"),
           reason: marked(w, "data-reason"),
           title: text(w.find((c) => c.hasClass("w-title"))[0]),
+          what: whatOf(w),
           note: (w.find((c) => c.hasClass("w-note"))[0] || null) && text(w.find((c) => c.hasClass("w-note"))[0]),
           links: w.find((c) => c.tagName === "A").map((a) => ({ href: a.href, text: text(a) })),
           folded: folded.has(w),
@@ -412,6 +435,7 @@ console.log(JSON.stringify({
     ids: idleProjects.map((c) => c.getAttribute("id")),
     open: idle.open === true,
     lines: idle.find((c) => c.getAttribute("data-quiet-project") !== null).map(text),
+    whats: idleProjects.map(whatOf),
     timelines: Object.fromEntries(idleProjects.map((c) => [c.getAttribute("data-quiet-project"), timelineOf(c)])),
     environments: Object.fromEntries(idleProjects.map((c) => [c.getAttribute("data-quiet-project"), environmentsOf(c)])) } : null,
   foot: text(byId.get("lb-foot")),
@@ -423,6 +447,14 @@ console.log(JSON.stringify({
     entries: toc.find((c) => c.getAttribute("data-toc") !== null).map((a) => ({
       name: a.getAttribute("data-toc"), href: a.href, parts: a.children.map(text), target: tocTarget(a.href),
       lavishAction: a.getAttribute("data-lavish-action") !== null })) },
+  asked: ((host) => {
+    const more = host.find((c) => c.getAttribute("data-asked-more") !== null)[0];
+    const folded = new Set(more ? more.find((c) => c.getAttribute("data-qa") !== null) : []);
+    return { hidden: host.hidden === true, title: host.children[0] ? text(host.children[0]) : null,
+      banner: host.find((c) => c.hasClass("lb-banner")).map(text)[0] || null,
+      more: more ? Number(more.getAttribute("data-asked-more")) : 0,
+      items: host.find((c) => c.getAttribute("data-qa") !== null).map((q) => ({ ...askedOf(q), folded: folded.has(q) })) };
+  })(byId.get("lb-asked")),
   headings: everywhere.filter((n) => n.tagName === "H2").map(text),
   statusOutsideLanes: everywhere.filter((n) => n.getAttribute("data-worker-status") !== null).length
     - root.find((c) => c.getAttribute("data-lane-box") !== null)

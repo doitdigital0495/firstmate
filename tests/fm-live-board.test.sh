@@ -1064,6 +1064,215 @@ check "$(render "$home")" '([.projects[].questions[].id] | index("data-window") 
   "work the captain's answer let continue kept its question card or stayed in the charted lane"
 pass "answered questions leave the page on the next refresh, and work an answer lets continue moves to its lane"
 
+# --- Every row says what it is --------------------------------------------------
+home=$(make_home explained)
+cat > "$home/data/backlog.md" <<'BACKLOG'
+## In flight
+
+## Queued
+- [ ] ws-dev-4 - Chatbot DEV-4 (repo: web-shop) (kind: ship) (since 2026-01-02)
+- [ ] ws-export - Export orders (repo: web-shop) (kind: ship) (since 2026-01-03)
+    Lets a shop owner download last month's orders as a spreadsheet.
+- [ ] ws-token - Rotate keys (repo: web-shop) (kind: ship) (since 2026-01-04)
+    data/ws-token/report.md
+- [ ] ws-held - Chatbot DEV-5 (repo: web-shop) (kind: ship) (since 2026-01-05) (hold: waiting for the supplier to confirm the price list)
+
+## Done
+BACKLOG
+printf '%s\n' "$ENABLED" > "$home/config/live-board.json"
+printf '%s\n' '{"schema":"fm-live-board-projects.v1","projects":[{"name":"Web shop","description":"The online shop customers order from.","match":[{"repo":"web-shop"}]}]}' \
+  > "$home/config/live-board-projects.json"
+in_home "$home" "$LIVE" build >/dev/null || fail "the explained board did not build"
+out=$(render "$home")
+card() { printf '([.projects[].lanes[].cards[] | select(.id == "%s")][0])' "$1"; }
+check "$out" "$(card ws-export)"' | .what == {text:"Lets a shop owner download last month\u0027s orders as a spreadsheet.",
+    source:"note",label:"What this is:",from:"From this item\u0027s own note in the task list."}' \
+  "a task with a note did not show that note as its explanation"
+check "$out" "$(card ws-dev-4)"' | .title == "Chatbot DEV-4" and .what.text == "No explanation recorded yet" and .what.source == "missing"' \
+  "a bare label did not say that its explanation is missing"
+check "$out" "$(card ws-token)"' | .what.text == "No explanation recorded yet" and .what.source == "missing"' \
+  "a note that is only a path was shown as an explanation"
+grep -q 'spreadsheet' "$home/data/live-board/board.html" || fail "the built page does not carry the explained note"
+! grep -q 'ws-token/report.md' "$home/data/live-board/board.html" \
+  || fail "a raw backlog note reached the published page"
+sed -n '/<script id="live-board-data" type="application\/json">/,/<\/script>/p' "$home/data/live-board/board.html" | sed '1d;$d' \
+  | jq -e '[.board.projects[].tasks[], .board.registered_homes[].workers[] | has("about")] | length > 0 and (any | not)' >/dev/null \
+  || fail "the published board payload carries a task's backlog note"
+check "$out" "$(card ws-held)"' | .what.source == "hold" and (.what.text | test("supplier to confirm the price list"))' \
+  "a held task with no note did not explain itself from its hold reason"
+check "$out" '.projects[0].description == "The online shop customers order from." and .projects[0].what == null
+  and any(.notes[]; test("^2 items have no explanation recorded yet"))' \
+  "a described project repeated its explanation, or the board notes did not count the unexplained rows"
+# The rule itself: nothing the page lists may stand without an explanation.
+explained='([.projects[] | select((.description // .what.text // "") == "")] | length == 0)
+  and ([.projects[].lanes[].cards[]] | length > 0 and all(.[]; (.what.text // "") != ""))
+  and ((.idle.whats // []) | all(.[]; . != null and (.text // "") != ""))'
+check "$out" "$explained" "an item rendered without an explanation"
+rm -f "$home/config/live-board-projects.json"
+in_home "$home" "$LIVE" build >/dev/null || fail "the unmapped explained board did not build"
+out=$(render "$home")
+check "$out" "$explained"' and (.projects[0] | .label == "web-shop" and .what.text == "No explanation recorded yet" and .what.source == "missing")' \
+  "a project nobody described did not say that its explanation is missing"
+pass "every project and every lane row says what it is, from its note or hold reason, or says that no explanation is recorded"
+
+# --- A second mate's rows say what they are too ---------------------------------
+mate=$(make_home explained-mate)
+mkdir -p "$mate/bin"
+printf '# Firstmate fixture\n' > "$mate/AGENTS.md"
+printf 'shop-crew\n' > "$mate/.fm-secondmate-home"
+cat > "$mate/data/backlog.md" <<'BACKLOG'
+## In flight
+- [ ] crew-only - Speed up search (repo: web-shop) (kind: ship) (since 2026-01-06)
+    Makes the shop's search box answer in under a second.
+
+## Queued
+- [ ] crew-later - Translate the shop (repo: web-shop) (kind: ship) (since 2026-01-08)
+    Shows the whole shop in German and French.
+- [ ] crew-bare - Chatbot DEV-6 (repo: web-shop) (kind: ship) (since 2026-01-09)
+    data/crew-bare/report.md
+
+## Done
+BACKLOG
+worker "$mate" crew-only busy 'project=web-shop'
+printf 'working [at=%s]: the search index is rebuilt and being measured\n' "$(date +%s)" > "$mate/state/crew-only.status"
+printf -- '- shop-crew - fixture crew (home: %s; scope: fixture work; projects: web-shop; added 2026-01-01)\n' "$mate" \
+  > "$home/data/secondmates.md"
+in_home "$home" "$LIVE" build >/dev/null || fail "the board with a registered second mate did not build"
+out=$(render "$home")
+check "$out" '('"$(card crew-only)"' | .lane == "doing" and .title == "Speed up search" and .what.source == "note"
+    and .what.text == "Makes the shop\u0027s search box answer in under a second.")
+  and ('"$(card crew-later)"' | .lane == "next" and .what.source == "note"
+    and .what.text == "Shows the whole shop in German and French.")
+  and ('"$(card crew-bare)"' | .title == "Chatbot DEV-6" and .what.text == "No explanation recorded yet" and .what.source == "missing")
+  and any(.notes[]; test("^[0-9]+ items have no explanation recorded yet"))' \
+  "a second mate's worker or queued work did not say what it is, or a bare label of its did not say that is missing"
+check "$out" "$explained" "a row from a registered second mate rendered without an explanation"
+! grep -q 'crew-bare/report.md' "$home/data/live-board/board.html" \
+  || fail "a second mate's raw backlog note reached the published page"
+sed -n '/<script id="live-board-data" type="application\/json">/,/<\/script>/p' "$home/data/live-board/board.html" | sed '1d;$d' \
+  | jq -e '[.board.registered_homes[] | .workers[], .queued[] | has("about")] | length == 3 and (any | not)' >/dev/null \
+  || fail "the published board payload carries a second mate's backlog note"
+pass "a registered second mate's workers and queued work say what they are, and their raw notes stay off the page"
+
+# --- A question typed on the board is answered on the board --------------------
+home=$(make_home asked)
+printf '%s\n' "$ENABLED" > "$home/config/live-board.json"
+in_home "$home" "$LIVE" build >/dev/null || fail "the asked board did not build"
+board="$home/data/live-board/board.html"
+ANSWER="$ROOT/bin/fm-live-board-answer.sh"
+PROC="$ROOT/bin/fm-procevent.sh"
+check "$(render "$home")" '.asked == {hidden:true,title:null,banner:null,more:0,items:[]}' \
+  "a board nobody typed on showed a questions section"
+sid=$(in_home "$home" "$ROOT/bin/fm-procevent-lavish.sh" source-id "$board")
+inbox="$home/state/procevent-inbox"
+(umask 077; mkdir -p "$inbox")
+capture() {  # <source-id> <sequence> <row...>
+  local source=$1 seq=$2
+  shift 2
+  {
+    printf 'session:\n  file: %s\n  status: feedback\nprompts[%s]{uid,prompt,selector,tag,text}:\n' "$board" "$#"
+    printf '  %s\n' "$@"
+  } > "$inbox/$source.$seq.result"
+  printf 'lavish\n' > "$inbox/$source.$seq.adapter"
+}
+choice='"1","Answer\n\nContext data:\n{\"schema\": \"fm-bearings-answer.v1\", \"question\": \"x\", \"selection\": \"y\", \"note\": \"\"}","form",choice,"x -> y"'
+capture "$sid" 1 '"1",What is Dev 4 to dev 6???,"div > section:nth-of-type(3)",section,"Charted next 2 Chatbot DEV-4 Waits for other work"' \
+  "$choice" '"",Is the pilot planned yet?,"",message,Freeform message'
+touch -t 202001010000 "$board"
+in_home "$home" "$LIVE" refresh
+out=$(render "$home")
+check "$out" '.asked.hidden == false and .asked.title == "Your questions and answers22 not answered yet"
+  and (.asked.items | map({key,status,question,on,answer,badges}))
+    == [{key:"'"$sid"'.1.1",status:"open",question:"What is Dev 4 to dev 6???",
+         on:"Typed on: Charted next 2 Chatbot DEV-4 Waits for other work",answer:null,badges:["Not answered yet"]},
+        {key:"'"$sid"'.1.3",status:"open",question:"Is the pilot planned yet?",on:null,answer:null,badges:["Not answered yet"]}]' \
+  "typed questions did not show as not answered yet, or a keyed choice was listed as a question"
+out=$(in_home "$home" "$PROC" handled "$sid" 1 2>&1) && fail "a board result with unanswered questions was marked handled: $out"
+assert_contains "$out" "not handled: the captain typed on the live board and 2 items have no answer on the board yet" \
+  "the refusal did not say why the result was not handled"
+assert_contains "$out" "item 1: What is Dev 4 to dev 6???" "the refusal did not quote the first question"
+assert_contains "$out" "bin/fm-live-board-answer.sh record $sid 1 --item 3 --source" "the refusal did not give the exact command to answer"
+assert_contains "$out" "bin/fm-procevent.sh handled $sid 1 --no-answer-needed" "the refusal did not give the no-answer-needed command"
+[ ! -e "$inbox/$sid.1.handled" ] || fail "a refused result was recorded handled"
+out=$(printf 'none\n' | in_home "$home" "$ANSWER" record "$sid" 1 2>&1) && fail "an answer with no item was accepted for a two-question result: $out"
+assert_contains "$out" "pass --item" "an ambiguous answer did not ask which item it answers"
+out=$(printf 'DEV-4 is safe custom dashboards.\n\nDEV-5 is confirmed actions <b>x</b>.\n' \
+  | in_home "$home" "$ANSWER" record "$sid" 1 --item 1 --source "data/plan/report.md, DEV build plan" 2>&1) \
+  || fail "recording an answer failed: $out"
+assert_contains "$out" "recorded: $sid.1.1" "recording did not report its key"
+assert_not_contains "$out" "posted:" "an older Lavish without reply was posted to"
+[ ! -e "$home/lavish-open" ] || fail "recording an answer drove the installed Lavish, which has no reply command"
+out=$(render "$home")
+check "$out" '.asked.title == "Your questions and answers21 not answered yet"
+  and (.asked.items[0] | .status == "answered" and .badges == []
+    and .answer == "DEV-4 is safe custom dashboards.\n\nDEV-5 is confirmed actions <b>x</b>."
+    and (.source | test("^Answered .* · Source: data/plan/report\\.md, DEV build plan$")))
+  and (.asked.items[1] | .status == "open" and .answer == null)' \
+  "a recorded answer did not show on the rebuilt board with its text, time and source"
+out=$(in_home "$home" "$PROC" handled "$sid" 1 2>&1) && fail "a result with one question still unanswered was marked handled: $out"
+assert_contains "$out" "1 item has no answer" "the refusal did not count the remaining question"
+assert_not_contains "$out" "item 1:" "the refusal named a question that is already answered"
+printf 'Not yet: the pilot waits for the alerts proof.\n' > "$TMP_ROOT/answer.txt"
+in_home "$home" "$ANSWER" record "$sid" 1 --item 3 --file "$TMP_ROOT/answer.txt" >/dev/null || fail "recording from a file failed"
+out=$(in_home "$home" "$PROC" handled "$sid" 1 2>&1) || fail "a fully answered result was refused: $out"
+assert_contains "$out" "handled: $sid 1" "an answered result was not recorded handled"
+touch -t 202001010000 "$board"
+in_home "$home" "$LIVE" refresh
+check "$(render "$home")" '(.asked.items | map([.status,.question]))
+    == [["answered","What is Dev 4 to dev 6???"],["answered","Is the pilot planned yet?"]]
+  and .asked.items[1].answer == "Not yet: the pilot waits for the alerts proof."
+  and (.asked.items[1].source | test("No source recorded$"))' \
+  "answers did not stay on the board after their result was handled"
+capture "$sid" 2 '"2",go,"div > section",section,"Next 3 Retry payments"'
+out=$(in_home "$home" "$PROC" handled "$sid" 2 --no-answer-needed "  " 2>&1) && fail "a blank reason was accepted: $out"
+out=$(in_home "$home" "$PROC" handled "$sid" 2 --no-answer-needed "an instruction, not a question" 2>&1) \
+  || fail "an explicit no-answer-needed reason was refused: $out"
+assert_contains "$out" "handled: $sid 2" "a result with a no-answer-needed reason was not recorded handled"
+check "$(cat "$home/data/live-board/answers.json")" '.schema == "fm-live-board-answers.v1"
+  and ([.answers[] | select(.key == "'"$sid"'.2.1")][0] | .answer == null and .waived == "an instruction, not a question" and .question == "go")' \
+  "the reason no answer was needed was not recorded"
+capture "$sid" 3 "$choice"
+out=$(in_home "$home" "$PROC" handled "$sid" 3 2>&1) || fail "a result with only keyed choices was refused: $out"
+capture lavish-00000000000000aa 1 '"",A question on some other board?,"",message,Freeform message'
+out=$(in_home "$home" "$PROC" handled lavish-00000000000000aa 1 2>&1) || fail "another board's result was held to the live board's rule: $out"
+touch -t 202001010000 "$board"
+in_home "$home" "$LIVE" refresh
+check "$(render "$home")" '(.asked.items | length) == 2 and .asked.banner == null' \
+  "an item recorded as needing no answer, or another board's question, was listed"
+cp "$home/data/live-board/answers.json" "$TMP_ROOT/answers.good"
+printf 'not json\n' > "$home/data/live-board/answers.json"
+capture "$sid" 4 '"",Still there?,"",message,Freeform message'
+out=$(printf 'yes\n' | in_home "$home" "$ANSWER" record "$sid" 4 2>&1) && fail "an unreadable record was overwritten: $out"
+assert_contains "$out" "unreadable and was left untouched" "an unreadable record did not refuse the write"
+out=$(in_home "$home" "$PROC" handled "$sid" 4 2>&1) && fail "a question was marked handled while the answers record could not be read: $out"
+assert_contains "$out" "the answers record cannot be read" "an unreadable record did not say why the result was not handled"
+touch -t 202001010000 "$board"
+in_home "$home" "$LIVE" refresh
+check "$(render "$home")" '(.asked.banner | test("saved answers could not be read"))
+  and (.asked.items | map([.status,.question])) == [["open","Still there?"]]' \
+  "an unreadable record hid the open question or did not say the answers could not be read"
+cp "$TMP_ROOT/answers.good" "$home/data/live-board/answers.json"
+# A Lavish that has `reply` also gets the answer in the board's conversation.
+mv "$home/fakebin/lavish-axi" "$home/fakebin/lavish-axi.old"
+cat > "$home/fakebin/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1-}" in
+  --version) printf '0.1.80\n' ;;
+  reply) cat "$4" > "$FM_HOME/lavish-reply.body" ;;
+  *) exec "$(dirname "$0")/lavish-axi.old" "$@" ;;
+esac
+SH
+chmod +x "$home/fakebin/lavish-axi"
+out=$(printf 'Yes, still here.\n' | in_home "$home" "$ANSWER" record "$sid" 4 --source "live records" 2>&1) \
+  || fail "recording with a Lavish that has reply failed: $out"
+assert_contains "$out" "posted: the board conversation" "a Lavish with reply did not get the answer posted"
+assert_contains "$(cat "$home/lavish-reply.body")" "You asked: Still there?" "the posted reply did not restate the question"
+assert_contains "$(cat "$home/lavish-reply.body")" "Yes, still here." "the posted reply did not carry the answer"
+check "$(render "$home")" '(.asked.items | map([.status,.question]))
+    == [["answered","Still there?"],["answered","What is Dev 4 to dev 6???"],["answered","Is the pilot planned yet?"]]' \
+  "answers were not listed newest first"
+pass "a question typed on the board shows there as not answered yet, then with its answer, and its result cannot be marked handled without one or a reason"
+
 # --- The watcher drives refresh -----------------------------------------------
 home=$(make_home watched)
 printf '%s\n' "$ENABLED" > "$home/config/live-board.json"

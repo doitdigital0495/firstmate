@@ -64,6 +64,9 @@
 # not-deployed, none or unknown. No description
 # text beyond that summary leaves this projection, and only canonical GitHub
 # /pull/<number> and Azure DevOps /pullrequest/<number> links are kept.
+# A task's about is the plain words of its backlog row's own note, or null when
+# the note is not mostly words: `lb_words` in bin/fm-live-board-projects.jq
+# drops its links, paths and ids, and bin/fm-live-board.sh keeps it off the page.
 # Only allowlisted fields leave this projection: no backlog bodies, raw status,
 # terminal output, action commands, private file paths or arbitrary links. Only
 # recorded https PR /pull/<number> links are retained. Operational text must
