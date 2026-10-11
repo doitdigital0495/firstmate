@@ -1129,6 +1129,12 @@ check "$out" "$(card ws-dev-4)"' | .title == "Chatbot DEV-4" and .what.text == "
   "a bare label did not say that its explanation is missing"
 check "$out" "$(card ws-token)"' | .what.text == "No explanation recorded yet" and .what.source == "missing"' \
   "a note that is only a path was shown as an explanation"
+grep -q 'spreadsheet' "$home/data/live-board/board.html" || fail "the built page does not carry the explained note"
+! grep -q 'ws-token/report.md' "$home/data/live-board/board.html" \
+  || fail "a raw backlog note reached the published page"
+sed -n '/<script id="live-board-data" type="application\/json">/,/<\/script>/p' "$home/data/live-board/board.html" | sed '1d;$d' \
+  | jq -e '[.board.projects[].tasks[], .board.registered_homes[].workers[] | has("about")] | length > 0 and (any | not)' >/dev/null \
+  || fail "the published board payload carries a task's backlog note"
 check "$out" "$(card ws-held)"' | .what.source == "hold" and (.what.text | test("supplier to confirm the price list"))' \
   "a held task with no note did not explain itself from its hold reason"
 check "$out" '.projects[0].description == "The online shop customers order from." and .projects[0].what == null

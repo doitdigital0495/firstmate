@@ -11,7 +11,7 @@
 # mode: the shipped dark template (bin/fm-live-board-template.html) plus one
 # injected payload {refresh_seconds, board, view, asked}, where board is exactly one
 # `fm-live-board-snapshot.sh --json` document (schema fm-live-board.v1) less its
-# per-repository pull request lists, and view is the whole document's
+# per-repository pull request lists and each task's about, and view is the whole document's
 # fm-live-board-view.v1 grouping into the captain's named projects (see
 # PROJECTS), carrying the pull requests each project shows, and asked is the
 # `fm-live-board-answer.sh list` document (see QUESTIONS). The snapshot owns every fact; bin/fm-live-board-projects.jq owns
@@ -372,7 +372,8 @@ build_board() {  # <refresh-seconds>
     include "fm-live-board-projects";
     if .schema == "fm-live-board.v1" and (.projects | type == "array")
     then {refresh_seconds:$refresh, asked:$asked[0], view:lb_view($map),
-      board:(if (.pull_requests.repos | type) == "array" then .pull_requests.repos |= map(del(.prs)) else . end)}
+      board:(del(.projects[].tasks[].about, .registered_homes[].workers[].about)
+        | if (.pull_requests.repos | type) == "array" then .pull_requests.repos |= map(del(.prs)) else . end)}
     else error("not fm-live-board.v1") end' "$snap" 2>/dev/null) \
     || fail "the snapshot is not a readable fm-live-board.v1 document"
   # `<` never appears in JSON syntax outside strings, so escaping every

@@ -1,5 +1,6 @@
 include "fm-captain-question-context";
 include "fm-live-board-prs";
+include "fm-live-board-projects";
 # The fm-live-board.v1 projection; its executable wrapper owns the public contract.
 def valid_input:
   .schema == "fm-live-board-input.v1"
@@ -59,6 +60,7 @@ def meta_only_rows:
 def home_tasks($home_key):
   . as $input
   | open_rows as $open | structured_rows as $backlog | meta_only_rows as $meta_only
+  | ([$backlog[].id, $input.tasks[].id] | map({key:.,value:true}) | from_entries) as $ids
   | $open + $meta_only | map(. as $row
     | ([$input.tasks[] | select(.id == $row.id)][0] // null) as $worker
     | ($row.repo | nonempty) as $repo
@@ -75,7 +77,7 @@ def home_tasks($home_key):
     | ($row.question_context | question_context) as $question_context
     | {key:([$home_key,$row.id,($row.order // "meta" | tostring)] | tojson),
        id:$row.id,home_key:$home_key,project:$project,title:($row.title // $row.id),kind:$kind,
-       about:($row.body_excerpt | nonempty),
+       about:($row.body_excerpt | lb_words($ids; 240)),
        backlog_state:$row.state,role:($row.current_role // "worker"),state:$state,
        current_state:(if $worker == null then null else
          $worker.current_state | {state,source,detail:((.detail // "")[:240]),observed_at,freshness} end),
