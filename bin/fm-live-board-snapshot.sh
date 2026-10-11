@@ -7,8 +7,13 @@
 # Output contract: fm-live-board.v1; schema validation and projection are owned
 # by bin/fm-live-board-snapshot.jq. Fields: revision (SHA-256 of payload before
 # revision), collected_at/epoch, collection_duration_seconds, home {key,label},
-# coverage, omissions[], warnings[], counts, projects[], recently_finished[]
-# and pull_requests.
+# coverage, omissions[], warnings[], counts, projects[], recently_finished[],
+# registered_homes, delegated[] and pull_requests.
+# registered_homes is null when the input carries none, else one
+# {id,status,reason,generated_epoch,active,active_omitted} per registered
+# secondmate home; delegated lists the work being done now under those homes as
+# {key,id,home,project,title,about,kind,state,doing,observed_at_epoch}, exactly
+# as each home's own summary reports it.
 # Each project has a home-qualified key, name/label, registration, counts,
 # tasks[] and questions[]. recently_finished lists structured done backlog rows
 # whose done/merged date falls in the 14 days before collection as
@@ -58,7 +63,8 @@
 # not-deployed, none or unknown. No description
 # text beyond that summary leaves this projection, and only canonical GitHub
 # /pull/<number> and Azure DevOps /pullrequest/<number> links are kept.
-# Only allowlisted fields leave this projection: no backlog bodies, raw status,
+# A task's about is its backlog row's own note, already cut to 240 characters.
+# Only allowlisted fields leave this projection: no other backlog body text, raw status,
 # terminal output, action commands, private file paths or arbitrary links. Only
 # recorded https PR /pull/<number> links are retained. Operational text must
 # itself be secret-free; publishing this home remains an explicit later opt-in.

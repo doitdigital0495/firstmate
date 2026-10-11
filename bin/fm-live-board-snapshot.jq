@@ -12,6 +12,9 @@ def valid_input:
   and (.tasks | type == "array") and (.main_inventory | type == "object")
   and (.coverage.local.complete | type == "boolean")
   and (.coverage.registered_homes.complete | type == "boolean")
+  and ((has("registered_homes") | not) or (.registered_homes.records | type == "array"
+    and all(.[]; (.id | type == "string" and length > 0) and (.active | type == "array")
+      and all(.active[]; .id | type == "string" and length > 0))))
   and all(.backlog.records[]; (.state | IN("in_flight","queued","done"))
     and (.structured | type == "boolean")
     and (if .structured then (.id | type == "string" and length > 0)
@@ -71,6 +74,7 @@ if valid_input then . else error("unsupported or malformed fm-live-board-input.v
     | ($row.question_context | question_context) as $question_context
     | {key:([$home_key,$row.id,($row.order // "meta" | tostring)] | tojson),
        id:$row.id,home_key:$home_key,project:$project,title:($row.title // $row.id),kind:$kind,
+       about:($row.body_excerpt | nonempty),
        backlog_state:$row.state,role:($row.current_role // "worker"),state:$state,
        current_state:(if $worker == null then null else
          $worker.current_state | {state,source,detail:((.detail // "")[:240]),observed_at,freshness} end),
@@ -147,4 +151,11 @@ if valid_input then . else error("unsupported or malformed fm-live-board-input.v
      ($input.registry.projects[] | select(.recognised == false) |
        {kind:"unrecognised-project-posture",name:.name,annotation:.annotation})],
    counts:counts($tasks;$questions),projects:$groups,recently_finished:$finished,
+   registered_homes:(if ($input.registered_homes | type) != "object" then null else
+     [$input.registered_homes.records[]
+      | {id,status,reason,generated_epoch,active:(.active | length),active_omitted}] end),
+   delegated:[($input.registered_homes.records // [])[] as $from | $from.active[]
+     | {key:([$home_key,$from.id,.id] | tojson),id,home:$from.id,project:(.repo | nonempty),
+        title:((.name | nonempty) // .id),about:(.about | nonempty),kind,state,
+        doing:(.doing | nonempty),observed_at_epoch:$from.generated_epoch}],
    pull_requests:lbp_project($prs[0]; [$backlog[].id]; $input.generated_epoch)}

@@ -9,6 +9,9 @@
 #   fm-procevent-lavish.sh answers <result-file>
 #   fm-procevent-lavish.sh reconciles <result-file>
 #   fm-procevent-lavish.sh read <result-file>
+#   fm-procevent-lavish.sh comments <result-file>
+#   fm-procevent-lavish.sh owes-answer <source-id> <sequence> <result-file> [<no-answer-reason>]
+#   fm-procevent-lavish.sh reply <artifact.html> <reply-file>
 #   fm-procevent-lavish.sh source-id <artifact.html>
 #   fm-procevent-lavish.sh retire <artifact.html>
 #   fm-procevent-lavish.sh poll <artifact.html> [--agent-reply-file <path>]
@@ -32,6 +35,24 @@
 #            Captain-supplied body lines are visibly prefixed so they cannot
 #            forge structural labels. Empty message and annotation sections
 #            are reported explicitly.
+# comments   Print one JSON object per line for every item of a captured result
+#            the captain typed words into and that is not a keyed choice: the
+#            freeform message and each annotation carrying a comment, as
+#            {item,uid,kind,text,on}. item is the row's position in the result,
+#            counted from 1, because Lavish reuses a uid within one result; kind
+#            is message or annotation; on is the annotated element's text, cut
+#            to 200 characters. Read-only, like `read`.
+# owes-answer
+#            The generic answer gate bin/fm-procevent.sh asks before it records
+#            a result handled. Exit 3 is the only refusal: the result belongs
+#            to this home's live board and bin/fm-live-board-answer.sh, which
+#            owns that rule and the refusal text printed here, still finds a
+#            typed item with no recorded answer. A reason records that no
+#            answer is needed instead. Every other board and every other exit
+#            lets the result be handled.
+# reply      Post one message to the artifact's Lavish conversation through
+#            `lavish-axi reply`. Exit 3, with nothing tried, unless the
+#            installed Lavish is confirmed to have that command.
 # poll       The registered listener command `arm` publishes, not a command to
 #            run in a conversational turn. It runs the published blocking poll
 #            and prints its response verbatim, absorbing only the one exact
@@ -710,6 +731,94 @@ cmd_choice_rows() {
   ' "$selection" "$file"
 }
 
+# Every typed, non-choice item of one captured result, as JSON lines. A choice
+# row's prompt is its keyed Context data, never a comment, exactly as in `read`.
+cmd_comments() {
+  local file=${1-}
+  [ -n "$file" ] || usage
+  [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
+  perl -MJSON::PP -e '
+    use strict; use warnings;
+    my ($path) = @ARGV;
+    open my $fh, "<", $path or exit 1;
+    my (@fields, $want, @rows);
+    while (my $line = <$fh>) {
+      if (!@fields) {
+        next unless $line =~ /^(?:prompts|feedback)\[(\d+)\]\{([^}]*)\}:\s*$/;
+        ($want, @fields) = ($1, split /,/, $2);
+        next;
+      }
+      last unless $line =~ /^\s/;
+      last if @rows >= $want;
+      chomp $line;
+      push @rows, $line;
+    }
+    close $fh;
+    my $json = JSON::PP->new->canonical->utf8;
+    my $item = 0;
+    for my $row (@rows) {
+      $item++;
+      $row =~ s/^\s+//;
+      my @vals;
+      while (length $row) {
+        if ($row =~ s/^"((?:[^"\\]|\\.)*)"//) {
+          push @vals, $1;
+        } else {
+          $row =~ s/^([^,]*)//;
+          push @vals, $1;
+        }
+        last unless $row =~ s/^,//;
+      }
+      if (@vals > @fields) {
+        my ($preserve) = grep { $fields[$_] eq "prompt" } 0 .. $#fields;
+        if (defined $preserve) {
+          my @parts = splice @vals, $preserve, @vals - @fields + 1;
+          splice @vals, $preserve, 0, join(",", @parts);
+        }
+      }
+      next if @vals != @fields;
+      s/\\(.)/$1 eq "n" ? "\n" : $1 eq "t" ? "\t" : $1 eq "r" ? "\r" : $1/ge for @vals;
+      my %f;
+      $f{$fields[$_]} = $vals[$_] for 0 .. $#fields;
+      my $tag = defined $f{tag} ? $f{tag} : "";
+      next if $tag eq "choice";
+      my $text = defined $f{prompt} ? $f{prompt} : "";
+      my $on = $tag eq "message" ? "" : (defined $f{text} ? $f{text} : "");
+      $text = $f{text} if $tag eq "message" && !length($text) && defined $f{text};
+      utf8::decode($_) for ($text, $on);
+      $text =~ s/^\s+|\s+$//g;
+      $on =~ s/\s+/ /g;
+      next unless length $text;
+      print $json->encode({
+        item => $item, uid => (defined $f{uid} ? "$f{uid}" : ""),
+        kind => ($tag eq "message" ? "message" : "annotation"),
+        text => $text, on => substr($on, 0, 200)
+      }), "\n";
+    }
+  ' "$file"
+}
+
+# The answer gate for this home's live board; every other artifact passes.
+cmd_owes_answer() {
+  local id=${1-} seq=${2-} result=${3-} board
+  [ -n "$id" ] && [ -n "$seq" ] && [ -n "$result" ] || usage
+  board=$("$SCRIPT_DIR/fm-live-board.sh" path 2>/dev/null) || return 0
+  [ -f "$board" ] && [ "$(cmd_source_id "$board" 2>/dev/null)" = "$id" ] || return 0
+  if [ "$#" -ge 4 ]; then
+    "$SCRIPT_DIR/fm-live-board-answer.sh" gate "$id" "$seq" --no-answer-needed "$4"
+  else
+    "$SCRIPT_DIR/fm-live-board-answer.sh" gate "$id" "$seq"
+  fi
+}
+
+cmd_reply() {
+  local artifact=${1-} file=${2-}
+  [ -n "$artifact" ] && [ -n "$file" ] || usage
+  [ -f "$file" ] && [ ! -L "$file" ] || die "reply file does not exist: $file"
+  "$FM_ROOT/bin/fm-bootstrap.sh" lavish-reply-compatible >/dev/null 2>&1 || exit 3
+  post_lavish_reply "$artifact" "$file"
+}
+
 cmd_answers() { cmd_choice_rows answers "$@"; }
 cmd_reconciles() { cmd_choice_rows reconciles "$@"; }
 
@@ -866,6 +975,9 @@ case "${1-}" in
   answers)   shift; cmd_answers "$@" ;;
   reconciles) shift; cmd_reconciles "$@" ;;
   read)      shift; cmd_read "$@" ;;
+  comments)  shift; cmd_comments "$@" ;;
+  owes-answer) shift; cmd_owes_answer "$@" ;;
+  reply)     shift; cmd_reply "$@" ;;
   ''|-h|--help|help) usage ;;
   *) die "unknown command: $1" ;;
 esac

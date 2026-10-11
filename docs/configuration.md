@@ -1585,8 +1585,11 @@ Arm the check once per home with `bin/fm-tool-update-check.sh arm`.
 ## Live board (config/live-board.json)
 
 The live board is an opt-in browser page that shows the captain's projects in this home, each with its open captain questions first and then its open work in three lanes, and refreshes about once a minute.
-Doing now holds only what a worker is working on at that moment, Next holds queued work with no hold and no unfinished prerequisite that a worker will start without the captain, and Charted next holds everything that will not start or move on its own, each card saying what it waits for.
+Doing now holds what a worker is working on at that moment, in this home or under a registered secondmate home, each card naming its crew and what the worker is doing; Next holds queued work with no hold and no unfinished prerequisite that a worker will start without the captain, and Charted next holds everything that will not start or move on its own, each card saying what it waits for.
 Every open task sits in exactly one lane; Next and Charted next show three cards and fold the rest, and projects with no question and no open work fold away.
+Work under a registered secondmate home is read from that home's own `state/home-summary.json`; only its work being done now is shown, and a home whose summary is missing, invalid, on another machine or more than six hours old is named in the board notes with that reason instead of being shown as idle.
+Every project and every lane card carries a one-line "What this is" that expands to say where it came from: the task's own note in the backlog (the indented lines under its row), else the plain-language "about" of its captain question, else its hold reason.
+A card with none of those shows "No explanation recorded yet", and the board notes count such cards, so a short label never stands alone and a missing explanation is visible.
 A table of contents under the totals jumps to each project, and every project card has a Collapse control that leaves only its name, badges and status line showing.
 The page remembers which cards are collapsed, so they stay collapsed across its refreshes.
 It is separate from `/bearings lavish` and renders only the canonical `bin/fm-live-board-snapshot.sh` projection; [`bin/fm-live-board.sh`](../bin/fm-live-board.sh)'s header owns its commands, config schemas, grouping, freshness thresholds, and answer path.
@@ -1617,6 +1620,9 @@ The captain picks an option, optionally adds a note, and queues the answer; the 
 A shrunken card always keeps Change answer, which reopens it; a new answer replaces the earlier one if Lavish has not sent it yet.
 The page cannot see what Lavish still holds or has sent, so it shows no queued count and never marks a card sent.
 An answered question leaves the page on the first refresh after its answer is recorded; a question the captain put off until a later day keeps its card, badged with that day, beside its Charted next card.
+Anything else the captain types on the page, as a freeform message or as a comment on part of it, is a question Firstmate answers on the page: "Your questions and answers", under the table of contents, lists each one newest first with its answer, when it was answered and its source, and shows "Not answered yet" from the moment the question is captured until its answer is recorded.
+Firstmate records an answer with `bin/fm-live-board-answer.sh record <source-id> <sequence>`, reading plain text from a file or standard input, which stores it in `data/live-board/answers.json` and rebuilds the page; Lavish serves that directory beside the page, so an answer must hold no secret.
+`bin/fm-procevent.sh handled` refuses to mark such a result handled until every typed item has an answer, and names the exact command to run, unless it is given `--no-answer-needed <reason>`; [`bin/fm-live-board-answer.sh`](../bin/fm-live-board-answer.sh)'s header owns the record, the commands and that rule.
 Each project also shows a timeline of its 15 newest pull requests by merge or close time, oldest on the left, read from the forge of each registered project's clone (GitHub through `gh`, Azure DevOps through `az`) and from the home's own checkout.
 The GitHub read takes the most recently updated pull requests, so a pull request opened long ago and merged today is on the strip.
 Comment activity on old pull requests uses places in that read too, so on a repository with very heavy checks, where the board falls back to a small read, the strip often omits recent merges.
