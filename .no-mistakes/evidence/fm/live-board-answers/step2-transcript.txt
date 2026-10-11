@@ -1,0 +1,35 @@
+## build with the change
+board: /tmp/fm-lab.OdNrdU/data/live-board/board.html
+{"doing":0,"notes":["1 item has no explanation recorded yet; Firstmate adds one by giving the task a note.","Work under the Chat crew crew could not be read: invalid home: not a firstmate home (missing bin/).","The project registry could not be read.","From other Firstmate crews, only work being done now is on this board; their waiting work is not."],"asked":{"hidden":true,"title":null,"banner":null,"more":0,"items":[]},"doing_cards":[],"other":[{"title":"Chatbot DEV-4","lane":"next","what":"No explanation recorded yet","source":"missing"},{"title":"Chatbot DEV-5","lane":"next","what":"Lets the assistant carry out an action only after the user confirms it.","source":"note"},{"title":"Assistant test cases","lane":"next","what":"Runs 20 test conversations that impersonate real users, to fine tune the assistant.","source":"note"},{"title":"Chatbot DEV-6","lane":"charted","what":"waiting for the pilot users to be named","source":"hold"}]}
+## the captain's real captured questions arrive
+board: /tmp/fm-lab.OdNrdU/data/live-board/board.html
+{"hidden":false,"title":"Your questions and answers44 not answered yet","items":[{"key":"lavish-cfa48fb6cfafcdab.4.1","status":"open","question":"In the live overview (this lavish). ALWAYS explain things (collapsor so). Never just say: DEV-4. Always shortly explain what it is","badges":["Not answered yet"],"on":"Typed on: Charted next 8 These will not start on their own. "},{"key":"lavish-cfa48fb6cfafcdab.3.1","status":"open","question":"Why is nothing being done now?? answer in this lavish","badges":["Not answered yet"],"on":"Typed on: Doing now 0 A worker is on this right now. Nothing"},{"key":"lavish-cfa48fb6cfafcdab.2.1","status":"open","question":"What is Dev 4 to dev 6???","badges":["Not answered yet"],"on":"Typed on: Charted next 8 These will not start on their own. "},{"key":"lavish-cfa48fb6cfafcdab.1.1","status":"open","question":"What is the status of the 20 test cases you should do do fine tune the geris ai assistant, impersonating users?","badges":["Not answered yet"],"on":""}]}
+## marking a question's result handled without an answer
+not handled: the captain typed on the live board and 1 item has no answer on the board yet (result lavish-cfa48fb6cfafcdab 1).
+  item 1: What is the status of the 20 test cases you should do do fine tune the geris ai assistant, impersonating users?
+Answer each one where it was asked, then mark the result handled:
+  bin/fm-live-board-answer.sh record lavish-cfa48fb6cfafcdab 1 --item 1 --source "<where the answer comes from>" --file <answer.txt>
+Or, when nothing in this result asks for an answer, say why:
+  bin/fm-procevent.sh handled lavish-cfa48fb6cfafcdab 1 --no-answer-needed "<reason>"
+exit=1 handled-file=no
+not handled: the captain typed on the live board and 1 item has no answer on the board yet (result lavish-cfa48fb6cfafcdab 2).
+  item 1: What is Dev 4 to dev 6???
+Answer each one where it was asked, then mark the result handled:
+  bin/fm-live-board-answer.sh record lavish-cfa48fb6cfafcdab 2 --item 1 --source "<where the answer comes from>" --file <answer.txt>
+Or, when nothing in this result asks for an answer, say why:
+  bin/fm-procevent.sh handled lavish-cfa48fb6cfafcdab 2 --no-answer-needed "<reason>"
+exit=1 handled-file=no
+not handled: the captain typed on the live board and 1 item has no answer on the board yet (result lavish-cfa48fb6cfafcdab 3).
+  item 1: Why is nothing being done now?? answer in this lavish
+Answer each one where it was asked, then mark the result handled:
+  bin/fm-live-board-answer.sh record lavish-cfa48fb6cfafcdab 3 --item 1 --source "<where the answer comes from>" --file <answer.txt>
+Or, when nothing in this result asks for an answer, say why:
+  bin/fm-procevent.sh handled lavish-cfa48fb6cfafcdab 3 --no-answer-needed "<reason>"
+exit=1 handled-file=no
+not handled: the captain typed on the live board and 1 item has no answer on the board yet (result lavish-cfa48fb6cfafcdab 4).
+  item 1: In the live overview (this lavish). ALWAYS explain things (collapsor so). Never just say: DEV-4. Always shortly explain what it is
+Answer each one where it was asked, then mark the result handled:
+  bin/fm-live-board-answer.sh record lavish-cfa48fb6cfafcdab 4 --item 1 --source "<where the answer comes from>" --file <answer.txt>
+Or, when nothing in this result asks for an answer, say why:
+  bin/fm-procevent.sh handled lavish-cfa48fb6cfafcdab 4 --no-answer-needed "<reason>"
+exit=1 handled-file=no

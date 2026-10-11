@@ -1,0 +1,58 @@
+## crew home readable: eleven workers are live under the Chat crew
+board: /tmp/fm-lab.OdNrdU/data/live-board/board.html
+{"doing":11,"status":"11 being done now, 2 starting next, 1 not starting on its own","notes":["1 item has no explanation recorded yet; Firstmate adds one by giving the task a note.","The project registry could not be read.","From other Firstmate crews, only work being done now is on this board; their waiting work is not."],"doing_cards":[{"title":"Assistant test cases","worker":"A worker in the Chat crew crew","note":"A worker is actively working on this right now.","what":"Runs 20 test conversations that impersonate real users, to fine tune the assistant."},{"title":"Crew job 10","worker":"A worker in the Chat crew crew","note":"A worker is actively working on this right now.","what":"Crew work item 10, explained in one plain sentence."},{"title":"Crew job 11","worker":"A worker in the Chat crew crew","note":"A worker is actively working on this right now.","what":"Crew work item 11, explained in one plain sentence."},{"title":"Crew job 2","worker":"A worker in the Chat crew crew","note":"A worker is actively working on this right now.","what":"Crew work item 2, explained in one plain sentence."},{"title":"Crew job 3","worker":"A worker in the Chat crew crew","note":"A worker is actively working on this right now.","what":"Crew work item 3, explained in one plain sentence."},{"title":"Crew job 4","worker":"A worker in the Chat crew crew","note":"A worker is actively working on this right now.","what":"Crew work item 4, explained in one plain sentence."},{"title":"Crew job 5","worker":"A worker in the Chat crew crew","note":"A worker is actively working on this right now.","what":"Crew work item 5, explained in one plain sentence."},{"title":"Crew job 6","worker":"A worker in the Chat crew crew","note":"A worker is actively working on this right now.","what":"Crew work item 6, explained in one plain sentence."},{"title":"Crew job 7","worker":"A worker in the Chat crew crew","note":"A worker is actively working on this right now.","what":"Crew work item 7, explained in one plain sentence."},{"title":"Crew job 8","worker":"A worker in the Chat crew crew","note":"A worker is actively working on this right now.","what":"Crew work item 8, explained in one plain sentence."},{"title":"Crew job 9","worker":"A worker in the Chat crew crew","note":"A worker is actively working on this right now.","what":"Crew work item 9, explained in one plain sentence."}],"next":["Chatbot DEV-4","Chatbot DEV-5"]}
+## answer the 20-test-cases question (stdin), with a source
+recorded: lavish-cfa48fb6cfafcdab.1.1
+exit=0
+## handled is accepted only once its question is answered
+handled: lavish-cfa48fb6cfafcdab 1
+exit=0 handled-file=yes
+not handled: the captain typed on the live board and 1 item has no answer on the board yet (result lavish-cfa48fb6cfafcdab 2).
+  item 1: What is Dev 4 to dev 6???
+Answer each one where it was asked, then mark the result handled:
+  bin/fm-live-board-answer.sh record lavish-cfa48fb6cfafcdab 2 --item 1 --source "<where the answer comes from>" --file <answer.txt>
+Or, when nothing in this result asks for an answer, say why:
+  bin/fm-procevent.sh handled lavish-cfa48fb6cfafcdab 2 --no-answer-needed "<reason>"
+exit=1 handled-file=no
+## answer Dev 4 to 6 from a file, and the Doing now question
+recorded: lavish-cfa48fb6cfafcdab.2.1
+exit=0
+recorded: lavish-cfa48fb6cfafcdab.3.1
+exit=0
+handled: lavish-cfa48fb6cfafcdab 2
+exit=0 handled-file=yes
+handled: lavish-cfa48fb6cfafcdab 3
+exit=0 handled-file=yes
+## adversarial: empty answer, oversized answer, control characters, blank waiver
+fm-live-board-answer: the answer is empty
+exit=1
+fm-live-board-answer: the answer is 6001 bytes; the limit is 6000
+exit=1
+fm-live-board-answer: the answer, question and source must be plain text without control characters
+exit=1
+error: --no-answer-needed needs a reason
+exit=1 handled-file=no
+fm-live-board-answer: source id must be path-safe: ../../etc
+exit=1
+## adversarial: unreadable answers record
+fm-live-board-answer: the answers record is unreadable and was left untouched: /tmp/fm-lab.OdNrdU/data/live-board/answers.json
+exit=1 record-now=not json
+not handled: the captain typed on the live board (result lavish-cfa48fb6cfafcdab 4) and the answers record cannot be read: /tmp/fm-lab.OdNrdU/data/live-board/answers.json
+Repair that file or move it aside, record the answers, then mark the result handled.
+exit=1 handled-file=no
+board: /tmp/fm-lab.OdNrdU/data/live-board/board.html
+{"banner":"The saved answers could not be read, so only unanswered questions show. Firstmate must repair the record.","items":[["open","In the live overview (this lavish). ALWA"]]}
+## the fourth comment is an instruction: handled with a reason, not listed as a question
+handled: lavish-cfa48fb6cfafcdab 4
+exit=0 handled-file=yes
+## another board's typed question is not held to this rule
+handled: lavish-00000000000000aa 1
+exit=0
+## final board, answers stay after their results are handled
+board: /tmp/fm-lab.OdNrdU/data/live-board/board.html
+{"title":"Your questions and answers3","banner":null,"items":[{"status":"answered","question":"Why is nothing being done now?? answer in this lavish","answer":"Work was being done: eleven workers were live under the Chat crew. The board only counted this home. It now lists them under Doing now.","source":"Answered 11 Oct, 13:55 · No source recorded","badges":[]},{"status":"answered","question":"What is Dev 4 to dev 6???","answer":"DEV-4, DEV-5 and DEV-6 are the next three Chatbot steps. DEV-5 lets the assistant act only after the user confirms. DEV-6 waits for the pilot users to be named. DEV-4 has no explanation recorded yet.","source":"Answered 11 Oct, 13:55 · Source: the task list","badges":[]},{"status":"answered","question":"What is the status of the 20 test cases you should do do fin","answer":"The 20 test conversations are the task \"Assistant test cases\". A worker in the Chat crew is running them right now; none has been reported back yet.\n\nSee its card under Chatbot, Doing now. <b>not bold</b> <script>document.title=\"pwned\"</script>","source":"Answered 11 Oct, 13:55 · Source: the Chat crew summary and the task list","badges":[]}]}
+{"status":"ok","items":[{"key":"lavish-cfa48fb6cfafcdab.3.1","status":"answered"},{"key":"lavish-cfa48fb6cfafcdab.2.1","status":"answered"},{"key":"lavish-cfa48fb6cfafcdab.1.1","status":"answered"}]}
+## adversarial: a crew summary too old to trust is not shown as work being done
+board: /tmp/fm-lab.OdNrdU/data/live-board/board.html
+{"doing":0,"notes":["Work under the Chat crew crew could not be read: its summary is more than 6 hours old.","From other Firstmate crews, only work being done now is on this board; their waiting work is not."]}
+{"doing_after_restore":11}
