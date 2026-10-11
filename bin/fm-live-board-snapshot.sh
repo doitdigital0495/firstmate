@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Separate home-local live-board projection, never a Bearings status-page mode.
+# Separate per-home live-board projection, never a Bearings status-page mode.
 # Usage: fm-live-board-snapshot.sh [--json] [--input FILE] [--prs FILE]
 # Default: collect exactly one fm-fleet-snapshot.sh --live-board-input snapshot.
 # --input renders a previously collected fm-live-board-input.v1, without reads
@@ -7,8 +7,8 @@
 # Output contract: fm-live-board.v1; schema validation and projection are owned
 # by bin/fm-live-board-snapshot.jq. Fields: revision (SHA-256 of payload before
 # revision), collected_at/epoch, collection_duration_seconds, home {key,label},
-# coverage, omissions[], warnings[], counts, projects[], recently_finished[]
-# and pull_requests.
+# coverage, omissions[], warnings[], counts, projects[], recently_finished[],
+# registered_homes[] and pull_requests.
 # Each project has a home-qualified key, name/label, registration, counts,
 # tasks[] and questions[]. recently_finished lists structured done backlog rows
 # whose done/merged date falls in the 14 days before collection as
@@ -35,7 +35,12 @@
 # working, finished, paused, queued, unknown; ties by since/id/key.
 # No Bearings caps apply; counts are exact for the local structured inventory.
 # Unstructured work, missing registry, inventory gaps and uncollected other homes
-# are explicit. Registered-home board exports are a separate follow-on slice.
+# are explicit. registered_homes lists each registered secondmate home in the
+# input as {key,id,label,status,reason,collected_at_epoch,workers[]}: status is
+# collected, remote, invalid or unreadable, and workers are that home's tasks
+# that have a worker, in the same shape as a project's tasks and projected from
+# that home's own input. Its open questions and its work without a worker stay
+# on its own board, so projects[] and counts cover this home only.
 # --prs names one fm-live-board-prs.v1 document (bin/fm-live-board-prs.sh owns
 # it); this command reads no forge itself. pull_requests is {status,
 # collected_at_epoch, repos[]} with status not-collected when no file was
