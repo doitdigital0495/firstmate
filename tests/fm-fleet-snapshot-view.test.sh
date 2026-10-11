@@ -789,6 +789,25 @@ EOF
   pass "undated captain holds age after a configurable threshold, decided only from structured fields"
 }
 
+test_large_backlog_reaches_jq_through_files() {
+  local home fakebin out i
+  home=$(make_home large-backlog)
+  {
+    printf '## In flight\n\n## Queued\n'
+    for i in $(seq 1 700); do
+      printf -- '- [ ] bulk-%04d - Synthetic queued task %d with a long descriptive title that inflates the structured record (repo: alpha) (kind: ship)\n' "$i" "$i"
+    done
+    printf '\n## Done\n'
+  } > "$home/data/backlog.md"
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_NOW=2026-07-14T00:00:00Z \
+    "$SNAPSHOT" --contribution-input) || fail 'a large backlog broke the contribution input'
+  [ "$(printf '%s' "$out" | wc -c)" -gt 131072 ] || fail 'the synthetic backlog no longer exceeds one argv entry'
+  printf '%s' "$out" | jq -e '(.backlog.records | length) == 700 and (.tasks | length) == 0' >/dev/null \
+    || fail 'a large backlog lost records on the contribution input'
+  pass 'a backlog larger than one argv entry reaches jq through files'
+}
+
 test_view_renders_snapshot() {
   local home fakebin view
   home=$(make_home view)
@@ -1168,5 +1187,6 @@ test_completed_scout_report_is_pointer_not_pending
 test_parked_scout_decision_stays_pending
 test_scout_reports_include_teardown_reports
 test_backlog_tasks_axi_forms_and_overrides
+test_large_backlog_reaches_jq_through_files
 test_view_renders_snapshot
 test_view_renders_dead_secondmate_agent_status
