@@ -1,0 +1,19 @@
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-live-board.sh refresh
+[exit 0]
+--- adversarial: mark the result handled with nothing answered
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-procevent.sh handled lavish-19e28e8f154a0481 1
+not handled: the captain typed on the live board and 3 items have no answer on the board yet (result lavish-19e28e8f154a0481 1).
+  item 1: What is the status of the 20 test cases you should do do fine tune the geris ai assistant impersonating users?
+  item 2: What is Dev 4 to dev 6???
+  item 3: Why is nothing being done now?? answer in this lavish
+Answer each one where it was asked, then mark the result handled:
+  bin/fm-live-board-answer.sh record lavish-19e28e8f154a0481 1 --item 1 --source "<where the answer comes from>" --file <answer.txt>
+  bin/fm-live-board-answer.sh record lavish-19e28e8f154a0481 1 --item 2 --source "<where the answer comes from>" --file <answer.txt>
+  bin/fm-live-board-answer.sh record lavish-19e28e8f154a0481 1 --item 3 --source "<where the answer comes from>" --file <answer.txt>
+Or, when nothing in this result asks for an answer, say why:
+  bin/fm-procevent.sh handled lavish-19e28e8f154a0481 1 --no-answer-needed "<reason>"
+[exit 1]
+inbox: lavish-19e28e8f154a0481.1.adapter
+inbox: lavish-19e28e8f154a0481.1.result

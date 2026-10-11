@@ -1,0 +1,55 @@
+--- adversarial: answer with no --item on a three-question result
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-live-board-answer.sh record lavish-19e28e8f154a0481 1
+fm-live-board-answer: result lavish-19e28e8f154a0481 1 carries more than one typed item; pass --item <n>: 1="What is the status of the 20 test cases you should do do fin", 2="What is Dev 4 to dev 6???", 3="Why is nothing being done now?? answer in this lavish"
+[exit 1]
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-live-board-answer.sh record lavish-19e28e8f154a0481 1 --item 1 --source state/geris-testcases.status
+recorded: lavish-19e28e8f154a0481.1.1
+[exit 0]
+--- adversarial: handled with one of three answered
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-procevent.sh handled lavish-19e28e8f154a0481 1
+not handled: the captain typed on the live board and 2 items have no answer on the board yet (result lavish-19e28e8f154a0481 1).
+  item 2: What is Dev 4 to dev 6???
+  item 3: Why is nothing being done now?? answer in this lavish
+Answer each one where it was asked, then mark the result handled:
+  bin/fm-live-board-answer.sh record lavish-19e28e8f154a0481 1 --item 2 --source "<where the answer comes from>" --file <answer.txt>
+  bin/fm-live-board-answer.sh record lavish-19e28e8f154a0481 1 --item 3 --source "<where the answer comes from>" --file <answer.txt>
+Or, when nothing in this result asks for an answer, say why:
+  bin/fm-procevent.sh handled lavish-19e28e8f154a0481 1 --no-answer-needed "<reason>"
+[exit 1]
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-live-board-answer.sh record lavish-19e28e8f154a0481 1 --item 2 --source data/backlog.md
+recorded: lavish-19e28e8f154a0481.1.2
+[exit 0]
+--- adversarial: blank no-answer-needed reason
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-procevent.sh handled lavish-19e28e8f154a0481 1 --no-answer-needed   
+error: --no-answer-needed needs a reason
+[exit 1]
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-live-board-answer.sh record lavish-19e28e8f154a0481 1 --item 3 --source live worker records
+recorded: lavish-19e28e8f154a0481.1.3
+posted: the board conversation
+[exit 0]
+--- body posted to the board conversation (Lavish with reply):
+You asked: Why is nothing being done now?? answer in this lavish
+
+Two workers are on it right now: one here and one in the geris crew.
+
+-----
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-procevent.sh handled lavish-19e28e8f154a0481 1
+handled: lavish-19e28e8f154a0481 1
+[exit 0]
+inbox: lavish-19e28e8f154a0481.1.adapter
+inbox: lavish-19e28e8f154a0481.1.handled
+inbox: lavish-19e28e8f154a0481.1.result
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-live-board.sh refresh
+[exit 0]
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-live-board-answer.sh list
+{"schema":"fm-live-board-questions.v1","status":"ok","items":[{"key":"lavish-19e28e8f154a0481.1.1","question":"What is the status of the 20 test cases you should do do fine tune the geris ai assistant impersonating users?","on":"","asked_at_epoch":1791729701,"status":"answered","answer":"12 of the 20 conversations are played; 3 answers needed tuning <script>alert(1)</script>.","answered_at_epoch":1791729704,"source":"state/geris-testcases.status"},{"key":"lavish-19e28e8f154a0481.1.2","question":"What is Dev 4 to dev 6???","on":"Charted next 4 Chatbot DEV-4 Waits for other work to finish first","asked_at_epoch":1791729701,"status":"answered","answer":"DEV-4 is safe custom dashboards.\n\nDEV-5 is confirmed actions.\n\nDEV-6 is the price list import.","answered_at_epoch":1791729706,"source":"data/backlog.md"},{"key":"lavish-19e28e8f154a0481.1.3","question":"Why is nothing being done now?? answer in this lavish","on":"Doing now 0 A worker is on this right now. Nothing is being worked on right now.","asked_at_epoch":1791729701,"status":"answered","answer":"Two workers are on it right now: one here and one in the geris crew.","answered_at_epoch":1791729708,"source":"live worker records"}]}
+[exit 0]

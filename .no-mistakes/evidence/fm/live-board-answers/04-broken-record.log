@@ -1,0 +1,13 @@
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-live-board-answer.sh record lavish-19e28e8f154a0481 2
+fm-live-board-answer: the answers record is unreadable and was left untouched: /tmp/fm-lb-live.86iISE/home/data/live-board/answers.json
+[exit 1]
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-procevent.sh handled lavish-19e28e8f154a0481 2
+not handled: the captain typed on the live board (result lavish-19e28e8f154a0481 2) and the answers record cannot be read: /tmp/fm-lb-live.86iISE/home/data/live-board/answers.json
+Repair that file or move it aside, record the answers, then mark the result handled.
+[exit 1]
+answers.json after refused write: not json
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-live-board.sh refresh
+[exit 0]

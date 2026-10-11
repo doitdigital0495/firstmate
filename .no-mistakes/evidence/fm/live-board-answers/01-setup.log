@@ -1,0 +1,4 @@
+
+$ in_home /tmp/fm-lb-live.86iISE/home /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4NP98GFDCR4BWBMQAF1M5K4/bin/fm-live-board.sh build
+board: /tmp/fm-lb-live.86iISE/home/data/live-board/board.html
+[exit 0]
