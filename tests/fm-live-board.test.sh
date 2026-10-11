@@ -134,6 +134,9 @@ check "$out" '.empty != null and (.empty | test("Nothing running"))
   and .stats.questions == 0 and .stats.doing == 0 and .stats.next == 0 and .stats.charted == 0
   and .tray == null and .freshness == "live"' \
   "an empty fleet did not render the explicit empty state"
+check "$out" '.toc.hidden == false and .toc.summary == "Contents · 1 project" and (.toc.entries | map(.name)) == ["quiet"]
+  and .toc.entries[0].target == {"kind":"quiet","name":"quiet"}' \
+  "a page with only a quiet project did not list it in the table of contents"
 pass "an empty fleet renders its empty state with idle registered projects folded away"
 
 # --- Large fleet ---------------------------------------------------------------
@@ -335,6 +338,69 @@ check "$out" '(.projects | map(.label)) == ["Checkout","Data platform","web-shop
   and (.projects[2].description | test("Not yet sorted"))
   and .idle.names == ["Unused effort"] and (.notes | any(test("project map")) | not)' \
   "the project map did not group work under the captain's names in priority order"
+
+# --- Table of contents and collapsing cards -------------------------------------
+check "$out" '.toc.hidden == false and .toc.open == true and .toc.summary == "Contents · 4 projects"
+  and (.toc.entries | map(.name)) == ["Checkout","Data platform","web-shop","Unused effort"]
+  and (.toc.entries | map(.name)) == ((.projects | map(.label)) + .idle.names)
+  and (.toc.entries | map(.target)) == [{"kind":"card","name":"Checkout"},{"kind":"card","name":"Data platform"},
+    {"kind":"card","name":"web-shop"},{"kind":"quiet","name":"Unused effort"}]
+  and (.toc.entries | map(.href)) == ((.projects | map("#" + .id)) + (.idle.ids | map("#" + .)))
+  and (.toc.entries | all(.lavishAction))
+  and (.toc.entries | map(.parts)) == [["Checkout","1 question"],["Data platform","2 questions"],["web-shop","1 question"],
+    ["Unused effort","quiet"]]' \
+  "the table of contents did not list every rendered card and quiet project once, in page order, each pointing at its own"
+check "$out" '(.projects | length == 3) and (.projects | all(.collapsed == false and .bodyHidden == false
+    and .toggle.tag == "BUTTON" and .toggle.type == "button" and .toggle.expanded == "true"
+    and .toggle.text == "Collapse" and .toggle.controlsBody))
+  and .idle.open == false' \
+  "a card did not start expanded with a real button that says so"
+out=$(render "$home" "$now" '!fold=Data platform')
+check "$out" '(.submits | map(.status)) == ["pressed"]
+  and (.projects | map(.collapsed)) == [false,true,false] and (.projects | map(.bodyHidden)) == [false,true,false]
+  and (.projects[1] | .toggle.expanded == "false" and .toggle.text == "Expand" and .toggle.controlsBody
+    and .label == "Data platform" and (.status | type == "string" and length > 0))
+  and (.projects[0].toggle | .expanded == "true" and .text == "Collapse")
+  and (.toc.entries | map(.name)) == ["Checkout","Data platform","web-shop","Unused effort"]
+  and .toc.lavishQuestion == "live-board-collapsed" and .toc.kept == "[\"Data platform\"]" and .queued == []' \
+  "collapsing a card did not hide only its body and keep its name, status line and table of contents entry"
+check "$(render "$home" "$now" '!fold=Data platform' '!fold=web-shop' '!reload')" \
+  '(.projects | map(.collapsed)) == [false,true,true] and (.projects | map(.toggle.expanded)) == ["true","false","false"]' \
+  "collapsed cards did not stay collapsed across a reload"
+check "$(render "$home" "$now" '!fold=Data platform' '!fold=Data platform' '!reload')" \
+  '.projects | all(.collapsed == false and .bodyHidden == false and .toggle.expanded == "true")' \
+  "a card collapsed and expanded again did not stay expanded across a reload"
+check "$(render "$home" "$now" '!fold=Data platform' '!reload' '!jump=Data platform')" \
+  '(.submits | map(.status)) == ["pressed","reloaded","pressed"]
+  and (.projects[1] | .collapsed == false and .bodyHidden == false and .toggle.expanded == "true")' \
+  "jumping to a collapsed card from the table of contents did not expand it"
+check "$(render "$home" "$now" '!fold=Data platform' '!jump=Data platform' '!reload')" \
+  '.projects | all(.collapsed == false)' \
+  "a card expanded by a table of contents jump collapsed again on reload"
+check "$(render "$home" "$now" '!jump=Unused effort')" '.idle.open == true and (.projects | all(.collapsed == false))' \
+  "jumping to a quiet project did not unfold the quiet projects"
+check "$(render "$home" "$now" '!screen=narrow' '!fold=Data platform' '!jump=Data platform')" \
+  '.toc.hidden == false and .toc.open == false and .toc.summary == "Contents · 4 projects"
+  and (.toc.entries | map(.name)) == ["Checkout","Data platform","web-shop","Unused effort"]
+  and (.projects | all(.collapsed == false))' \
+  "a phone-width page did not fold its table of contents to one line with every entry still in it"
+out=$(render "$home" "$now" '!storage=blocked' '!fold=Checkout')
+check "$out" '(.projects | map(.collapsed)) == [true,false,false] and (.toc.entries | length == 4)
+  and (.projects[1].lanes | length == 3)' \
+  "a browser that blocks storage broke collapsing or the page"
+check "$(render "$home" "$now" '!storage=blocked' '!fold=Checkout' '!reload')" \
+  '(.projects | map(.label)) == ["Checkout","Data platform","web-shop"] and (.projects | all(.collapsed == false))' \
+  "a browser that blocks storage did not simply forget the collapsed cards on reload"
+check "$(render "$home" "$now" '!storage=blocked' '!fold=Checkout' '!reload' '!folds=["Checkout","Gone project"]')" \
+  '(.submits | map(.status)) == ["pressed","reloaded","restored"] and (.projects | map(.collapsed)) == [true,false,false]
+  and (.projects | map(.toggle.expanded)) == ["false","true","true"] and .queued == []' \
+  "a collapsed card Lavish restored after a reload did not collapse again where the browser blocks storage"
+check "$(render "$home" "$now" '!fold=Checkout' '!folds=not json')" \
+  '(.projects | length == 3) and (.projects | all(.collapsed == false)) and (.toc.entries | length == 4)' \
+  "a garbled restored field broke the page instead of being ignored"
+check "$(render "$home" "$now" '!storage=corrupt')" \
+  '(.projects | length == 3) and (.projects | all(.collapsed == false)) and (.toc.entries | length == 4)' \
+  "a garbled stored entry broke the page instead of being ignored"
 printf '%s\n' '{"schema":"fm-live-board-projects.v1","projects":[{"name":"X","match":[{"branch":"x"}]}]}' \
   > "$home/config/live-board-projects.json"
 in_home "$home" "$LIVE" build >/dev/null || fail "an invalid project map failed the build"
@@ -344,6 +410,8 @@ check "$(render "$home" "$now")" '(.projects | map(.label)) == ["web-shop","data
 rm -f "$home/config/live-board-projects.json"
 in_home "$home" "$LIVE" build >/dev/null || fail "the fleet board did not rebuild"
 pass "a project map groups work under the captain's names; unmatched work and bad maps fall back by repository"
+pass "the table of contents lists every card and quiet project in page order, and each entry jumps to its own"
+pass "every card collapses and expands from a real button, stays that way across reloads, and a contents jump expands it"
 
 # --- Pull request timelines ----------------------------------------------------
 # Each project shows its pull requests; pointing at one shows what changed and
@@ -897,5 +965,6 @@ wait "$WATCH_PID" >/dev/null 2>&1 || true
 WATCH_PID=
 [ -s "$home/data/live-board/board.html" ] \
   || fail "the watcher did not publish an enabled board: $(cat "$TMP_ROOT/watch.err" 2>/dev/null)"
-check "$(render "$home")" '.empty != null' "the watcher-published board did not render"
+check "$(render "$home")" '.empty != null and .idle == null and .toc.hidden == true and .toc.open == null and .toc.entries == []' \
+  "the watcher-published board did not render, or showed a table of contents with nothing to list"
 pass "a running watcher keeps an enabled board published"

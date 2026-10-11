@@ -156,6 +156,18 @@
 # bin/fm-live-board-projects.jq owns the strip. build and refresh keep the
 # fetched branch history under state/.live-board-git.
 #
+# CONTENTS. A table of contents under the totals lists every project the page
+# renders, in page order - each card, then each quiet project - with a card's
+# open question count; a phone-width page folds it to one line. An entry jumps
+# to its project, expanding a collapsed card or unfolding the quiet projects
+# when that is what hides it. Every card has a Collapse control that hides all
+# but its name, badges and status line; cards start expanded. Which cards are
+# collapsed is kept by project name in a hidden field of the table of contents
+# that Lavish restores after each live reload, as a card's queued answer is,
+# and it queues nothing; Lavish's frame refuses browser storage, so the same
+# list also goes to localStorage, under the home label, only for a page opened
+# outside Lavish. Losing either only forgets which cards were collapsed.
+#
 # CARDS. Each card reads top to bottom as its project, what it is about, what
 # it is for, the question, then every option with what picking it does and the
 # recommended one highlighted. A card whose context carries no about or no

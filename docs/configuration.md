@@ -1587,6 +1587,8 @@ Arm the check once per home with `bin/fm-tool-update-check.sh arm`.
 The live board is an opt-in browser page that shows the captain's projects in this home, each with its open captain questions first and then its open work in three lanes, and refreshes about once a minute.
 Doing now holds only what a worker is working on at that moment, Next holds queued work with no hold and no unfinished prerequisite that a worker will start without the captain, and Charted next holds everything that will not start or move on its own, each card saying what it waits for.
 Every open task sits in exactly one lane; Next and Charted next show three cards and fold the rest, and projects with no question and no open work fold away.
+A table of contents under the totals jumps to each project, and every project card has a Collapse control that leaves only its name and status line showing.
+The page remembers which cards are collapsed, so they stay collapsed across its refreshes.
 It is separate from `/bearings lavish` and renders only the canonical `bin/fm-live-board-snapshot.sh` projection; [`bin/fm-live-board.sh`](../bin/fm-live-board.sh)'s header owns its commands, config schemas, grouping, freshness thresholds, and answer path.
 
 To enable it in a home, create the local, gitignored `config/live-board.json`:
