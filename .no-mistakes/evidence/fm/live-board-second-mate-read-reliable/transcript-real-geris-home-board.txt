@@ -1,0 +1,5 @@
+board: /tmp/fm-lab-board.kriKuq/real/primary/data/live-board/board.html
+[9-real-geris-home-on-a-lab-board] code=c793dbf build exit=0 seconds=16.2 overrides=none
+[9-real-geris-home-on-a-lab-board] second mate lines on page: doing=8 next=10 charted=31
+[9-real-geris-home-on-a-lab-board] doing statuses: 1x Paused on an outside wait, 3x Stuck or stopped, 3x Waiting for validation, 1x Working
+[9-real-geris-home-on-a-lab-board] age marks: [null]

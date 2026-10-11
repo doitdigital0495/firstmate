@@ -1,0 +1,30 @@
+# kept last good read: generated 95 s ago, tasks=27, mode=600
+board: /tmp/fm-lab-board.kriKuq/mixed/primary/data/live-board/board.html
+[4-read-too-slow-keeps-last-good] code=c793dbf build exit=0 seconds=1.7 overrides=FM_SNAPSHOT_BOARD_HOMES_TIMEOUT=1
+[4-read-too-slow-keeps-last-good] second mate lines on page: doing=27 next=22 charted=0
+[4-read-too-slow-keeps-last-good] doing statuses: 17x Paused on an outside wait, 10x Working
+[4-read-too-slow-keeps-last-good] age marks: ["as of 2 minutes ago"]
+[4-read-too-slow-keeps-last-good] note: The work of second mate Geris ai assistant is shown as of 2 minutes ago, from its last good read: the read failed or took too long this time.
+board: /tmp/fm-lab-board.kriKuq/mixed/primary/data/live-board/board.html
+[5-never-read-before] code=c793dbf build exit=0 seconds=1.7 overrides=FM_SNAPSHOT_BOARD_HOMES_TIMEOUT=1 FM_SNAPSHOT_CACHE_DIR=/tmp/fm-lab-board.kriKuq/empty-cache
+[5-never-read-before] second mate lines on page: doing=0 next=0 charted=0
+[5-never-read-before] doing statuses: 
+[5-never-read-before] age marks: []
+[5-never-read-before] note: The work of second mate Geris ai assistant is not shown: the read failed or took too long.
+board: /tmp/fm-lab-board.kriKuq/mixed/primary/data/live-board/board.html
+[6-kept-read-names-another-home] code=c793dbf build exit=0 seconds=1.7 overrides=FM_SNAPSHOT_BOARD_HOMES_TIMEOUT=1
+[6-kept-read-names-another-home] second mate lines on page: doing=0 next=0 charted=0
+[6-kept-read-names-another-home] doing statuses: 
+[6-kept-read-names-another-home] age marks: []
+[6-kept-read-names-another-home] note: The work of second mate Geris ai assistant is not shown: the read failed or took too long.
+board: /tmp/fm-lab-board.kriKuq/mixed/primary/data/live-board/board.html
+[7-kept-read-is-a-symlink] code=c793dbf build exit=0 seconds=1.6 overrides=FM_SNAPSHOT_BOARD_HOMES_TIMEOUT=1
+[7-kept-read-is-a-symlink] second mate lines on page: doing=0 next=0 charted=0
+[7-kept-read-is-a-symlink] doing statuses: 
+[7-kept-read-is-a-symlink] age marks: []
+[7-kept-read-is-a-symlink] note: The work of second mate Geris ai assistant is not shown: the read failed or took too long.
+board: /tmp/fm-lab-board.kriKuq/mixed/primary/data/live-board/board.html
+[8-reads-again] code=c793dbf build exit=0 seconds=8.0 overrides=none
+[8-reads-again] second mate lines on page: doing=27 next=22 charted=0
+[8-reads-again] doing statuses: 17x Paused on an outside wait, 10x Working
+[8-reads-again] age marks: [null]

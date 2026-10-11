@@ -1,0 +1,5 @@
+board: /tmp/fm-lab-board.kriKuq/all/primary/data/live-board/board.html
+[3-after-fix-every-review-query-hangs] code=c793dbf build exit=0 seconds=22.5 overrides=none
+[3-after-fix-every-review-query-hangs] second mate lines on page: doing=27 next=22 charted=0
+[3-after-fix-every-review-query-hangs] doing statuses: 17x Paused on an outside wait, 10x Working
+[3-after-fix-every-review-query-hangs] age marks: [null]

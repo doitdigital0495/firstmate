@@ -1,0 +1,5 @@
+real Geris home, before-fix code, read-only board-input read: exit=0 seconds=46.7 (per-home bound is 30) workers_read=27 states=["1 blocked","8 done","3 parked","11 unknown","4 working"]
+real Geris home, after-fix code, read-only board-input read: exit=0 seconds=12.7 (per-home bound is 30) workers_read=27 states=["1 blocked","9 done","10 parked","1 paused","2 unknown","4 working"]
+real Geris home, before-fix-again code, read-only board-input read: exit=0 seconds=45.9 (per-home bound is 30) workers_read=27 states=["1 blocked","8 done","3 parked","11 unknown","4 working"]
+real Geris home, after-fix-again code, read-only board-input read: exit=0 seconds=12.3 (per-home bound is 30) workers_read=27 states=["1 blocked","9 done","10 parked","1 paused","2 unknown","4 working"]
+ 18:14:35 up  8:25, 11 users,  load average: 9.78, 8.40, 11.50

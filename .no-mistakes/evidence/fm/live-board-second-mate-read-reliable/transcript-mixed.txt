@@ -1,0 +1,11 @@
+board: /tmp/fm-lab-board.kriKuq/mixed/primary/data/live-board/board.html
+[1-before-fix-mixed-load] code=base build exit=0 seconds=31.0 overrides=none
+[1-before-fix-mixed-load] second mate lines on page: doing=0 next=0 charted=0
+[1-before-fix-mixed-load] doing statuses: 
+[1-before-fix-mixed-load] age marks: []
+[1-before-fix-mixed-load] note: The work of second mate Geris ai assistant is not shown: the read failed or took too long.
+board: /tmp/fm-lab-board.kriKuq/mixed/primary/data/live-board/board.html
+[2-after-fix-mixed-load] code=c793dbf build exit=0 seconds=8.0 overrides=none
+[2-after-fix-mixed-load] second mate lines on page: doing=27 next=22 charted=0
+[2-after-fix-mixed-load] doing statuses: 17x Paused on an outside wait, 10x Working
+[2-after-fix-mixed-load] age marks: [null]
