@@ -209,10 +209,93 @@ def lb_environments($pulls; $staged; $known; $config):
       end]}
   end;
 
+# WORKERS. Every task that has a worker, in this home and in each registered
+# home the snapshot read, gets one of seven plain statuses. `lb_worker_status`
+# is the one rule, read top down; it only words the current state the snapshot
+# already resolved and classifies nothing itself.
+#   working     the worker is doing the work itself
+#   validation  an automatic review of its work is running or stopped at a step
+#   merge       its pull request's checks are running, or it is green and unmerged
+#   you         its task holds an open question for the captain, or it asked for a decision
+#   external    it paused itself on something outside the team
+#   finished    it is done and not yet cleaned up
+#   stuck       it is blocked, it failed, or its state cannot be read
+# A working worker wins over a question on its task, as in the lanes.
+def lb_worker_status:
+  (.current_state // {}) as $now
+  | ($now.detail // "") as $detail
+  | if $now.state == "working" then
+      (if $now.source != "run-step" then "working"
+       elif $detail | startswith("ci running") then "merge" else "validation" end)
+    elif .hold.kind == "captain" and .hold.reason != null
+      and ($now.state | IN("parked","paused","blocked","done")) then "you"
+    elif $now.state == "parked" then
+      (if $now.source == "run-step" and ($detail | contains("ask-user: authority decision") | not)
+       then "validation" else "you" end)
+    elif $now.state == "paused" then "external"
+    elif $now.state == "done" then
+      (if $detail | test("checks green|^run passed: PR open") then "merge" else "finished" end)
+    else "stuck" end;
+# The row's status word, and how the count line says it.
+def lb_worker_words:
+  {"working":["Working","working"],
+   "validation":["Waiting for validation","waiting for validation"],
+   "merge":["Waiting for a merge or CI","waiting for a merge or CI"],
+   "you":["Waiting on you","waiting on you"],
+   "external":["Paused on an outside wait","paused on an outside wait"],
+   "finished":["Finished and idle","finished and idle"],
+   "stuck":["Stuck or stopped","stuck or stopped"]}[.];
+def lb_worker_order: ["working","validation","merge","you","external","finished","stuck"];
+# What needs cleaning up leads the list.
+def lb_worker_rank:
+  {"stuck":0,"finished":1,"you":2,"merge":3,"validation":4,"external":5,"working":6}[.];
+# One plain sentence on what that status means for this worker.
+def lb_worker_say($status):
+  (.current_state // {}) as $now
+  | ($now.detail // "") as $detail
+  | if $status == "working" then "A worker is doing this now."
+    elif $status == "validation" then
+      (if $now.state == "parked" then "The automatic review stopped at a step and waits for the worker to go through it."
+       else "Its work is being reviewed and checked automatically." end)
+    elif $status == "merge" then
+      (if $now.state == "working" then "The checks on its pull request are running."
+       else "Its pull request is ready and waits to be merged." end)
+    elif $status == "you" then
+      (if .hold.kind == "captain" and .hold.reason != null then "It waits for your answer to the question on its project card."
+       else "It asked for a decision before it can go on." end)
+    elif $status == "external" then "It paused itself until something outside the team is ready."
+    elif $status == "finished" then "It is done and can be cleaned up."
+    elif $now.state == "blocked" then "It reported that it cannot go on without help."
+    elif $now.state == "failed" then "Its work failed."
+    elif $detail | test("gone|no metadata") then "Its session is gone, so nothing is working on this."
+    else "Its current state could not be read." end;
+def lb_worker_kind:
+  {"ship":"Build","scout":"Investigation"}[.owner.kind // .kind] // "Other work";
+# The worker's own last words; a state read from anything but its own report
+# has no words fit for the page.
+def lb_worker_note($ids):
+  (.last_meaningful_event.note
+    // (if .current_state.source == "status-log" then .current_state.detail else null end))
+  | lb_note($ids);
+# The last report is when this status began only when the status was read from it.
+def lb_worker_since:
+  .last_meaningful_event as $event
+  | ($event.emitted_at_epoch // $event.observed_at_epoch // null) as $at
+  | {at:$at,
+     at_is_since:($at != null and .current_state.source == "status-log"
+       and {"working":"working","needs-decision":"parked","blocked":"blocked","paused":"paused",
+            "done":"done","failed":"failed"}[$event.verb // ""] == .current_state.state)};
+def lb_home_name: gsub("[-_.]+"; " ") | (.[:1] | ascii_upcase) + .[1:];
+def lb_home_unread_why:
+  if .status == "remote" then "that home is on another machine"
+  elif .status == "invalid" then "its registration could not be checked"
+  else "the read failed or took too long" end;
+
 def lb_view($map):
 . as $board
 | ($map | if . != null and lb_valid_map then . else null end) as $named
-| ([$board.projects[].tasks[].id, $board.recently_finished[]?.id]
+| ($board.registered_homes // []) as $homes
+| ([$board.projects[].tasks[].id, $board.recently_finished[]?.id, $homes[].workers[].id]
    | map({key:.,value:true}) | from_entries) as $ids
 | ([$board.projects[].tasks[] | {key:.id,value:.title}] | from_entries) as $titles
 | (($board.collected_at // "") | .[:10]) as $today
@@ -329,6 +412,22 @@ def lb_view($map):
 | sort_by([(if .counts.urgent > 0 then 0 elif .counts.questions > 0 then 1
       elif .counts.stuck > 0 then 2 elif .counts.doing > 0 then 3 elif .active then 4 else 5 end),
     (if .order == null then 1 else 0 end),(.order // 0),(.name | ascii_downcase),.key]) as $groups
+| ([$board.projects[].tasks[] | {home:null,task:.}]
+   + [$homes[] | (.label | lb_home_name) as $home | .workers[] | {home:$home,task:.}]
+   | map(select(.task.worker_present == true and .task.owner.kind != "secondmate")
+       | .home as $home | .task as $t | ($t | lb_worker_status) as $status
+       | group_of($t.id; $t.project) as $g
+       | {group:([$home,$g.key] | tojson),home:$home,
+          project:(if $g.index != null then $named.projects[$g.index].name else ($g.repo // "Unsorted work") end),
+          row:({key:$t.key,id:$t.id,title:($t.title | lb_title($ids) // "Untitled work"),
+            status:$status,status_label:($status | lb_worker_words)[0],say:($t | lb_worker_say($status)),
+            kind:($t | lb_worker_kind),note:($t | lb_worker_note($ids)),pr:$t.pr.url}
+            + ($t | lb_worker_since))})) as $crew
+| ([$crew | group_by(.group)[]
+    | {key:.[0].group,project:.[0].project,home:.[0].home,
+       rows:(map(.row) | sort_by([(.status | lb_worker_rank),(.title | ascii_downcase),.key]))}]
+   | sort_by([(.rows[0].status | lb_worker_rank),(if .home == null then 0 else 1 end),.home // "",
+       (.project | ascii_downcase),.key])) as $crew_groups
 | {schema:"fm-live-board-view.v1",
    grouping:(if $map == null then "repo" elif $named == null then "invalid-map" else "map" end),
    counts:{questions:([$groups[].counts.questions]|add // 0),urgent:([$groups[].counts.urgent]|add // 0),
@@ -350,9 +449,20 @@ def lb_view($map):
      ($board.omissions[]? | .kind as $k
        | if $k == "backlog-unavailable" then "The task list could not be read, so some work may be missing."
          elif $k == "registry-unavailable" then "The project registry could not be read."
-         elif $k == "registered-homes-uncollected" then "Work run from other Firstmate homes is not on this board."
+         elif $k == "registered-homes-uncollected" then
+           "Not every second mate\u0027s workers could be read, so the Workers list may be missing some."
          elif $k == "unstructured-open-work" then "\(.count) open task lines are not structured and are not shown."
          else "Coverage gap: \($k | gsub("-"; " "))" end),
+     (if ($homes | length) > 0 then
+        "The project cards show this home\u0027s work only; a second mate\u0027s workers are in the Workers list."
+      else empty end),
      ($board.warnings // [] | map(select(.kind != "question-needs-owner-review")) | group_by(.kind)[]
        | "\(length) board warning\(if length == 1 then "" else "s" end) for Firstmate: \(.[0].kind | gsub("-"; " "))")],
+   workers:{total:($crew | length),
+     statuses:[lb_worker_order[] as $status
+       | ([$crew[] | select(.row.status == $status)] | length) as $n
+       | {key:$status,count:$n,label:"\($n) \(($status | lb_worker_words)[1])"}],
+     gaps:[$homes[] | select(.status != "collected")
+       | "The workers of second mate \(.label | lb_home_name) are not shown: \(lb_home_unread_why)."],
+     groups:$crew_groups},
    projects:$groups};

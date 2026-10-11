@@ -156,6 +156,44 @@
 # bin/fm-live-board-projects.jq owns the strip. build and refresh keep the
 # fetched branch history under state/.live-board-git.
 #
+# WORKERS. Under the table of contents the page lists every task that has a
+# worker, in this home and in each registered secondmate home the snapshot
+# read (bin/fm-live-board-snapshot.sh's header owns `registered_homes`; the
+# home's own questions and unstarted work stay on its own board). Each worker
+# has exactly one plain status, and `lb_worker_status` in
+# bin/fm-live-board-projects.jq is the one rule; it words the current state
+# the snapshot already resolved and classifies nothing itself:
+#   Working                    the worker is doing the work itself.
+#   Waiting for validation     an automatic review of its work is running, or
+#                              stopped at a step that needs no person.
+#   Waiting for a merge or CI  the checks on its pull request are running, or
+#                              the pull request is green and not yet merged.
+#   Waiting on you             its task holds an open captain question, it
+#                              asked for a decision, or a review step waits on
+#                              a person's decision.
+#   Paused on an outside wait  it paused itself on something outside the team.
+#   Finished and idle          it is done and not yet cleaned up.
+#   Stuck or stopped           it is blocked, it failed, its session is gone,
+#                              or its state could not be read.
+# A working worker wins over a question on its task, as in LANES. A row of
+# counts, one per status that has workers, heads the section; each count is a
+# button that shows only those workers and pressing it again, or All, shows
+# them all. Below it a native details lists the workers by project, a second
+# mate's under that project with the second mate named; it starts open, and
+# folded on a phone-width page. Rows that need cleaning up lead: stuck, then
+# finished, waiting on you, merge, validation, outside wait and working, and
+# groups follow their first row. A row shows the status as an icon and a word,
+# the task's title, Build or Investigation, how long ago the worker last
+# reported - "for" that long when its status was read from that report - and
+# a link to its pull request; pressing it opens what the status means and the
+# worker's last report. Only a status read from the worker's own report shows
+# words from it, so no internal state label reaches the page. A registered
+# home that is on another machine, fails its registration checks or was not
+# read in time is named in the section instead of being counted as empty.
+# The pressed count, the folded list and the open rows live in a hidden field
+# of the section that Lavish restores after each live reload, as the collapsed
+# cards do, and queue nothing.
+#
 # CONTENTS. A table of contents under the totals lists every project the page
 # renders, in page order - each card, then each quiet project - with a card's
 # open question count; a phone-width page folds it to one line. An entry jumps

@@ -1584,9 +1584,11 @@ Arm the check once per home with `bin/fm-tool-update-check.sh arm`.
 
 ## Live board (config/live-board.json)
 
-The live board is an opt-in browser page that shows the captain's projects in this home, each with its open captain questions first and then its open work in three lanes, and refreshes about once a minute.
+The live board is an opt-in browser page that shows the captain's projects in this home, each with its open captain questions first and then its open work in three lanes, plus the status of every worker, and refreshes about once a minute.
 Doing now holds only what a worker is working on at that moment, Next holds queued work with no hold and no unfinished prerequisite that a worker will start without the captain, and Charted next holds everything that will not start or move on its own, each card saying what it waits for.
 Every open task sits in exactly one lane; Next and Charted next show three cards and fold the rest, and projects with no question and no open work fold away.
+A Workers section above the cards counts every worker by what it is doing right now - working, waiting for validation, waiting for a merge or CI, waiting on the captain, paused on an outside wait, finished and idle, or stuck or stopped - and each count is a button that narrows the list under it to those workers.
+That list covers this home and every registered secondmate home on the same machine, names a home it could not read, and opens a pressed row on the worker's last report.
 A table of contents under the totals jumps to each project, and every project card has a Collapse control that leaves only its name, badges and status line showing.
 The page remembers which cards are collapsed, so they stay collapsed across its refreshes.
 It is separate from `/bearings lavish` and renders only the canonical `bin/fm-live-board-snapshot.sh` projection; [`bin/fm-live-board.sh`](../bin/fm-live-board.sh)'s header owns its commands, config schemas, grouping, freshness thresholds, and answer path.
@@ -2523,6 +2525,7 @@ FM_HOME_SUMMARY_TIMEOUT=60     # seconds bounding the complete best-effort home-
 FM_HOME_SUMMARY_ERROR_LOG_MAX_BYTES=65536   # approximate size cap for state/.home-summary-refresh.log before it is trimmed to the newest 200 lines; invalid or zero values use 65536
 FM_LIVE_BOARD_TIMEOUT=45   # seconds bounding one live-board snapshot collection in bin/fm-live-board.sh; a timed-out build keeps the previous page; invalid or zero values use 45
 FM_HOME_SUMMARY_FAILURE_REPORT=2   # recorded publication failures since the ledger's own last publication before session start reports a HOME_SUMMARY line; invalid or zero values use 2
+FM_SNAPSHOT_BOARD_HOMES_TIMEOUT=30   # seconds bounding each registered secondmate home's read for the live board's worker list inside bin/fm-fleet-snapshot.sh --live-board-input; a home not read in time is named on the page
 FM_SNAPSHOT_CREW_STATE_TIMEOUT=10   # seconds bounding each local per-task current-state read inside bin/fm-fleet-snapshot.sh; remote endpoint liveness is not probed on the snapshot path
 FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=8   # maximum local tasks whose current-state and endpoint observations are collected concurrently during snapshot composition
 FM_SNAPSHOT_BUDGET=5                # one total seconds budget for all concurrent remote home-ledger reads
