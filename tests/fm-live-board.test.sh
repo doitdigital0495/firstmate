@@ -292,7 +292,7 @@ check "$(crew_row "$held | (.tasks[] | select(.id == \"ln-doing\") | .current_st
   '.lane == "charted" and .why == "your-answer" and .status == null' \
   "a waiting worker whose task holds a question for the captain did not stay in charted next as waiting for the answer"
 check "$(crew_row "$held")" '.lane == "doing" and .status == "working"' "a working worker lost its line to a question on its task"
-pass "a worker's line is worded from the resolved current state, and one waiting on the captain or finished stays in charted next"pass "each worker status is worded from the resolved current state: working, validation, merge or CI, you, outside wait, finished, stuck"
+pass "a worker's line is worded from the resolved current state, and one waiting on the captain or finished stays in charted next"
 
 # A second mate's workers and queued work join their project's lanes, named as its.
 home=$(make_home crew)
