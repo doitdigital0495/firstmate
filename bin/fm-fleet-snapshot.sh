@@ -116,16 +116,18 @@
 #
 # --contribution-input prints only the canonical backlog/tasks ownership pair,
 # without worker observations or cross-home collection, for the home-local poll.
-# --live-board-input is the separate home-local, opt-in board input contract
+# --live-board-input is the separate, opt-in board input contract
 # fm-live-board-input.v1: generated/generated_epoch, fm_home, collection duration,
 # registry (fm-project-mode.sh --list-json), canonical backlog/tasks and main_inventory.
 # It reuses generation-bound worker observations without contributions, terminal
 # capture, remote reads, cache writes or bounded home-summary aggregation.
-# registered_homes is {registry_complete,records[]}, one record per registered
-# secondmate: {id,status: read|unread,reason,generated_epoch,active[],
-# active_omitted}, where active is that home's own summary's active_children
-# as {id,kind,state,repo,name,about,doing}; board_registered_homes_json owns
-# which homes are read and why one is not.
+# registered_homes[] carries one {id,status,reason,input} per registered
+# secondmate home, up to FM_SNAPSHOT_SECONDMATES: status collected with that
+# home's own fm-live-board-input.v1 as input (this command, read-only, with
+# FM_HOME set to the validated home and bounded by
+# FM_SNAPSHOT_BOARD_HOMES_TIMEOUT), else remote, invalid or unreadable with the
+# reason and a null input. A registered home's own registered homes are not
+# followed. coverage.registered_homes is {complete,reason,total,collected}.
 # tasks additionally carry last_meaningful_event: null or {type,verb,name,note,
 # emitted_at_epoch,observed_at_epoch,age_seconds}; strict selection is owned by
 # status_last_meaningful_event/status_milestone_record in fm-classify-lib.sh.
@@ -191,6 +193,7 @@ FM_SNAPSHOT_REGISTRY_LINES=${FM_SNAPSHOT_REGISTRY_LINES:-256}
 FM_SNAPSHOT_REGISTRY_BYTES=${FM_SNAPSHOT_REGISTRY_BYTES:-65536}
 FM_SNAPSHOT_REGISTRY_RECORDS=${FM_SNAPSHOT_REGISTRY_RECORDS:-40}
 FM_SNAPSHOT_REGISTRY_TIMEOUT=${FM_SNAPSHOT_REGISTRY_TIMEOUT:-2}
+FM_SNAPSHOT_BOARD_HOMES_TIMEOUT=${FM_SNAPSHOT_BOARD_HOMES_TIMEOUT:-30}
 validate_positive_bound() {  # <name> <value>
   case "$2" in
     ''|*[!0-9]*|0)
@@ -223,6 +226,7 @@ validate_positive_bound FM_SNAPSHOT_REGISTRY_LINES "$FM_SNAPSHOT_REGISTRY_LINES"
 validate_positive_bound FM_SNAPSHOT_REGISTRY_BYTES "$FM_SNAPSHOT_REGISTRY_BYTES"
 validate_positive_bound FM_SNAPSHOT_REGISTRY_RECORDS "$FM_SNAPSHOT_REGISTRY_RECORDS"
 validate_positive_bound FM_SNAPSHOT_REGISTRY_TIMEOUT "$FM_SNAPSHOT_REGISTRY_TIMEOUT"
+validate_positive_bound FM_SNAPSHOT_BOARD_HOMES_TIMEOUT "$FM_SNAPSHOT_BOARD_HOMES_TIMEOUT"
 FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS=${FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS:-14}
 case "$FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" in
   ''|*[!0-9]*)
@@ -264,9 +268,11 @@ refreshes only its parent-side remote-summary cache as an observational side eff
 --contribution-input emits the canonical local backlog/tasks ownership pair only,
 without worker observations or cross-home collection.
 
---live-board-input emits the separate home-local board input described in this
-script's header, not an expanded Bearings digest. It does not aggregate other
-homes or refresh contribution/remote caches; uncollected homes are disclosed.
+--live-board-input emits the separate board input described in this script's
+header, not an expanded Bearings digest. It refreshes no contribution or remote
+cache. Each registered local secondmate home's own board input is read, all at
+once and each within FM_SNAPSHOT_BOARD_HOMES_TIMEOUT (default 30 seconds);
+a home that is remote, invalid or not read in time is disclosed.
 
 --secondmate-home-summary emits the bounded structured summary used after a
 validated registered-home handoff. It is local-only, skips nested secondmate
@@ -1110,7 +1116,6 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
          | {id,kind,state:.current_state.state,
             repo:(($work.repo // .project // null) | if . == null then null else trunc(120) end),
             name:(($work.title // null) | if . == null then null else trunc(70) end),
-            about:(($work.body_excerpt // null) | if . == null or . == "" then null else trunc(240) end),
             source:.current_state.source,
             doing:((.current_state.detail // "") | trunc(120))} ]) as $active_all
     | ($captain_holds_all
@@ -1423,10 +1428,11 @@ snapshot_cache_store() {  # <summary-json-file> <destination>
   return 1
 }
 
-# The one validity rule for a home's state/home-summary.json, as a jq filter
-# over the slurped file with $home bound to the home it must describe.
-snapshot_summary_filter_write() {  # <filter-file>
-  cat > "$1" <<'JQ'
+prepare_remote_summary_collection() {  # <sampled-row-json-lines>
+  local rows=$1 manifest collector row id home host cache_path remote_rows rc slot=0
+  SNAPSHOT_COLLECT_DIR=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/fm-fleet-ledgers.XXXXXX") || return 1
+  SNAPSHOT_SUMMARY_FILTER="$SNAPSHOT_COLLECT_DIR/summary-filter.jq"
+  cat > "$SNAPSHOT_SUMMARY_FILTER" <<'JQ'
 length == 1 and (.[0] |
   .schema == "fm-secondmate-home-summary.v1"
   and .hold_classifier_schema == "fm-captain-hold-buckets.v1"
@@ -1441,13 +1447,6 @@ length == 1 and (.[0] |
   and (.counts | type) == "object" and (.omitted | type) == "array"
 )
 JQ
-}
-
-prepare_remote_summary_collection() {  # <sampled-row-json-lines>
-  local rows=$1 manifest collector row id home host cache_path remote_rows rc slot=0
-  SNAPSHOT_COLLECT_DIR=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/fm-fleet-ledgers.XXXXXX") || return 1
-  SNAPSHOT_SUMMARY_FILTER="$SNAPSHOT_COLLECT_DIR/summary-filter.jq"
-  snapshot_summary_filter_write "$SNAPSHOT_SUMMARY_FILTER" || return 1
   snapshot_cache_prepare || true
   manifest="$SNAPSHOT_COLLECT_DIR/manifest.jsonl"
   : > "$manifest"
@@ -1554,9 +1553,16 @@ snapshot_collection_cleanup() {
   SNAPSHOT_COLLECT_DIR=
   SNAPSHOT_SUMMARY_FILTER=
 }
+BOARD_HOMES_DIR=
+BOARD_HOMES_PIDS=
+board_homes_cleanup() {
+  [ -z "$BOARD_HOMES_DIR" ] || rm -rf -- "$BOARD_HOMES_DIR"
+  BOARD_HOMES_DIR=
+}
 snapshot_cleanup() {
   snapshot_task_cleanup
   snapshot_collection_cleanup
+  board_homes_cleanup
   cleanup_json_files
 }
 trap snapshot_cleanup EXIT
@@ -2049,6 +2055,101 @@ contribution_tasks_json() {
   done | jq -s .
 }
 
+# Registered-home board inputs; this script's header owns the contract. The
+# reads start before this home's own observations so they overlap them, and a
+# killed or failed read leaves no file, which reads as unreadable.
+board_homes_start() {
+  local row id home remote status reason index=0 seen=''
+  BOARD_HOMES_DIR=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/fm-fleet-board-homes.XXXXXX") || return 1
+  : > "$BOARD_HOMES_DIR/manifest.jsonl" || return 1
+  if [ -n "${FM_SNAPSHOT_BOARD_NESTED:-}" ]; then
+    printf '%s\n' '{"available":true,"complete":true,"records":[],"nested":true}' > "$BOARD_HOMES_DIR/registry.json" || return 1
+    return 0
+  fi
+  registry_secondmates_json > "$BOARD_HOMES_DIR/registry.json" || return 1
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    index=$((index + 1))
+    id=$(printf '%s' "$row" | jq -r '.id')
+    home=$(printf '%s' "$row" | jq -r '.home // ""')
+    remote=$(printf '%s' "$row" | jq -r '.remote // false')
+    reason=$(printf '%s' "$row" | jq -r '.registry_error // ""')
+    status=collected
+    if [ -z "$reason" ]; then
+      case "$home" in
+        /*) : ;;
+        *) reason="registered path is not absolute" ;;
+      esac
+    fi
+    if [ -n "$reason" ]; then
+      status=invalid
+    elif [ "$remote" = true ]; then
+      status=remote
+      reason="the home is on another machine"
+    elif ! validate_secondmate_home "$id" "$home" 2>/dev/null; then
+      status=invalid
+      reason=$VALIDATION_ERROR
+    else
+      home=$VALIDATED_HOME
+      case " $seen " in
+        *" $home "*) status=invalid; reason="duplicate resolved home route" ;;
+        *) seen="$seen $home" ;;
+      esac
+    fi
+    if [ "$status" = collected ]; then
+      # The path overrides name this home's directories, never the other home's.
+      {
+        fm_run_timed "$FM_SNAPSHOT_BOARD_HOMES_TIMEOUT" env \
+          -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_PROJECTS_OVERRIDE \
+          FM_HOME="$home" FM_SNAPSHOT_BOARD_NESTED=1 \
+          FM_SNAPSHOT_NOW="$SNAPSHOT_NOW" FM_SNAPSHOT_NOW_EPOCH="$SNAPSHOT_EPOCH" \
+          "$SCRIPT_DIR/fm-fleet-snapshot.sh" --live-board-input \
+          > "$BOARD_HOMES_DIR/$index.tmp" 2>/dev/null \
+          && mv -f -- "$BOARD_HOMES_DIR/$index.tmp" "$BOARD_HOMES_DIR/$index.json"
+      } &
+      BOARD_HOMES_PIDS="$BOARD_HOMES_PIDS $!"
+    fi
+    jq -cn --arg id "$id" --arg status "$status" --arg reason "$reason" --argjson index "$index" \
+      '{id:$id,status:$status,reason:(if $reason == "" then null else $reason end),index:$index}' \
+      >> "$BOARD_HOMES_DIR/manifest.jsonl" || return 1
+  done < <(jq -c --argjson cap "$FM_SNAPSHOT_SECONDMATES" \
+    '(if $cap == 0 then .records else .records[:$cap] end)[]' "$BOARD_HOMES_DIR/registry.json")
+}
+
+board_homes_json() {  # <output-file>
+  local pid row index file
+  for pid in $BOARD_HOMES_PIDS; do
+    wait "$pid" 2>/dev/null || true
+  done
+  BOARD_HOMES_PIDS=
+  : > "$BOARD_HOMES_DIR/homes.jsonl" || return 1
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    index=$(printf '%s' "$row" | jq -r '.index')
+    file="$BOARD_HOMES_DIR/$index.json"
+    if [ "$(printf '%s' "$row" | jq -r '.status')" != collected ]; then
+      printf '%s' "$row" | jq -c 'del(.index) + {input:null}'
+    elif [ -f "$file" ] && jq -e '.schema == "fm-live-board-input.v1"' "$file" >/dev/null 2>&1; then
+      printf '%s' "$row" | jq -c --slurpfile input "$file" 'del(.index) + {input:$input[0]}'
+    else
+      printf '%s' "$row" | jq -c 'del(.index) + {status:"unreadable",reason:"the read failed or took too long",input:null}'
+    fi >> "$BOARD_HOMES_DIR/homes.jsonl" || return 1
+  done < "$BOARD_HOMES_DIR/manifest.jsonl"
+  jq -s --slurpfile registry "$BOARD_HOMES_DIR/registry.json" '
+    ($registry[0]) as $registry
+    | ([.[] | select(.status == "collected")] | length) as $collected
+    | {homes:.,
+       coverage:{total:length,collected:$collected,
+         complete:($registry.nested != true and $registry.available == true and $registry.complete == true
+           and ($registry.records | length) == length and $collected == length),
+         reason:(if $registry.nested == true then "a registered home\u0027s own registered homes are not read"
+           elif $registry.available != true then ($registry.reason // "registered secondmate table is unreadable")
+           elif $registry.complete != true or ($registry.records | length) != length then
+             "more homes are registered than one snapshot reads"
+           elif $collected != length then "\(length - $collected) of \(length) registered homes were not read"
+           else null end)}}' "$BOARD_HOMES_DIR/homes.jsonl" > "$1"
+}
+
 if [ "$OUTPUT_MODE" = contribution-input ]; then
   # Reuse the canonical backlog parser, without observing workers or other homes.
   contribution_tasks=$(contribution_tasks_json) || { echo "fm-fleet-snapshot: contribution task read failed" >&2; exit 1; }
@@ -2062,6 +2163,9 @@ if [ "$OUTPUT_MODE" = contribution-input ]; then
   jq -n --slurpfile backlog "$JSON_TRANSPORT_DIR/backlog.json" --slurpfile tasks "$JSON_TRANSPORT_DIR/tasks.json" \
     '{backlog:$backlog[0],tasks:$tasks[0]}'
   exit $?
+fi
+if [ "$OUTPUT_MODE" = live-board-input ]; then
+  board_homes_start || { echo "fm-fleet-snapshot: registered-home board read failed to start" >&2; exit 1; }
 fi
 prefetch_task_current_states || { echo "fm-fleet-snapshot: task observation failed" >&2; exit 1; }
 TASKS_JSON=$(set -o pipefail; task_json_lines) || { echo "fm-fleet-snapshot: task snapshot failed" >&2; exit 1; }
@@ -2079,64 +2183,13 @@ printf '%s\n' "$BACKLOG_JSON" > "$BACKLOG_JSON_FILE" \
 printf '%s\n' "$TASKS_JSON" > "$TASKS_JSON_FILE" \
   || { echo "fm-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
 
-# Work being done now under each registered secondmate home, for the board
-# input: the home's own validated state/home-summary.json, read in place. A
-# remote home, an invalid home, a summary that fails the shared validity rule
-# and one older than BOARD_HOME_SUMMARY_MAX_AGE seconds are reported unread
-# with the reason, never guessed. Nothing remote is read and no cache written.
-BOARD_HOME_SUMMARY_MAX_AGE=21600
-board_registered_homes_json() {
-  local registry_file records summary row id home remote reason
-  registry_file="$JSON_TRANSPORT_DIR/board-secondmate-registry.json"
-  records="$JSON_TRANSPORT_DIR/board-registered-homes.jsonl"
-  registry_secondmates_json > "$registry_file" || return 1
-  SNAPSHOT_COLLECT_DIR=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/fm-fleet-ledgers.XXXXXX") || return 1
-  SNAPSHOT_SUMMARY_FILTER="$SNAPSHOT_COLLECT_DIR/summary-filter.jq"
-  snapshot_summary_filter_write "$SNAPSHOT_SUMMARY_FILTER" || return 1
-  summary="$SNAPSHOT_COLLECT_DIR/board-summary.json"
-  : > "$records"
-  while IFS= read -r row; do
-    [ -n "$row" ] || continue
-    id=$(printf '%s' "$row" | jq -r '.id')
-    home=$(printf '%s' "$row" | jq -r '.home // ""')
-    remote=$(printf '%s' "$row" | jq -r '.remote // false')
-    reason=$(printf '%s' "$row" | jq -r '.registry_error // ""')
-    printf '{}\n' > "$summary" || return 1
-    if [ -z "$reason" ]; then
-      if [ "$remote" = true ]; then
-        reason="it runs on another machine"
-      elif ! validate_secondmate_home "$id" "$home" 2>/dev/null; then
-        reason="invalid home: $VALIDATION_ERROR"
-      elif ! summary_file_read "$VALIDATED_HOME/state/home-summary.json" "$VALIDATED_HOME" "$summary"; then
-        reason="its summary is missing, unreadable, or invalid"
-      elif [ "$(snapshot_summary_age "$summary")" -gt "$BOARD_HOME_SUMMARY_MAX_AGE" ]; then
-        reason="its summary is more than $((BOARD_HOME_SUMMARY_MAX_AGE / 3600)) hours old"
-        printf '{}\n' > "$summary" || return 1
-      fi
-    fi
-    jq -c --arg id "$id" --arg reason "$reason" '
-      {id:$id,status:(if $reason == "" then "read" else "unread" end),
-       reason:(if $reason == "" then null else $reason end),
-       generated_epoch:(.generated_epoch // null),
-       active:[(.active_children // [])[] | select(type == "object" and (.id | type) == "string")
-         | {id,kind:(.kind // null),state:(.state // null),repo:(.repo // null),name:(.name // null),
-            about:(.about // null),doing:(.doing // null)}],
-       active_omitted:([(.omitted // [])[] | select(.surface == "active_children") | .count] | add // 0)}' \
-      "$summary" >> "$records" || return 1
-  done <<EOF
-$(jq -c '.records[]' "$registry_file")
-EOF
-  jq -cs --slurpfile registry "$registry_file" \
-    '{registry_complete:($registry[0].complete == true),records:.}' "$records"
-}
-
 if [ "$OUTPUT_MODE" = live-board-input ]; then
   "$SCRIPT_DIR/fm-project-mode.sh" --list-json > "$JSON_TRANSPORT_DIR/registry.json" \
     || { echo "fm-fleet-snapshot: project inventory failed" >&2; exit 1; }
   main_inventory_json "$BACKLOG_JSON_FILE" "$TASKS_JSON_FILE" > "$MAIN_INVENTORY_JSON_FILE" \
     || { echo "fm-fleet-snapshot: main inventory failed" >&2; exit 1; }
-  board_registered_homes_json > "$JSON_TRANSPORT_DIR/board-registered-homes.json" \
-    || { echo "fm-fleet-snapshot: registered home read failed" >&2; exit 1; }
+  board_homes_json "$JSON_TRANSPORT_DIR/board-homes.json" \
+    || { echo "fm-fleet-snapshot: registered-home board read failed" >&2; exit 1; }
   board_finished=$(date +%s)
   board_home=$FM_HOME
   [ ! -d "$FM_HOME" ] || board_home=$(cd "$FM_HOME" && pwd -P) || exit 1
@@ -2145,14 +2198,15 @@ if [ "$OUTPUT_MODE" = live-board-input ]; then
     --slurpfile registry "$JSON_TRANSPORT_DIR/registry.json" \
     --slurpfile backlog "$BACKLOG_JSON_FILE" --slurpfile tasks "$TASKS_JSON_FILE" \
     --slurpfile inventory "$MAIN_INVENTORY_JSON_FILE" \
-    --slurpfile homes "$JSON_TRANSPORT_DIR/board-registered-homes.json" '
+    --slurpfile homes "$JSON_TRANSPORT_DIR/board-homes.json" '
     [$backlog[0].records[] | select(.state != "done")] as $open
     | {schema:"fm-live-board-input.v1",generated:$generated,generated_epoch:$epoch,
      fm_home:$fm_home,collection_duration_seconds:$duration,registry:$registry[0],
-     backlog:$backlog[0],tasks:$tasks[0],main_inventory:$inventory[0],registered_homes:$homes[0],
+     backlog:$backlog[0],tasks:$tasks[0],main_inventory:$inventory[0],
+     registered_homes:$homes[0].homes,
      coverage:{local:{complete:($backlog[0].present and all($open[]; .structured != false)),
        total_open:($open | length)},
-       registered_homes:{complete:false,reason:"only work being done now is read from registered homes; their waiting work is not collected"}}}'
+       registered_homes:$homes[0].coverage}}'
   exit $?
 fi
 

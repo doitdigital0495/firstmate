@@ -134,6 +134,9 @@ check "$out" '.empty != null and (.empty | test("Nothing running"))
   and .stats.questions == 0 and .stats.doing == 0 and .stats.next == 0 and .stats.charted == 0
   and .tray == null and .freshness == "live"' \
   "an empty fleet did not render the explicit empty state"
+check "$out" '.workers | .hidden == false and .total == 0 and .count == "0" and .say == "No worker is running right now."
+  and .counts == [] and .groups == [] and .list == null and .kept == null' \
+  "a page with no workers did not render the Workers empty state"
 check "$out" '.toc.hidden == false and .toc.summary == "Contents · 1 project" and (.toc.entries | map(.name)) == ["quiet"]
   and .toc.entries[0].target == {"kind":"quiet","name":"quiet"}' \
   "a page with only a quiet project did not list it in the table of contents"
@@ -216,6 +219,157 @@ check "$out" '.stats.doing == 1 and .stats.next == 5 and .stats.charted == 9 and
   and ([.projects[].text] | join(" ") | test("ln-[a-z]") | not)' \
   "a question the captain put off lost its answerable card and deferred badge, or the lane totals were wrong"
 pass "doing now, next and charted next each follow one rule, and every task sits in exactly one lane"
+
+# --- Workers: every worker's status at a glance, and the list behind it --------
+check "$out" '.workers | .hidden == false and .total == 5 and .count == "5" and .lavishQuestion == "live-board-workers"
+  and (.say | test("Press a count")) and .gaps == []
+  and (.counts | map([.filter,.text])) == [["all","All 5"],["working","1 working"],
+    ["external","1 paused on an outside wait"],["finished","1 finished and idle"],["stuck","2 stuck or stopped"]]
+  and (.counts | all(.tag == "BUTTON" and .type == "button") and (.[1:] | all(.icon))
+    and .[0].pressed and (.[1:] | all(.pressed | not)))
+  and ([.counts[1:][].text | capture("^(?<n>[0-9]+) ").n | tonumber] | add) == ([.groups[].rows[]] | length)
+  and ([.groups[].rows[]] | length) == .total' \
+  "the worker counts did not add up to one row per worker, or a count was not a labelled button"
+check "$out" '.workers | (.groups | length == 1 and .[0].project == "shop" and .[0].home == null and .[0].count == 5
+    and .[0].hidden == false)
+  and (.groups[0].rows | map([.id,.status,.label])) == [["ln-stuck","stuck","Stuck or stopped"],
+    ["ln-lost","stuck","Stuck or stopped"],["ln-finished","finished","Finished and idle"],
+    ["ln-paused","external","Paused on an outside wait"],["ln-doing","working","Working"]]
+  and (.groups[0].rows | all(.icon and (.hidden | not)
+    and (.text | test("ln-[a-z]|run-step|status-log|\\bpane\\b|herdr|/projects/|wt-") | not)))
+  and (.groups[0].rows | map(.title)) == ["Fix the payment error","Speed up search","Tidy the product page",
+    "Wait for the supplier release","Build the new checkout"]
+  and (.groups[0].rows[3] | (.note | test("^Last report: waiting for the supplier"))
+    and (.say | test("paused itself")) and (.meta | test("^Build · for [0-9]+s$")))
+  and (.groups[0].rows[4] | (.say == "A worker is doing this now.") and (.meta | test("^Build · last update [0-9]+s ago$")))
+  and (.groups[0].rows[1] | .note == null and (.say | test("could not be read|session is gone")))
+  and .list == {"open":true,"summary":"All 5 workers, by project"}' \
+  "the worker list did not give each worker a plain status, title, kind and age with cleanup first"
+out=$(render "$home" "" '!workers=stuck')
+check "$out" '.workers | (.counts | map(select(.pressed) | .filter)) == ["stuck"]
+  and (.groups[0].rows | map(.hidden)) == [false,false,true,true,true] and .groups[0].hidden == false
+  and .groups[0].count == 2
+  and .list == {"open":true,"summary":"2 stuck or stopped, by project"}
+  and (.kept | fromjson) == {"filter":"stuck","open":true,"rows":[]}' \
+  "pressing a status count did not show only those workers"
+check "$(render "$home" "" '!workers=stuck' '!workers=stuck')" '.workers
+  | (.counts | map(select(.pressed) | .filter)) == ["all"] and (.groups[0].rows | all(.hidden | not))
+    and (.kept | fromjson) == {"filter":"","open":true,"rows":[]}' \
+  "pressing the pressed count again did not show every worker"
+check "$(render "$home" "" '!workers=stuck' '!workers=all')" '.workers
+  | (.counts | map(select(.pressed) | .filter)) == ["all"] and (.groups[0].rows | all(.hidden | not))' \
+  "the All count did not show every worker"
+check "$(render "$home" "" '!screen=narrow')" '.workers | .list.open == false and (.counts | length) == 5' \
+  "a phone-width page did not fold the worker list under its counts"
+check "$(render "$home" "" '!screen=narrow' '!workers=finished')" '.workers | .list.open
+  and (.groups[0].rows | map(select(.hidden | not) | .id)) == ["ln-finished"]' \
+  "pressing a count on a phone-width page did not open the list on those workers"
+check "$(render "$home" "" '!workers-list')" '.workers | .list.open == false
+  and (.kept | fromjson) == {"filter":"","open":false,"rows":[]}' \
+  "folding the worker list was not kept"
+check "$out" '.workers.groups[0].rows | all(.open | not)' "a worker row started open"
+opened=$(render "$home" "" '!workers-row=ln-paused' '!workers-row=ln-stuck' '!workers-row=ln-stuck')
+check "$opened" '.workers | (.groups[0].rows | map(select(.open) | .id)) == ["ln-paused"]
+  and (.kept | fromjson | .rows | length) == 1 and (.kept | test("ln-paused"))' \
+  "pressing a worker row did not open its detail, or pressing it again did not close it"
+check "$(render "$home" "" "!workers-kept=$(printf '%s' "$opened" | jq -r '.workers.kept')")" \
+  '.workers.groups[0].rows | map(select(.open) | .id) == ["ln-paused"]' \
+  "an opened worker row did not stay open after a reload"
+check "$(render "$home" "" '!workers-kept={"filter":"external","open":false}')" '.workers
+  | (.counts | map(select(.pressed) | .filter)) == ["external"] and .list.open == false
+    and (.groups[0].rows | map(select(.hidden | not) | .id)) == ["ln-paused"]' \
+  "a restored worker filter was not applied after a reload"
+for kept in 'not json' '{"filter":"merge","open":true}' '[]'; do
+  check "$(render "$home" "" "!workers-kept=$kept")" '.workers
+    | (.counts | map(select(.pressed) | .filter)) == ["all"] and (.groups[0].rows | all(.hidden | not)) and .list.open' \
+    "a garbled or outdated kept worker filter hid workers: $kept"
+done
+pass "the Workers section counts every worker by plain status, lists them by project, and filters on a pressed count"
+
+# Each status words the current state the snapshot already resolved.
+in_home "$home" "$ROOT/bin/fm-fleet-snapshot.sh" --live-board-input > "$TMP_ROOT/crew-input.json" \
+  || fail "could not collect the board input for the status mapping"
+crew_row() {  # <jq edit of the collected input> -> the ln-doing worker's row
+  jq "$1" "$TMP_ROOT/crew-input.json" > "$TMP_ROOT/crew-edited.json" || return 1
+  "$ROOT/bin/fm-live-board-snapshot.sh" --json --input "$TMP_ROOT/crew-edited.json" \
+    | jq -c -L "$ROOT/bin" 'include "fm-live-board-projects";
+        lb_view(null) | .workers | (.statuses | map(.count) | add) as $counted
+        | [.groups[].rows[]] as $rows | ($rows[] | select(.id == "ln-doing")) + {counted:$counted,rows:($rows | length)}'
+}
+while IFS='|' read -r state source detail want; do
+  [ -n "$state" ] || continue
+  got=$(crew_row "(.tasks[] | select(.id == \"ln-doing\") | .current_state)
+    |= . + {state:\"$state\",source:\"$source\",detail:\"$detail\"}") || fail "the status mapping input did not render: $state/$source"
+  check "$got" ".status == \"$want\" and .counted == 5 and .rows == 5
+    and ((.note // \"\") + .say + .status_label | test(\"validating|parked at|run passed|backend target|ci running\") | not)" \
+    "a worker whose current state is $state from $source ($detail) was not shown as $want"
+done <<'CASES'
+working|pane|harness busy (claude-hook)|working
+working|status-log|wiring the basket into the new checkout page|working
+working|run-step|validating (running)|validation
+working|run-step|validating (fixing)|validation
+working|run-step|run active|validation
+working|run-step|ci running|merge
+parked|run-step|parked at review: 3 finding(s)|validation
+parked|run-step|parked at review: 1 finding(s) · ask-user: authority decision|you
+parked|status-log|which courier should we use for the launch|you
+paused|status-log|waiting for the supplier to publish their release|external
+done|run-step|checks green: PR ready for review (still monitoring for merge/close)|merge
+done|run-step|run passed: PR open|merge
+done|run-step|run passed: PR merged|finished
+done|run-step|run completed|finished
+done|status-log|product page tidied and checked on a phone|finished
+blocked|status-log|the payment sandbox keeps refusing our test card|stuck
+failed|run-step|run failed|stuck
+unknown|none|backend target gone: firstmate:fm-ln-doing|stuck
+unknown|run-step|run cancelled: no verdict|stuck
+CASES
+held='(.backlog.records[] | select(.id == "ln-doing")) |= . + {hold_kind:"captain",hold_reason:"Pick a courier."}'
+check "$(crew_row "$held | (.tasks[] | select(.id == \"ln-doing\") | .current_state) |= . + {state:\"paused\",source:\"status-log\"}")" \
+  '.status == "you" and (.say | test("your answer"))' "a waiting worker whose task holds a question for the captain was not shown as waiting on you"
+check "$(crew_row "$held")" '.status == "working"' "a working worker lost its status to a question on its task"
+pass "each worker status is worded from the resolved current state: working, validation, merge or CI, you, outside wait, finished, stuck"
+
+# A second mate's workers join the counts and the list under their own home.
+home=$(make_home crew)
+mate=$(make_home crew-mate)
+mkdir -p "$mate/bin"
+printf '# Firstmate fixture\n' > "$mate/AGENTS.md"
+printf 'ai-desk\n' > "$mate/.fm-secondmate-home"
+printf -- '- shop [no-mistakes] - fixture (added 2026-01-01)\n' > "$home/data/projects.md"
+printf -- '- ai-desk - fixture (home: %s; scope: fixture; projects: desk; added 2026-07-11)\n- lost-desk - fixture (home: %s/no-such-home; scope: fixture; projects: desk; added 2026-07-11)\n' \
+  "$mate" "$TMP_ROOT" > "$home/data/secondmates.md"
+printf '%s\n' '{"schema":"fm-live-board-projects.v1","projects":[{"name":"Help desk","match":[{"repo":"desk"}]}]}' \
+  > "$home/config/live-board-projects.json"
+tasks_in "$home" add cr-own "Build the new checkout" --repo shop --kind ship --start
+worker "$home" cr-own busy 'project=shop'
+tasks_in "$mate" add cr-answer "Answer the refund question" --repo desk --kind scout --start
+tasks_in "$mate" add cr-wrap "Wrap up the desk report" --repo desk --kind ship --start
+tasks_in "$mate" add cr-waiting "Not started yet" --repo desk --kind ship
+worker "$mate" cr-answer busy 'kind=scout' 'project=desk'
+worker "$mate" cr-wrap idle 'project=desk' 'pr=https://github.com/acme/desk/pull/7'
+printf 'done [at=%s]: desk report written and checked\n' "$(date +%s)" > "$mate/state/cr-wrap.status"
+in_home "$home" "$LIVE" build >/dev/null || fail "a board with a second mate did not build"
+out=$(render "$home")
+check "$out" '.workers | .total == 3 and (.counts | map([.filter,.text])) == [["all","All 3"],["working","2 working"],
+    ["finished","1 finished and idle"]]
+  and (.groups | map([.project,.home,.count])) == [["Help desk","Ai desk",2],["shop",null,1]]
+  and .groups[0].badges == ["Second mate: Ai desk"] and .groups[1].badges == []
+  and (.groups[0].rows | map([.id,.status,.title])) == [["cr-wrap","finished","Wrap up the desk report"],
+    ["cr-answer","working","Answer the refund question"]]
+  and (.groups[0].rows[0] | (.meta | test("^Build · for [0-9]+s · pull request$"))
+    and .links == [{"href":"https://github.com/acme/desk/pull/7","text":"pull request","target":"_blank","lavishAction":true}])
+  and (.groups[0].rows[1].meta | test("^Investigation"))
+  and .gaps == ["The workers of second mate Lost desk are not shown: its registration could not be checked."]
+  and ([.groups[].rows[].text] | join(" ") | test("cr-[a-z]|crew-mate|no-such-home") | not)' \
+  "a second mate's workers were not counted and listed under their own home, or an unread home was not named"
+check "$out" '(.projects | map(.label) | sort) == ["Help desk","shop"] and .stats.doing == 2
+  and ([.projects[].lanes[].cards[].id] | sort) == ["cr-answer","cr-own"]
+  and ([.projects[] | select(.label == "Help desk")][0].lanes.doing.cards[0].worker == "A worker of second mate Ai desk")
+  and (.notes | any(test("project cards show only what its workers are doing now")))
+  and (.notes | any(test("Not every second mate.s workers could be read")))' \
+  "more than a second mate's work being done now reached the project cards, or the board notes did not say where the rest shows"
+pass "a second mate's workers are counted and listed under their own home, and a home that could not be read is named"
 
 # --- Projects, questions and workers -------------------------------------------
 home=$(make_home fleet)
@@ -993,63 +1147,56 @@ check "$out" "$explained"' and (.projects[0] | .label == "web-shop" and .what.te
 pass "every project and every lane row says what it is, from its note or hold reason, or says that no explanation is recorded"
 
 # --- Doing now includes work under a registered home ----------------------------
-mate="$TMP_ROOT/crew-home"
-mkdir -p "$mate/state" "$mate/data" "$mate/config" "$mate/projects" "$mate/bin"
-mate=$(cd "$mate" && pwd -P)
-printf '# Seeded Firstmate home\n' > "$mate/AGENTS.md"
+mate=$(make_home explained-mate)
+mkdir -p "$mate/bin"
+printf '# Firstmate fixture\n' > "$mate/AGENTS.md"
 printf 'shop-crew\n' > "$mate/.fm-secondmate-home"
-cp "$ROOT/.tasks.toml" "$mate/.tasks.toml"
 cat > "$mate/data/backlog.md" <<'BACKLOG'
 ## In flight
 - [ ] ws-export - Export orders (repo: web-shop) (kind: ship) (since 2026-01-03)
     Lets a shop owner download last month's orders as a spreadsheet.
 - [ ] crew-only - Speed up search (repo: web-shop) (kind: ship) (since 2026-01-06)
     Makes the shop's search box answer in under a second.
+- [ ] crew-idle - Tidy the footer (repo: web-shop) (kind: ship) (since 2026-01-07)
 
 ## Queued
+- [ ] crew-later - Translate the shop (repo: web-shop) (kind: ship) (since 2026-01-08)
 
 ## Done
 BACKLOG
-worker "$mate" ws-export busy
-worker "$mate" crew-only busy
-lend() {  # write the crew home's own summary, as its watcher does
-  PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$mate" \
-    "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary > "$mate/state/home-summary.json" \
-    || fail "the crew home did not produce its summary"
-}
-lend
-check "$(cat "$mate/state/home-summary.json")" '[.active_children[] | {id,about}] | sort_by(.id)
-  == [{id:"crew-only",about:"Makes the shop\u0027s search box answer in under a second."},
-      {id:"ws-export",about:"Lets a shop owner download last month\u0027s orders as a spreadsheet."}]' \
-  "a home summary did not carry each working child's own note"
+worker "$mate" ws-export busy 'project=web-shop'
+worker "$mate" crew-only busy 'project=web-shop'
+worker "$mate" crew-idle idle 'project=web-shop'
+printf 'working [at=%s]: the search index is rebuilt and being measured\n' "$(date +%s)" > "$mate/state/crew-only.status"
+printf 'done [at=%s]: footer tidied\n' "$(date +%s)" > "$mate/state/crew-idle.status"
 out=$(render "$home")
 check "$out" '.stats.doing == 0 and (.projects[0].lanes.doing | .count == 0 and .none == "Nothing is being worked on right now.")
   and '"$(card ws-export)"'.lane == "next"' \
-  "the fixture already showed work as being done before any crew was registered"
+  "the fixture already showed work as being done before any second mate was registered"
 printf -- '- shop-crew - fixture crew (home: %s; scope: fixture work; projects: web-shop; added 2026-01-01)\n' "$mate" \
   > "$home/data/secondmates.md"
-in_home "$home" "$LIVE" build >/dev/null || fail "the board with a registered crew did not build"
+in_home "$home" "$LIVE" build >/dev/null || fail "the board with a registered second mate did not build"
 out=$(render "$home")
 check "$out" '.stats.doing == 2 and (.projects[0].lanes.doing | .count == 2 and .none == null)
-  and '"$(card ws-export)"' == ('"$(card ws-export)"' | . + {lane:"doing",worker:"A worker in the Shop crew crew",
-    note:"A worker is actively working on this right now."})
-  and ('"$(card ws-export)"' | .what.source == "note" and (.what.text | test("download last month")))
+  and ('"$(card ws-export)"' | .lane == "doing" and .worker == "A worker of second mate Shop crew"
+    and .note == "A worker is doing this now."
+    and .what.source == "note" and (.what.text | test("download last month")))
   and ('"$(card crew-only)"' | .lane == "doing" and .title == "Speed up search"
-    and .worker == "A worker in the Shop crew crew" and .what.source == "note"
+    and .worker == "A worker of second mate Shop crew"
+    and .note == "the search index is rebuilt and being measured" and .what.source == "note"
     and .what.text == "Makes the shop\u0027s search box answer in under a second.")
   and ([.projects[].lanes.next.cards[].id] | index("ws-export") == null)
+  and ([.projects[].lanes[].cards[].id] | (index("crew-idle") == null and index("crew-later") == null))
   and (.projects[0].status | test("^2 being done now"))
-  and any(.notes[]; test("only work being done now is on this board"))' \
-  "work a registered crew is doing did not move to Doing now with its worker, what it is doing and what it is"
-check "$out" "$explained" "a row lent by a registered crew rendered without an explanation"
-jq '.generated_epoch -= 30000' "$mate/state/home-summary.json" > "$mate/state/home-summary.old" \
-  && mv -f "$mate/state/home-summary.old" "$mate/state/home-summary.json"
-in_home "$home" "$LIVE" build >/dev/null || fail "the board with a stale crew summary did not build"
-out=$(render "$home")
-check "$out" '.stats.doing == 0 and '"$(card ws-export)"'.lane == "next"
-  and any(.notes[]; . == "Work under the Shop crew crew could not be read: its summary is more than 6 hours old.")' \
-  "a crew summary too old to trust was still shown as work being done now, or the board did not say why it was not read"
-pass "Doing now lists work a registered crew is doing, with its worker and plain explanation, and names a crew it could not read"
+  and (.workers.total == 3)
+  and any(.notes[]; test("project cards show only what its workers are doing now"))' \
+  "work a second mate's workers are doing did not move to Doing now with whose worker it is, what it is doing and what it is"
+check "$out" "$explained" "a row lent by a registered second mate rendered without an explanation"
+worker "$home" ws-dev-4 busy 'project=web-shop'
+in_home "$home" "$LIVE" build >/dev/null || fail "the board with a worker of its own did not build"
+check "$(render "$home")" '.stats.doing == 3 and '"$(card ws-dev-4)"'.worker == "One of Firstmate\u0027s own workers"' \
+  "this home's own worker was not named as Firstmate's own"
+pass "Doing now lists what a registered second mate's workers are doing, naming whose worker it is, what it is doing and what it is"
 
 # --- A question typed on the board is answered on the board --------------------
 home=$(make_home asked)

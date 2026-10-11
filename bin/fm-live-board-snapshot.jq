@@ -12,9 +12,6 @@ def valid_input:
   and (.tasks | type == "array") and (.main_inventory | type == "object")
   and (.coverage.local.complete | type == "boolean")
   and (.coverage.registered_homes.complete | type == "boolean")
-  and ((has("registered_homes") | not) or (.registered_homes.records | type == "array"
-    and all(.[]; (.id | type == "string" and length > 0) and (.active | type == "array")
-      and all(.active[]; .id | type == "string" and length > 0))))
   and all(.backlog.records[]; (.state | IN("in_flight","queued","done"))
     and (.structured | type == "boolean")
     and (if .structured then (.id | type == "string" and length > 0)
@@ -51,14 +48,18 @@ def task_band:
   if .state == "blocked" or .state == "parked" then 0
   elif .state == "working" then 1 elif .state == "finished-awaiting-processing" then 2
   elif .state == "paused" then 3 elif .state == "queued" then 4 else 5 end;
-if valid_input then . else error("unsupported or malformed fm-live-board-input.v1") end
-| . as $input
-| [.backlog.records[] | select(.structured and .state != "done")] as $open
-| [.backlog.records[] | select(.structured)] as $backlog
-| [.tasks[] as $worker
-   | select(any($backlog[]; .id == $worker.id) | not)
-   | {id:$worker.id,order:null,state:null,structured:true}] as $meta_only
-| ($open + $meta_only | map(. as $row
+def open_rows: [.backlog.records[] | select(.structured and .state != "done")];
+def structured_rows: [.backlog.records[] | select(.structured)];
+def meta_only_rows:
+  structured_rows as $backlog
+  | [.tasks[] as $worker
+     | select(any($backlog[]; .id == $worker.id) | not)
+     | {id:$worker.id,order:null,state:null,structured:true}];
+# One home's open tasks and metadata-only workers, from that home's own input.
+def home_tasks($home_key):
+  . as $input
+  | open_rows as $open | structured_rows as $backlog | meta_only_rows as $meta_only
+  | $open + $meta_only | map(. as $row
     | ([$input.tasks[] | select(.id == $row.id)][0] // null) as $worker
     | ($row.repo | nonempty) as $repo
     | ($worker.project | nonempty) as $meta_project
@@ -99,7 +100,22 @@ if valid_input then . else error("unsupported or malformed fm-live-board-input.v
          if ([$backlog[] | select(.id == $row.id)] | length) > 1 then
            {kind:"duplicate-backlog-id"} else empty end],
        unregistered_decisions:(if $row.hold_kind == "captain" and $row.hold_reason != null then []
-         else ($worker.hints.open_decisions // [] | map({key,verb,summary:((.summary // "")[:240])})) end)})) as $tasks
+         else ($worker.hints.open_decisions // [] | map({key,verb,summary:((.summary // "")[:240])})) end)});
+# A registered home contributes only its workers; its cards stay on its own board.
+def registered_home($home_key):
+  . as $home
+  | ([$home_key,$home.id] | tojson) as $key
+  | ($home.status == "collected" and ($home.input | type == "object" and valid_input)) as $read
+  | {key:$key,id:$home.id,label:$home.id,
+     status:(if $read then "collected" elif $home.status == "collected" then "unreadable" else $home.status end),
+     reason:(if $read then null elif $home.status == "collected" then "its board input is malformed" else $home.reason end),
+     collected_at_epoch:(if $read then $home.input.generated_epoch else null end),
+     workers:(if $read then [$home.input | home_tasks($key)[] | select(.worker_present)] else [] end)};
+if valid_input then . else error("unsupported or malformed fm-live-board-input.v1") end
+| . as $input
+| open_rows as $open | structured_rows as $backlog | meta_only_rows as $meta_only
+| home_tasks($home_key) as $tasks
+| [($input.registered_homes // [])[] | registered_home($home_key)] as $homes
 | [$tasks[] | select(.hold.kind == "captain" and .hold.reason != null)
    | {key:.key,id:.id,home_key:.home_key,project:.project,title:.title,
       priority:.priority,urgent:(.priority == 0 or .priority == 1),
@@ -137,8 +153,9 @@ if valid_input then . else error("unsupported or malformed fm-live-board-input.v
    omissions:[
      if $input.backlog.present | not then {kind:"backlog-unavailable"} else empty end,
      if $input.registry.present | not then {kind:"registry-unavailable"} else empty end,
-     if $input.coverage.registered_homes.complete | not then
-       {kind:"registered-homes-uncollected",reason:$input.coverage.registered_homes.reason} else empty end,
+     if ($input.coverage.registered_homes.complete | not) or any($homes[]; .status != "collected") then
+       {kind:"registered-homes-uncollected",reason:$input.coverage.registered_homes.reason,
+        homes:[$homes[] | select(.status != "collected") | {label:.label,status:.status}]} else empty end,
      ([$input.backlog.records[] | select(.structured == false and .state != "done")]|length) as $unstructured
      | if $unstructured > 0 then {kind:"unstructured-open-work",count:$unstructured} else empty end],
    warnings:[
@@ -150,12 +167,5 @@ if valid_input then . else error("unsupported or malformed fm-live-board-input.v
      ($input.registry.duplicates[] | {kind:"duplicate-project-registration",name:.}),
      ($input.registry.projects[] | select(.recognised == false) |
        {kind:"unrecognised-project-posture",name:.name,annotation:.annotation})],
-   counts:counts($tasks;$questions),projects:$groups,recently_finished:$finished,
-   registered_homes:(if ($input.registered_homes | type) != "object" then null else
-     [$input.registered_homes.records[]
-      | {id,status,reason,generated_epoch,active:(.active | length),active_omitted}] end),
-   delegated:[($input.registered_homes.records // [])[] as $from | $from.active[]
-     | {key:([$home_key,$from.id,.id] | tojson),id,home:$from.id,project:(.repo | nonempty),
-        title:((.name | nonempty) // .id),about:(.about | nonempty),kind,state,
-        doing:(.doing | nonempty),observed_at_epoch:$from.generated_epoch}],
+   counts:counts($tasks;$questions),projects:$groups,recently_finished:$finished,registered_homes:$homes,
    pull_requests:lbp_project($prs[0]; [$backlog[].id]; $input.generated_epoch)}

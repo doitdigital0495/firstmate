@@ -25,7 +25,8 @@ check "$TMP_ROOT/empty.json" '.schema == "fm-live-board.v1" and .counts.open_tas
   and (.projects|length == 0) and .coverage.local.shown == 0
   and any(.omissions[]; .kind == "registry-unavailable")
   and any(.omissions[]; .kind == "backlog-unavailable")
-  and any(.omissions[]; .kind == "registered-homes-uncollected")
+  and (any(.omissions[]; .kind == "registered-homes-uncollected") | not)
+  and .registered_homes == [] and .coverage.registered_homes == {complete:true,reason:null,total:0,collected:0}
   and .coverage.local.complete == false' 'empty board must disclose unavailable sources'
 pass 'empty home is explicit, not an all-fleet clear verdict'
 
@@ -428,3 +429,64 @@ check "$TMP_ROOT/stages-board.json" "$(staged 5)"' | .task == "stock-1"' \
 check "$TMP_ROOT/stages-board.json" "($(staged 1) | .summary != null) and ($(staged 1150) | .summary != null) and ($(staged 1199) | .summary == null and .title == \"Change 1199\")" \
   'the manager note was not limited to the newest pull requests of a source, or an older one lost its title'
 pass 'only a well-formed environment place leaves the snapshot, and older pull requests keep their title without a manager note'
+
+# A registered secondmate home is read through its own board input; a broken
+# registration and a home on another machine are named, never silently dropped.
+h=$(home crew-parent)
+mate=$(home crew-mate)
+mkdir -p "$mate/bin" "$mate/projects/wt-mate-fix"
+printf '# Firstmate fixture\n' > "$mate/AGENTS.md"
+printf 'ai-desk\n' > "$mate/.fm-secondmate-home"
+cat > "$h/data/secondmates.md" <<REG
+- ai-desk - fixture (home: $mate; scope: fixture; projects: desk; added 2026-07-11)
+- lost-desk - fixture (home: $TMP_ROOT/no-such-home; scope: fixture; projects: desk; added 2026-07-11)
+- far-desk - fixture (host: box.example; root: /srv/fm; home: /srv/fm-far; scope: fixture; projects: desk; added 2026-07-11)
+REG
+cat > "$h/data/backlog.md" <<'BACKLOG'
+## In flight
+- [ ] own-fix - Fix our own thing (repo: alpha) (kind: ship) (since 2026-07-20)
+
+## Queued
+
+## Done
+BACKLOG
+cat > "$mate/data/backlog.md" <<'BACKLOG'
+## In flight
+- [ ] mate-fix - Answer the desk question (repo: desk) (kind: ship) (since 2026-07-21)
+
+## Queued
+- [ ] mate-later - Not started yet (repo: desk) (kind: ship) (since 2026-07-22)
+
+## Done
+BACKLOG
+fm_write_meta "$h/state/own-fix.meta" 'kind=ship' 'project=alpha'
+fm_write_meta "$mate/state/mate-fix.meta" 'kind=ship' 'project=desk' "worktree=$mate/projects/wt-mate-fix" \
+  'pr=https://github.com/acme/desk/pull/7'
+printf 'paused [at=1784937000]: waiting for the vendor to answer\n' > "$mate/state/mate-fix.status"
+collect "$h" "$TMP_ROOT/crew-input.json"
+check "$TMP_ROOT/crew-input.json" '(.registered_homes | map([.id,.status])) ==
+    [["ai-desk","collected"],["far-desk","remote"],["lost-desk","invalid"]]
+  and (.registered_homes[0].input | .schema == "fm-live-board-input.v1" and (.tasks | map(.id)) == ["mate-fix"]
+    and .registered_homes == [] and .coverage.registered_homes.complete == false)
+  and (.registered_homes[1:] | all(.input == null and (.reason | type == "string")))
+  and .coverage.registered_homes == {complete:false,reason:"2 of 3 registered homes were not read",total:3,collected:1}' \
+  'a registered home was not read through its own board input, or a broken or remote one was not named'
+render "$TMP_ROOT/crew-input.json" "$TMP_ROOT/crew-board.json"
+check "$TMP_ROOT/crew-board.json" '(.registered_homes | map([.label,.status,(.workers | map(.id))])) ==
+    [["ai-desk","collected",["mate-fix"]],["far-desk","remote",[]],["lost-desk","invalid",[]]]
+  and (.registered_homes[0].workers[0] | .title == "Answer the desk question" and .project == "desk" and .worker_present
+    and .pr.url == "https://github.com/acme/desk/pull/7" and (.current_state.state | type == "string")
+    and (.key | test("ai-desk")))
+  and ([.projects[].tasks[].id] | index("mate-fix") == null) and .counts.open_tasks == 1
+  and (.omissions[] | select(.kind == "registered-homes-uncollected") | .homes | map(.label)) == ["far-desk","lost-desk"]
+  and (tostring | (contains("no-such-home") or contains("/srv/fm")) | not)' \
+  'a registered home did not contribute exactly its workers, or leaked into this home\u0027s cards, counts or paths'
+jq '.registered_homes[0].input.tasks = "broken"' "$TMP_ROOT/crew-input.json" > "$TMP_ROOT/crew-bad.json"
+render "$TMP_ROOT/crew-bad.json" "$TMP_ROOT/crew-bad-board.json"
+check "$TMP_ROOT/crew-bad-board.json" '.registered_homes[0] | .status == "unreadable" and .workers == [] and .reason != null' \
+  'a malformed registered-home input was not disclosed as unreadable'
+FM_HOME="$h" FM_ROOT_OVERRIDE="$ROOT" FM_SNAPSHOT_SECONDMATES=1 "$FLEET" --live-board-input > "$TMP_ROOT/crew-capped.json"
+check "$TMP_ROOT/crew-capped.json" '(.registered_homes | length) == 1
+  and .coverage.registered_homes.complete == false and .coverage.registered_homes.reason != null' \
+  'homes beyond the per-snapshot bound were not disclosed'
+pass 'registered homes contribute their workers through their own input; remote, invalid, malformed and unread homes are named'
