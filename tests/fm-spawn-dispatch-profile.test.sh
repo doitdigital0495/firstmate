@@ -444,6 +444,7 @@ test_active_dispatch_profile_allows_explicit_harness() {
   rec=$(make_spawn_case profile-explicit claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
+  fm_test_dispatch_override "$HOME_DIR" "$id" "$HOME_DIR/data/$id/brief.md" codex gpt-5 high
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort high)
@@ -463,6 +464,7 @@ test_active_dispatch_profile_allows_positional_harness() {
   rec=$(make_spawn_case profile-positional claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
+  fm_test_dispatch_override "$HOME_DIR" "$id" "$HOME_DIR/data/$id/brief.md" codex gpt-5 high
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id" "$PROJ_DIR" codex --model gpt-5 --effort high)
@@ -479,6 +481,9 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   rec=$(make_spawn_case profile-raw claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
+  # A raw command cannot be matched to a table profile, so only a recorded
+  # captain override admits it while routing rows exist.
+  fm_test_dispatch_override "$HOME_DIR" "$id" "$HOME_DIR/data/$id/brief.md" custom-agent
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id" "$PROJ_DIR" "custom-agent --flag")
@@ -887,6 +892,8 @@ test_batch_preserves_native_ultra() {
   rec=$(make_spawn_case ultra-batch pi "$id1" "$id2")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
+  fm_test_dispatch_override "$HOME_DIR" "$id1" "$HOME_DIR/data/$id1/brief.md" pi codex-native/gpt-6-astra ultra
+  fm_test_dispatch_override "$HOME_DIR" "$id2" "$HOME_DIR/data/$id2/brief.md" pi codex-native/gpt-6-astra ultra
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness pi --model codex-native/gpt-6-astra --effort ultra)
   expect_code 0 "$?" "native Ultra batch failed: $out"
@@ -1622,6 +1629,8 @@ test_batch_forwards_shared_profile_flags() {
   rec=$(make_spawn_case profile-batch claude "$id1" "$id2")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
+  fm_test_dispatch_override "$HOME_DIR" "$id1" "$HOME_DIR/data/$id1/brief.md" codex gpt-5 high
+  fm_test_dispatch_override "$HOME_DIR" "$id2" "$HOME_DIR/data/$id2/brief.md" codex gpt-5 high
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness codex --model gpt-5 --effort high)
@@ -1907,14 +1916,195 @@ test_active_dispatch_profile_does_not_block_secondmate_launch() {
   enable_dispatch_profile "$HOME_DIR"
   sm="$CASE_DIR/secondmate-home"
   make_seeded_secondmate_home "$sm" "$id"
+  # The static secondmate harness (codex, no model) is not a row of the fixture
+  # table, so this launch departs from it on a recorded override.
+  fm_test_dispatch_override "$HOME_DIR" "$id" "$sm/data/charter.md" codex
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
   status=$?
-  expect_code 0 "$status" "secondmate spawn should be exempt from the dispatch-profile explicit harness requirement"
+  expect_code 0 "$status" "secondmate spawn should be exempt from the dispatch-profile explicit harness requirement"$'\n'"$out"
   assert_contains "$out" "spawned $id harness=codex kind=secondmate" "secondmate launch did not use secondmate harness resolution"
   assert_grep "kind=secondmate" "$HOME_DIR/state/$id.meta" "secondmate meta missing kind=secondmate"
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex default default
   pass "active crew-dispatch profile does not block secondmate launches"
+}
+
+# --- dispatch receipt gate (contract: bin/fm-dispatch-receipt-lib.sh) ---------
+# With routing rows in the home's table, a spawn launches only the profile a
+# receipt names. Each case reaches the gate through the real fm-spawn and
+# produces its receipts through the real producers, as a home does.
+
+test_dispatch_receipt_refuses_a_hand_picked_spawn() {
+  local rec id sid out status
+  id=receipt-handpick-z20
+  sid=receipt-handpick-scout-z21
+  rec=$(make_spawn_case receipt-handpick claude "$id" "$sid")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness claude --model opus --effort high)
+  status=$?
+  expect_code 1 "$status" "a hand-picked ship profile with no receipt must be refused"
+  assert_contains "$out" "dispatch receipt gate: refusing - no dispatch receipt binds the brief of $id" \
+    "the refusal must name the missing receipt"
+  assert_contains "$out" "A hand-picked --harness claude --model opus --effort high is not a routing decision" \
+    "the refusal must name the hand-picked profile"
+  assert_contains "$out" "bin/fm-dispatch-resolve.sh choose <brief> --row <id>" \
+    "the refusal must name the command that produces a receipt"
+  assert_contains "$out" "error: $id was not launched; the dispatch receipt gate refused it and nothing was created" \
+    "the refusal must state nothing was created"
+  assert_absent "$HOME_DIR/state/$id.meta" "a refused hand-pick must record no meta"
+  [ ! -s "$LAUNCH_LOG" ] || fail "a refused hand-pick must send nothing to a pane"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$sid" "$PROJ_DIR" --scout --harness claude --model opus --effort high)
+  status=$?
+  expect_code 1 "$status" "a hand-picked scout profile with no receipt must be refused"
+  assert_contains "$out" "dispatch receipt gate: refusing - no dispatch receipt binds the brief of $sid" \
+    "the scout refusal must name the missing receipt"
+  assert_absent "$HOME_DIR/state/$sid.meta" "a refused scout hand-pick must record no meta"
+
+  # A receipt for the table's profile does not admit a different one, and the
+  # refusal does not spend it.
+  fm_test_dispatch_choose "$HOME_DIR" "$id" "$HOME_DIR/data/$id/brief.md" default codex gpt-5 medium \
+    || fail "could not record the routed choice"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort high)
+  status=$?
+  expect_code 1 "$status" "a launch that differs from its receipt must be refused"
+  assert_contains "$out" "profile.effort is 'medium' on the receipt but the launch passes 'high'" \
+    "the refusal must name the mismatching receipt field"
+  assert_absent "$HOME_DIR/state/$id.meta" "a mismatching launch must record no meta"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort medium)
+  status=$?
+  expect_code 0 "$status" "the receipt's own profile must launch"$'\n'"$out"
+  assert_contains "$out" "(choose, row default) admits --harness codex --model gpt-5 --effort medium for $id; receipt consumed" \
+    "the launch must report the receipt it consumed"
+  assert_contains "$out" "spawned $id harness=codex" "the routed ship did not launch"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 medium
+  pass "dispatch receipt gate refuses a hand-picked ship and scout profile, and launches only the receipt's own profile"
+}
+
+test_dispatch_receipt_binds_one_brief_and_one_launch() {
+  local rec a b c d out status
+  a=receipt-bind-a-z22
+  b=receipt-bind-b-z23
+  c=receipt-bind-c-z24
+  d=receipt-bind-d-z25
+  rec=$(make_spawn_case receipt-bind claude "$a" "$b")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  # c and d share one brief text, so one brief-bound receipt matches both.
+  fm_test_spawn_brief "$HOME_DIR" "$c" "one shared intent"
+  fm_test_spawn_brief "$HOME_DIR" "$d" "one shared intent"
+
+  # A receipt for another brief admits nothing here.
+  fm_test_dispatch_choose "$HOME_DIR" "$a" "$HOME_DIR/data/$a/brief.md" default codex gpt-5 medium \
+    || fail "could not record the routed choice for $a"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$b" "$PROJ_DIR" --harness codex --model gpt-5 --effort medium)
+  status=$?
+  expect_code 1 "$status" "a receipt for another brief must not admit this task"
+  assert_contains "$out" "no dispatch receipt binds the brief of $b" "the refusal must say no receipt binds this brief"
+  assert_contains "$out" "the newest receipt in this home binds $(cd "$HOME_DIR/data/$a" && pwd -P)/brief.md" \
+    "the refusal must name the brief the newest receipt does bind"
+  assert_absent "$HOME_DIR/state/$b.meta" "a launch on another brief's receipt must record no meta"
+
+  # One receipt, one launch: the second task on the same brief text is refused.
+  fm_test_dispatch_choose "$HOME_DIR" '' "$HOME_DIR/data/$c/brief.md" default codex gpt-5 medium \
+    || fail "could not record the brief-bound choice"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$c" "$PROJ_DIR" --harness codex --model gpt-5 --effort medium)
+  expect_code 0 "$?" "the first launch on a fresh receipt must succeed"$'\n'"$out"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$d" "$PROJ_DIR" --harness codex --model gpt-5 --effort medium)
+  status=$?
+  expect_code 1 "$status" "a consumed receipt must not admit a second launch"
+  assert_contains "$out" "was already consumed by a launch" "the refusal must say the receipt was consumed"
+  assert_absent "$HOME_DIR/state/$d.meta" "a launch on a consumed receipt must record no meta"
+
+  # A stale receipt admits nothing. The freshness window can only be shortened.
+  fm_test_dispatch_choose "$HOME_DIR" "$d" "$HOME_DIR/data/$d/brief.md" default codex gpt-5 medium \
+    || fail "could not record the routed choice for $d"
+  sleep 2
+  out=$(FM_DISPATCH_RECEIPT_MAX_AGE=1 run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$d" "$PROJ_DIR" --harness codex --model gpt-5 --effort medium)
+  status=$?
+  expect_code 1 "$status" "a stale receipt must not admit a launch"
+  assert_contains "$out" "is stale: issuedAt is" "the refusal must say the receipt is stale"
+  assert_absent "$HOME_DIR/state/$d.meta" "a launch on a stale receipt must record no meta"
+  pass "dispatch receipt gate binds a receipt to one brief and one launch, and refuses a stale one"
+}
+
+test_dispatch_receipt_admits_scout_and_secondmate_from_the_table() {
+  local rec id sm sm2 out status
+  id=receipt-scout-z26
+  rec=$(make_spawn_case receipt-kinds codex "$id")
+  read_case_record "$rec"
+  printf '%s\n' '{"rules":[{"when":"current events","use":{"harness":"grok","model":"grok-4","effort":"high"}},{"when":"a standing secondmate","use":{"harness":"codex"}}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
+    > "$HOME_DIR/config/crew-dispatch.json"
+
+  fm_test_dispatch_choose "$HOME_DIR" "$id" "$HOME_DIR/data/$id/brief.md" rule_1 grok grok-4 high \
+    || fail "could not record the routed scout choice"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --scout --harness grok --model grok-4 --effort high)
+  status=$?
+  expect_code 0 "$status" "a scout routed from the table must launch"$'\n'"$out"
+  assert_contains "$out" "(choose, row rule_1) admits --harness grok --model grok-4 --effort high for $id; receipt consumed" \
+    "the scout launch must report its receipt"
+  assert_grep "kind=scout" "$HOME_DIR/state/$id.meta" "scout meta missing kind=scout"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" grok grok-4 high
+
+  # A secondmate launch is a launch: the configured harness needs a receipt too.
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" receipt-mate-z27
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" receipt-mate-z27 "$sm" --secondmate)
+  status=$?
+  expect_code 1 "$status" "a secondmate launch with no receipt must be refused"
+  assert_contains "$out" "dispatch receipt gate: refusing - no dispatch receipt binds the brief of receipt-mate-z27" \
+    "the secondmate refusal must name the missing receipt"
+  assert_absent "$HOME_DIR/state/receipt-mate-z27.meta" "a refused secondmate launch must record no meta"
+
+  fm_test_dispatch_choose "$HOME_DIR" receipt-mate-z27 "$sm/data/charter.md" rule_2 codex \
+    || fail "could not record the routed secondmate choice"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" receipt-mate-z27 "$sm" --secondmate)
+  status=$?
+  expect_code 0 "$status" "a secondmate routed from the table must launch"$'\n'"$out"
+  assert_contains "$out" "(choose, row rule_2) admits --harness codex for receipt-mate-z27; receipt consumed" \
+    "the secondmate launch must report its receipt"
+  assert_contains "$out" "spawned receipt-mate-z27 harness=codex kind=secondmate" "the routed secondmate did not launch"
+
+  # Respawning that secondmate on its recorded profile makes no new routing
+  # decision, so it needs no receipt.
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" receipt-mate-z27 "$sm" --secondmate)
+  assert_contains "$out" "receipt-mate-z27 keeps its recorded profile" \
+    "a same-profile secondmate respawn must pass without a new receipt"
+  assert_not_contains "$out" "dispatch receipt gate: refusing" "a same-profile secondmate respawn must not be refused"
+  pass "dispatch receipt gate admits a scout and a secondmate routed from the table, and a same-profile secondmate respawn"
+}
+
+test_dispatch_receipt_raw_command_needs_a_captain_override() {
+  local rec id out status
+  id=receipt-raw-z28
+  rec=$(make_spawn_case receipt-raw claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+
+  # A raw command whose first word is a table harness still names no table
+  # profile: its flags are free text.
+  fm_test_dispatch_choose "$HOME_DIR" "$id" "$HOME_DIR/data/$id/brief.md" default codex gpt-5 medium \
+    || fail "could not record the routed choice"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "codex --model gpt-9-secret")
+  status=$?
+  expect_code 1 "$status" "a raw launch command must not ride a table receipt"
+  assert_contains "$out" "a raw launch command cannot be matched to a profile of the dispatch table; only a captain override admits it" \
+    "the raw refusal must name the override as the only way"
+  assert_absent "$HOME_DIR/state/$id.meta" "a refused raw launch must record no meta"
+  pass "dispatch receipt gate admits a raw launch command only on a captain override"
 }
 
 # Execute the actual emitted command in a synthetic pane environment: the
@@ -2534,5 +2724,9 @@ test_keep_ai_trailers_omits_attribution_settings_and_strip_hooks
 test_keep_ai_trailers_reaches_secondmate_crew_launches
 test_claude_secondmate_launch_carries_the_attribution_policy
 test_active_dispatch_profile_does_not_block_secondmate_launch
+test_dispatch_receipt_refuses_a_hand_picked_spawn
+test_dispatch_receipt_binds_one_brief_and_one_launch
+test_dispatch_receipt_admits_scout_and_secondmate_from_the_table
+test_dispatch_receipt_raw_command_needs_a_captain_override
 
 echo "# all fm-spawn-dispatch-profile tests passed"

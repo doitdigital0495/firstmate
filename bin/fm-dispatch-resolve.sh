@@ -3,13 +3,45 @@
 # profile from a task brief with Jev via OpenRouter's System One API, opt-in.
 #
 # Usage:
-#   fm-dispatch-resolve.sh <brief-file> [--project <name>]
+#   fm-dispatch-resolve.sh <brief-file> [--project <name>] [--task <id>]
+#   fm-dispatch-resolve.sh rows
+#   fm-dispatch-resolve.sh choose <brief-file> --row <rule_N|default>
+#       --harness <h> [--model <m>] [--effort <e>] [--account <id>]
+#       --accounting-file <json> --rationale-file <path> [--task <id>]
+#   fm-dispatch-resolve.sh override <brief-file> --task <id>
+#       --harness <h> [--model <m>] [--effort <e>] [--account <id>]
+#       --words-file <path>
+#   fm-dispatch-resolve.sh overrides [--recent]
+#   fm-dispatch-resolve.sh gate ...     (called by fm-spawn.sh and fm-control.sh)
+#
+# Dispatch receipts: every launch in a home whose config/crew-dispatch.json has
+#   routing rows is admitted only against a receipt this script wrote, and
+#   bin/fm-dispatch-receipt-lib.sh's header owns the receipt format and the
+#   gate's rules. Three producers write one:
+#   - the resolution below, automatically, on status clear;
+#   - choose, for firstmate's own judgment when the answer is not clear or the
+#     tool is off: it names one row (rows lists their ids and candidates), a
+#     profile that is a candidate of that row, and an accounting file - a JSON
+#     array with one object per candidate of the row carrying harness, model,
+#     effort, account, catalog, plan, quotaIntakeRecord (the name of a
+#     bin/fm-quota-intake.sh record this home holds), spendPriority (a number
+#     or the literal "unknown"), eligible, and reason - plus a non-empty
+#     rationale file. A profile outside the row, a missing or extra candidate,
+#     or a pick the accounting marks not eligible is refused;
+#   - override, for the captain's explicit instruction about one task: it
+#     records the captain's exact words (an empty words file is refused) with
+#     the task id, marks the receipt override=captain, and appends the entry to
+#     data/dispatch-overrides.jsonl, which overrides prints and the next
+#     session start lists. It is the only way to launch a profile the table
+#     does not name.
+#   The receipt subcommands need no key and make no network call.
 #
 # Opt-in gate: OPENROUTER_API_KEY non-empty in this process environment, else an
 #   OPENROUTER_API_KEY= line in $FM_HOME/.env read with fmx_env_get, the same
 #   accessor as FMX_PAIRING_TOKEN (bin/fm-env-lib.sh). The environment wins.
 #   Absent in both: one "dispatch-resolve: off" line on stderr, nothing on
-#   stdout, exit 0, no network call, so firstmate dispatches exactly as today.
+#   stdout, exit 0, no network call, and no receipt: firstmate routes from the
+#   table with its own intake and records the result with choose.
 #   The key lives in one shell variable and reaches curl as a header read from
 #   a file descriptor, never on argv; nothing logs or writes it.
 #
@@ -53,7 +85,9 @@
 #     reason: <why the status is not clear>
 #     candidate: <harness>:<model> provider=.. windows=<id>:<pct>%@<reset>,.. [account=..] scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | not eligible: <reason> | incomplete: <reason>
 #     profile: --harness <h> [--model <m>] [--effort <e>]     (status clear only)
-#   clear      -> pass the profile line to fm-spawn.sh unless you state a reason to override
+#     receipt: <name> (one launch, valid <n>s) | none - ... | not written (...)
+#   clear      -> pass the profile line to fm-spawn.sh exactly; the receipt it wrote
+#                 admits that profile and no other
 #   ambiguous  -> confidence below the floor; decide as today from the probabilities
 #                 (window evidence is complete on this outcome, so hand-picking is informed)
 #   incomplete -> quota window evidence for at least one candidate is not fully known;
@@ -61,6 +95,8 @@
 #                 measurement and re-run; never pick by hand or drop the unknown candidate
 #   escalate   -> the rule requires captain approval, no candidate is rankable, or a genuine tie
 #   error      -> API, network, response, or quota-axi failure; decide as today
+#   Only clear writes a receipt; every other outcome, and off, leaves the launch
+#   to a receipt from choose (or override on the captain's instruction).
 #   Every outcome exits 0 so an intake is never blocked by this tool.
 #   Exit 2 only for a usage or configuration error (unreadable brief, an
 #   existing unreadable rules file, malformed rules, or missing jq), which is
@@ -75,7 +111,8 @@
 #
 # Authority: this tool never replaces firstmate's judgment, quota-array-dispatch,
 #   the captain-approval gate, or fm-spawn.sh validation; it publishes one
-#   inspectable answer plus every candidate's evidence, in code.
+#   inspectable answer plus every candidate's evidence, in code, and it is the
+#   only writer of the receipts the launch gate checks.
 set -u
 
 OPENROUTER_API_KEY_PRIVATE=${OPENROUTER_API_KEY:-}
@@ -87,6 +124,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-$FM_ROOT}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 # shellcheck source=bin/fm-quota-axi-lib.sh
 . "$SCRIPT_DIR/fm-quota-axi-lib.sh"
@@ -100,6 +139,18 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-account-lib.sh"
 # shellcheck source=bin/fm-brief-heading-lib.sh
 . "$SCRIPT_DIR/fm-brief-heading-lib.sh"
+# shellcheck source=bin/fm-dispatch-receipt-lib.sh
+. "$SCRIPT_DIR/fm-dispatch-receipt-lib.sh"
+
+# The receipt subcommands need neither a key nor the network, so they are
+# answered before the opt-in gate.
+case "${1:-}" in
+  gate) shift; fm_dr_cmd_gate "$@"; exit $? ;;
+  choose) shift; fm_dr_cmd_choose "$@"; exit $? ;;
+  override) shift; fm_dr_cmd_override "$@"; exit $? ;;
+  rows) shift; fm_dr_cmd_rows "$@"; exit $? ;;
+  overrides) shift; fm_dr_cmd_overrides "$@"; exit $? ;;
+esac
 
 CONFIDENCE_FLOOR=0.6
 # Bounded gather for an incomplete choice: attempts and the doubling backoff base.
@@ -130,11 +181,12 @@ usage() {
   ' "$0"
 }
 
-BRIEF='' PROJECT='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES=''
+BRIEF='' PROJECT='' TASK_ID='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES=''
 NEVER_SEND_PATH="$CONFIG/dispatch-never-send"
 while [ $# -gt 0 ]; do
   case "$1" in
     --project) [ $# -ge 2 ] || die "--project needs a value"; PROJECT=$2; shift 2 ;;
+    --task) [ $# -ge 2 ] || die "--task needs a value"; TASK_ID=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown flag $1" ;;
     *) [ -z "$BRIEF" ] || die "one brief file only"; BRIEF=$1; shift ;;
@@ -143,7 +195,7 @@ done
 
 # ---- opt-in gate ---------------------------------------------------------------
 if [ -z "$TS_KEY" ]; then
-  echo "dispatch-resolve: off ($TS_KEY_NAME absent from the environment and $FM_HOME/.env)" >&2
+  echo "dispatch-resolve: off ($TS_KEY_NAME absent from the environment and $FM_HOME/.env); no receipt written - route from the table yourself, then record it with: $(basename "$0") choose" >&2
   exit 0
 fi
 
@@ -654,7 +706,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       ([$ties[] | . as $candidate | $sel.use | to_entries[] |
         select(.value == $candidate.profile) | select($ev.profile_preference == "\($sel.source)_\(.key + 1)") | $candidate] | first) as $preferred |
       if ($ties | length) > 1 and $preferred == null then $ev + {status: "escalate", reason: "genuine spendPriority tie", note: $sel.note, candidates: $cands}
-      else $ev + {status: "clear", note: ($sel.note + (if ([$elig[].plan] | unique | length) > 1 then "; compare candidate plan tiers before accepting percent-based capacity" else "" end)), candidates: $cands, chosen: ($preferred // $best)}
+      else $ev + {status: "clear", note: ($sel.note + (if ([$elig[].plan] | unique | length) > 1 then "; compare candidate plan tiers before accepting percent-based capacity" else "" end)), candidates: $cands, chosen: ($preferred // $best), row: $sel.source}
         + (if ($unranked | length) > 0 then
              {unranked_note: "\($unranked | length) eligible candidate(s) unranked (\([$unranked[].provider] | unique | join(", ")))"}
            else {} end)
@@ -739,4 +791,16 @@ TEXT=$(jq -r '
       + (if .chosen.profile.effort then " --effort \(.chosen.profile.effort | shell_arg)" else "" end)
       + (if .chosen.profile.account then " --account \(.chosen.profile.account | shell_arg)" else "" end) else empty end)' <<<"$RESULT") || emit_error "output rendering failed"
 printf '%s\n' "$TEXT"
+# A clear answer is the routing decision, so it leaves the receipt the launch
+# gate will ask for. Failing to write it never blocks the intake: the line says
+# so and the gate refuses later.
+if [ "$(jq -r '.status // ""' <<<"$RESULT")" = clear ]; then
+  if RECEIPT_NAME=$(fm_dr_write_clear "$BRIEF" "$TASK_ID" "$RESULT"); then
+    printf '  receipt: %s (one launch, valid %ss)\n' "$RECEIPT_NAME" "$(fm_dr_max_age)"
+  else
+    printf '  receipt: not written (%s); the launch gate will refuse this profile until one exists\n' "${FM_DR_ERR:-unknown error}"
+  fi
+else
+  printf '  receipt: none - only clear writes one; record a routed choice with: %s choose %s --row <id> ...\n' "$(basename "$0")" "$BRIEF"
+fi
 exit 0

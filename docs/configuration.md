@@ -1125,7 +1125,8 @@ Firstmate resolves the rule's profile object or array under `AGENTS.md` section 
 
 - When the file exists, `fm-spawn.sh` enforces that contract by refusing crewmate and scout spawns that lack an explicit harness (`--harness`, a positional adapter, or a raw launch command).
 - Batch spawns satisfy the same requirement with a shared `--harness`.
-- Secondmate spawns are exempt and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
+- Secondmate spawns are exempt from that explicit-harness requirement and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
+- When the file has routing rows, every launch must also match a [dispatch receipt](#dispatch-receipts-statedispatch-receipt), secondmate launches included.
 
 **Contract owners**
 
@@ -1319,7 +1320,7 @@ See [`docs/examples/claude-shaped-store`](examples/claude-shaped-store) for a st
 
 `bin/fm-dispatch-resolve.sh` resolves one concrete crewmate or scout profile from a written brief with Jev through OpenRouter's System One API, so the rule match that firstmate otherwise reasons out in its own context becomes one short tool turn.
 It is off unless `OPENROUTER_API_KEY` is non-empty in the calling environment or the home's gitignored `.env` holds an `OPENROUTER_API_KEY=` line; the environment wins, matching the Relay and mail-plane contracts, and the Relay accessor in `bin/fm-env-lib.sh` reads the line.
-Off means one `dispatch-resolve: off` line on stderr, nothing on stdout, exit 0, and no network call, so firstmate dispatches exactly as it does without the tool.
+Off means one `dispatch-resolve: off` line on stderr, nothing on stdout, exit 0, no network call, and no receipt, so firstmate routes from the table with its own intake and records the result with `choose` (see [Dispatch receipts](#dispatch-receipts-statedispatch-receipt)).
 This section is the single owner of the tool's operator contract; the script header owns its exact flags and output lines, and "Crew dispatch profiles" above owns the declared rule and profile fields it applies.
 
 Rules come only from the effective home's `config/crew-dispatch.json`; `FM_CONFIG_OVERRIDE` selects the config directory for tests and specialized setup like the other scripts.
@@ -1401,6 +1402,55 @@ The resolver uses `https://openrouter.ai/api/v1/systemone`, model `typesafe/jev-
 If a direct typesafe.ai key is already provisioned as `TYPESAFE_API_KEY`, set `FM_DISPATCH_ROUTE=direct` for the one-line route fallback (`https://api.typesafe.ai`, `jev-latest`).
 With `FM_DISPATCH_CANARY=1`, session startup makes one trivial typed Choice request on the resolver's own route (base, model, and key, including `FM_DISPATCH_ROUTE=direct`) when that route's key is present; a route failure prints `DISPATCH_CANARY: FAIL` and never silently counts as a good route.
 The live rule-match evidence is recorded in [`verification/dispatch-resolve.md`](verification/dispatch-resolve.md).
+
+## Dispatch receipts (state/dispatch-receipt/)
+
+A home whose `config/crew-dispatch.json` has routing rows (at least one rule or a `default`) launches a worker only on a profile that came out of that table.
+`bin/fm-spawn.sh` refuses a ship, scout, or secondmate launch, and `bin/fm-control.sh relaunch` refuses a move onto a different harness, model, effort, or account, unless a fresh, unspent dispatch receipt binds that task's brief and names exactly the profile being launched.
+This section is the operator contract; `bin/fm-dispatch-receipt-lib.sh`'s header is the single owner of the receipt fields and the gate's rules, and `bin/fm-dispatch-resolve.sh`'s header owns the commands.
+
+The normal sequence needs no extra step, because a `clear` resolution writes the receipt itself:
+
+```sh
+bin/fm-dispatch-resolve.sh data/<id>/brief.md --project <name> --task <id> && bin/fm-quota-intake.sh && bin/fm-spawn.sh <id> <project> <the printed profile flags> --mode <mode>
+```
+
+**Producers**
+
+Only `bin/fm-dispatch-resolve.sh` writes a receipt, in three ways:
+
+- A `clear` resolution writes one for the profile on its `profile:` line.
+- `choose` records firstmate's own judgment when the answer is `incomplete`, `ambiguous`, `escalate`, or `error`, or when the tool is off: it takes the row id (`bin/fm-dispatch-resolve.sh rows` lists them), a profile that is a candidate of that row, an accounting file with one entry per candidate of the row, and a rationale file.
+- `override` records the captain's explicit instruction for one task, with the captain's exact words and the task id, and is the only way to launch a profile the table does not name.
+
+`choose` refuses a profile outside the named row, an accounting file that omits or adds a candidate, an entry without catalog evidence, plan, quota-intake record, `spendPriority` (a number or the literal `unknown`), eligibility, or reason, and a pick the accounting itself marks not eligible.
+`override` refuses empty words.
+
+**What the gate checks**
+
+- The newest receipt whose brief hash matches the task's brief must be unspent and at most 900 seconds old; `FM_DISPATCH_RECEIPT_MAX_AGE` can shorten that window and cannot lengthen it.
+- The receipt's row must be unchanged in the current table and still hold the receipt's profile, so editing a row makes its outstanding receipts stale.
+- The harness, model, effort, and account being launched must equal the receipt's profile field by field.
+- A receipt that names a task admits only that task, and each launch consumes its receipt.
+- A raw launch command is admitted only by a captain override, because a command string cannot be matched to a table profile.
+- A relaunch or a secondmate respawn that keeps the task's recorded profile makes no new routing decision and needs no receipt.
+
+Every refusal names the missing or mismatching receipt field and the command that produces a receipt, and leaves nothing created.
+
+**No off switch**
+
+The gate has no flag, variable, or config file that disables it.
+A home that has never had routing rows has no table to route from, so its launches are not gated.
+A home that once had routing rows and now has none is refused rather than ungated, so removing or emptying the table does not bypass it; retiring the table is the captain's decision, made by removing `state/dispatch-receipt/table-rows-seen` by hand.
+
+**Overrides are never silent**
+
+Each override is appended to `data/dispatch-overrides.jsonl`, and the session-start digest lists the overrides of the last seven days with the captain's recorded words.
+`bin/fm-dispatch-resolve.sh overrides` prints the whole log.
+
+**Homes**
+
+The scripts are shared and the records are not: every home, including each secondmate home and a remote secondmate host, runs the same gate against its own `config/crew-dispatch.json`, its own `state/dispatch-receipt/`, and its own override log.
 
 ## Toolchain
 

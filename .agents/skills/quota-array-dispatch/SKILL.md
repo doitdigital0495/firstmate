@@ -39,6 +39,7 @@ It does not replace the reasoning-class, runway-feasibility, or authentication g
 Firstmate can optionally arm `bin/fm-procevent-quota.sh` for a recurring mid-task check that wakes when the tracked provider drops below its configured threshold or its runway becomes `exhausted_now`.
 The opt-in [typed resolver](../../../docs/configuration.md#typed-dispatch-resolution-env-openrouter_api_key) applies the same eligibility gates and `spendPriority` argmax in code after a typed rule match.
 It never removes this skill's authority, and its `incomplete`, `ambiguous`, `escalate`, and `error` outcomes return here.
+Record every selection made here with `bin/fm-dispatch-resolve.sh choose` before spawning: its accounting file is this skill's per-candidate accounting, and the launch is refused without that receipt ([`docs/configuration.md`](../../../docs/configuration.md#dispatch-receipts-statedispatch-receipt) "Dispatch receipts").
 
 ## Read the default TOON
 

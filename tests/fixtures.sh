@@ -300,6 +300,62 @@ Exercise the spawn behavior under test.
 EOF
 }
 
+# fm_test_dispatch_env <home> <command...>
+# Runs a command against <home> exactly as the launch scripts address it.
+fm_test_dispatch_env() {
+  local home=$1
+  shift
+  FM_ROOT_OVERRIDE='' FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_CONFIG_OVERRIDE="$home/config" "$@"
+}
+
+# fm_test_dispatch_override <home> <task-id> <brief> <harness> [model] [effort] [account]
+# Records a captain override through the real producer
+# (bin/fm-dispatch-resolve.sh override), the only way a launch departs from a
+# home's dispatch table. A spawn test whose fixture table does not name the
+# profile under test uses it to pass the dispatch receipt gate the way a home does.
+fm_test_dispatch_override() {
+  local home=$1 id=$2 brief=$3 harness=$4 model=${5:-} effort=${6:-} account=${7:-} words rc=0
+  local args=(override "$brief" --task "$id" --harness "$harness")
+  [ -z "$model" ] || args+=(--model "$model")
+  [ -z "$effort" ] || args+=(--effort "$effort")
+  [ -z "$account" ] || args+=(--account "$account")
+  words=$(mktemp "${TMPDIR:-/tmp}/fm-test-override-words.XXXXXX") || return 1
+  printf 'test fixture: launch %s on %s exactly as this test passes it\n' "$id" "$harness" > "$words"
+  fm_test_dispatch_env "$home" "$ROOT/bin/fm-dispatch-resolve.sh" "${args[@]}" --words-file "$words" >/dev/null || rc=$?
+  rm -f "$words"
+  return "$rc"
+}
+
+# fm_test_dispatch_choose <home> <task-id> <brief> <row-id> <harness> [model] [effort] [account]
+# Records a routed choice through the real producer (bin/fm-dispatch-resolve.sh
+# choose): one accounting entry per candidate of the named row of the home's
+# config/crew-dispatch.json, each pointing at a fixture quota-intake record.
+# An empty task id leaves the receipt bound to the brief alone.
+fm_test_dispatch_choose() {
+  local home=$1 id=$2 brief=$3 row=$4 harness=$5 model=${6:-} effort=${7:-} account=${8:-} work rc=0
+  local args=(choose "$brief" --row "$row" --harness "$harness")
+  [ -z "$id" ] || args+=(--task "$id")
+  [ -z "$model" ] || args+=(--model "$model")
+  [ -z "$effort" ] || args+=(--effort "$effort")
+  [ -z "$account" ] || args+=(--account "$account")
+  work=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-choose.XXXXXX") || return 1
+  mkdir -p "$home/state/quota-intake"
+  [ -f "$home/state/quota-intake/quota-fixture.json" ] || printf '{}\n' > "$home/state/quota-intake/quota-fixture.json"
+  jq --arg row "$row" '
+    (if $row == "default" then .default else .rules[($row | ltrimstr("rule_") | tonumber) - 1].use end)
+    | (if type == "array" then . else [.] end)
+    | map({harness, model: (.model // ""), effort: (.effort // ""), account: (.account // ""),
+           catalog: "fixture catalog lists this model", plan: "fixture plan",
+           quotaIntakeRecord: "quota-fixture.json", spendPriority: 1, eligible: true, reason: "ok"})' \
+    "$home/config/crew-dispatch.json" > "$work/accounting.json" || rc=$?
+  printf 'test fixture: routed from row %s\n' "$row" > "$work/rationale.txt"
+  [ "$rc" -ne 0 ] || fm_test_dispatch_env "$home" "$ROOT/bin/fm-dispatch-resolve.sh" "${args[@]}" \
+    --accounting-file "$work/accounting.json" --rationale-file "$work/rationale.txt" >/dev/null || rc=$?
+  rm -rf "$work"
+  return "$rc"
+}
+
 # fm_test_make_spawn_fakebin <dir> [extra-exit0-tool...]
 # Creates <dir>/fakebin with the spawn tmux stub, a no-op treehouse, and any
 # extra exit-0 tools. Echoes the fakebin path.

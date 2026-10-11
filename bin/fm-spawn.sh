@@ -246,7 +246,12 @@
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
 #   spawns require an explicit harness so firstmate cannot silently skip dispatch
-#   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
+#   profile consultation. When that file has routing rows, every launch - ship,
+#   scout, secondmate, and a --relaunch onto a different harness, model, effort,
+#   or account - is also refused unless a dispatch receipt names exactly the
+#   profile being launched (bin/fm-dispatch-receipt-lib.sh owns that gate; there
+#   is no flag or variable that turns it off). A --secondmate spawn is exempt
+#   from the explicit-harness requirement only and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
 #   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|devin)
@@ -2654,6 +2659,11 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
   fi
 fi
 
+# The profile exactly as it was asked for, before a lean task-worker default
+# fills an omitted axis: the dispatch receipt gate compares these to the receipt.
+DISPATCH_REQ_MODEL=$MODEL
+DISPATCH_REQ_EFFORT=$EFFORT
+
 # Check configured pins against the actual profile, before lean defaults can
 # invent a provider on a pinned launch.
 RAW_COMMAND=
@@ -3838,6 +3848,35 @@ if [ "$KIND" = secondmate ]; then
   fi
 fi
 
+# Phase 1.9, routing half: the dispatch receipt gate (contract:
+# bin/fm-dispatch-receipt-lib.sh). A launch whose harness, model, effort, and
+# account did not come out of this home's dispatch table stops here, whatever
+# flags it was given. It is previewed before the quota record is spent and
+# consumed after, so a refused routing decision never burns a quota read. A
+# relaunch or a secondmate respawn that keeps the task's recorded profile makes
+# no new routing decision and needs no receipt. Remote second mates run this
+# same gate on their own host inside their own fm-spawn.
+DISPATCH_GATE_ARGS=(--task "$ID" --brief "${SOURCE_BRIEF:-$BRIEF}" --harness "$HARNESS")
+[ -z "$DISPATCH_REQ_MODEL" ] || DISPATCH_GATE_ARGS+=(--model "$DISPATCH_REQ_MODEL")
+[ -z "$DISPATCH_REQ_EFFORT" ] || DISPATCH_GATE_ARGS+=(--effort "$DISPATCH_REQ_EFFORT")
+[ -z "$ACCOUNT_ARG" ] || DISPATCH_GATE_ARGS+=(--account "$ACCOUNT_ARG")
+[ "$RAW_LAUNCH" -eq 0 ] || DISPATCH_GATE_ARGS+=(--raw)
+if [ "$RELAUNCH" -eq 1 ] || { [ "$KIND" = secondmate ] && [ -f "$STATE/$ID.meta" ]; }; then
+  DISPATCH_GATE_ARGS+=(--recorded-meta "$STATE/$ID.meta" --resolved-model "${MODEL:-default}" --resolved-effort "${EFFORT:-default}")
+fi
+spawn_dispatch_receipt_gate() {  # [--consume]
+  local out
+  if ! out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" \
+    FM_CONFIG_OVERRIDE="$CONFIG" FM_DATA_OVERRIDE="$DATA" \
+    "$SCRIPT_DIR/fm-dispatch-resolve.sh" gate "${DISPATCH_GATE_ARGS[@]}" "$@"); then
+    printf '%s\n' "$out" >&2
+    echo "error: $ID was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile" >&2
+    exit 1
+  fi
+  [ $# -eq 0 ] || printf '%s\n' "$out" >&2
+}
+spawn_dispatch_receipt_gate
+
 # Phase 1.9: bin/fm-quota-intake.sh gate. Every worker, scout, and local
 # second-mate launch stops here until a fresh quota intake record proves this
 # exact harness, model, account, and credential store still has every usage
@@ -3860,6 +3899,7 @@ if ! QUOTA_GATE_OUT=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
   exit 1
 fi
 printf '%s\n' "$QUOTA_GATE_OUT" >&2
+spawn_dispatch_receipt_gate --consume
 
 # Phase 2. bin/fm-claude-admission.sh owns the whole decision, including which
 # stores this home shapes at all - a store the home does not shape takes no
