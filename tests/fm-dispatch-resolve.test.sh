@@ -307,6 +307,28 @@ assert_contains "$body" 'cursor-grok' "candidate and effort options reach the mo
 assert_not_contains "$body" '.codex-geris' "credential paths never reach the model"
 pass "clear: one rule Choice request, key on the fd header only, spendPriority argmax over every candidate"
 
+# --- clear writes the dispatch receipt the launch gate asks for ---------------
+RECEIPT_DIR="$HOME_DIR/state/dispatch-receipt"
+receipt_name=$(sed -n 's/^  receipt: \(dispatch-[^ ]*\) .*/\1/p' <<<"$out")
+[ -n "$receipt_name" ] || fail "clear did not print the receipt it wrote: $out"
+receipt="$RECEIPT_DIR/$receipt_name"
+assert_present "$receipt" "clear writes its receipt under state/dispatch-receipt"
+assert_equals '600' "$(stat -c %a "$receipt" 2>/dev/null || stat -f %Lp "$receipt")" "the receipt is private"
+assert_equals 'resolve clear rule_4' "$(jq -r '"\(.source) \(.status) \(.row.id)"' "$receipt")" "the receipt names its source and matched row"
+assert_equals '{"harness":"cursor","model":"cursor-grok-4.6-medium","effort":"","account":"","provider":"cursor"}' \
+  "$(jq -c .profile "$receipt")" "the receipt carries the exact chosen profile"
+assert_equals '64 64' "$(jq -r '"\(.brief.sha256 | length) \(.row.sha256 | length)"' "$receipt")" "the receipt binds the brief and the row by hash"
+assert_equals '2' "$(jq '.candidates | length' "$receipt")" "the receipt accounts for every candidate of the row"
+assert_equals 'true' "$(jq 'all(.candidates[]; (.catalog | length) > 0 and (.plan | length) > 0 and (.quotaIntakeRecord | length) > 0 and ((.spendPriority | type) == "number" or .spendPriority == "unknown") and (.eligible | type) == "boolean" and (.reason | type) == "string")' "$receipt")" \
+  "each candidate carries catalog, plan, quota-intake record, spendPriority, eligibility, and reason"
+run code out err gate --brief "$BRIEF" --task pager-fix --harness cursor --model cursor-grok-4.6-medium
+expect_code 0 "$code" "the clear profile passes the gate with no extra step"
+assert_contains "$out" "dispatch receipt gate: PASS - receipt $receipt_name (resolve, row rule_4)" "the gate names the receipt it admits"
+run code out err gate --brief "$BRIEF" --task pager-fix --harness claude --model opus --effort high
+expect_code 3 "$code" "a hand-picked profile beside a clear receipt is refused"
+assert_contains "$out" "profile.harness is 'cursor' on the receipt but the launch passes 'claude'" "the refusal names the mismatching receipt field"
+pass "clear: writes a private receipt binding the brief, the row, the profile, and every candidate, and the gate admits only that profile"
+
 # --- never-send list: a match or a bad list withholds the request -------------
 NEVER_SEND="$HOME_DIR/config/dispatch-never-send"
 PRIVATE_BRIEF="$TMP_ROOT/private-brief.md"
@@ -489,11 +511,14 @@ pass "no-rule fallback, Agy, Gemini, and documented configurations resolve"
 
 # --- ambiguous: fixed confidence floor -----------------------------------------
 reset_log
+receipts_before=$(find "$RECEIPT_DIR" -name 'dispatch-*.json' | wc -l | tr -d ' ')
 write_response "$RESPONSE" rule_4 0.41
 OPENROUTER_API_KEY=$KEY run code out err "$BRIEF"
 expect_code 0 "$code" "ambiguous exits 0"
 assert_contains "$out" '  status: ambiguous' "below the floor is ambiguous"
 assert_contains "$out" '  reason: confidence 0.41 below floor 0.6' "ambiguous names the floor"
+assert_contains "$out" '  receipt: none - only clear writes one' "a non-clear outcome says it wrote no receipt"
+assert_equals "$receipts_before" "$(find "$RECEIPT_DIR" -name 'dispatch-*.json' | wc -l | tr -d ' ')" "a non-clear outcome writes no receipt"
 assert_contains "$out" 'candidate: claude:sonnet  provider=claude  windows=five_hour:93%@2030-01-01T04:00:00Z,seven_day:79%@2030-01-04T00:00:00Z  scope=all_models  remaining=79%  spendPriority=-0.4627  runway=projected_exhaustion  -> eligible' "ambiguous preserves matched candidate evidence"
 assert_not_contains "$out" '  profile:' "ambiguous emits no profile line"
 pass "ambiguous: confidence below the fixed floor hands the decision back"
@@ -1314,5 +1339,230 @@ assert_contains "$(cat "$LOG/argv")" 'https://api.typesafe.ai/v1/systemone' "dir
 assert_equals 'jev-latest' "$(jq -r '.model' "$LOG/body")" "direct canary uses the resolver's direct model"
 assert_equals "Authorization: Bearer $KEY" "$(cat "$LOG/header")" "direct canary uses the direct key"
 pass "startup canary follows the resolver's route selection"
+
+# --- dispatch receipts: the guarded producers and the launch gate --------------
+# Contract: bin/fm-dispatch-receipt-lib.sh. Everything here goes through the
+# subcommands a home uses; the gate is called exactly as bin/fm-spawn.sh and
+# bin/fm-control.sh relaunch call it.
+RH="$TMP_ROOT/receipt-home"
+RB="$RH/data/t1/brief.md"
+mkdir -p "$RH/config" "$RH/state/quota-intake" "$RH/data/t1" "$RH/data/t2"
+RTABLE='{"rules":[{"when":"hard design work","use":[{"harness":"claude","model":"opus","effort":"high"},{"harness":"codex","model":"gpt-5.6-sol"}]},{"when":"routine work","approval":"captain","use":{"harness":"pi","model":"zai/glm-5","provider":"zai"}}],"default":[{"harness":"codex"}]}'
+printf '%s\n' "$RTABLE" > "$RH/config/crew-dispatch.json"
+printf '# Task\n## Captain'"'"'s intent\nRedesign the pager.\n' > "$RB"
+printf '# Task\n## Captain'"'"'s intent\nAnother task entirely.\n' > "$RH/data/t2/brief.md"
+printf '{}\n' > "$RH/state/quota-intake/quota-1-1-1.json"
+ACCT="$TMP_ROOT/accounting.json"
+WHY="$TMP_ROOT/rationale.txt"
+WORDS="$TMP_ROOT/captain-words.txt"
+printf 'spendPriority tie broken on the reasoning class the task needs\n' > "$WHY"
+write_accounting() {  # <claude eligible> <codex intake record>
+  jq -n --argjson claude "$1" --arg rec "$2" '[
+    {harness: "claude", model: "opus", effort: "high", catalog: "claude model list names opus", plan: "max20",
+     quotaIntakeRecord: "quota-1-1-1.json", spendPriority: 41.5, eligible: $claude, reason: "ok"},
+    {harness: "codex", model: "gpt-5.6-sol", catalog: "codex catalog names gpt-5.6-sol", plan: "pro",
+     quotaIntakeRecord: $rec, spendPriority: "unknown", eligible: false, reason: "weekly window at 0% remaining"}]' > "$ACCT"
+}
+rtool() {  # <exit-var> <out-var> [args...]: stdout and stderr together
+  local __exit=$1 __out=$2 _out _code
+  shift 2
+  _out=$(FM_HOME="$RH" "$TOOL" "$@" 2>&1)
+  _code=$?
+  printf -v "$__exit" '%s' "$_code"
+  printf -v "$__out" '%s' "$_out"
+}
+rreceipts() { find "$RH/state/dispatch-receipt" -name 'dispatch-*.json' 2>/dev/null | wc -l | tr -d ' '; }
+CHOOSE=(choose "$RB" --task t1 --row rule_1 --harness claude --model opus --effort high --accounting-file "$ACCT" --rationale-file "$WHY")
+
+rtool code out rows
+expect_code 0 "$code" "rows lists the table"
+assert_contains "$out" 'row rule_1  sha256=' "rows names each row by id and hash"
+assert_contains "$out" '  candidate: --harness claude --model opus --effort high' "rows lists each candidate as launch flags"
+assert_contains "$out" 'row rule_2  sha256=' "rows lists every rule"
+assert_contains "$out" 'approval=captain' "rows shows a declared approval"
+assert_contains "$out" 'row default  sha256=' "rows lists the default row"
+
+# With rows in the table and no receipt, a hand-picked profile is refused.
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort high
+expect_code 3 "$code" "no receipt refuses"
+assert_contains "$out" 'dispatch receipt gate: refusing - no dispatch receipt binds the brief of t1' "the refusal names the missing receipt"
+assert_contains "$out" 'the newest receipt in this home binds nothing, because there is none' "the refusal says the home holds no receipt"
+assert_contains "$out" 'bin/fm-dispatch-resolve.sh choose <brief> --row <id>' "the refusal names the producing command"
+
+# choose: bound to one row, its candidates, and the per-candidate accounting.
+write_accounting true quota-1-1-1.json
+rtool code out choose "$RB" --row rule_1 --harness claude --model sonnet --accounting-file "$ACCT" --rationale-file "$WHY"
+expect_code 2 "$code" "a profile outside the row is refused"
+assert_contains "$out" 'is not a candidate of row rule_1; a profile outside the matched row is refused' "choose names the row the profile is outside"
+rtool code out choose "$RB" --row rule_9 --harness claude --model opus --effort high --accounting-file "$ACCT" --rationale-file "$WHY"
+expect_code 2 "$code" "an unknown row is refused"
+assert_contains "$out" "row 'rule_9' is not in" "choose names the unknown row"
+rtool code out choose "$RB" --harness claude --model opus --effort high --accounting-file "$ACCT" --rationale-file "$WHY"
+expect_code 2 "$code" "choose without a row is refused"
+assert_contains "$out" 'choose requires --row' "choose demands the row id"
+jq '.[0:1]' "$ACCT" > "$TMP_ROOT/accounting-short.json"
+rtool code out choose "$RB" --row rule_1 --harness claude --model opus --effort high --accounting-file "$TMP_ROOT/accounting-short.json" --rationale-file "$WHY"
+expect_code 2 "$code" "accounting that omits a candidate is refused"
+assert_contains "$out" 'accounting omits a candidate of the row: codex:gpt-5.6-sol' "choose names the omitted candidate"
+jq 'del(.[1].catalog)' "$ACCT" > "$TMP_ROOT/accounting-nocatalog.json"
+rtool code out choose "$RB" --row rule_1 --harness claude --model opus --effort high --accounting-file "$TMP_ROOT/accounting-nocatalog.json" --rationale-file "$WHY"
+expect_code 2 "$code" "accounting without catalog evidence is refused"
+assert_contains "$out" 'every accounting entry needs catalog' "choose names the missing accounting field"
+jq '.[1].spendPriority = "plenty"' "$ACCT" > "$TMP_ROOT/accounting-guess.json"
+rtool code out choose "$RB" --row rule_1 --harness claude --model opus --effort high --accounting-file "$TMP_ROOT/accounting-guess.json" --rationale-file "$WHY"
+expect_code 2 "$code" "a spendPriority that is neither a number nor unknown is refused"
+assert_contains "$out" 'spendPriority: a number or the literal "unknown"' "choose names the spendPriority rule"
+write_accounting true quota-9-9-9.json
+rtool code out "${CHOOSE[@]}"
+expect_code 2 "$code" "accounting from a quota-intake record the home does not hold is refused"
+assert_contains "$out" 'quota-intake record(s) this home does not hold: quota-9-9-9.json' "choose names the absent intake record"
+write_accounting false quota-1-1-1.json
+rtool code out "${CHOOSE[@]}"
+expect_code 2 "$code" "choosing a candidate the accounting excludes is refused"
+assert_contains "$out" 'the chosen profile is marked not eligible in the accounting' "choose names the excluded pick"
+write_accounting true quota-1-1-1.json
+: > "$TMP_ROOT/empty.txt"
+rtool code out choose "$RB" --task t1 --row rule_1 --harness claude --model opus --effort high --accounting-file "$ACCT" --rationale-file "$TMP_ROOT/empty.txt"
+expect_code 2 "$code" "an empty rationale is refused"
+assert_equals 0 "$(rreceipts)" "no refused choose leaves a receipt"
+rtool code out "${CHOOSE[@]}"
+expect_code 0 "$code" "a routed choice with complete accounting is recorded: $out"
+assert_contains "$out" '  status: chosen' "choose reports its status"
+assert_contains "$out" '  profile: --harness claude --model opus --effort high' "choose prints the profile line for fm-spawn"
+assert_equals 1 "$(rreceipts)" "choose writes one receipt"
+pass "choose: refuses a profile outside the row, an unknown row, incomplete or guessed accounting, an excluded pick, and an empty rationale"
+
+# The gate admits exactly that profile, once.
+rtool code out gate --brief "$RH/data/t2/brief.md" --task t2 --harness claude --model opus --effort high
+expect_code 3 "$code" "a receipt for another brief refuses"
+assert_contains "$out" 'no dispatch receipt binds the brief of t2' "another brief's receipt binds nothing here"
+assert_contains "$out" "the newest receipt in this home binds $(cd "$RH/data/t1" && pwd -P)/brief.md" "the refusal names the brief that is bound"
+rtool code out gate --brief "$RB" --task t9 --harness claude --model opus --effort high
+expect_code 3 "$code" "a receipt issued for another task refuses"
+assert_contains "$out" "was issued for task 't1', not t9" "the refusal names the task mismatch"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort max
+expect_code 3 "$code" "a different effort than the receipt refuses"
+assert_contains "$out" "profile.effort is 'high' on the receipt but the launch passes 'max'" "the refusal names the mismatching field"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort high --account geris
+expect_code 3 "$code" "a different account than the receipt refuses"
+assert_contains "$out" "profile.account is 'default' on the receipt but the launch passes 'geris'" "the refusal names the account mismatch"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort high
+expect_code 0 "$code" "a preview passes and spends nothing"
+assert_contains "$out" '(preview)' "a gate call without --consume is a preview"
+# A relaunch progress note appended to the brief does not unbind its receipt.
+cp "$RB" "$TMP_ROOT/brief-before-note.md"
+printf '\n## Progress note (2026-01-01T00:00:00Z)\n\nThis task was relaunched.\n' >> "$RB"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort high --consume
+expect_code 0 "$code" "the launch consumes the receipt across an appended progress note: $out"
+assert_contains "$out" 'receipt consumed' "the consuming gate says so"
+cp "$TMP_ROOT/brief-before-note.md" "$RB"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort high --consume
+expect_code 3 "$code" "a consumed receipt refuses"
+assert_contains "$out" 'was already consumed by a launch' "the refusal says the receipt was consumed"
+pass "gate: one receipt admits one launch of its own brief, task, and profile, and nothing else"
+
+# Stale: the window can only be shortened, never widened.
+rtool code out "${CHOOSE[@]}"
+stale=$(find "$RH/state/dispatch-receipt" -name 'dispatch-*.json' ! -name "$(basename "$(find "$RH/state/dispatch-receipt" -name '*.spent' | sed 's/\.spent$//')")")
+jq '.issuedAtEpoch -= 1000' "$stale" > "$stale.tmp" && mv "$stale.tmp" "$stale"
+FM_DISPATCH_RECEIPT_MAX_AGE=99999999 rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort high
+expect_code 3 "$code" "a receipt older than the fixed cap refuses whatever the environment asks for"
+assert_contains "$out" 'is stale: issuedAt is' "the refusal says the receipt is stale"
+assert_contains "$out" '(max 900s)' "the freshness window cannot be widened past its cap"
+pass "gate: a stale receipt refuses and the freshness window cannot be widened"
+
+# The table moved on: the receipt's row changed, or it never held the profile.
+rtool code out "${CHOOSE[@]}"
+jq '.rules[0].use += [{"harness":"grok"}]' "$RH/config/crew-dispatch.json" > "$TMP_ROOT/table.tmp" && cp "$TMP_ROOT/table.tmp" "$RH/config/crew-dispatch.json"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort high
+expect_code 3 "$code" "a receipt whose row has since changed refuses"
+assert_contains "$out" "names row.id 'rule_1'" "the refusal names the row"
+assert_contains "$out" 'that row has changed in config/crew-dispatch.json since' "the refusal says the row changed"
+printf '%s\n' "$RTABLE" > "$RH/config/crew-dispatch.json"
+# A receipt written by hand for a profile the row does not hold is refused: the
+# gate re-derives membership from the current table.
+forged="$RH/state/dispatch-receipt/dispatch-9999999999-000000000-1.json"
+newest=$(find "$RH/state/dispatch-receipt" -name 'dispatch-*.json' | LC_ALL=C sort | tail -n 1)
+jq --argjson now "$(date -u +%s)" '.receipt = "dispatch-9999999999-000000000-1.json" | .issuedAtEpoch = $now | .profile.model = "fable" | .profile.effort = "max"' "$newest" > "$forged"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model fable --effort max
+expect_code 3 "$code" "a profile outside the matched row refuses even on a hand-written receipt"
+assert_contains "$out" "is not a candidate of row.id 'rule_1' in the current config/crew-dispatch.json; a profile outside the matched row is refused" "the refusal names the row the profile is outside"
+rm -f "$forged"
+pass "gate: a receipt whose row changed, or whose profile the row does not hold, refuses"
+
+# override: the captain's exact words, for one task, never silent.
+rtool code out override "$RB" --task t1 --harness claude --model fable --effort max --words-file "$TMP_ROOT/empty.txt"
+expect_code 2 "$code" "an override with empty words is refused"
+assert_contains "$out" "the captain's words are empty; an override without the captain's exact words is refused" "override names the empty words"
+printf '   \n\n' > "$WORDS"
+rtool code out override "$RB" --task t1 --harness claude --model fable --effort max --words-file "$WORDS"
+expect_code 2 "$code" "an override with whitespace-only words is refused"
+printf 'use fable at max for this one\n' > "$WORDS"
+rtool code out override "$RB" --harness claude --model fable --effort max --words-file "$WORDS"
+expect_code 2 "$code" "an override with no task is refused"
+assert_absent "$RH/data/dispatch-overrides.jsonl" "a refused override logs nothing"
+rtool code out override "$RB" --task t1 --harness claude --model fable --effort max --words-file "$WORDS"
+expect_code 0 "$code" "an override with the captain's words is recorded: $out"
+assert_contains "$out" '  override: captain' "override marks the receipt override=captain"
+assert_equals 'captain|use fable at max for this one|t1' "$(jq -r 'select(.override != null) | "\(.override.by)|\(.override.words)|\(.override.task)"' "$RH"/state/dispatch-receipt/dispatch-*.json | tail -n 1)" \
+  "the override receipt carries the captain's exact words and the task id"
+assert_equals 't1|use fable at max for this one|fable' "$(jq -r '"\(.task)|\(.words)|\(.profile.model)"' "$RH/data/dispatch-overrides.jsonl")" \
+  "the override is appended to the durable log"
+rtool code out overrides --recent
+assert_contains "$out" 'task=t1  --harness claude --model fable --effort max  captain: "use fable at max for this one"' "the recent listing shows the override and its words"
+rtool code out gate --brief "$RB" --task t2 --harness claude --model fable --effort max
+expect_code 3 "$code" "an override for one task does not admit another"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model fable --effort max --raw --consume
+expect_code 0 "$code" "the override admits its own off-table profile, raw command included: $out"
+assert_contains "$out" 'override=captain' "the gate reports the override it admitted"
+# An override receipt with no entry in the durable log is not an override.
+rtool code out override "$RB" --task t1 --harness claude --model fable --effort max --words-file "$WORDS"
+: > "$RH/data/dispatch-overrides.jsonl"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model fable --effort max
+expect_code 3 "$code" "an override receipt missing from the log refuses"
+assert_contains "$out" 'is marked override=captain but' "the refusal names the unlogged override"
+pass "override: refuses empty words and a missing task, logs the captain's words durably, and admits only its own task"
+
+# A raw launch command never rides a table receipt.
+rtool code out "${CHOOSE[@]}"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort high --raw
+expect_code 3 "$code" "a raw launch command on a table receipt refuses"
+assert_contains "$out" 'a raw launch command cannot be matched to a profile of the dispatch table; only a captain override admits it' "the refusal names the override as the only way"
+
+# Keeping the recorded profile is no new routing decision; changing it is.
+printf 'harness=claude\nmodel=opus\neffort=high\nkind=ship\n' > "$TMP_ROOT/recorded.meta"
+rm -rf "$RH/state/dispatch-receipt"/dispatch-*
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort high --recorded-meta "$TMP_ROOT/recorded.meta"
+expect_code 0 "$code" "a relaunch that keeps the recorded profile needs no receipt: $out"
+assert_contains "$out" 't1 keeps its recorded profile' "the gate says why no receipt was needed"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort max --recorded-meta "$TMP_ROOT/recorded.meta"
+expect_code 3 "$code" "a relaunch onto a new effort needs a receipt"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort high --account geris --recorded-meta "$TMP_ROOT/recorded.meta"
+expect_code 3 "$code" "a relaunch onto a new account needs a receipt"
+pass "gate: a raw command needs an override, and only a launch that keeps the recorded profile skips the receipt"
+
+# Removing or emptying the table is not a way around it; a home that never had
+# routing rows has nothing to route from.
+mv "$RH/config/crew-dispatch.json" "$TMP_ROOT/table.bak"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort max
+expect_code 3 "$code" "a removed table refuses in a home that routed from it"
+assert_contains "$out" 'this home routed from config/crew-dispatch.json before and it now has no rules and no default' "the refusal names the removed table"
+printf '{"model_notes":{"claude":"notes only"}}\n' > "$RH/config/crew-dispatch.json"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort max
+expect_code 3 "$code" "an emptied table refuses in a home that routed from it"
+printf '{broken\n' > "$RH/config/crew-dispatch.json"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort max
+expect_code 3 "$code" "a malformed table refuses"
+assert_contains "$out" 'is not a readable, well-formed rules file' "the refusal names the malformed table"
+NOROWS="$TMP_ROOT/norows-home"
+mkdir -p "$NOROWS/config" "$NOROWS/state"
+rtool_norows() { FM_HOME="$NOROWS" "$TOOL" gate --brief "$RB" --task t1 --harness claude --model opus --effort max 2>&1; }
+out=$(rtool_norows); code=$?
+expect_code 0 "$code" "a home with no table has nothing to route from"
+printf '{"model_notes":{"claude":"notes only"}}\n' > "$NOROWS/config/crew-dispatch.json"
+out=$(rtool_norows); code=$?
+expect_code 0 "$code" "a notes-only table has no routing rows"
+assert_contains "$out" 'PASS - this home has no routing rows' "the gate says there is no table to route from"
+pass "gate: a removed, emptied, or malformed table refuses, and a home that never had routing rows passes"
 
 printf '# all fm-dispatch-resolve tests passed\n'

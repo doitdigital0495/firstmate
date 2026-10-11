@@ -358,6 +358,8 @@ test_raw_compound_launch_command_carries_the_switch() {
   read_case "$rec"
   printf '%s\n' '{"rules":[{"when":"current events","use":{"harness":"grok","model":"grok-4","effort":"high"}}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
     > "$HOME_DIR/config/crew-dispatch.json"
+  # The raw command's harness is the basename of its first word.
+  fm_test_dispatch_override "$HOME_DIR" raw-compound-a1 "$HOME_DIR/data/raw-compound-a1/brief.md" cd
 
   probe_dir="$CASE_DIR/agent-cwd"
   mkdir -p "$probe_dir"

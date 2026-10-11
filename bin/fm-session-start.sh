@@ -991,6 +991,20 @@ if fm_pf_relay_active "$FM_HOME" \
   fi
 fi
 
+# Captain overrides of the dispatch table (bin/fm-dispatch-receipt-lib.sh owns
+# the log). A launch that departed from the table is surfaced from disk at every
+# session start for a week, so an override is never silent. A home with no
+# override on record runs one [ -f ] test and prints no subsection.
+if [ -f "$DATA/dispatch-overrides.jsonl" ]; then
+  DISPATCH_OVERRIDES=$("$SCRIPT_DIR/fm-dispatch-resolve.sh" overrides --recent 2>/dev/null) || DISPATCH_OVERRIDES=
+  if [ -n "$DISPATCH_OVERRIDES" ]; then
+    subsection "Dispatch table overrides (data/dispatch-overrides.jsonl, last 7 days)"
+    printf '%s\n' "$DISPATCH_OVERRIDES"
+    printf '\nEach line is a launch that departed from config/crew-dispatch.json on the captain'"'"'s recorded words for that one task.\n'
+    printf 'It grants nothing for any other task: every other launch still routes from the table.\n'
+  fi
+fi
+
 # --- 7. network checks ------------------------------------------------------
 # Deliberately here and not later: these lines are actionable (a stuck clone, a
 # secondmate that could not be relaunched, broken GitHub auth), and the section
