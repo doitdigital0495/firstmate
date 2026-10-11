@@ -37,9 +37,11 @@
 # Unstructured work, missing registry, inventory gaps and uncollected other homes
 # are explicit. registered_homes lists each registered secondmate home in the
 # input as {key,id,label,status,reason,collected_at_epoch,workers[],queued[]}:
-# status is collected, remote, invalid or unreadable, workers are that home's
-# tasks that have a worker and queued its queued tasks that have none, both in
-# the same shape as a project's tasks and projected from that home's own input.
+# status is collected, stale, remote, invalid or unreadable, workers are that
+# home's tasks that have a worker and queued its queued tasks that have none,
+# both in the same shape as a project's tasks and projected from that home's
+# own input. A stale home was not read this time: its rows are its last good
+# read, taken at its collected_at_epoch, and its reason says why.
 # Its open questions and its other work without a worker stay on its own
 # board, so projects[] and counts cover this home only.
 # --prs names one fm-live-board-prs.v1 document (bin/fm-live-board-prs.sh owns
@@ -71,7 +73,8 @@
 # terminal output, action commands, private file paths or arbitrary links. Only
 # recorded https PR /pull/<number> links are retained. Operational text must
 # itself be secret-free; publishing this home remains an explicit later opt-in.
-# This command changes no home state, starts no service and spends no model turns.
+# This command starts no service and spends no model turns; the last good
+# registered-home inputs bin/fm-fleet-snapshot.sh caches are its only state write.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() { awk 'NR==1 {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "$0"; }

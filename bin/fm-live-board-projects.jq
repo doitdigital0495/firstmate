@@ -301,6 +301,14 @@ def lb_home_unread_why:
   if .status == "remote" then "that home is on another machine"
   elif .status == "invalid" then "its registration could not be checked"
   else "the read failed or took too long" end;
+# How old a second mate's last good read is, for work shown from it.
+def lb_as_of($seconds):
+  "as of " + (if $seconds < 60 then "less than a minute"
+    elif $seconds < 5400 then lb_plural($seconds / 60 | round; "minute"; "minutes")
+    elif $seconds < 172800 then lb_plural($seconds / 3600 | round; "hour"; "hours")
+    else lb_plural($seconds / 86400 | round; "day"; "days") end) + " ago";
+def lb_home_as_of($board):
+  if .status == "stale" then lb_as_of(($board.collected_at_epoch // 0) - (.collected_at_epoch // 0)) else null end;
 
 def lb_view($map):
 . as $board
@@ -321,10 +329,11 @@ def lb_view($map):
       else {key:"repo:\($repo // "")",index:null,repo:$repo} end;
   [$board.projects[] | .questions[] | . as $q | group_of(.id; .project) + {question:$q}] as $asked
 # A registered home's workers and queued work sit in their project's lanes
-# beside this home's, each line naming its second mate.
-| ([$board.projects[] | .tasks[] | . as $t | group_of(.id; .project) + {task:$t,home:null}]
-   + [$homes[] | (.label | lb_home_name) as $home | (.workers[], .queued[]?) | . as $t
-      | group_of(.id; .project) + {task:$t,home:$home}]) as $placed
+# beside this home's, each line naming its second mate, and the age of its last
+# good read when this build could not read that home.
+| ([$board.projects[] | .tasks[] | . as $t | group_of(.id; .project) + {task:$t,home:null,as_of:null}]
+   + [$homes[] | (.label | lb_home_name) as $home | lb_home_as_of($board) as $as_of | (.workers[], .queued[]?) | . as $t
+      | group_of(.id; .project) + {task:$t,home:$home,as_of:$as_of}]) as $placed
 | [($board.recently_finished // [])[] | . as $f | group_of(.id; .project) + {finished:$f}] as $done
 | [($board.pull_requests.repos // [])[] | . as $repo | ($repo.prs // [])[] | . as $pr
    | group_of($pr.task // ""; $repo.project) + {pr:($pr + {forge:$repo.forge,repo:$repo.project})}] as $merged
@@ -338,11 +347,11 @@ def lb_view($map):
 | [$keys[] as $g
    | [$asked[] | select(.key == $g.key) | .question] as $questions
    | [$done[] | select(.key == $g.key) | .finished] as $finished
-   | [$placed[] | select(.key == $g.key) | .home as $home | .task as $t
+   | [$placed[] | select(.key == $g.key) | .home as $home | .as_of as $as_of | .task as $t
       | (if $t.worker_present == true then $t | lb_worker_status else null end) as $crew
       | ($t | lb_lane($today; $crew)) as $l
       | lb_explain($ids; $t.about; $t.question_context.about; $t.hold.reason) as $what
-      | {key:$t.key,id:$t.id,title:($t.title | lb_title($ids) // "Untitled work"),home:$home,
+      | {key:$t.key,id:$t.id,title:($t.title | lb_title($ids) // "Untitled work"),home:$home,home_as_of:$as_of,
          lane:$l.lane,why:$l.why,why_label:($l.why | lb_why_label($t.hold.until)),state:$t.state,
          explain:$what.text,explain_source:$what.source,
          note:(if $l.lane == "doing" then ($t | lb_worker_doing($crew; $ids))
@@ -473,7 +482,9 @@ def lb_view($map):
          elif $k == "unstructured-open-work" then "\(.count) open task lines are not structured and are not shown."
          else "Coverage gap: \($k | gsub("-"; " "))" end),
      ($homes[] | select(.status != "collected")
-       | "The work of second mate \(.label | lb_home_name) is not shown: \(lb_home_unread_why)."),
+       | if .status == "stale" then
+           "The work of second mate \(.label | lb_home_name) is shown \(lb_home_as_of($board)), from its last good read: \(lb_home_unread_why) this time."
+         else "The work of second mate \(.label | lb_home_name) is not shown: \(lb_home_unread_why)." end),
      ($board.warnings // [] | map(select(.kind != "question-needs-owner-review")) | group_by(.kind)[]
        | "\(length) board warning\(if length == 1 then "" else "s" end) for Firstmate: \(.[0].kind | gsub("-"; " "))")],
    projects:$groups};

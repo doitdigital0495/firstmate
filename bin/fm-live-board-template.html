@@ -742,6 +742,12 @@ __FM_LIVE_BOARD_DATA__
       var home = badge("b-info", "Second mate: " + t.home);
       home.setAttribute("data-home", t.home);
       name.appendChild(home);
+      if (t.home_as_of) {
+        var asOf = badge("b-warn", t.home_as_of);
+        asOf.setAttribute("data-home-as-of", "");
+        asOf.setAttribute("title", "This second mate could not be read this time, so this is its last good read.");
+        name.appendChild(asOf);
+      }
     }
     row.appendChild(name);
     /* A stacked card says what it is under its title; a Doing now line keeps

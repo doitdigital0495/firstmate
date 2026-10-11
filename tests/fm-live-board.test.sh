@@ -334,6 +334,49 @@ check "$out" '(.notes | index("The work of second mate Lost desk is not shown: i
   "a second mate whose home could not be read was not named in the board notes"
 pass "a second mate's workers and queued work sit in their project's lanes, and a home that could not be read is named"
 
+# A second mate whose home stops reading keeps the lines of its last good read,
+# each marked with that read's age, never dropped and never shown as current.
+base=$(date +%s)
+in_home "$home" env FM_SNAPSHOT_NOW_EPOCH="$base" "$LIVE" build >/dev/null || fail "a board with a second mate did not rebuild"
+# A task record that cannot be captured fails that home's whole read.
+mkdir "$mate/state/broken.meta"
+in_home "$home" env FM_SNAPSHOT_NOW_EPOCH="$((base + 420))" "$LIVE" build >/dev/null \
+  || fail "a board whose second mate could not be read did not build"
+out=$(render "$home")
+check "$out" '(.projects | map(.label)) == ["Help desk","shop"]
+  and (.projects[0].lanes | (.doing.cards | map([.id,.home,.asOf])) == [["cr-answer","Second mate: Ai desk","as of 7 minutes ago"]]
+    and (.next.cards | map([.id,.home,.asOf])) == [["cr-waiting","Second mate: Ai desk","as of 7 minutes ago"]]
+    and (.charted.cards | map([.id,.asOf])) == [["cr-held","as of 7 minutes ago"],["cr-wrap","as of 7 minutes ago"]])
+  and (.projects[1].lanes.doing.cards | map([.id,.home,.asOf])) == [["cr-own",null,null]]' \
+  "a second mate that could not be read lost its last good lines, or they were not marked with their age"
+check "$out" '(.notes | index("The work of second mate Ai desk is shown as of 7 minutes ago, from its last good read: the read failed or took too long this time.") != null)
+  and (.notes | any(test("Ai desk is not shown")) | not)' \
+  "the board notes did not say a second mate's work is its last good read"
+rmdir "$mate/state/broken.meta"
+in_home "$home" env FM_SNAPSHOT_NOW_EPOCH="$((base + 480))" "$LIVE" build >/dev/null || fail "a board whose second mate reads again did not build"
+out=$(render "$home")
+check "$out" '([.projects[0].lanes[].cards[] | .asOf] | all(. == null)) and (.notes | any(test("last good read")) | not)
+  and (.projects[0].lanes.doing.cards | map(.id)) == ["cr-answer"]' \
+  "a second mate that reads again was still marked as its last good read"
+pass "a second mate that could not be read keeps its last good lines marked with their age, and the notes say so"
+
+# A review query that never answers must leave the worker's read time to fall
+# back on the worker's own report, instead of ending the read with it.
+home=$(make_home hung-review)
+printf -- '- shop [no-mistakes] - fixture (added 2026-01-01)\n' > "$home/data/projects.md"
+tasks_in "$home" add hr-wait "Wait for the vendor" --repo shop --kind ship --start
+worker "$home" hr-wait idle 'project=shop'
+git -C "$home/projects/wt-hr-wait" init -q -b fm/hr-wait
+git -C "$home/projects/wt-hr-wait" -c user.email=fixture@example.invalid -c user.name=fixture commit -q --allow-empty -m init
+printf 'paused [at=%s]: waiting for the vendor to answer\n' "$(date +%s)" > "$home/state/hr-wait.status"
+printf '#!/usr/bin/env bash\nexec sleep 60\n' > "$home/fakebin/no-mistakes"
+in_home "$home" env FM_SNAPSHOT_CREW_STATE_TIMEOUT=4 "$LIVE" build >/dev/null || fail "a board with a hung review query did not build"
+out=$(render "$home")
+check "$out" '(.projects[0].lanes.doing.cards | map([.id,.status,.statusLabel,.note])) ==
+  [["hr-wait","external","Paused on an outside wait","waiting for the vendor to answer"]]' \
+  "a worker whose review query never answered lost its own report and read as stuck"
+pass "a review query that never answers still leaves a worker its own reported status"
+
 # --- Projects, questions and workers -------------------------------------------
 home=$(make_home fleet)
 printf -- '- web-shop [no-mistakes] - fixture (added 2026-01-01)\n- data [direct-PR] - fixture (added 2026-01-01)\n' \

@@ -491,4 +491,40 @@ FM_HOME="$h" FM_ROOT_OVERRIDE="$ROOT" FM_SNAPSHOT_SECONDMATES=1 "$FLEET" --live-
 check "$TMP_ROOT/crew-capped.json" '(.registered_homes | length) == 1
   and .coverage.registered_homes.complete == false and .coverage.registered_homes.reason != null' \
   'homes beyond the per-snapshot bound were not disclosed'
-pass 'registered homes contribute their workers and queued work through their own input; remote, invalid, malformed and unread homes are named'
+# A home whose read fails keeps its last good input, marked stale with that
+# input's own age; one that was never read successfully is unreadable.
+collect "$h" "$TMP_ROOT/crew-good.json"
+check "$TMP_ROOT/crew-good.json" '.registered_homes[0] | .status == "collected" and .input.generated_epoch == 1784937600' \
+  'the fixture read did not carry the pinned collection time'
+# A task record that cannot be captured fails that home's whole read.
+mkdir "$mate/state/broken.meta"
+FM_HOME="$h" FM_ROOT_OVERRIDE="$ROOT" FM_SNAPSHOT_NOW=2026-07-25T00:07:00Z "$FLEET" --live-board-input > "$TMP_ROOT/crew-stale.json"
+check "$TMP_ROOT/crew-stale.json" '.generated_epoch == 1784938020
+  and (.registered_homes[0] | .id == "ai-desk" and .status == "stale" and .reason == "the read failed or took too long"
+    and .input.generated_epoch == 1784937600 and (.input.tasks | map(.id)) == ["mate-fix"])
+  and .coverage.registered_homes == {complete:false,reason:"3 of 3 registered homes were not read",total:3,collected:0}' \
+  'a registered home whose read failed did not keep its last good input, or was presented as read this time'
+render "$TMP_ROOT/crew-stale.json" "$TMP_ROOT/crew-stale-board.json"
+check "$TMP_ROOT/crew-stale-board.json" '(.registered_homes[0] | .status == "stale" and .reason == "the read failed or took too long"
+    and .collected_at_epoch == 1784937600 and (.workers | map(.id)) == ["mate-fix"] and (.queued | map(.id)) == ["mate-later"])
+  and .collected_at_epoch == 1784938020
+  and (.omissions[] | select(.kind == "registered-homes-uncollected") | .homes | map([.label,.status])) ==
+    [["ai-desk","stale"],["far-desk","remote"],["lost-desk","invalid"]]' \
+  'a stale registered home did not contribute its last good workers and queued work with their age'
+jq '.registered_homes[0].input.tasks = "broken"' "$TMP_ROOT/crew-stale.json" > "$TMP_ROOT/crew-stale-bad.json"
+render "$TMP_ROOT/crew-stale-bad.json" "$TMP_ROOT/crew-stale-bad-board.json"
+check "$TMP_ROOT/crew-stale-bad-board.json" '.registered_homes[0] | .status == "unreadable" and .workers == [] and .queued == []' \
+  'a malformed last good input was not disclosed as unreadable'
+FM_HOME="$h" FM_ROOT_OVERRIDE="$ROOT" FM_SNAPSHOT_NOW=2026-07-25T00:07:00Z FM_SNAPSHOT_CACHE_DIR="$TMP_ROOT/crew-no-cache" \
+  "$FLEET" --live-board-input > "$TMP_ROOT/crew-never.json"
+check "$TMP_ROOT/crew-never.json" '.registered_homes[0] | .status == "unreadable" and .input == null
+  and .reason == "the read failed or took too long"' \
+  'a registered home with no last good input was not disclosed as unreadable'
+FM_HOME="$h" FM_ROOT_OVERRIDE="$ROOT" FM_SNAPSHOT_NOW=2026-07-24T23:00:00Z "$FLEET" --live-board-input > "$TMP_ROOT/crew-early.json"
+check "$TMP_ROOT/crew-early.json" '.registered_homes[0] | .status == "unreadable" and .input == null' \
+  'a kept input newer than this collection was presented as its last good read'
+rmdir "$mate/state/broken.meta"
+FM_HOME="$h" FM_ROOT_OVERRIDE="$ROOT" FM_SNAPSHOT_NOW=2026-07-25T00:09:00Z "$FLEET" --live-board-input > "$TMP_ROOT/crew-back.json"
+check "$TMP_ROOT/crew-back.json" '.registered_homes[0] | .status == "collected" and .reason == null and .input.generated_epoch == 1784938140' \
+  'a registered home that reads again was still shown from its last good input'
+pass 'registered homes contribute their workers and queued work through their own input; remote, invalid, malformed and unread homes are named, and a home that stops reading keeps its last good input with its age'
