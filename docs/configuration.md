@@ -1445,11 +1445,13 @@ A home with no routing rows has no table to route from, so its launches are not 
 **What the gate prevents, and what it only records**
 
 The gate physically stops a launch whose profile no receipt names, which is what catches a hand-picked profile.
-Three paths are audit and deterrence, not physical prevention.
+Four paths are audit and deterrence, not physical prevention.
 `override` accepts any non-empty words file as the captain's words, so nothing proves the captain wrote them.
 `choose` takes accounting the caller wrote itself, so nothing proves the catalog, plan, and quota figures in it.
 Receipts and `state/<id>.meta` are plain files the same user can write by hand, so a forged receipt for a profile its row holds, or a hand-edited recorded profile, passes.
-Each of these leaves a durable record the captain can read afterwards: the override log and the session-start digest for an override, the receipt with its accounting and rationale for a choice.
+The parent-admission pass-through for a remote second mate, described under "Second mates" below, can be reached from a local session.
+The first three leave a durable record the captain can read afterwards: the override log and the session-start digest for an override, the receipt with its accounting and rationale for a choice.
+The pass-through leaves none.
 
 **Second mates**
 
@@ -1458,10 +1460,12 @@ Changing `config/secondmate-harness` (or the second-mate model or effort) theref
 
 A remote second mate is gated in its parent home.
 `bin/fm-spawn.sh --secondmate` runs the gate against a receipt in the parent home for the charter at `data/<id>/brief.md` before it asks the remote host to launch, refuses with the same text as any other launch, and consumes that receipt.
-The remote host has no receipt producer, so its host-local launch needs no receipt of its own: `bin/fm-remote-secondmate-control.sh launch` hands the parent's admission on, and the gate honours it only for the host-local launch of that one second mate, never for a ship, a scout, a local second mate, or a relaunch started from a session.
+The remote host has no receipt producer, so its host-local launch needs no receipt of its own: `bin/fm-remote-secondmate-control.sh launch` hands the parent's admission on, and the gate honours it only for a second-mate launch whose state directory is the home's private `state/parent-route`, whose brief is that home's `data/charter.md`, and whose `.fm-secondmate-home` marker names the same id, never for a ship, a scout, or a relaunch.
+That admission is audit and deterrence, not physical prevention: every one of those conditions is established on the launching side, so a local session can reach it for a seeded second-mate home, by running `bin/fm-remote-secondmate-control.sh launch` against that home or by setting `FM_DISPATCH_PARENT_ADMITTED` and the state directory by hand, and such a launch leaves no receipt and no override record.
 
 One remote path is not covered by the parent's table.
 `bin/fm-remote-secondmate-relaunch.sh`, which moves a running remote second mate onto another harness, model, or effort, is gated only on the remote host, against that host's own table and its private `state/parent-route` records: a host whose table has routing rows refuses the move, because nothing can produce a receipt there, and a host whose table has none does not gate it.
+Nothing admits that move on a host with routing rows today.
 
 **Overrides are never silent**
 
