@@ -1,0 +1,15 @@
+$ bin/fm-live-board-answer.sh record lavish-d27e6ce15a7ede01 1 --item 1 --source 'the task list' --file answer1.txt
+recorded: lavish-d27e6ce15a7ede01.1.1
+exit: 0
+
+$ bin/fm-procevent.sh handled lavish-d27e6ce15a7ede01 1
+handled: lavish-d27e6ce15a7ede01 1
+exit: 0
+
+$ bin/fm-procevent.sh list
+SOURCE                       ADAPTER      OWNER      PENDING
+lavish-d27e6ce15a7ede01      lavish       none       0
+
+$ bin/fm-live-board-answer.sh list
+{"status":"answered","question":"What is Dev 4 to dev 6???","answer":"DEV-4 lets a customer build a safe custom dashboard by asking in plain words.\nDEV-5 is held until the supplier confirms the price list.\nDEV-6 has no explanation recorded yet.","source":"the task list"}
+{"status":"answered","question":"What is the status of the 20 test cases you should do do fine tune the geris ai assistant, impersonating users?","answer":"12 of the 20 impersonated test cases have run; a worker of the Ai crew is on the other 8 right now.","source":"the Ai crew worker's own status"}

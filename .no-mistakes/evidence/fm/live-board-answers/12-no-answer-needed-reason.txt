@@ -1,0 +1,19 @@
+# record restored
+$ bin/fm-procevent.sh handled lavish-d27e6ce15a7ede01 2 --no-answer-needed '  '
+error: --no-answer-needed needs a reason
+exit: 1
+$ bin/fm-procevent.sh list
+SOURCE                       ADAPTER      OWNER      PENDING
+lavish-d27e6ce15a7ede01      lavish       none       1
+$ bin/fm-procevent.sh handled lavish-d27e6ce15a7ede01 2 --no-answer-needed 'fixture: exercising the recorded-reason path'
+handled: lavish-d27e6ce15a7ede01 2
+exit: 0
+$ bin/fm-procevent.sh list
+SOURCE                       ADAPTER      OWNER      PENDING
+lavish-d27e6ce15a7ede01      lavish       none       0
+$ jq '.answers[] | {key,answered:(.answer != null),waived}' answers.json
+{"key":"lavish-d27e6ce15a7ede01.1.2","answered":true,"waived":null}
+{"key":"lavish-d27e6ce15a7ede01.1.1","answered":true,"waived":null}
+{"key":"lavish-d27e6ce15a7ede01.2.1","answered":false,"waived":"fixture: exercising the recorded-reason path"}
+$ bin/fm-live-board-answer.sh list
+{"status":"ok","items":[{"status":"answered","question":"What is Dev 4 to dev 6???"},{"status":"answered","question":"What is the status of the 20 test cases you should do do fine tune the geris ai assistant, impersonating users?"}]}

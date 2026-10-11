@@ -1,0 +1,10 @@
+$ bin/fm-procevent-lavish.sh comments <captured result 2>
+{"item":1,"kind":"message","on":"","text":"Why is nothing being done now?? answer in this lavish","uid":""}
+
+# the answers record is made unreadable
+$ bin/fm-procevent.sh handled lavish-d27e6ce15a7ede01 2
+not handled: the captain typed on the live board (result lavish-d27e6ce15a7ede01 2) and the answers record cannot be read: <lab>/data/live-board/answers.json
+Repair that file or move it aside, record the answers, then mark the result handled.
+exit: 1
+$ bin/fm-live-board.sh build && bin/fm-live-board-answer.sh list
+{"status":"unreadable","items":[{"status":"open","question":"Why is nothing being done now?? answer in this lavish"}]}
