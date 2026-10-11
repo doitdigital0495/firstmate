@@ -1,0 +1,22 @@
+== Web shop :: 2 questions wait for you, 4 with a worker (2 stuck or stopped), 2 starting automatically, 5 not starting on their own
+  [doing]
+    Stuck or stopped | Fix the payment error | the payment sandbox keeps refusing our test card | own home
+    Stuck or stopped | Speed up search | Its current state could not be read. | own home
+    Working | Build the new checkout | wiring the basket into the new checkout page | own home
+    Paused on an outside wait | Wait for the supplier release | waiting for the supplier to publish their release | own home
+  [next]
+    Starts automatically | Add order tracking | - | own home
+    Starts automatically | Rename the basket | - | own home
+  [charted]
+    Waits for your answer | Which courier? | - | own home
+    Waits for your answer | Choose the invoice layout | - | own home
+    Waits for other work to finish first | Launch the loyalty scheme | Waits for: Build the new checkout | own home
+    Waiting until 2099-01-01 | Switch payment provider | The supplier contract is still being signed | own home
+    Finished, cleanup pending | Tidy the product page | product page tidied and checked on a phone | own home
+== Help desk :: 1 with a worker, 1 starting automatically, 1 not starting on its own
+  [doing]
+    Working | Answer the refund question | A worker is doing this now. | Ai desk
+  [next]
+    Starts automatically | Draft the desk handbook | - | Ai desk
+  [charted]
+    Waiting until 2099-01-01 | Pick the desk tool | The vendor has not sent a quote | Ai desk
