@@ -134,9 +134,8 @@ check "$out" '.empty != null and (.empty | test("Nothing running"))
   and .stats.questions == 0 and .stats.doing == 0 and .stats.next == 0 and .stats.charted == 0
   and .tray == null and .freshness == "live"' \
   "an empty fleet did not render the explicit empty state"
-check "$out" '.workers | .hidden == false and .total == 0 and .count == "0" and .say == "No worker is running right now."
-  and .counts == [] and .groups == [] and .list == null and .kept == null' \
-  "a page with no workers did not render the Workers empty state"
+check "$out" '(.headings | any(test("^Workers")) | not) and .statusOutsideLanes == 0' \
+  "a page with no workers rendered a Workers section of its own"
 check "$out" '.toc.hidden == false and .toc.summary == "Contents · 1 project" and (.toc.entries | map(.name)) == ["quiet"]
   and .toc.entries[0].target == {"kind":"quiet","name":"quiet"}' \
   "a page with only a quiet project did not list it in the table of contents"
@@ -191,146 +190,111 @@ in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ln-later-gated --reason "Dec
 in_home "$home" "$LIVE" build >/dev/null || fail "the lanes board did not build"
 out=$(render "$home")
 check "$out" '.projects[0].lanes
-  | (.doing | .count == 1 and (.cards | map(.id)) == ["ln-doing"] and (.say | test("A worker is on this right now"))
-      and (.cards[0].note | test("wiring the basket")))
-    and (.next | .count == 5 and .more == 2 and (.say | test("starts these without you"))
+  | (.doing | .count == 4 and .more == 0 and (.say | test("workers running for this project"))
+      and (.cards | map([.id,.status,.statusLabel])) == [["ln-stuck","stuck","Stuck or stopped"],
+        ["ln-lost","stuck","Stuck or stopped"],["ln-doing","working","Working"],
+        ["ln-paused","external","Paused on an outside wait"]]
+      and (.cards | all(.line and .icon and .why == "worker" and .reason == null and (.folded | not))))
+    and (.next | .count == 5 and .more == 2 and (.say | test("starts automatically, without you"))
       and (.cards | map(.id)) == ["ln-next-top","ln-next-low","ln-expired","ln-next-b","ln-next-c"]
-      and (.cards | map(.folded)) == [false,false,false,true,true] and (.cards | all(.reason == null)))
-    and (.charted | .count == 9 and (.say | test("will not start on their own"))
-      and (.cards | map([.id,.why])) == [["ln-stuck","stuck"],["ln-ask","your-answer"],["ln-gated","other-work"],
-        ["ln-held","on-hold"],["ln-later","deferred"],["ln-later-gated","deferred"],["ln-paused","paused"],
-        ["ln-finished","wrap-up"],["ln-lost","unclear"]]
-      and (.cards | map(.reason)) == ["Stuck, needs help","Waits for your answer","Waits for other work to finish first",
+      and (.cards | map(.folded)) == [false,false,false,true,true]
+      and (.cards | all(.reason == "Starts automatically" and .status == null and (.line or .icon | not))))
+    and (.charted | .count == 6 and .more == 3 and (.say | test("will not start on their own"))
+      and (.cards | map([.id,.why])) == [["ln-ask","your-answer"],["ln-gated","other-work"],
+        ["ln-held","on-hold"],["ln-later","deferred"],["ln-later-gated","deferred"],["ln-finished","wrap-up"]]
+      and (.cards | map(.reason)) == ["Waits for your answer","Waits for other work to finish first",
         "Waiting until 2099-01-01","You put this off until 2099-01-01","You put this off until 2099-02-01",
-        "Waiting on something outside the team",
-        "Finished, waiting to be wrapped up","Started, but its current status cannot be read"]
-      and (.cards[2].note == "Waits for: Build the new checkout")
-      and (.cards[3].note | test("supplier contract")))' \
+        "Finished, cleanup pending"]
+      and (.cards | all(.status == null and (.line or .icon | not)))
+      and (.cards[1].note == "Waits for: Build the new checkout")
+      and (.cards[2].note | test("supplier contract")))' \
   "the lane rules did not put each kind of open work in its one lane with its plain reason"
 check "$out" '[.projects[].lanes[].cards[].id] | length == 15 and (unique | length) == 15' \
   "a task appeared in no lane or in more than one"
-check "$out" '.stats.doing == 1 and .stats.next == 5 and .stats.charted == 9 and .stats.questions == 3
+check "$out" '.stats.doing == 4 and .stats.next == 5 and .stats.charted == 6 and .stats.questions == 3
   and (.projects[0].questions | map(.id) | sort) == ["ln-ask","ln-later","ln-later-gated"]
   and (.projects[0].questions[] | select(.id == "ln-later") | .answerable
     and (.badges | index("you deferred this until 2099-01-01") != null))
   and (.projects[0].questions[] | select(.id == "ln-later-gated")
     | .badges | index("you deferred this until 2099-02-01") != null)
-  and .projects[0].status == "3 questions wait for you, 1 being done now, 5 starting next, 9 not starting on their own (1 stuck)"
+  and .projects[0].status == "3 questions wait for you, 4 with a worker (2 stuck or stopped), 5 starting automatically, 6 not starting on their own"
+  and (.projects[0].badges | index("2 stuck") != null)
   and ([.projects[].text] | join(" ") | test("ln-[a-z]") | not)' \
   "a question the captain put off lost its answerable card and deferred badge, or the lane totals were wrong"
-pass "doing now, next and charted next each follow one rule, and every task sits in exactly one lane"
+pass "doing now holds the tasks with a worker, next what starts automatically, charted next what waits, and every task sits in exactly one lane"
 
-# --- Workers: every worker's status at a glance, and the list behind it --------
-check "$out" '.workers | .hidden == false and .total == 5 and .count == "5" and .lavishQuestion == "live-board-workers"
-  and (.say | test("Press a count")) and .gaps == []
-  and (.counts | map([.filter,.text])) == [["all","All 5"],["working","1 working"],
-    ["external","1 paused on an outside wait"],["finished","1 finished and idle"],["stuck","2 stuck or stopped"]]
-  and (.counts | all(.tag == "BUTTON" and .type == "button") and (.[1:] | all(.icon))
-    and .[0].pressed and (.[1:] | all(.pressed | not)))
-  and ([.counts[1:][].text | capture("^(?<n>[0-9]+) ").n | tonumber] | add) == ([.groups[].rows[]] | length)
-  and ([.groups[].rows[]] | length) == .total' \
-  "the worker counts did not add up to one row per worker, or a count was not a labelled button"
-check "$out" '.workers | (.groups | length == 1 and .[0].project == "shop" and .[0].home == null and .[0].count == 5
-    and .[0].hidden == false)
-  and (.groups[0].rows | map([.id,.status,.label])) == [["ln-stuck","stuck","Stuck or stopped"],
-    ["ln-lost","stuck","Stuck or stopped"],["ln-finished","finished","Finished and idle"],
-    ["ln-paused","external","Paused on an outside wait"],["ln-doing","working","Working"]]
-  and (.groups[0].rows | all(.icon and (.hidden | not)
-    and (.text | test("ln-[a-z]|run-step|status-log|\\bpane\\b|herdr|/projects/|wt-") | not)))
-  and (.groups[0].rows | map(.title)) == ["Fix the payment error","Speed up search","Tidy the product page",
-    "Wait for the supplier release","Build the new checkout"]
-  and (.groups[0].rows[3] | (.note | test("^Last report: waiting for the supplier"))
-    and (.say | test("paused itself")) and (.meta | test("^Build · for [0-9]+s$")))
-  and (.groups[0].rows[4] | (.say == "A worker is doing this now.") and (.meta | test("^Build · last update [0-9]+s ago$")))
-  and (.groups[0].rows[1] | .note == null and (.say | test("could not be read|session is gone")))
-  and .list == {"open":true,"summary":"All 5 workers, by project"}' \
-  "the worker list did not give each worker a plain status, title, kind and age with cleanup first"
-out=$(render "$home" "" '!workers=stuck')
-check "$out" '.workers | (.counts | map(select(.pressed) | .filter)) == ["stuck"]
-  and (.groups[0].rows | map(.hidden)) == [false,false,true,true,true] and .groups[0].hidden == false
-  and .groups[0].count == 2
-  and .list == {"open":true,"summary":"2 stuck or stopped, by project"}
-  and (.kept | fromjson) == {"filter":"stuck","open":true,"rows":[]}' \
-  "pressing a status count did not show only those workers"
-check "$(render "$home" "" '!workers=stuck' '!workers=stuck')" '.workers
-  | (.counts | map(select(.pressed) | .filter)) == ["all"] and (.groups[0].rows | all(.hidden | not))
-    and (.kept | fromjson) == {"filter":"","open":true,"rows":[]}' \
-  "pressing the pressed count again did not show every worker"
-check "$(render "$home" "" '!workers=stuck' '!workers=all')" '.workers
-  | (.counts | map(select(.pressed) | .filter)) == ["all"] and (.groups[0].rows | all(.hidden | not))' \
-  "the All count did not show every worker"
-check "$(render "$home" "" '!screen=narrow')" '.workers | .list.open == false and (.counts | length) == 5' \
-  "a phone-width page did not fold the worker list under its counts"
-check "$(render "$home" "" '!screen=narrow' '!workers=finished')" '.workers | .list.open
-  and (.groups[0].rows | map(select(.hidden | not) | .id)) == ["ln-finished"]' \
-  "pressing a count on a phone-width page did not open the list on those workers"
-check "$(render "$home" "" '!workers-list')" '.workers | .list.open == false
-  and (.kept | fromjson) == {"filter":"","open":false,"rows":[]}' \
-  "folding the worker list was not kept"
-check "$out" '.workers.groups[0].rows | all(.open | not)' "a worker row started open"
-opened=$(render "$home" "" '!workers-row=ln-paused' '!workers-row=ln-stuck' '!workers-row=ln-stuck')
-check "$opened" '.workers | (.groups[0].rows | map(select(.open) | .id)) == ["ln-paused"]
-  and (.kept | fromjson | .rows | length) == 1 and (.kept | test("ln-paused"))' \
-  "pressing a worker row did not open its detail, or pressing it again did not close it"
-check "$(render "$home" "" "!workers-kept=$(printf '%s' "$opened" | jq -r '.workers.kept')")" \
-  '.workers.groups[0].rows | map(select(.open) | .id) == ["ln-paused"]' \
-  "an opened worker row did not stay open after a reload"
-check "$(render "$home" "" '!workers-kept={"filter":"external","open":false}')" '.workers
-  | (.counts | map(select(.pressed) | .filter)) == ["external"] and .list.open == false
-    and (.groups[0].rows | map(select(.hidden | not) | .id)) == ["ln-paused"]' \
-  "a restored worker filter was not applied after a reload"
-for kept in 'not json' '{"filter":"merge","open":true}' '[]'; do
-  check "$(render "$home" "" "!workers-kept=$kept")" '.workers
-    | (.counts | map(select(.pressed) | .filter)) == ["all"] and (.groups[0].rows | all(.hidden | not)) and .list.open' \
-    "a garbled or outdated kept worker filter hid workers: $kept"
-done
-pass "the Workers section counts every worker by plain status, lists them by project, and filters on a pressed count"
+# --- Doing now: one line per worker, with what it is doing and its status -------
+check "$out" '.projects[0].lanes.doing.cards
+  | (map(.title)) == ["Fix the payment error","Speed up search","Build the new checkout","Wait for the supplier release"]
+    and (.[0] | (.note | test("^the payment sandbox keeps refusing")) and (.when | test("^for [0-9]+s$")))
+    and (.[1] | (.note | test("could not be read|session is gone")) and .when == null)
+    and (.[2] | (.note | test("^wiring the basket into the new checkout page$")) and (.when | test("^last update [0-9]+s ago$")))
+    and (.[3] | (.note | test("^waiting for the supplier")) and (.when | test("^for [0-9]+s$")))
+    and all(.home == null and .links == [] and .hints == [.title,.note])' \
+  "a worker's line did not say in one sentence what it is doing, with its status and how long"
+check "$out" '(.headings | any(test("^Workers")) | not) and .statusOutsideLanes == 0
+  and ([.projects[].lanes[].cards[] | select(.status != null)] | length) == 4
+  and ([.projects[].text] | join(" ") | test("ln-[a-z]|run-step|status-log|\\bpane\\b|herdr|/projects/|wt-") | not)' \
+  "the page kept a Workers section of its own, or a worker line leaked an internal label"
+check "$(render "$home" "" '!screen=narrow')" '.projects[0].lanes.doing | .count == 4 and .more == 0 and (.cards | all(.folded | not))' \
+  "a phone-width page did not show every worker line"
+pass "each project's Doing now lists its workers one line each with a plain status, and the page has no separate Workers section"
 
 # Each status words the current state the snapshot already resolved.
 in_home "$home" "$ROOT/bin/fm-fleet-snapshot.sh" --live-board-input > "$TMP_ROOT/crew-input.json" \
   || fail "could not collect the board input for the status mapping"
-crew_row() {  # <jq edit of the collected input> -> the ln-doing worker's row
+crew_row() {  # <jq edit of the collected input> -> the ln-doing task's row in its lane
   jq "$1" "$TMP_ROOT/crew-input.json" > "$TMP_ROOT/crew-edited.json" || return 1
   "$ROOT/bin/fm-live-board-snapshot.sh" --json --input "$TMP_ROOT/crew-edited.json" \
     | jq -c -L "$ROOT/bin" 'include "fm-live-board-projects";
-        lb_view(null) | .workers | (.statuses | map(.count) | add) as $counted
-        | [.groups[].rows[]] as $rows | ($rows[] | select(.id == "ln-doing")) + {counted:$counted,rows:($rows | length)}'
+        lb_view(null) | [.projects[].lanes[][]] as $rows
+        | [$rows[] | select(.id == "ln-doing")] as $own
+        | $own[0] + {placed:($own | length),rows:($rows | length),with_status:([$rows[] | select(.status != null)] | length),
+            doing:([.projects[].lanes.doing[]] | length)}'
 }
-while IFS='|' read -r state source detail want; do
+# A status that puts the task in Doing now is that line's status; the other two
+# leave it in Charted next under the reason named.
+while IFS='|' read -r state source detail lane want; do
   [ -n "$state" ] || continue
   got=$(crew_row "(.tasks[] | select(.id == \"ln-doing\") | .current_state)
     |= . + {state:\"$state\",source:\"$source\",detail:\"$detail\"}") || fail "the status mapping input did not render: $state/$source"
-  check "$got" ".status == \"$want\" and .counted == 5 and .rows == 5
-    and ((.note // \"\") + .say + .status_label | test(\"validating|parked at|run passed|backend target|ci running\") | not)" \
-    "a worker whose current state is $state from $source ($detail) was not shown as $want"
+  check "$got" ".lane == \"$lane\" and .placed == 1 and .rows == 15 and .with_status == .doing
+    and (if .lane == \"doing\" then .status == \"$want\" and (.status_label | type == \"string\") and (.note | type == \"string\")
+         else .why == \"$want\" and .status == null end)
+    and ((.note // \"\") + (.status_label // \"\") + .why_label | test(\"validating|parked at|run passed|backend target|ci running\") | not)" \
+    "a worker whose current state is $state from $source ($detail) was not shown as $want in $lane"
 done <<'CASES'
-working|pane|harness busy (claude-hook)|working
-working|status-log|wiring the basket into the new checkout page|working
-working|run-step|validating (running)|validation
-working|run-step|validating (fixing)|validation
-working|run-step|run active|validation
-working|run-step|ci running|merge
-parked|run-step|parked at review: 3 finding(s)|validation
-parked|run-step|parked at review: 1 finding(s) · ask-user: authority decision|you
-parked|status-log|which courier should we use for the launch|you
-paused|status-log|waiting for the supplier to publish their release|external
-done|run-step|checks green: PR ready for review (still monitoring for merge/close)|merge
-done|run-step|run passed: PR open|merge
-done|run-step|run passed: PR merged|finished
-done|run-step|run completed|finished
-done|status-log|product page tidied and checked on a phone|finished
-blocked|status-log|the payment sandbox keeps refusing our test card|stuck
-failed|run-step|run failed|stuck
-unknown|none|backend target gone: firstmate:fm-ln-doing|stuck
-unknown|run-step|run cancelled: no verdict|stuck
+working|pane|harness busy (claude-hook)|doing|working
+working|status-log|wiring the basket into the new checkout page|doing|working
+working|run-step|validating (running)|doing|validation
+working|run-step|validating (fixing)|doing|validation
+working|run-step|run active|doing|validation
+working|run-step|ci running|doing|merge
+parked|run-step|parked at review: 3 finding(s)|doing|validation
+parked|run-step|parked at review: 1 finding(s) · ask-user: authority decision|charted|stuck
+parked|status-log|which courier should we use for the launch|charted|stuck
+paused|status-log|waiting for the supplier to publish their release|doing|external
+done|run-step|checks green: PR ready for review (still monitoring for merge/close)|doing|merge
+done|run-step|run passed: PR open|doing|merge
+done|run-step|run passed: PR merged|charted|wrap-up
+done|run-step|run completed|charted|wrap-up
+done|status-log|product page tidied and checked on a phone|charted|wrap-up
+blocked|status-log|the payment sandbox keeps refusing our test card|doing|stuck
+failed|run-step|run failed|doing|stuck
+unknown|none|backend target gone: firstmate:fm-ln-doing|doing|stuck
+unknown|run-step|run cancelled: no verdict|doing|stuck
 CASES
+check "$(crew_row '(.tasks[] | select(.id == "ln-doing") | .current_state) |= . + {state:"working",source:"run-step",detail:"validating (running)"}')" \
+  '.note == "Its work is being reviewed and checked automatically."' \
+  "a worker under automatic review did not say so in place of its last report"
 held='(.backlog.records[] | select(.id == "ln-doing")) |= . + {hold_kind:"captain",hold_reason:"Pick a courier."}'
 check "$(crew_row "$held | (.tasks[] | select(.id == \"ln-doing\") | .current_state) |= . + {state:\"paused\",source:\"status-log\"}")" \
-  '.status == "you" and (.say | test("your answer"))' "a waiting worker whose task holds a question for the captain was not shown as waiting on you"
-check "$(crew_row "$held")" '.status == "working"' "a working worker lost its status to a question on its task"
-pass "each worker status is worded from the resolved current state: working, validation, merge or CI, you, outside wait, finished, stuck"
+  '.lane == "charted" and .why == "your-answer" and .status == null' \
+  "a waiting worker whose task holds a question for the captain did not stay in charted next as waiting for the answer"
+check "$(crew_row "$held")" '.lane == "doing" and .status == "working"' "a working worker lost its line to a question on its task"
+pass "a worker's line is worded from the resolved current state, and one waiting on the captain or finished stays in charted next"pass "each worker status is worded from the resolved current state: working, validation, merge or CI, you, outside wait, finished, stuck"
 
-# A second mate's workers join the counts and the list under their own home.
+# A second mate's workers and queued work join their project's lanes, named as its.
 home=$(make_home crew)
 mate=$(make_home crew-mate)
 mkdir -p "$mate/bin"
@@ -346,28 +310,29 @@ worker "$home" cr-own busy 'project=shop'
 tasks_in "$mate" add cr-answer "Answer the refund question" --repo desk --kind scout --start
 tasks_in "$mate" add cr-wrap "Wrap up the desk report" --repo desk --kind ship --start
 tasks_in "$mate" add cr-waiting "Not started yet" --repo desk --kind ship
-worker "$mate" cr-answer busy 'kind=scout' 'project=desk'
-worker "$mate" cr-wrap idle 'project=desk' 'pr=https://github.com/acme/desk/pull/7'
+tasks_in "$mate" add cr-held "Pick the desk tool" --repo desk --kind ship
+tasks_in "$mate" hold cr-held --reason "The vendor has not sent a quote" --kind external --until 2099-01-01
+worker "$mate" cr-answer busy 'kind=scout' 'project=desk' 'pr=https://github.com/acme/desk/pull/7'
+worker "$mate" cr-wrap idle 'project=desk'
 printf 'done [at=%s]: desk report written and checked\n' "$(date +%s)" > "$mate/state/cr-wrap.status"
 in_home "$home" "$LIVE" build >/dev/null || fail "a board with a second mate did not build"
 out=$(render "$home")
-check "$out" '.workers | .total == 3 and (.counts | map([.filter,.text])) == [["all","All 3"],["working","2 working"],
-    ["finished","1 finished and idle"]]
-  and (.groups | map([.project,.home,.count])) == [["Help desk","Ai desk",2],["shop",null,1]]
-  and .groups[0].badges == ["Second mate: Ai desk"] and .groups[1].badges == []
-  and (.groups[0].rows | map([.id,.status,.title])) == [["cr-wrap","finished","Wrap up the desk report"],
-    ["cr-answer","working","Answer the refund question"]]
-  and (.groups[0].rows[0] | (.meta | test("^Build · for [0-9]+s · pull request$"))
-    and .links == [{"href":"https://github.com/acme/desk/pull/7","text":"pull request","target":"_blank","lavishAction":true}])
-  and (.groups[0].rows[1].meta | test("^Investigation"))
-  and .gaps == ["The workers of second mate Lost desk are not shown: its registration could not be checked."]
-  and ([.groups[].rows[].text] | join(" ") | test("cr-[a-z]|crew-mate|no-such-home") | not)' \
-  "a second mate's workers were not counted and listed under their own home, or an unread home was not named"
-check "$out" '(.projects | map(.label)) == ["shop"] and .stats.doing == 1
-  and (.notes | any(test("project cards show this home.s work only")))
-  and (.notes | any(test("Not every second mate.s workers could be read")))' \
-  "a second mate's work leaked into this home's project cards, or the board notes did not say where it shows"
-pass "a second mate's workers are counted and listed under their own home, and a home that could not be read is named"
+check "$out" '(.projects | map(.label)) == ["Help desk","shop"] and .stats == (.stats + {doing:2,next:1,charted:2})
+  and (.projects[0].lanes | (.doing.cards | map([.id,.status,.title,.home])) == [["cr-answer","working","Answer the refund question","Second mate: Ai desk"]]
+    and (.doing.cards[0] | .line and .icon and .note == "A worker is doing this now." and .when == "pull request"
+      and .links == [{"href":"https://github.com/acme/desk/pull/7","text":"pull request"}])
+    and (.next.cards | map([.id,.reason,.home])) == [["cr-waiting","Starts automatically","Second mate: Ai desk"]]
+    and (.charted.cards | map([.id,.reason,.home])) == [["cr-held","Waiting until 2099-01-01","Second mate: Ai desk"],
+      ["cr-wrap","Finished, cleanup pending","Second mate: Ai desk"]])
+  and .projects[0].status == "1 with a worker, 1 starting automatically, 2 not starting on their own"
+  and (.projects[1].lanes.doing.cards | map([.id,.status,.home])) == [["cr-own","working",null]]
+  and (.headings | any(test("^Workers")) | not) and .statusOutsideLanes == 0
+  and ([.projects[].text] | join(" ") | test("cr-[a-z]|crew-mate|no-such-home") | not)' \
+  "a second mate's workers and queued work did not join their project's lanes under its name"
+check "$out" '(.notes | index("The work of second mate Lost desk is not shown: its registration could not be checked.") != null)
+  and (.notes | any(test("Workers list|this home.s work only")) | not)' \
+  "a second mate whose home could not be read was not named in the board notes"
+pass "a second mate's workers and queued work sit in their project's lanes, and a home that could not be read is named"
 
 # --- Projects, questions and workers -------------------------------------------
 home=$(make_home fleet)
@@ -435,15 +400,15 @@ check "$out" '(.projects[0].questions[0] | .answerable and .mode == "options"
     and .title == "Logo </script><b>x</b>" and (.modeText | test("records your words")))' \
   "owner context did not drive the real question, its explained options, or the free-text fallback"
 check "$out" '(.projects[0].lanes.doing.cards | map(.id)) == ["ws-redesign"]
-  and (.projects[0].lanes.doing.cards[0] | .title == "Redesign checkout" and .reason == null
+  and (.projects[0].lanes.doing.cards[0] | .title == "Redesign checkout" and .status == "working" and .statusLabel == "Working"
     and .links == [{href:"https://github.com/example/web-shop/pull/42",text:"pull request"}]
     and (.note | test("checkout tests pass")) and (.note | test("fm/|data/|run=|01ABC") | not))
   and (.projects[0].latest | test("Redesign checkout - checkout tests pass"))
   and (.projects[0].lanes.next.cards | map(.title)) == ["Retry payments"]
   and (.projects[0].lanes.charted.cards | map(.id)) == ["ws-carrier","ws-legacy"]
   and (.projects[0].lanes.charted.cards | all(.reason == "Waits for your answer"))
-  and .projects[0].status == "2 questions wait for you (1 urgent), 1 being done now, 1 starting next, 2 not starting on their own"
-  and (.projects[1].lanes | .doing.cards == [] and (.doing.none | test("Nothing is being worked on"))
+  and .projects[0].status == "2 questions wait for you (1 urgent), 1 with a worker, 1 starting automatically, 2 not starting on their own"
+  and (.projects[1].lanes | .doing.cards == [] and (.doing.none | test("No worker is running for this project"))
     and (.next.cards | map(.title)) == ["Nightly export"])
   and .stats.doing == 1 and .stats.next == 2 and .stats.charted == 4' \
   "open work did not land in its doing, next and charted lanes"
@@ -485,7 +450,7 @@ check "$out" '(.projects | map(.label)) == ["Checkout","Data platform","web-shop
   and .projects[0].description == "The new checkout."
   and (.projects[0].questions | map(.id)) == ["ws-carrier"]
   and (.projects[0].lanes.doing.cards | map(.id)) == ["ws-redesign"]
-  and .projects[0].status == "1 question waits for you (1 urgent), 1 being done now, 1 starting next, 1 not starting on its own"
+  and .projects[0].status == "1 question waits for you (1 urgent), 1 with a worker, 1 starting automatically, 1 not starting on its own"
   and (.projects[2].questions | map(.id)) == ["ws-legacy"]
   and (.projects[2].description | test("Not yet sorted"))
   and .idle.names == ["Unused effort"] and (.notes | any(test("project map")) | not)' \

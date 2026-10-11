@@ -31,12 +31,6 @@
 //   `!folds=<kept>`       put <kept> back in the table of contents' hidden
 //                         collapsed-cards field and deliver a parent message,
 //                         as Lavish does after a reload
-// Three specs drive the Workers section:
-//   `!workers=<status>`   press that status's count; `all` presses the All count
-//   `!workers-list`       press the worker list's summary, folding or unfolding it
-//   `!workers-row=<id>`   press that worker's row, opening or closing its detail
-//   `!workers-kept=<kept>` put <kept> back in the section's hidden field and
-//                         deliver a parent message, as Lavish does after a reload
 // and two, read before the page first runs, set what the browser is like:
 //   `!storage=blocked`    every use of browser storage throws
 //   `!storage=corrupt`    every entry reads back as text that is not JSON
@@ -50,17 +44,16 @@
 //         readonly,options:[{value,label,detail,recommended}],noteField,modeText,
 //         submit,answer,answered,kept,change,status}],
 //       lanes:{doing|next|charted:{count,say,none,more,
-//         cards:[{id,why,reason,title,note,links,folded}]}},
+//         cards:[{id,why,reason,title,note,links,folded,home,when,line,
+//           status,statusLabel,icon,hints:[]}]}},
 //       timeline:{status,count,say,gaps:[],lavishQuestion,kept,
 //         marks:[{key,kind,tag,date,label,pressed,shown}],
 //         detail:{shown,pinned,deploy,badges,title,summary,deployText,runs:[{result,text}],
 //           links:[{href,text}],close,text}}}],
 //       environments:null|{mode,say,strips:[{repo,status,why,notes:[],
 //         cells:[{name,kind,label,last,waiting,wait,titles:[],direct}]}]}}],
-//     workers:{hidden,total,count,say,lavishQuestion,kept,gaps:[],
-//       counts:[{filter,text,pressed,icon}],list:null|{open,summary},
-//       groups:[{project,home,count,hidden,badges,
-//         rows:[{id,status,label,icon,title,say,note,meta,links,hidden,open}]}]},
+//     headings: every second-level heading the page built, in any of its parts,
+//     statusOutsideLanes: how many worker statuses sit outside a project's lanes,
 //     idle.timelines:{<name>:timeline}, idle.environments:{<name>:environments},
 //     submits:[{id,status}], queued:[{prompt,tag,data}], tray:{text,buttons}, tickers }
 import { readFileSync } from "node:fs";
@@ -100,7 +93,7 @@ class Node {
   }
 }
 
-const ids = ["lb-root", "lb-home", "lb-fresh", "lb-banner", "lb-stats", "lb-toc", "lb-workers", "lb-notes", "lb-projects", "lb-tray", "lb-foot"];
+const ids = ["lb-root", "lb-home", "lb-fresh", "lb-banner", "lb-stats", "lb-toc", "lb-notes", "lb-projects", "lb-tray", "lb-foot"];
 const byId = new Map();
 const data = new Node("script");
 data.textContent = html.split('<script id="live-board-data" type="application/json">')[1].split("</script>")[0];
@@ -143,6 +136,8 @@ boot();
 
 const text = (n) => n.textContent.replace(/\s+/g, " ").trim();
 const badges = (n) => n.find((c) => c.hasClass("badge")).map(text);
+// The words of the one node under it carrying that attribute, or null.
+const marked = (n, attribute) => ((hit) => (hit ? text(hit) : null))(n.find((c) => c.getAttribute(attribute) !== null)[0]);
 // The words of one named card part, or of the given tag inside it.
 const say = (q, part, tag) => {
   const box = q.find((c) => c.getAttribute("data-part") === part)[0];
@@ -245,25 +240,6 @@ for (const spec of answers) {
       ? card && card.find((c) => c.getAttribute("data-project-toggle") !== null)[0]
       : byId.get("lb-toc").find((c) => c.getAttribute("data-toc") === name)[0];
     if (target) target.dispatch("click");
-    submits.push({ id: spec, status: target ? "pressed" : "no-target" });
-    continue;
-  }
-  if (spec.startsWith("!workers")) {
-    const crew = byId.get("lb-workers");
-    let target;
-    if (spec === "!workers-list" || spec.startsWith("!workers-row=")) {
-      // A real press folds or unfolds a details after its summary's listeners ran.
-      const holder = spec === "!workers-list" ? crew.find((c) => c.getAttribute("data-workers-list") !== null)[0]
-        : crew.find((c) => c.getAttribute("data-worker") === spec.slice(13))[0];
-      target = holder && (holder.tagName === "DETAILS" ? holder.children[0] : holder.find((c) => c.tagName === "SUMMARY")[0]);
-      if (target) { target.dispatch("click"); target.parentNode.open = target.parentNode.open !== true; }
-    } else if (spec.startsWith("!workers-kept=")) {
-      target = crew.find((c) => c.name === "workers")[0];
-      if (target) { target.value = spec.slice(14); for (const fn of messageListeners) fn({}); }
-    } else {
-      target = crew.find((c) => c.getAttribute("data-worker-filter") === spec.slice(9))[0];
-      if (target) target.dispatch("click");
-    }
     submits.push({ id: spec, status: target ? "pressed" : "no-target" });
     continue;
   }
@@ -389,11 +365,18 @@ const projects = root.children.filter((c) => c.getAttribute("data-project") !== 
           id: w.getAttribute("data-task"),
           lane: w.getAttribute("data-lane"),
           why: w.getAttribute("data-why"),
-          reason: badges(w)[0] || null,
+          reason: marked(w, "data-reason"),
           title: text(w.find((c) => c.hasClass("w-title"))[0]),
           note: (w.find((c) => c.hasClass("w-note"))[0] || null) && text(w.find((c) => c.hasClass("w-note"))[0]),
           links: w.find((c) => c.tagName === "A").map((a) => ({ href: a.href, text: text(a) })),
           folded: folded.has(w),
+          home: marked(w, "data-home"),
+          when: (w.find((c) => c.hasClass("w-when"))[0] || null) && text(w.find((c) => c.hasClass("w-when"))[0]),
+          line: w.hasClass("w-line"),
+          hints: w.find((c) => c.getAttribute("title") !== null).map((c) => c.getAttribute("title")),
+          status: w.getAttribute("data-worker-status"),
+          statusLabel: marked(w, "data-worker-chip"),
+          icon: w.find((c) => c.hasClass("crew-icon") && c.innerHTML.includes("<svg")).length > 0,
         })),
       }];
     })),
@@ -413,44 +396,8 @@ const tocTarget = (href) => {
     : null;
 };
 const toc = byId.get("lb-toc");
-const crew = byId.get("lb-workers");
-const crewList = crew.find((c) => c.getAttribute("data-workers-list") !== null)[0];
-const hasIcon = (n) => n.find((c) => c.hasClass("crew-icon") && c.innerHTML.includes("<svg")).length > 0;
-const workers = {
-  hidden: crew.hidden,
-  total: crew.getAttribute("data-workers") === null ? null : Number(crew.getAttribute("data-workers")),
-  count: ((n) => (n ? text(n) : null))(crew.children[0] && crew.children[0].find((c) => c.hasClass("lane-count"))[0]),
-  say: ((n) => (n ? text(n) : null))(crew.children[0] && crew.children[0].find((c) => c.hasClass("lane-say"))[0]),
-  lavishQuestion: crew.getAttribute("data-lavish-question"),
-  kept: ((field) => (field ? field.value : null))(crew.find((c) => c.name === "workers")[0]),
-  gaps: crew.find((c) => c.getAttribute("data-workers-gap") !== null).map(text),
-  counts: crew.find((c) => c.getAttribute("data-worker-filter") !== null).map((b) => ({
-    filter: b.getAttribute("data-worker-filter"), text: text(b), tag: b.tagName, type: b.type,
-    pressed: b.getAttribute("aria-pressed") === "true", icon: hasIcon(b) })),
-  list: crewList ? { open: crewList.open === true, summary: text(crewList.children[0]) } : null,
-  groups: crew.find((c) => c.getAttribute("data-worker-group") !== null).map((g) => ({
-    project: g.getAttribute("data-worker-group"),
-    home: g.getAttribute("data-worker-home"),
-    count: Number(text(g.find((c) => c.hasClass("lane-count"))[0])),
-    hidden: g.hidden,
-    badges: badges(g.children[0]),
-    rows: g.find((c) => c.getAttribute("data-worker") !== null).map((w) => ({
-      id: w.getAttribute("data-worker"),
-      status: w.getAttribute("data-worker-status"),
-      label: badges(w)[0] || null,
-      icon: hasIcon(w),
-      title: text(w.find((c) => c.hasClass("w-title"))[0]),
-      say: text(w.find((c) => c.hasClass("w-note"))[0]),
-      note: ((n) => (n ? text(n) : null))(w.find((c) => c.getAttribute("data-worker-note") !== null)[0]),
-      meta: text(w.find((c) => c.hasClass("crew-meta"))[0]),
-      links: w.find((c) => c.tagName === "A").map((a) => ({ href: a.href, text: text(a), target: a.target,
-        lavishAction: a.getAttribute("data-lavish-action") !== null })),
-      hidden: w.hidden,
-      open: w.find((c) => c.tagName === "DETAILS")[0].open === true,
-      text: text(w),
-    })),
-  })),
-};
+// Every node the page built, wherever it put it.
+const everywhere = [...byId.values()].flatMap((n) => [n, ...n.find(() => true)]);
 
 console.log(JSON.stringify({
   freshness: fresh ? fresh.getAttribute("data-freshness") : null,
@@ -476,7 +423,10 @@ console.log(JSON.stringify({
     entries: toc.find((c) => c.getAttribute("data-toc") !== null).map((a) => ({
       name: a.getAttribute("data-toc"), href: a.href, parts: a.children.map(text), target: tocTarget(a.href),
       lavishAction: a.getAttribute("data-lavish-action") !== null })) },
-  workers,
+  headings: everywhere.filter((n) => n.tagName === "H2").map(text),
+  statusOutsideLanes: everywhere.filter((n) => n.getAttribute("data-worker-status") !== null).length
+    - root.find((c) => c.getAttribute("data-lane-box") !== null)
+      .flatMap((lane) => lane.find((c) => c.getAttribute("data-worker-status") !== null)).length,
   projects,
   submits,
   queued: queued.map((q) => ({ prompt: q.prompt, tag: q.options.tag, data: q.options.data })),

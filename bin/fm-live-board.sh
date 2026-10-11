@@ -56,25 +56,61 @@
 # invalid map never fails the build: the page groups by repository and says
 # the map needs fixing. Firstmate maintains the file; it is never tracked.
 # The view leads with projects that have questions for the captain, then
-# stuck, then work being done now, then other open work, in map order;
+# stuck, then work that has a worker, then other open work, in map order;
 # projects with no question and no open work fold away. Worker status, titles
 # and reasons drop links, paths, branches, run ids and task ids, so ids appear
 # only in data attributes.
 #
 # LANES. Every open task sits in exactly one of three lanes per project, and
 # `lb_lane` in bin/fm-live-board-projects.jq is the one rule that decides it:
-#   Doing now     a worker is on the task and its current state is working.
+#   Doing now     the task has a worker, and that worker neither waits on the
+#                 captain nor is finished (see WORKERS).
 #   Next          queued, not held and with no unfinished prerequisite - the
 #                 same "ready queued (dispatchable now)" set session start
-#                 lists - so a worker starts it without the captain.
+#                 lists - so a worker starts it without the captain; each
+#                 card says "Starts automatically".
 #   Charted next  everything else, each card naming why it will not start or
 #                 move on its own: waiting for the captain's answer, put off
 #                 by the captain until a date, on another hold, waiting for
-#                 other work, stuck, paused, finished but not yet wrapped up,
-#                 an umbrella row, or a started task whose state is unreadable.
-# A working worker wins over a hold or prerequisite on its task; a dated hold
-# that is not the captain's lapses on its date, as the backlog treats it.
-# Doing now lists every card; the other two show three and fold the rest.
+#                 other work, stuck, finished with cleanup pending, an
+#                 umbrella row, or a started task whose state is unreadable.
+# A worker in Doing now wins over a hold or prerequisite on its task; a dated
+# hold that is not the captain's lapses on its date, as the backlog treats it.
+# Doing now is as wide as the card and lists every line; Next and Charted next
+# sit side by side under it, show three cards and fold the rest.
+#
+# WORKERS. The page has no separate worker list: a task that has a worker is a
+# line in its project's Doing now, in this home and in each registered
+# secondmate home the snapshot read (bin/fm-live-board-snapshot.sh's header
+# owns `registered_homes`). A second mate's workers and its queued work that
+# has no worker yet sit in their project's lanes by the LANES rule, each
+# marked with that second mate's name; its questions stay on its own board.
+# Each worker has exactly one plain status, and `lb_worker_status` in
+# bin/fm-live-board-projects.jq is the one rule; it words the current state
+# the snapshot already resolved and classifies nothing itself:
+#   Working                    the worker is doing the work itself.
+#   Waiting for validation     an automatic review of its work is running, or
+#                              stopped at a step that needs no person.
+#   Waiting for a merge or CI  the checks on its pull request are running, or
+#                              the pull request is green and not yet merged.
+#   Paused on an outside wait  it paused itself on something outside the team.
+#   Stuck or stopped           it is blocked, it failed, its session is gone,
+#                              or its state could not be read.
+# Two more statuses keep the task out of Doing now: a worker whose task holds
+# an open captain question, that asked for a decision, or whose review step
+# waits on a person's decision is waiting on the captain, and one that is done
+# and not yet cleaned up is finished; both stay in Charted next under the
+# reason LANES names. A working worker wins over a question on its task.
+# A line reads left to right: the status as an icon and a word, the task's
+# title, one sentence on what the worker is doing, how long ago it last
+# reported - "for" that long when its status was read from that report - and
+# a link to its pull request. The sentence is the worker's own last report
+# while it works, and when it paused or got stuck and said so itself;
+# otherwise it is what the status means, so no internal state label reaches
+# the page. Stuck or stopped lines lead, then working, validation, merge and
+# outside wait. A registered home that is on another machine, fails its
+# registration checks or was not read in time is named in the board notes
+# instead of being counted as empty.
 #
 # ANSWERS. A question card offers answer controls when the snapshot marks it
 # answerable with owner-authored context (bin/fm-captain-hold.sh owns that
@@ -155,44 +191,6 @@
 # environment" is read from the branches' history, and `lb_environments` in
 # bin/fm-live-board-projects.jq owns the strip. build and refresh keep the
 # fetched branch history under state/.live-board-git.
-#
-# WORKERS. Under the table of contents the page lists every task that has a
-# worker, in this home and in each registered secondmate home the snapshot
-# read (bin/fm-live-board-snapshot.sh's header owns `registered_homes`; the
-# home's own questions and unstarted work stay on its own board). Each worker
-# has exactly one plain status, and `lb_worker_status` in
-# bin/fm-live-board-projects.jq is the one rule; it words the current state
-# the snapshot already resolved and classifies nothing itself:
-#   Working                    the worker is doing the work itself.
-#   Waiting for validation     an automatic review of its work is running, or
-#                              stopped at a step that needs no person.
-#   Waiting for a merge or CI  the checks on its pull request are running, or
-#                              the pull request is green and not yet merged.
-#   Waiting on you             its task holds an open captain question, it
-#                              asked for a decision, or a review step waits on
-#                              a person's decision.
-#   Paused on an outside wait  it paused itself on something outside the team.
-#   Finished and idle          it is done and not yet cleaned up.
-#   Stuck or stopped           it is blocked, it failed, its session is gone,
-#                              or its state could not be read.
-# A working worker wins over a question on its task, as in LANES. A row of
-# counts, one per status that has workers, heads the section; each count is a
-# button that shows only those workers and pressing it again, or All, shows
-# them all. Below it a native details lists the workers by project, a second
-# mate's under that project with the second mate named; it starts open, and
-# folded on a phone-width page. Rows that need cleaning up lead: stuck, then
-# finished, waiting on you, merge, validation, outside wait and working, and
-# groups follow their first row. A row shows the status as an icon and a word,
-# the task's title, Build or Investigation, how long ago the worker last
-# reported - "for" that long when its status was read from that report - and
-# a link to its pull request; pressing it opens what the status means and the
-# worker's last report. Only a status read from the worker's own report shows
-# words from it, so no internal state label reaches the page. A registered
-# home that is on another machine, fails its registration checks or was not
-# read in time is named in the section instead of being counted as empty.
-# The pressed count, the folded list and the open rows live in a hidden field
-# of the section that Lavish restores after each live reload, as the collapsed
-# cards do, and queue nothing.
 #
 # CONTENTS. A table of contents under the totals lists every project the page
 # renders, in page order - each card, then each quiet project - with a card's
