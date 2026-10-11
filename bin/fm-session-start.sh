@@ -49,7 +49,9 @@
 #   6. fleet digest   - a compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
 #                       the away posture (state/.afk-contract and the legacy
-#                       state/.afk daemon flag), and a cheap per-task
+#                       state/.afk daemon flag), the last week's captain
+#                       overrides of the dispatch table
+#                       (data/dispatch-overrides.jsonl), and a cheap per-task
 #                       endpoint-liveness read, each bounded and crash-
 #                       isolated so one task's read can never abort the
 #                       digest: read-only, always runs. The per-task reads
