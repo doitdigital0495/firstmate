@@ -63,16 +63,22 @@
 #   it describes: the state directory is the remote home's private
 #   state/parent-route, the brief is that home's data/charter.md, the home's
 #   .fm-secondmate-home marker names the same id, and the launch is not a raw
-#   command. A ship, a scout, a local second mate, or a relaunch started from a
-#   session matches none of that, so the variable does not switch the gate off.
+#   command. A ship, a scout, or a relaunch matches none of that, so the
+#   variable does not switch the gate off for them. Every one of those
+#   conditions is established on the launching side, though, so a local session
+#   can reach the pass-through for a seeded second-mate home, by running the
+#   remote control plane's launch verb against it or by setting the variables
+#   by hand.
 #
 # What the gate does and does not prevent: it physically stops a launch whose
-#   profile no receipt names, which is what catches a hand-picked profile. Three
+#   profile no receipt names, which is what catches a hand-picked profile. Four
 #   paths are audit and deterrence, not physical prevention: `override` accepts
 #   any non-empty words file as the captain's words, `choose` takes accounting
-#   the caller wrote itself, and receipts and state/<id>.meta are plain files
-#   the same user can write by hand. Each leaves a durable record (the override
-#   log, the receipt) that the captain can read afterwards.
+#   the caller wrote itself, receipts and state/<id>.meta are plain files the
+#   same user can write by hand, and the parent-admission pass-through above can
+#   be reached from a local session. The first three leave a durable record (the
+#   override log, the receipt) that the captain can read afterwards; the
+#   pass-through leaves none.
 #
 # FM_DISPATCH_RECEIPT_MAX_AGE can only shorten the freshness window (clamped
 # 1..900 seconds, default 900); the test suite reaches the gate the way a home
