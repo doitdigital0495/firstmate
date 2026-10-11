@@ -1,0 +1,239 @@
+[90m5:13PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m5:13PM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 114ms[0m
+[90m5:13PM[0m [32mINF[0m [1mno leaks found[0m
+
+==================== S0 home with NO routing rows: nothing is demanded (gate is silent, launch proceeds to the next gate) ====================
+
+$ fm bin/fm-spawn.sh lab-norows-a0 /tmp/fm-lab.9OoZI0/proj --harness claude --model opus --effort high --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-norows-a0/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-norows-a0
+warning: /tmp/fm-lab.9OoZI0/data/lab-norows-a0/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+quota intake gate: refusing - no intake record exists under /tmp/fm-lab.9OoZI0/state/quota-intake; run bin/fm-quota-intake.sh first and re-check every usage limit
+error: lab-norows-a0 was not launched; the quota intake gate refused it and nothing was created - run bin/fm-quota-intake.sh and re-check every usage limit before relaunching
+[exit 1]
+
+==================== S1 the table's rows ====================
+
+$ fm bin/fm-dispatch-resolve.sh rows
+row rule_1  sha256=a6f380391c10  when: current events
+  candidate: --harness grok --model grok-4 --effort high
+row default  sha256=d224bcfc7316  when: No listed rule applies to this task.
+  candidate: --harness codex --model gpt-5 --effort medium
+  candidate: --harness claude --model sonnet --effort high
+[exit 0]
+
+==================== S2 hand-picked ship (personal Claude, Opus, high) with no receipt ====================
+
+$ fm bin/fm-spawn.sh lab-ship-a1 /tmp/fm-lab.9OoZI0/proj --harness claude --model opus --effort high --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a1/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-ship-a1
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+dispatch receipt gate: refusing - no dispatch receipt binds the brief of lab-ship-a1 (brief.sha256 9e0b85edf0f7 for /tmp/fm-lab.9OoZI0/data/lab-ship-a1/brief.md); the newest receipt in this home binds nothing, because there is none. A hand-picked --harness claude --model opus --effort high is not a routing decision: produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> (it writes the receipt on status clear), otherwise bin/fm-dispatch-resolve.sh choose <brief> --row <id> --harness <h> [--model <m>] [--effort <e>] [--account <id>] --accounting-file <json> --rationale-file <path> (row ids: bin/fm-dispatch-resolve.sh rows); only the captain's explicit instruction for this one task departs from the table: bin/fm-dispatch-resolve.sh override <brief> --task <id> --harness <h> ... --words-file <path>
+error: lab-ship-a1 was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile
+[exit 1]
+
+$ ls /tmp/fm-lab.9OoZI0/state
+[exit 0]
+
+==================== S3 hand-picked scout with no receipt ====================
+
+$ fm bin/fm-spawn.sh lab-scout-a2 /tmp/fm-lab.9OoZI0/proj --scout --harness claude --model opus --effort high
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+dispatch receipt gate: refusing - no dispatch receipt binds the brief of lab-scout-a2 (brief.sha256 68589a7f48e0 for /tmp/fm-lab.9OoZI0/data/lab-scout-a2/brief.md); the newest receipt in this home binds nothing, because there is none. A hand-picked --harness claude --model opus --effort high is not a routing decision: produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> (it writes the receipt on status clear), otherwise bin/fm-dispatch-resolve.sh choose <brief> --row <id> --harness <h> [--model <m>] [--effort <e>] [--account <id>] --accounting-file <json> --rationale-file <path> (row ids: bin/fm-dispatch-resolve.sh rows); only the captain's explicit instruction for this one task departs from the table: bin/fm-dispatch-resolve.sh override <brief> --task <id> --harness <h> ... --words-file <path>
+error: lab-scout-a2 was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile
+[exit 1]
+
+==================== S4 resolver is off in this home (no key): no receipt, so the hand-pick stays refused ====================
+
+$ fm env -u OPENROUTER_API_KEY -u TYPESAFE_API_KEY bin/fm-dispatch-resolve.sh /tmp/fm-lab.9OoZI0/data/lab-ship-a1/brief.md --project proj --task lab-ship-a1
+dispatch-resolve: off (OPENROUTER_API_KEY absent from the environment and /tmp/fm-lab.9OoZI0/.env); no receipt written - route from the table yourself, then record it with: fm-dispatch-resolve.sh choose
+[exit 0]
+
+$ fm bin/fm-spawn.sh lab-ship-a1 /tmp/fm-lab.9OoZI0/proj --harness claude --model opus --effort high --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a1/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-ship-a1
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+dispatch receipt gate: refusing - no dispatch receipt binds the brief of lab-ship-a1 (brief.sha256 9e0b85edf0f7 for /tmp/fm-lab.9OoZI0/data/lab-ship-a1/brief.md); the newest receipt in this home binds nothing, because there is none. A hand-picked --harness claude --model opus --effort high is not a routing decision: produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> (it writes the receipt on status clear), otherwise bin/fm-dispatch-resolve.sh choose <brief> --row <id> --harness <h> [--model <m>] [--effort <e>] [--account <id>] --accounting-file <json> --rationale-file <path> (row ids: bin/fm-dispatch-resolve.sh rows); only the captain's explicit instruction for this one task departs from the table: bin/fm-dispatch-resolve.sh override <brief> --task <id> --harness <h> ... --words-file <path>
+error: lab-ship-a1 was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile
+[exit 1]
+
+==================== S5 choose refuses a profile that is not a candidate of the named row ====================
+
+$ fm bin/fm-dispatch-resolve.sh choose /tmp/fm-lab.9OoZI0/data/lab-ship-a1/brief.md --row default --task lab-ship-a1 --harness claude --model opus --effort high --accounting-file /tmp/fm-lab.9OoZI0/work/accounting.json --rationale-file /tmp/fm-lab.9OoZI0/work/rationale.txt
+error: profile --harness claude --model opus --effort high is not a candidate of row default; a profile outside the matched row is refused. Its candidates are: --harness codex --model gpt-5 --effort medium; --harness claude --model sonnet --effort high
+[exit 2]
+
+==================== S6 choose a real candidate (codex gpt-5 medium), then launch a DIFFERENT effort: refused, receipt not spent ====================
+
+$ fm bin/fm-dispatch-resolve.sh choose /tmp/fm-lab.9OoZI0/data/lab-ship-a1/brief.md --row default --task lab-ship-a1 --harness codex --model gpt-5 --effort medium --accounting-file /tmp/fm-lab.9OoZI0/work/accounting.json --rationale-file /tmp/fm-lab.9OoZI0/work/rationale.txt
+dispatch-resolve:
+  status: chosen
+  row: default (No listed rule applies to this task.)
+  receipt: dispatch-1791731643-997346855-2124914.json (one launch, valid 900s)
+  profile: --harness codex --model gpt-5 --effort medium
+[exit 0]
+
+$ fm bin/fm-spawn.sh lab-ship-a1 /tmp/fm-lab.9OoZI0/proj --harness codex --model gpt-5 --effort high --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a1/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-ship-a1
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+dispatch receipt gate: refusing - the launch of lab-ship-a1 does not equal receipt dispatch-1791731643-997346855-2124914.json: profile.effort is 'medium' on the receipt but the launch passes 'high'. Launch the receipt's profile (--harness codex --model gpt-5 --effort medium; pass --effort default to drop a carried-over value), or route this profile properly: produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> (it writes the receipt on status clear), otherwise bin/fm-dispatch-resolve.sh choose <brief> --row <id> --harness <h> [--model <m>] [--effort <e>] [--account <id>] --accounting-file <json> --rationale-file <path> (row ids: bin/fm-dispatch-resolve.sh rows); only the captain's explicit instruction for this one task departs from the table: bin/fm-dispatch-resolve.sh override <brief> --task <id> --harness <h> ... --words-file <path>
+error: lab-ship-a1 was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile
+[exit 1]
+
+$ fm bin/fm-spawn.sh lab-ship-a1 /tmp/fm-lab.9OoZI0/proj --harness claude --model opus --effort high --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a1/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-ship-a1
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+dispatch receipt gate: refusing - the launch of lab-ship-a1 does not equal receipt dispatch-1791731643-997346855-2124914.json: profile.harness is 'codex' on the receipt but the launch passes 'claude'. Launch the receipt's profile (--harness codex --model gpt-5 --effort medium), or route this profile properly: produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> (it writes the receipt on status clear), otherwise bin/fm-dispatch-resolve.sh choose <brief> --row <id> --harness <h> [--model <m>] [--effort <e>] [--account <id>] --accounting-file <json> --rationale-file <path> (row ids: bin/fm-dispatch-resolve.sh rows); only the captain's explicit instruction for this one task departs from the table: bin/fm-dispatch-resolve.sh override <brief> --task <id> --harness <h> ... --words-file <path>
+error: lab-ship-a1 was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile
+[exit 1]
+
+$ ls /tmp/fm-lab.9OoZI0/state/dispatch-receipt
+dispatch-1791731643-997346855-2124914.json
+[exit 0]
+
+==================== S7 that receipt does not admit another task's brief ====================
+
+$ fm bin/fm-spawn.sh lab-ship-a3 /tmp/fm-lab.9OoZI0/proj --harness codex --model gpt-5 --effort medium --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a3/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-ship-a3
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a3/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+dispatch receipt gate: refusing - no dispatch receipt binds the brief of lab-ship-a3 (brief.sha256 a3ece364594c for /tmp/fm-lab.9OoZI0/data/lab-ship-a3/brief.md); the newest receipt in this home binds /tmp/fm-lab.9OoZI0/data/lab-ship-a1/brief.md. A hand-picked --harness codex --model gpt-5 --effort medium is not a routing decision: produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> (it writes the receipt on status clear), otherwise bin/fm-dispatch-resolve.sh choose <brief> --row <id> --harness <h> [--model <m>] [--effort <e>] [--account <id>] --accounting-file <json> --rationale-file <path> (row ids: bin/fm-dispatch-resolve.sh rows); only the captain's explicit instruction for this one task departs from the table: bin/fm-dispatch-resolve.sh override <brief> --task <id> --harness <h> ... --words-file <path>
+error: lab-ship-a3 was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile
+[exit 1]
+
+==================== S8 environment variables do not switch the gate off for a ship ====================
+
+$ fm env FM_DISPATCH_PARENT_ADMITTED=lab-ship-a3 FM_DISPATCH_RECEIPT_MAX_AGE=99999999 bin/fm-spawn.sh lab-ship-a3 /tmp/fm-lab.9OoZI0/proj --harness claude --model opus --effort high --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a3/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-ship-a3
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a3/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+dispatch receipt gate: refusing - no dispatch receipt binds the brief of lab-ship-a3 (brief.sha256 a3ece364594c for /tmp/fm-lab.9OoZI0/data/lab-ship-a3/brief.md); the newest receipt in this home binds /tmp/fm-lab.9OoZI0/data/lab-ship-a1/brief.md. A hand-picked --harness claude --model opus --effort high is not a routing decision: produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> (it writes the receipt on status clear), otherwise bin/fm-dispatch-resolve.sh choose <brief> --row <id> --harness <h> [--model <m>] [--effort <e>] [--account <id>] --accounting-file <json> --rationale-file <path> (row ids: bin/fm-dispatch-resolve.sh rows); only the captain's explicit instruction for this one task departs from the table: bin/fm-dispatch-resolve.sh override <brief> --task <id> --harness <h> ... --words-file <path>
+error: lab-ship-a3 was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile
+[exit 1]
+
+==================== S9 the receipt's own profile passes the dispatch gate (the launch then meets the NEXT gate, quota intake) ====================
+
+$ fm bin/fm-spawn.sh lab-ship-a1 /tmp/fm-lab.9OoZI0/proj --harness codex --model gpt-5 --effort medium --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a1/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-ship-a1
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+quota intake gate: refusing - the newest intake record is 1791731652s old (max 600s); run bin/fm-quota-intake.sh now and re-check every usage limit
+error: lab-ship-a1 was not launched; the quota intake gate refused it and nothing was created - run bin/fm-quota-intake.sh and re-check every usage limit before relaunching
+[exit 1]
+
+$ fm bin/fm-dispatch-resolve.sh gate --task lab-ship-a1 --brief /tmp/fm-lab.9OoZI0/data/lab-ship-a1/brief.md --harness codex --model gpt-5 --effort medium
+dispatch receipt gate: PASS - receipt dispatch-1791731643-997346855-2124914.json (choose, row default) admits --harness codex --model gpt-5 --effort medium for lab-ship-a1 (preview)
+[exit 0]
+
+==================== S10 one receipt, one launch: consume it, then the same launch is refused ====================
+
+$ fm bin/fm-dispatch-resolve.sh gate --task lab-ship-a1 --brief /tmp/fm-lab.9OoZI0/data/lab-ship-a1/brief.md --harness codex --model gpt-5 --effort medium --consume
+dispatch receipt gate: PASS - receipt dispatch-1791731643-997346855-2124914.json (choose, row default) admits --harness codex --model gpt-5 --effort medium for lab-ship-a1; receipt consumed
+[exit 0]
+
+$ fm bin/fm-dispatch-resolve.sh gate --task lab-ship-a1 --brief /tmp/fm-lab.9OoZI0/data/lab-ship-a1/brief.md --harness codex --model gpt-5 --effort medium
+dispatch receipt gate: refusing - receipt dispatch-1791731643-997346855-2124914.json for this brief was already consumed by a launch (marker dispatch-1791731643-997346855-2124914.json.spent); every launch needs its own receipt: produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> (it writes the receipt on status clear), otherwise bin/fm-dispatch-resolve.sh choose <brief> --row <id> --harness <h> [--model <m>] [--effort <e>] [--account <id>] --accounting-file <json> --rationale-file <path> (row ids: bin/fm-dispatch-resolve.sh rows); only the captain's explicit instruction for this one task departs from the table: bin/fm-dispatch-resolve.sh override <brief> --task <id> --harness <h> ... --words-file <path>
+[exit 3]
+
+$ ls /tmp/fm-lab.9OoZI0/state/dispatch-receipt
+dispatch-1791731643-997346855-2124914.json
+dispatch-1791731643-997346855-2124914.json.spent
+[exit 0]
+
+==================== S11 editing the row after the receipt was issued makes the receipt stale ====================
+
+$ fm bin/fm-dispatch-resolve.sh choose /tmp/fm-lab.9OoZI0/data/lab-ship-a4/brief.md --row default --task lab-ship-a4 --harness codex --model gpt-5 --effort medium --accounting-file /tmp/fm-lab.9OoZI0/work/accounting.json --rationale-file /tmp/fm-lab.9OoZI0/work/rationale.txt
+dispatch-resolve:
+  status: chosen
+  row: default (No listed rule applies to this task.)
+  receipt: dispatch-1791731653-122380649-2144161.json (one launch, valid 900s)
+  profile: --harness codex --model gpt-5 --effort medium
+[exit 0]
+
+$ fm bin/fm-spawn.sh lab-ship-a4 /tmp/fm-lab.9OoZI0/proj --harness codex --model gpt-5 --effort medium --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a4/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-ship-a4
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a4/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+dispatch receipt gate: refusing - receipt dispatch-1791731653-122380649-2144161.json names row.id 'default' at row.sha256 d224bcfc7316, but that row has changed in config/crew-dispatch.json since; route again: produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> (it writes the receipt on status clear), otherwise bin/fm-dispatch-resolve.sh choose <brief> --row <id> --harness <h> [--model <m>] [--effort <e>] [--account <id>] --accounting-file <json> --rationale-file <path> (row ids: bin/fm-dispatch-resolve.sh rows); only the captain's explicit instruction for this one task departs from the table: bin/fm-dispatch-resolve.sh override <brief> --task <id> --harness <h> ... --words-file <path>
+error: lab-ship-a4 was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile
+[exit 1]
+
+==================== S12 editing the brief after the receipt was issued unbinds it ====================
+
+$ fm bin/fm-spawn.sh lab-ship-a4 /tmp/fm-lab.9OoZI0/proj --harness codex --model gpt-5 --effort medium --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a4/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-ship-a4
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a4/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+dispatch receipt gate: refusing - no dispatch receipt binds the brief of lab-ship-a4 (brief.sha256 16da683c7e1d for /tmp/fm-lab.9OoZI0/data/lab-ship-a4/brief.md); the newest receipt in this home binds /tmp/fm-lab.9OoZI0/data/lab-ship-a4/brief.md. A hand-picked --harness codex --model gpt-5 --effort medium is not a routing decision: produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> (it writes the receipt on status clear), otherwise bin/fm-dispatch-resolve.sh choose <brief> --row <id> --harness <h> [--model <m>] [--effort <e>] [--account <id>] --accounting-file <json> --rationale-file <path> (row ids: bin/fm-dispatch-resolve.sh rows); only the captain's explicit instruction for this one task departs from the table: bin/fm-dispatch-resolve.sh override <brief> --task <id> --harness <h> ... --words-file <path>
+error: lab-ship-a4 was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile
+[exit 1]
+
+==================== S13 a raw launch command with no captain override ====================
+
+$ fm bin/fm-spawn.sh lab-raw-a5 /tmp/fm-lab.9OoZI0/proj custom-agent --flag --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-raw-a5/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-raw-a5
+warning: /tmp/fm-lab.9OoZI0/data/lab-raw-a5/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+dispatch receipt gate: refusing - no dispatch receipt binds the brief of lab-raw-a5 (brief.sha256 f8f0d0692544 for /tmp/fm-lab.9OoZI0/data/lab-raw-a5/brief.md); the newest receipt in this home binds /tmp/fm-lab.9OoZI0/data/lab-ship-a4/brief.md. A hand-picked --harness custom-agent is not a routing decision: produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> (it writes the receipt on status clear), otherwise bin/fm-dispatch-resolve.sh choose <brief> --row <id> --harness <h> [--model <m>] [--effort <e>] [--account <id>] --accounting-file <json> --rationale-file <path> (row ids: bin/fm-dispatch-resolve.sh rows); only the captain's explicit instruction for this one task departs from the table: bin/fm-dispatch-resolve.sh override <brief> --task <id> --harness <h> ... --words-file <path>
+error: lab-raw-a5 was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile
+[exit 1]
+
+==================== S14 captain override: empty words refused; real words are logged and listed; it admits only that task and profile ====================
+
+$ fm bin/fm-dispatch-resolve.sh override /tmp/fm-lab.9OoZI0/data/lab-ship-a3/brief.md --task lab-ship-a3 --harness claude --model opus --effort high --words-file /tmp/fm-lab.9OoZI0/work/empty.txt
+error: the captain's words are empty; an override without the captain's exact words is refused
+[exit 2]
+
+$ fm bin/fm-dispatch-resolve.sh override /tmp/fm-lab.9OoZI0/data/lab-ship-a3/brief.md --task lab-ship-a3 --harness claude --model opus --effort high --words-file /tmp/fm-lab.9OoZI0/work/words.txt
+dispatch-resolve:
+  status: override
+  override: captain (logged in /tmp/fm-lab.9OoZI0/data/dispatch-overrides.jsonl; listed at the next session start)
+  receipt: dispatch-1791731659-078652516-2151962.json (one launch, valid 900s)
+  profile: --harness claude --model opus --effort high
+[exit 0]
+
+$ fm bin/fm-dispatch-resolve.sh overrides --recent
+2026-10-11T15:14:19Z  task=lab-ship-a3  --harness claude --model opus --effort high  captain: "Launch lab-ship-a3 on personal Claude Opus high, just this once."
+[exit 0]
+
+$ jq -c {task, profile, words: (.words // .override.words)} /tmp/fm-lab.9OoZI0/data/dispatch-overrides.jsonl
+{"task":"lab-ship-a3","profile":{"harness":"claude","model":"opus","effort":"high","account":"","provider":""},"words":"Launch lab-ship-a3 on personal Claude Opus high, just this once."}
+[exit 0]
+
+$ fm bin/fm-spawn.sh lab-ship-a3 /tmp/fm-lab.9OoZI0/proj --harness claude --model opus --effort xhigh --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a3/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-ship-a3
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a3/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+dispatch receipt gate: refusing - the launch of lab-ship-a3 does not equal receipt dispatch-1791731659-078652516-2151962.json: profile.effort is 'high' on the receipt but the launch passes 'xhigh'. Launch the receipt's profile (--harness claude --model opus --effort high; pass --effort default to drop a carried-over value), or route this profile properly: produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> (it writes the receipt on status clear), otherwise bin/fm-dispatch-resolve.sh choose <brief> --row <id> --harness <h> [--model <m>] [--effort <e>] [--account <id>] --accounting-file <json> --rationale-file <path> (row ids: bin/fm-dispatch-resolve.sh rows); only the captain's explicit instruction for this one task departs from the table: bin/fm-dispatch-resolve.sh override <brief> --task <id> --harness <h> ... --words-file <path>
+error: lab-ship-a3 was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile
+[exit 1]
+
+$ fm bin/fm-dispatch-resolve.sh gate --task lab-ship-a3 --brief /tmp/fm-lab.9OoZI0/data/lab-ship-a3/brief.md --harness claude --model opus --effort high
+dispatch receipt gate: PASS - receipt dispatch-1791731659-078652516-2151962.json (override, override=captain) admits --harness claude --model opus --effort high for lab-ship-a3 (preview)
+[exit 0]
+
+$ fm bin/fm-spawn.sh lab-ship-a1 /tmp/fm-lab.9OoZI0/proj --harness claude --model opus --effort high --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a1/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-ship-a1
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+dispatch receipt gate: refusing - receipt dispatch-1791731643-997346855-2124914.json for this brief was already consumed by a launch (marker dispatch-1791731643-997346855-2124914.json.spent); every launch needs its own receipt: produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> (it writes the receipt on status clear), otherwise bin/fm-dispatch-resolve.sh choose <brief> --row <id> --harness <h> [--model <m>] [--effort <e>] [--account <id>] --accounting-file <json> --rationale-file <path> (row ids: bin/fm-dispatch-resolve.sh rows); only the captain's explicit instruction for this one task departs from the table: bin/fm-dispatch-resolve.sh override <brief> --task <id> --harness <h> ... --words-file <path>
+error: lab-ship-a1 was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile
+[exit 1]
+
+==================== S15 a malformed table fails closed ====================
+
+$ fm bin/fm-spawn.sh lab-ship-a3 /tmp/fm-lab.9OoZI0/proj --harness claude --model opus --effort high --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.9OoZI0
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a3/launch-brief.md records no ship branch; defaulting to legacy branch fm/lab-ship-a3
+warning: /tmp/fm-lab.9OoZI0/data/lab-ship-a3/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+dispatch receipt gate: refusing - config/crew-dispatch.json is not a readable, well-formed rules file (); correct it rather than launching around it
+error: lab-ship-a3 was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile
+[exit 1]
+
+==================== teardown ====================
+
+$ find /tmp/fm-lab.9OoZI0/state -maxdepth 1 -name *.meta
+[exit 0]
+no worker meta recorded and no pane created in any step above; lab home removed on exit
