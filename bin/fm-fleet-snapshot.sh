@@ -116,7 +116,7 @@
 #
 # --contribution-input prints only the canonical backlog/tasks ownership pair,
 # without worker observations or cross-home collection, for the home-local poll.
-# --live-board-input is the separate home-local, opt-in board input contract
+# --live-board-input is the separate, opt-in board input contract
 # fm-live-board-input.v1: generated/generated_epoch, fm_home, collection duration,
 # registry (fm-project-mode.sh --list-json), canonical backlog/tasks and main_inventory.
 # It reuses generation-bound worker observations without contributions, terminal

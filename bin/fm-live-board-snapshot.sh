@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Separate home-local live-board projection, never a Bearings status-page mode.
+# Separate per-home live-board projection, never a Bearings status-page mode.
 # Usage: fm-live-board-snapshot.sh [--json] [--input FILE] [--prs FILE]
 # Default: collect exactly one fm-fleet-snapshot.sh --live-board-input snapshot.
 # --input renders a previously collected fm-live-board-input.v1, without reads
