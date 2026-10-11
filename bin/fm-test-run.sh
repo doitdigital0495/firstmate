@@ -395,6 +395,7 @@ family_for_basename() {
     fm-spawn-claude-settings.test.sh|fm-spawn-claude-lean.test.sh|\
     fm-spawn-compact-adviser-disable.test.sh|\
     fm-spawn-compact-adviser-disable-remote.test.sh|\
+    fm-remote-secondmate-dispatch-receipt.test.sh|\
     fm-project-capacity.test.sh|\
     fm-teardown-endpoint-safety.test.sh)
       printf '%s\n' backend-dispatch
@@ -1547,10 +1548,11 @@ families_for_changed_path() {
       printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
       ;;
     bin/fm-dispatch-receipt-lib.sh)
-      # The receipt gate: its producers, then the two launch paths that call it.
+      # The receipt gate: its producers, then the launch paths that call it.
       printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
       printf '%s\n' "__script__:fm-spawn-dispatch-profile.test.sh"
       printf '%s\n' "__script__:fm-control-relaunch.test.sh"
+      printf '%s\n' "__script__:fm-remote-secondmate-dispatch-receipt.test.sh"
       ;;
     bin/fm-env-lib.sh)
       # The one .env accessor, sourced by bin/fm-x-lib.sh (Relay token) and

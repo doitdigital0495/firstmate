@@ -1439,9 +1439,29 @@ Every refusal names the missing or mismatching receipt field and the command tha
 
 **No off switch**
 
-The gate has no flag, variable, or config file that disables it.
-A home that has never had routing rows has no table to route from, so its launches are not gated.
-A home that once had routing rows and now has none is refused rather than ungated, so removing or emptying the table does not bypass it; retiring the table is the captain's decision, made by removing `state/dispatch-receipt/table-rows-seen` by hand.
+The gate has no flag or config file that disables it.
+A home with no routing rows has no table to route from, so its launches are not gated; that holds whether the table is absent or carries notes only, and a table that is present but malformed refuses every launch.
+
+**What the gate prevents, and what it only records**
+
+The gate physically stops a launch whose profile no receipt names, which is what catches a hand-picked profile.
+Three paths are audit and deterrence, not physical prevention.
+`override` accepts any non-empty words file as the captain's words, so nothing proves the captain wrote them.
+`choose` takes accounting the caller wrote itself, so nothing proves the catalog, plan, and quota figures in it.
+Receipts and `state/<id>.meta` are plain files the same user can write by hand, so a forged receipt for a profile its row holds, or a hand-edited recorded profile, passes.
+Each of these leaves a durable record the captain can read afterwards: the override log and the session-start digest for an override, the receipt with its accounting and rationale for a choice.
+
+**Second mates**
+
+Second-mate launches are under the dispatch table like every other launch.
+Changing `config/secondmate-harness` (or the second-mate model or effort) therefore needs a dispatch receipt or a recorded captain override for the second mate's charter before its next respawn, and that includes the automatic liveness respawn, which is refused until one exists.
+
+A remote second mate is gated in its parent home.
+`bin/fm-spawn.sh --secondmate` runs the gate against a receipt in the parent home for the charter at `data/<id>/brief.md` before it asks the remote host to launch, refuses with the same text as any other launch, and consumes that receipt.
+The remote host has no receipt producer, so its host-local launch needs no receipt of its own: `bin/fm-remote-secondmate-control.sh launch` hands the parent's admission on, and the gate honours it only for the host-local launch of that one second mate, never for a ship, a scout, a local second mate, or a relaunch started from a session.
+
+One remote path is not covered by the parent's table.
+`bin/fm-remote-secondmate-relaunch.sh`, which moves a running remote second mate onto another harness, model, or effort, is gated only on the remote host, against that host's own table and its private `state/parent-route` records: a host whose table has routing rows refuses the move, because nothing can produce a receipt there, and a host whose table has none does not gate it.
 
 **Overrides are never silent**
 
@@ -1450,7 +1470,8 @@ Each override is appended to `data/dispatch-overrides.jsonl`, and the session-st
 
 **Homes**
 
-The scripts are shared and the records are not: every home, including each secondmate home and a remote secondmate host, runs the same gate against its own `config/crew-dispatch.json`, its own `state/dispatch-receipt/`, and its own override log.
+The scripts are shared and the records are not: every home, including each secondmate home, runs the same gate against its own `config/crew-dispatch.json`, its own `state/dispatch-receipt/`, and its own override log.
+A remote secondmate's own launch is the one exception described under "Second mates" above: its receipt lives in, and is consumed in, its parent home.
 
 ## Toolchain
 

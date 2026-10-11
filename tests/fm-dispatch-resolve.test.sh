@@ -1541,28 +1541,41 @@ rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effo
 expect_code 3 "$code" "a relaunch onto a new account needs a receipt"
 pass "gate: a raw command needs an override, and only a launch that keeps the recorded profile skips the receipt"
 
-# Removing or emptying the table is not a way around it; a home that never had
-# routing rows has nothing to route from.
+# A mismatch names the way to drop a carried-over value only where one exists.
+rtool code out "${CHOOSE[@]}"
+expect_code 0 "$code" "choose records a receipt for the mismatch checks: $out"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model sonnet --effort high
+expect_code 3 "$code" "a launch whose model differs from the receipt refuses"
+assert_contains "$out" "profile.model is 'opus' on the receipt but the launch passes 'sonnet'" "the refusal names the mismatching model"
+assert_contains "$out" 'pass --model default to drop a carried-over value' "a model mismatch names the flag that drops a carried-over model"
+rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort high --account geris
+expect_code 3 "$code" "a launch whose account differs from the receipt refuses"
+assert_contains "$out" "profile.account is 'default' on the receipt but the launch passes 'geris'" "the refusal names the mismatching account"
+assert_not_contains "$out" '--account default' "an account mismatch must not suggest a flag value no launch accepts"
+pass "gate: a mismatch suggests dropping a carried-over value for model and effort only"
+
+# The parent-admission variable a remote second-mate host is handed admits
+# nothing in an ordinary home: this launch still needs its own receipt.
+rm -rf "$RH/state/dispatch-receipt"/dispatch-*
+out=$(FM_HOME="$RH" FM_DISPATCH_PARENT_ADMITTED=t1 "$TOOL" gate --brief "$RB" --task t1 --harness claude --model opus --effort high 2>&1); code=$?
+expect_code 3 "$code" "the parent-admission variable must not switch the gate off for an ordinary launch"
+assert_contains "$out" 'no dispatch receipt binds the brief of t1' "the ordinary launch is still refused for its missing receipt"
+pass "gate: the remote second-mate parent admission does not admit an ordinary launch"
+
+# A home with no routing rows has nothing to route from, whether the table
+# is absent or holds notes only; a malformed table refuses.
 mv "$RH/config/crew-dispatch.json" "$TMP_ROOT/table.bak"
 rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort max
-expect_code 3 "$code" "a removed table refuses in a home that routed from it"
-assert_contains "$out" 'this home routed from config/crew-dispatch.json before and it now has no rules and no default' "the refusal names the removed table"
+expect_code 0 "$code" "a home with no table has nothing to route from: $out"
+assert_contains "$out" 'PASS - this home has no routing rows' "the gate says there is no table to route from"
 printf '{"model_notes":{"claude":"notes only"}}\n' > "$RH/config/crew-dispatch.json"
 rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort max
-expect_code 3 "$code" "an emptied table refuses in a home that routed from it"
+expect_code 0 "$code" "a notes-only table has no routing rows: $out"
+assert_contains "$out" 'PASS - this home has no routing rows' "the gate says a notes-only table has nothing to route from"
 printf '{broken\n' > "$RH/config/crew-dispatch.json"
 rtool code out gate --brief "$RB" --task t1 --harness claude --model opus --effort max
 expect_code 3 "$code" "a malformed table refuses"
 assert_contains "$out" 'is not a readable, well-formed rules file' "the refusal names the malformed table"
-NOROWS="$TMP_ROOT/norows-home"
-mkdir -p "$NOROWS/config" "$NOROWS/state"
-rtool_norows() { FM_HOME="$NOROWS" "$TOOL" gate --brief "$RB" --task t1 --harness claude --model opus --effort max 2>&1; }
-out=$(rtool_norows); code=$?
-expect_code 0 "$code" "a home with no table has nothing to route from"
-printf '{"model_notes":{"claude":"notes only"}}\n' > "$NOROWS/config/crew-dispatch.json"
-out=$(rtool_norows); code=$?
-expect_code 0 "$code" "a notes-only table has no routing rows"
-assert_contains "$out" 'PASS - this home has no routing rows' "the gate says there is no table to route from"
-pass "gate: a removed, emptied, or malformed table refuses, and a home that never had routing rows passes"
+pass "gate: a home with no routing rows is not gated, and a malformed table refuses"
 
 printf '# all fm-dispatch-resolve tests passed\n'

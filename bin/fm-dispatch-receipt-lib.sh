@@ -37,8 +37,10 @@
 #   override    null, or {by: "captain", words, task} for a captain override
 #
 # The gate (fm_dr_cmd_gate) admits a launch only when:
-#   - this home has no routing rows (no rules and no default) and never had
-#     any: there is no table to route from, so nothing is demanded; or
+#   - this home has no routing rows (no rules and no default): there is no
+#     table to route from, so nothing is demanded; or
+#   - it is the host-local launch of a remote second mate that the parent home's
+#     gate already admitted (see "Remote second mates" below); or
 #   - the launch keeps the profile already recorded for the task (a relaunch or
 #     a secondmate respawn with the same harness, model, effort, and account); or
 #   - the newest receipt whose brief hash matches this task's brief is unspent,
@@ -49,14 +51,32 @@
 #     override log and whose profile equals the launch.
 #   A raw launch command is only ever admitted by a captain override, because a
 #   command string cannot be matched to a table profile.
-#   A home that once had routing rows and now has none is refused: removing or
-#   emptying the table is not a way around it.
 #   Every refusal names the missing or mismatching receipt field and the
 #   command that produces a receipt. Exit 0 pass, 3 refusal, 2 usage.
 #
-# There is deliberately no bypass variable. FM_DISPATCH_RECEIPT_MAX_AGE can only
-# shorten the freshness window (clamped 1..900 seconds, default 900); the test
-# suite reaches the gate the way a home does, by producing real receipts.
+# Remote second mates: bin/fm-spawn.sh runs this gate in the PARENT home, against
+#   a receipt in the parent home, before it delegates the launch to the remote
+#   host, and the launch consumes that receipt. The host-local fm-spawn the
+#   remote control plane then runs has no receipt producer of its own, so
+#   bin/fm-remote-secondmate-control.sh launch hands it
+#   FM_DISPATCH_PARENT_ADMITTED=<id>. The gate honours that only for the launch
+#   it describes: the state directory is the remote home's private
+#   state/parent-route, the brief is that home's data/charter.md, the home's
+#   .fm-secondmate-home marker names the same id, and the launch is not a raw
+#   command. A ship, a scout, a local second mate, or a relaunch started from a
+#   session matches none of that, so the variable does not switch the gate off.
+#
+# What the gate does and does not prevent: it physically stops a launch whose
+#   profile no receipt names, which is what catches a hand-picked profile. Three
+#   paths are audit and deterrence, not physical prevention: `override` accepts
+#   any non-empty words file as the captain's words, `choose` takes accounting
+#   the caller wrote itself, and receipts and state/<id>.meta are plain files
+#   the same user can write by hand. Each leaves a durable record (the override
+#   log, the receipt) that the captain can read afterwards.
+#
+# FM_DISPATCH_RECEIPT_MAX_AGE can only shorten the freshness window (clamped
+# 1..900 seconds, default 900); the test suite reaches the gate the way a home
+# does, by producing real receipts.
 #
 # Captain overrides are appended to data/dispatch-overrides.jsonl, one JSON
 # object per line, and bin/fm-session-start.sh lists the recent ones.
@@ -75,7 +95,6 @@ FM_DR_ERR=
 fm_dr_dir() { printf '%s\n' "$STATE/dispatch-receipt"; }
 fm_dr_table() { printf '%s\n' "$CONFIG/crew-dispatch.json"; }
 fm_dr_override_log() { printf '%s\n' "$DATA/dispatch-overrides.jsonl"; }
-fm_dr_rows_seen_marker() { printf '%s\n' "$STATE/dispatch-receipt/table-rows-seen"; }
 
 fm_dr_die() { printf 'error: %s\n' "$1" >&2; exit 2; }
 fm_dr_refuse() { printf 'dispatch receipt gate: refusing - %s\n' "$1"; exit 3; }
@@ -222,14 +241,6 @@ fm_dr_newest_for_brief() {  # <brief-sha256> -> path of the newest receipt bindi
   return 1
 }
 
-fm_dr_mark_rows_seen() {
-  local marker
-  marker=$(fm_dr_rows_seen_marker)
-  [ -e "$marker" ] && return 0
-  mkdir -p -- "$(fm_dr_dir)" 2>/dev/null || return 0
-  ( umask 077; : > "$marker" ) 2>/dev/null || true
-}
-
 # fm_dr_write <source> <status> <task> <brief> <row-json|null> <profile-json>
 #             <candidates-json> <rationale> <override-json|null>
 # Prints the new receipt's file name. Internal: only this library's producers
@@ -305,7 +316,6 @@ fm_dr_write_clear() {
       spendPriority: (if (.spendPriority | type) == "number" then .spendPriority else "unknown" end),
       eligible: ((.eligible // false) and ((.unranked // false) | not)),
       reason: (.reason // "")}]' <<<"$result") || return 1
-  fm_dr_mark_rows_seen
   fm_dr_write resolve clear "$task" "$brief" "$row" "$profile" "$candidates" \
     "$(jq -r '.note // "rule matched"' <<<"$result")" null
 }
@@ -407,7 +417,6 @@ fm_dr_cmd_choose() {
               spendPriority: $c.spendPriority, eligible: $c.eligible, reason: $c.reason}]' "$accounting")
   profile=$(jq -c --argjson cands "$candidates" "$FM_DR_KEY_JQ"'
     . as $p | . + {provider: (([$cands[] | select(key == ($p | key)) | .provider] | first) // "")}' <<<"$profile")
-  fm_dr_mark_rows_seen
   local name
   name=$(fm_dr_write choose chosen "$task" "$brief" "$(jq -c '{id, sha256}' <<<"$row")" "$profile" "$candidates" "$rationale" null) \
     || fm_dr_die "$FM_DR_ERR"
@@ -531,17 +540,22 @@ fm_dr_cmd_gate() {
   resolved_effort=$(fm_dr_axis "$resolved_effort")
   command -v jq >/dev/null 2>&1 || fm_dr_refuse "jq is not installed, so the dispatch table cannot be read"
 
-  local rows marker
+  local rows
   rows=$(fm_dr_table_rows) \
     || fm_dr_refuse "config/crew-dispatch.json is not a readable, well-formed rules file ($FM_DR_ERR); correct it rather than launching around it"
-  marker=$(fm_dr_rows_seen_marker)
   if [ "$(jq 'length' <<<"$rows")" -eq 0 ]; then
-    [ ! -e "$marker" ] \
-      || fm_dr_refuse "this home routed from config/crew-dispatch.json before and it now has no rules and no default (table missing or emptied); restore the routing rows. Retiring the table is the captain's decision alone, made by removing $marker by hand"
     printf 'dispatch receipt gate: PASS - this home has no routing rows in config/crew-dispatch.json, so there is no table to route from\n'
     return 0
   fi
-  fm_dr_mark_rows_seen
+
+  # The host-local launch of a remote second mate its parent home already admitted.
+  local remote_home=${STATE%/state/parent-route}
+  if [ -n "$task_id" ] && [ "${FM_DISPATCH_PARENT_ADMITTED:-}" = "$task_id" ] && [ "$raw" -eq 0 ] \
+    && [ "$remote_home" != "$STATE" ] && [ -n "$brief" ] && [ "$brief" -ef "$remote_home/data/charter.md" ] \
+    && [ "$(cat "$remote_home/.fm-secondmate-home" 2>/dev/null)" = "$task_id" ]; then
+    printf 'dispatch receipt gate: PASS - %s was admitted by the gate in its parent home; this host-local launch of a remote second mate needs no receipt of its own\n' "$task_id"
+    return 0
+  fi
 
   # A launch that keeps the task's recorded profile changes no routing decision.
   if [ -n "$meta" ] && [ -f "$meta" ]; then
@@ -617,12 +631,16 @@ fm_dr_cmd_gate() {
     esac
   fi
 
-  local field want got
+  local field want got drop
   for field in harness model effort account; do
     want=$(jq -r --arg f "$field" '.profile[$f] // ""' "$receipt")
     got=$(jq -r --arg f "$field" '.[$f] // ""' <<<"$launch")
     [ "$want" = "$got" ] && continue
-    fm_dr_refuse "the launch of $task does not equal receipt $name: profile.$field is '${want:-default}' on the receipt but the launch passes '${got:-default}'. Launch the receipt's profile ($(fm_dr_profile_text "$(jq -c '.profile' "$receipt")"); pass --$field default to drop a carried-over value), or route this profile properly: $hint"
+    case "$field" in
+      model | effort) drop="; pass --$field default to drop a carried-over value" ;;
+      *) drop='' ;;
+    esac
+    fm_dr_refuse "the launch of $task does not equal receipt $name: profile.$field is '${want:-default}' on the receipt but the launch passes '${got:-default}'. Launch the receipt's profile ($(fm_dr_profile_text "$(jq -c '.profile' "$receipt")")$drop), or route this profile properly: $hint"
   done
 
   if [ "$consume" -eq 1 ]; then

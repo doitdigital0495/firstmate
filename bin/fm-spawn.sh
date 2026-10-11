@@ -249,8 +249,10 @@
 #   profile consultation. When that file has routing rows, every launch - ship,
 #   scout, secondmate, and a --relaunch onto a different harness, model, effort,
 #   or account - is also refused unless a dispatch receipt names exactly the
-#   profile being launched (bin/fm-dispatch-receipt-lib.sh owns that gate; there
-#   is no flag or variable that turns it off). A --secondmate spawn is exempt
+#   profile being launched (bin/fm-dispatch-receipt-lib.sh owns that gate and
+#   says what it does and does not prevent; no flag turns it off, and a remote
+#   secondmate is gated in this parent home before its host is asked to launch).
+#   A --secondmate spawn is exempt
 #   from the explicit-harness requirement only and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
@@ -1049,6 +1051,18 @@ else
   fi
 fi
 
+spawn_dispatch_receipt_gate() {  # [--consume]
+  local out
+  if ! out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" \
+    FM_CONFIG_OVERRIDE="$CONFIG" FM_DATA_OVERRIDE="$DATA" \
+    "$SCRIPT_DIR/fm-dispatch-resolve.sh" gate "${DISPATCH_GATE_ARGS[@]}" "$@"); then
+    printf '%s\n' "$out" >&2
+    echo "error: $ID was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile" >&2
+    return 1
+  fi
+  [ $# -eq 0 ] || printf '%s\n' "$out" >&2
+}
+
 spawn_remote_secondmate() {
   local id=$1 remote host root home harness positional model effort backend out rc meta tmp
   local remote_backend remote_target remote_harness remote_herdr_session registry_lock remote_lock remote_generation
@@ -1158,6 +1172,19 @@ spawn_remote_secondmate() {
       return 1
     fi
   fi
+  # The dispatch receipt gate for a remote second mate runs here, in the parent
+  # home and against a receipt in the parent home, because the remote host has
+  # no receipt producer; the host-local launch is then admitted on the strength
+  # of this one (contract: bin/fm-dispatch-receipt-lib.sh). Previewed before
+  # anything is transferred, consumed just before the launch is delegated.
+  DISPATCH_GATE_ARGS=(--task "$id" --brief "$DATA/$id/brief.md" --harness "$harness" --recorded-meta "$meta")
+  [ "$model" = - ] || DISPATCH_GATE_ARGS+=(--model "$model")
+  [ "$effort" = - ] || DISPATCH_GATE_ARGS+=(--effort "$effort")
+  if ! spawn_dispatch_receipt_gate; then
+    fm_lock_release "$registry_lock" || true
+    fm_lock_release "$SPAWN_TASK_LOCK" || true
+    return 1
+  fi
   # Gate the host before anything is published or transferred, so a host that
   # cannot hold a durable Herdr endpoint refuses here rather than half-way
   # through a launch. This is also the readiness gate every liveness relaunch
@@ -1233,6 +1260,12 @@ spawn_remote_secondmate() {
   remote_traceparent=
   if [ "$(fm_trace_context_session_effective "$STATE/.trace-context-effective")" = on ]; then
     remote_traceparent=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CONFIG" "$meta" || true)
+  fi
+  if ! spawn_dispatch_receipt_gate --consume; then
+    fm_lock_release "$remote_lock" || true
+    fm_lock_release "$registry_lock" || true
+    fm_lock_release "$SPAWN_TASK_LOCK" || true
+    return 1
   fi
   launch_args=("$id" "$harness" "$model" "$effort" "$backend")
   [ -z "$remote_traceparent" ] || launch_args+=("$remote_traceparent")
@@ -3854,8 +3887,9 @@ fi
 # flags it was given. It is previewed before the quota record is spent and
 # consumed after, so a refused routing decision never burns a quota read. A
 # relaunch or a secondmate respawn that keeps the task's recorded profile makes
-# no new routing decision and needs no receipt. Remote second mates run this
-# same gate on their own host inside their own fm-spawn.
+# no new routing decision and needs no receipt. A remote second mate passes
+# this same gate in its parent home, inside spawn_remote_secondmate, and its
+# host-local fm-spawn is admitted here on the strength of that.
 DISPATCH_GATE_ARGS=(--task "$ID" --brief "${SOURCE_BRIEF:-$BRIEF}" --harness "$HARNESS")
 [ -z "$DISPATCH_REQ_MODEL" ] || DISPATCH_GATE_ARGS+=(--model "$DISPATCH_REQ_MODEL")
 [ -z "$DISPATCH_REQ_EFFORT" ] || DISPATCH_GATE_ARGS+=(--effort "$DISPATCH_REQ_EFFORT")
@@ -3864,18 +3898,7 @@ DISPATCH_GATE_ARGS=(--task "$ID" --brief "${SOURCE_BRIEF:-$BRIEF}" --harness "$H
 if [ "$RELAUNCH" -eq 1 ] || { [ "$KIND" = secondmate ] && [ -f "$STATE/$ID.meta" ]; }; then
   DISPATCH_GATE_ARGS+=(--recorded-meta "$STATE/$ID.meta" --resolved-model "${MODEL:-default}" --resolved-effort "${EFFORT:-default}")
 fi
-spawn_dispatch_receipt_gate() {  # [--consume]
-  local out
-  if ! out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" \
-    FM_CONFIG_OVERRIDE="$CONFIG" FM_DATA_OVERRIDE="$DATA" \
-    "$SCRIPT_DIR/fm-dispatch-resolve.sh" gate "${DISPATCH_GATE_ARGS[@]}" "$@"); then
-    printf '%s\n' "$out" >&2
-    echo "error: $ID was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile" >&2
-    exit 1
-  fi
-  [ $# -eq 0 ] || printf '%s\n' "$out" >&2
-}
-spawn_dispatch_receipt_gate
+spawn_dispatch_receipt_gate || exit 1
 
 # Phase 1.9: bin/fm-quota-intake.sh gate. Every worker, scout, and local
 # second-mate launch stops here until a fresh quota intake record proves this
@@ -3899,7 +3922,7 @@ if ! QUOTA_GATE_OUT=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
   exit 1
 fi
 printf '%s\n' "$QUOTA_GATE_OUT" >&2
-spawn_dispatch_receipt_gate --consume
+spawn_dispatch_receipt_gate --consume || exit 1
 
 # Phase 2. bin/fm-claude-admission.sh owns the whole decision, including which
 # stores this home shapes at all - a store the home does not shape takes no
