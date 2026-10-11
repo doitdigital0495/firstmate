@@ -472,21 +472,23 @@ check "$TMP_ROOT/crew-input.json" '(.registered_homes | map([.id,.status])) ==
   and .coverage.registered_homes == {complete:false,reason:"2 of 3 registered homes were not read",total:3,collected:1}' \
   'a registered home was not read through its own board input, or a broken or remote one was not named'
 render "$TMP_ROOT/crew-input.json" "$TMP_ROOT/crew-board.json"
-check "$TMP_ROOT/crew-board.json" '(.registered_homes | map([.label,.status,(.workers | map(.id))])) ==
-    [["ai-desk","collected",["mate-fix"]],["far-desk","remote",[]],["lost-desk","invalid",[]]]
+check "$TMP_ROOT/crew-board.json" '(.registered_homes | map([.label,.status,(.workers | map(.id)),(.queued | map(.id))])) ==
+    [["ai-desk","collected",["mate-fix"],["mate-later"]],["far-desk","remote",[],[]],["lost-desk","invalid",[],[]]]
+  and (.registered_homes[0].queued[0] | .title == "Not started yet" and .project == "desk" and .state == "queued"
+    and (.worker_present | not) and (.key | test("ai-desk")))
   and (.registered_homes[0].workers[0] | .title == "Answer the desk question" and .project == "desk" and .worker_present
     and .pr.url == "https://github.com/acme/desk/pull/7" and (.current_state.state | type == "string")
     and (.key | test("ai-desk")))
-  and ([.projects[].tasks[].id] | index("mate-fix") == null) and .counts.open_tasks == 1
+  and ([.projects[].tasks[].id] | (index("mate-fix") // index("mate-later")) == null) and .counts.open_tasks == 1
   and (.omissions[] | select(.kind == "registered-homes-uncollected") | .homes | map(.label)) == ["far-desk","lost-desk"]
   and (tostring | (contains("no-such-home") or contains("/srv/fm")) | not)' \
-  'a registered home did not contribute exactly its workers, or leaked into this home\u0027s cards, counts or paths'
+  'a registered home did not contribute exactly its workers and queued work, or leaked into this home\u0027s cards, counts or paths'
 jq '.registered_homes[0].input.tasks = "broken"' "$TMP_ROOT/crew-input.json" > "$TMP_ROOT/crew-bad.json"
 render "$TMP_ROOT/crew-bad.json" "$TMP_ROOT/crew-bad-board.json"
-check "$TMP_ROOT/crew-bad-board.json" '.registered_homes[0] | .status == "unreadable" and .workers == [] and .reason != null' \
+check "$TMP_ROOT/crew-bad-board.json" '.registered_homes[0] | .status == "unreadable" and .workers == [] and .queued == [] and .reason != null' \
   'a malformed registered-home input was not disclosed as unreadable'
 FM_HOME="$h" FM_ROOT_OVERRIDE="$ROOT" FM_SNAPSHOT_SECONDMATES=1 "$FLEET" --live-board-input > "$TMP_ROOT/crew-capped.json"
 check "$TMP_ROOT/crew-capped.json" '(.registered_homes | length) == 1
   and .coverage.registered_homes.complete == false and .coverage.registered_homes.reason != null' \
   'homes beyond the per-snapshot bound were not disclosed'
-pass 'registered homes contribute their workers through their own input; remote, invalid, malformed and unread homes are named'
+pass 'registered homes contribute their workers and queued work through their own input; remote, invalid, malformed and unread homes are named'

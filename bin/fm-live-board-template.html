@@ -59,31 +59,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible, .idle li:focus-vis
 .toc-link:hover { border-color: #6b5326; }
 .toc-count { color: var(--gold); font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
 .toc-quiet { color: var(--text-faint); font-size: 0.78rem; white-space: nowrap; }
-.lb-crew { display: grid; gap: 10px; margin: 0 0 14px; padding: 12px 14px; min-width: 0; background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 14px; }
-.lb-crew[hidden], .crew-group[hidden], .crew-row[hidden] { display: none; }
-.crew-head { display: grid; gap: 2px; min-width: 0; }
-.crew-head h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0; font-size: 1.15rem; color: var(--text-strong); }
-.crew-counts { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
-.crew-count { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; max-width: 100%; padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg-inset); color: var(--text-strong); font: 600 0.84rem var(--font); text-align: left; cursor: pointer; }
-.crew-count:hover { border-color: #6b5326; }
-.crew-count[aria-pressed="true"] { border-color: var(--gold); background: var(--gold-soft); box-shadow: 0 0 0 1px var(--gold); }
 .crew-icon { display: inline-flex; flex: none; }
-.crew-box { min-width: 0; }
-.crew-box > summary { cursor: pointer; min-height: 28px; color: var(--text-muted); font-size: 0.85rem; }
-.crew-box:not([open]) > .crew-list { display: none; }
-.crew-list { display: grid; gap: 12px; margin-top: 8px; min-width: 0; }
-.crew-group { display: grid; gap: 6px; min-width: 0; }
-.crew-project { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; font-size: 0.95rem; color: var(--text-strong); overflow-wrap: anywhere; }
-.crew-rows { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; min-width: 0; }
-.crew-row { border: 1px solid var(--line-soft); border-radius: 9px; background: var(--bg-card); min-width: 0; }
-.crew-line { display: grid; grid-template-columns: 232px minmax(0, 1fr) minmax(0, auto) auto; align-items: center; gap: 4px 12px; min-height: 40px; padding: 6px 11px; list-style: none; cursor: pointer; }
-.crew-line::-webkit-details-marker { display: none; }
-.crew-line .badge { justify-self: start; white-space: normal; }
-.crew-meta { color: var(--text-muted); font-size: 0.8rem; overflow-wrap: anywhere; }
-.crew-chev { display: inline-flex; color: var(--text-faint); transform: rotate(-90deg); }
-.crew-item[open] .crew-chev { transform: none; }
-.crew-detail { display: grid; gap: 2px; padding: 0 11px 9px 255px; min-width: 0; }
-.crew-item:not([open]) > .crew-detail { display: none; }
 .lb-banner { margin: 0 0 16px; border-radius: 10px; padding: 10px 14px; border: 1px solid #6b3527; background: var(--rust-soft); color: var(--text-strong); }
 .lb-empty { text-align: center; padding: 40px 16px; margin: 0 0 14px; background: var(--bg-raised); border: 1px dashed var(--line); border-radius: 14px; color: var(--text-muted); }
 .lb-empty h2 { color: var(--text-strong); margin: 8px 0 4px; font-size: 1.1rem; }
@@ -158,13 +134,13 @@ textarea.q-note { min-height: 88px; resize: vertical; }
 .q-status { font-size: 0.85rem; color: var(--sea); }
 .q-status.err { color: var(--rust); }
 .q-readonly { margin-top: 8px; padding: 8px 12px; border-radius: 9px; background: var(--bg-inset); border: 1px dashed var(--line); color: var(--text-muted); font-size: 0.85rem; }
-.lanes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: start; min-width: 0; }
+.lanes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: start; min-width: 0; }
 .lane { display: grid; gap: 8px; align-content: start; min-width: 0; padding: 10px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--bg-inset); }
 .lane-head { display: grid; gap: 2px; min-width: 0; }
 .lane-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 0; font-size: 0.95rem; color: var(--text-strong); }
 .lane-count { color: var(--text-muted); font-weight: 500; font-size: 0.82rem; }
 .lane-say { margin: 0; color: var(--text-muted); font-size: 0.8rem; overflow-wrap: anywhere; }
-.lane-doing { border-top: 3px solid var(--sea); } .lane-next { border-top: 3px solid var(--ocean); } .lane-charted { border-top: 3px solid var(--gold); }
+.lane-doing { grid-column: 1 / -1; border-top: 3px solid var(--sea); } .lane-next { border-top: 3px solid var(--ocean); } .lane-charted { border-top: 3px solid var(--gold); }
 .lane-none { margin: 0; color: var(--text-faint); font-size: 0.85rem; }
 .lane-more { min-width: 0; }
 .lane-more summary { cursor: pointer; color: var(--text-muted); font-size: 0.85rem; min-height: 28px; }
@@ -172,6 +148,10 @@ textarea.q-note { min-height: 88px; resize: vertical; }
 .lane-more:not([open]) > .lane-more-body { display: none; }
 .w { display: grid; gap: 4px; padding: 9px 11px; border: 1px solid var(--line-soft); border-radius: 9px; background: var(--bg-card); min-width: 0; }
 .w .badge { justify-self: start; white-space: normal; }
+.w-line { grid-template-columns: 228px minmax(0, 1fr) minmax(0, 1fr) 236px; align-items: center; gap: 4px 12px; min-height: 40px; padding: 6px 11px; }
+.w-line .w-title, .w-line .w-note { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.w-line .w-when { grid-column: 4; text-align: right; }
+.w-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
 .w-title { color: var(--text-strong); overflow-wrap: anywhere; }
 .w-note { color: var(--text-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
 .w-when { color: var(--text-faint); font-size: 0.78rem; }
@@ -237,7 +217,11 @@ textarea.q-note { min-height: 88px; resize: vertical; }
 .idle li b { color: var(--text); font-weight: 600; }
 .lb-notes { margin: 0 0 14px; border: 1px solid var(--line-soft); background: var(--bg-raised); border-radius: 10px; padding: 8px 14px; font-size: 0.85rem; }
 .lb-foot { margin-top: 20px; color: var(--text-faint); font-size: 0.78rem; overflow-wrap: anywhere; }
-@media (max-width: 900px) { .lanes { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 900px) {
+  .lanes, .w-line { grid-template-columns: minmax(0, 1fr); }
+  .w-line .w-title, .w-line .w-note { display: block; }
+  .w-line .w-when { grid-column: 1; text-align: left; }
+}
 @media (max-width: 640px) {
   .lb { padding: 14px 10px 40px; }
   .proj-head { padding: 12px; }
@@ -251,14 +235,6 @@ textarea.q-note { min-height: 88px; resize: vertical; }
   .toc-box ol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .toc-box li { display: grid; }
   .toc-link { display: flex; min-height: 44px; border-radius: 10px; overflow-wrap: anywhere; }
-  .lb-crew { padding: 10px; }
-  .crew-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .crew-count { min-height: 44px; border-radius: 10px; overflow-wrap: anywhere; }
-  .crew-box > summary { min-height: 44px; padding-top: 12px; }
-  .crew-line { grid-template-columns: minmax(0, 1fr) auto; min-height: 44px; }
-  .crew-line .badge, .crew-line .w-title, .crew-line .crew-meta { grid-column: 1; }
-  .crew-line .crew-chev { grid-column: 2; grid-row: 1; }
-  .crew-detail { padding-left: 11px; }
 }
 </style>
 </head>
@@ -277,7 +253,6 @@ textarea.q-note { min-height: 88px; resize: vertical; }
   <div id="lb-banner"></div>
   <section class="lb-stats" id="lb-stats" aria-label="Totals"></section>
   <nav class="lb-toc" id="lb-toc" aria-label="Table of contents" hidden></nav>
-  <section class="lb-crew" id="lb-workers" aria-label="Workers" hidden></section>
   <div id="lb-tray" aria-live="polite"></div>
   <div id="lb-projects"></div>
   <div id="lb-notes"></div>
@@ -297,12 +272,12 @@ __FM_LIVE_BOARD_DATA__
   var CHEVRON = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4 L6 8 L10 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   /* The projection decides each task's lane and reason; the page only words them. */
   var LANES = [
-    ["doing", "Doing now", "A worker is on this right now.", "Nothing is being worked on right now."],
-    ["next", "Next", "A worker starts these without you; nothing is in their way.", "Nothing is lined up to start on its own."],
+    ["doing", "Doing now", "The workers running for this project: what each one is doing and its status.", "No worker is running for this project right now."],
+    ["next", "Next", "Not with a worker yet. Each starts automatically, without you; nothing is in its way.", "Nothing is lined up to start automatically."],
     ["charted", "Charted next", "These will not start on their own. Each one says what it waits for.", "Nothing is waiting."]
   ];
   var LANE_SHOWN = 3;
-  var WHY_CLASS = { stuck: "b-danger", "your-answer": "b-warn", deferred: "b-warn" };
+  var WHY_CLASS = { ready: "b-info", stuck: "b-danger", "your-answer": "b-warn", deferred: "b-warn" };
   var READONLY = {
     stale: "This question changed after its answer options were written. Firstmate must refresh it before you can answer here.",
     duplicate: "This question carries conflicting answer options. Firstmate must review it before you can answer here.",
@@ -621,17 +596,64 @@ __FM_LIVE_BOARD_DATA__
     return card;
   }
 
+  /* A worker's status is always an icon and a word, never colour alone. */
+  var CREW_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">';
+  var CREW_ICON = {
+    working: CREW_SVG + '<path d="M4 2.5 L11.5 7 L4 11.5 Z" fill="currentColor"/></svg>',
+    validation: CREW_SVG + '<circle cx="6" cy="6" r="3.8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 9 L12.3 12.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    merge: CREW_SVG + '<circle cx="3.5" cy="3" r="1.7" fill="currentColor"/><circle cx="3.5" cy="11" r="1.7" fill="currentColor"/><circle cx="10.5" cy="7" r="1.7" fill="currentColor"/><path d="M3.5 3 L3.5 11 M3.5 7 L10.5 7" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
+    external: CREW_SVG + '<path d="M4.5 3 L4.5 11 M9.5 3 L9.5 11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
+    stuck: CREW_SVG + '<path d="M7 1.5 L13 12.5 L1 12.5 Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7 5.5 L7 8.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="7" cy="10.6" r="0.9" fill="currentColor"/></svg>'
+  };
+  var CREW_BADGE = { working: "b-live", validation: "b-info", merge: "b-info", stuck: "b-danger" };
+  function crewIcon(status) {
+    var icon = el("span", "crew-icon");
+    icon.innerHTML = CREW_ICON[status] || "";
+    return icon;
+  }
+  /* The view decides each task's lane, its reason, and a worker's status and
+     words. A Doing now row is one line per worker: status, task, what it is
+     doing; the other lanes stack a card under the reason it waits or starts. */
   function taskCard(t) {
-    var row = el("div", "w");
+    var doing = t.lane === "doing";
+    var row = el("div", doing ? "w w-line" : "w");
     row.setAttribute("data-task", t.id);
     row.setAttribute("data-lane", t.lane);
     row.setAttribute("data-why", t.why || "");
-    row.appendChild(el("span", "w-title", t.title));
-    // Only a charted card needs its reason; the other lanes say theirs once.
-    if (t.lane === "charted") row.appendChild(badge(WHY_CLASS[t.why] || "b-muted", t.why_label || "Waiting"));
-    if (t.note) row.appendChild(el("span", "w-note", t.note));
+    if (doing) {
+      row.setAttribute("data-worker-status", t.status || "");
+      var status = el("span", "badge " + (CREW_BADGE[t.status] || "b-muted"));
+      status.setAttribute("data-worker-chip", "");
+      status.appendChild(crewIcon(t.status));
+      status.appendChild(el("span", "", t.status_label || "Status unknown"));
+      row.appendChild(status);
+    }
+    var name = el("span", "w-name");
+    var title = el("span", "w-title", t.title);
+    name.appendChild(title);
+    if (t.home) {
+      var home = badge("b-info", "Second mate: " + t.home);
+      home.setAttribute("data-home", t.home);
+      name.appendChild(home);
+    }
+    row.appendChild(name);
+    if (!doing) {
+      var reason = badge(WHY_CLASS[t.why] || "b-muted", t.why_label || "Waiting");
+      reason.setAttribute("data-reason", "");
+      row.appendChild(reason);
+    }
+    var note = t.note ? el("span", "w-note", t.note) : null;
+    if (note) row.appendChild(note);
+    /* A wide line shows two rows of each at most; pointing at one shows it whole. */
+    if (doing) {
+      title.setAttribute("title", t.title);
+      if (note) note.setAttribute("title", t.note);
+    }
     var when = [];
-    if (typeof t.at === "number") when.push("last update " + ago(Date.now() / 1000 - t.at));
+    if (typeof t.at === "number") {
+      var age = ago(Date.now() / 1000 - t.at);
+      when.push(doing && t.at_is_since ? "for " + age.replace(" ago", "") : "last update " + age);
+    }
     var line = el("span", "w-when", when.join(" · "));
     var pr = safePr(t.pr);
     if (pr) {
@@ -1124,205 +1146,10 @@ __FM_LIVE_BOARD_DATA__
     toc.appendChild(foldKept);
   }
 
-  /* WORKERS. The view decides each worker's status, its words and the order;
-     the page lays the list out, filters it by the pressed count and opens a
-     pressed row on what that worker last reported. Which count is pressed,
-     whether the list is open and which rows are open live in a hidden field
-     that Lavish restores after each live reload, as the collapsed cards do; it
-     queues nothing. Status is always an icon and a word, never colour alone. */
-  var CREW_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">';
-  var CREW_ICON = {
-    working: CREW_SVG + '<path d="M4 2.5 L11.5 7 L4 11.5 Z" fill="currentColor"/></svg>',
-    validation: CREW_SVG + '<circle cx="6" cy="6" r="3.8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 9 L12.3 12.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
-    merge: CREW_SVG + '<circle cx="3.5" cy="3" r="1.7" fill="currentColor"/><circle cx="3.5" cy="11" r="1.7" fill="currentColor"/><circle cx="10.5" cy="7" r="1.7" fill="currentColor"/><path d="M3.5 3 L3.5 11 M3.5 7 L10.5 7" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
-    you: CREW_SVG + '<path d="M4.6 5 C4.6 1.8 9.6 1.8 9.6 5 C9.6 7 7 6.9 7 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="7" cy="12" r="1.2" fill="currentColor"/></svg>',
-    external: CREW_SVG + '<path d="M4.5 3 L4.5 11 M9.5 3 L9.5 11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
-    finished: CREW_SVG + '<path d="M2.5 7.5 L5.8 10.8 L11.5 3.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    stuck: CREW_SVG + '<path d="M7 1.5 L13 12.5 L1 12.5 Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7 5.5 L7 8.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="7" cy="10.6" r="0.9" fill="currentColor"/></svg>'
-  };
-  var CREW_BADGE = { working: "b-live", validation: "b-info", merge: "b-info", you: "b-warn", stuck: "b-danger" };
-  function crewIcon(status) {
-    var icon = el("span", "crew-icon");
-    icon.innerHTML = CREW_ICON[status] || "";
-    return icon;
-  }
-  function workerRow(w, pressed) {
-    var row = el("li", "crew-row");
-    row.setAttribute("data-worker", w.id);
-    row.setAttribute("data-worker-status", w.status);
-    var item = el("details", "crew-item");
-    var line = el("summary", "crew-line");
-    var status = el("span", "badge " + (CREW_BADGE[w.status] || "b-muted"));
-    status.appendChild(crewIcon(w.status));
-    status.appendChild(el("span", "", w.status_label));
-    line.appendChild(status);
-    line.appendChild(el("span", "w-title", w.title));
-    var meta = el("span", "crew-meta");
-    var parts = [w.kind];
-    if (typeof w.at === "number") {
-      var age = ago(Date.now() / 1000 - w.at);
-      parts.push(w.at_is_since ? "for " + age.replace(" ago", "") : "last update " + age);
-    }
-    meta.appendChild(el("span", "", parts.join(" · ")));
-    var pr = safePr(w.pr);
-    if (pr) {
-      meta.appendChild(el("span", "", " · "));
-      var a = el("a", "", "pull request"); a.href = pr; a.target = "_blank"; a.rel = "noopener";
-      a.setAttribute("data-lavish-action", "");
-      meta.appendChild(a);
-    }
-    line.appendChild(meta);
-    var chev = el("span", "crew-chev");
-    chev.innerHTML = CHEVRON;
-    line.appendChild(chev);
-    /* The press lands before the row opens or closes, so report what it becomes. */
-    line.addEventListener("click", function () { pressed(w.key, item.open !== true); });
-    item.appendChild(line);
-    var detail = el("div", "crew-detail");
-    detail.appendChild(el("span", "w-note", w.say));
-    if (w.note) {
-      var note = el("span", "w-note", "Last report: " + w.note);
-      note.setAttribute("data-worker-note", "");
-      detail.appendChild(note);
-    }
-    item.appendChild(detail);
-    row.appendChild(item);
-    return { node: row, item: item, key: w.key, status: w.status };
-  }
-  var crew = view.workers || {};
-  var crewHost = document.getElementById("lb-workers");
-  var syncCrew = function () {};
-  if (crewHost && Array.isArray(crew.groups) && Array.isArray(crew.statuses)) {
-    crewHost.hidden = false;
-    crewHost.setAttribute("data-workers", String(crew.total || 0));
-    crewHost.setAttribute("data-lavish-question", "live-board-workers");
-    var crewHead = el("div", "crew-head");
-    var crewName = el("h2");
-    crewName.appendChild(el("span", "", "Workers"));
-    crewName.appendChild(el("span", "lane-count", String(crew.total || 0)));
-    crewHead.appendChild(crewName);
-    crewHead.appendChild(el("p", "lane-say", crew.total
-      ? "What every worker is doing right now. Press a count to see only those workers."
-      : "No worker is running right now."));
-    crewHost.appendChild(crewHead);
-    (crew.gaps || []).forEach(function (text) {
-      var gap = el("p", "tl-gap", text);
-      gap.setAttribute("data-workers-gap", "");
-      crewHost.appendChild(gap);
-    });
-    if (crew.total) {
-      var crewKept = el("input");
-      crewKept.type = "hidden"; crewKept.name = "workers"; crewKept.value = "";
-      var crewCounts = el("div", "crew-counts");
-      crewCounts.setAttribute("role", "group");
-      crewCounts.setAttribute("aria-label", "Show workers by status");
-      var crewBox = el("details", "crew-box");
-      crewBox.setAttribute("data-workers-list", "");
-      var crewSay = el("summary");
-      crewBox.appendChild(crewSay);
-      var crewList = el("div", "crew-list");
-      crewBox.appendChild(crewList);
-      var crewFilter = "", crewButtons = [], crewGroups = [], crewWords = {}, crewOpen = [];
-      var paintCrew = function () {
-        var shown = 0;
-        crewGroups.forEach(function (g) {
-          var any = false;
-          g.rows.forEach(function (r) {
-            r.node.hidden = crewFilter !== "" && r.status !== crewFilter;
-            if (!r.node.hidden) { any = true; shown += 1; }
-          });
-          g.node.hidden = !any;
-          g.count.textContent = String(g.rows.filter(function (r) { return !r.node.hidden; }).length);
-        });
-        crewButtons.forEach(function (b) { b.node.setAttribute("aria-pressed", b.key === crewFilter ? "true" : "false"); });
-        crewSay.textContent = crewFilter === ""
-          ? "All " + plural(shown, "worker") + ", by project"
-          : crewWords[crewFilter] + ", by project";
-      };
-      var keepCrew = function (open) {
-        crewKept.value = JSON.stringify({ filter: crewFilter, open: open, rows: crewOpen });
-        announce(crewKept);
-      };
-      var pressRow = function (key, open) {
-        crewOpen = crewOpen.filter(function (k) { return k !== key; });
-        if (open) crewOpen.push(key);
-        keepCrew(crewBox.open === true);
-      };
-      syncCrew = function () {
-        var kept = null;
-        try { kept = JSON.parse(crewKept.value); } catch (e) { kept = null; }
-        if (!kept || typeof kept !== "object" || Array.isArray(kept)) return;
-        crewFilter = typeof kept.filter === "string" && crewWords[kept.filter] ? kept.filter : "";
-        crewBox.open = kept.open === true;
-        crewOpen = [];
-        crewGroups.forEach(function (g) {
-          g.rows.forEach(function (r) {
-            r.item.open = Array.isArray(kept.rows) && kept.rows.indexOf(r.key) !== -1;
-            if (r.item.open) crewOpen.push(r.key);
-          });
-        });
-        paintCrew();
-      };
-      var crewButton = function (key, label) {
-        var b = el("button", "crew-count");
-        b.type = "button";
-        b.setAttribute("data-worker-filter", key || "all");
-        if (key) b.appendChild(crewIcon(key));
-        b.appendChild(el("span", "", label));
-        b.addEventListener("click", function () {
-          crewFilter = crewFilter === key ? "" : key;
-          /* Pressing a count is asking to see those workers. */
-          crewBox.open = true;
-          paintCrew();
-          keepCrew(true);
-        });
-        crewButtons.push({ node: b, key: key });
-        crewCounts.appendChild(b);
-      };
-      crewButton("", "All " + crew.total);
-      crew.statuses.forEach(function (st) {
-        if (!st.count) return;
-        crewWords[st.key] = st.label;
-        crewButton(st.key, st.label);
-      });
-      crew.groups.forEach(function (g) {
-        var box = el("div", "crew-group");
-        box.setAttribute("data-worker-group", g.project);
-        if (g.home) box.setAttribute("data-worker-home", g.home);
-        var name = el("h3", "crew-project");
-        name.appendChild(el("span", "", g.project));
-        if (g.home) name.appendChild(badge("b-info", "Second mate: " + g.home));
-        var count = el("span", "lane-count", String((g.rows || []).length));
-        name.appendChild(count);
-        box.appendChild(name);
-        var list = el("ul", "crew-rows");
-        var rows = [];
-        (g.rows || []).forEach(function (w) {
-          var row = workerRow(w, pressRow);
-          rows.push(row);
-          list.appendChild(row.node);
-        });
-        box.appendChild(list);
-        crewGroups.push({ node: box, rows: rows, count: count });
-        crewList.appendChild(box);
-      });
-      /* A phone gets the list folded, so the counts and the cards stay near the top. */
-      crewBox.open = true;
-      try { crewBox.open = window.matchMedia("(min-width: 641px)").matches; } catch (e) { /* it stays open */ }
-      /* The press lands before the list folds or unfolds, so keep what it becomes. */
-      crewSay.addEventListener("click", function () { keepCrew(crewBox.open !== true); });
-      crewHost.appendChild(crewCounts);
-      crewHost.appendChild(crewBox);
-      crewHost.appendChild(crewKept);
-      paintCrew();
-    }
-  }
-
   function syncRestored() {
     syncAnswers();
     pinSyncs.forEach(function (sync) { sync(); });
     syncFolds();
-    syncCrew();
   }
   syncAnswers();
   paintTray();

@@ -36,11 +36,12 @@
 # No Bearings caps apply; counts are exact for the local structured inventory.
 # Unstructured work, missing registry, inventory gaps and uncollected other homes
 # are explicit. registered_homes lists each registered secondmate home in the
-# input as {key,id,label,status,reason,collected_at_epoch,workers[]}: status is
-# collected, remote, invalid or unreadable, and workers are that home's tasks
-# that have a worker, in the same shape as a project's tasks and projected from
-# that home's own input. Its open questions and its work without a worker stay
-# on its own board, so projects[] and counts cover this home only.
+# input as {key,id,label,status,reason,collected_at_epoch,workers[],queued[]}:
+# status is collected, remote, invalid or unreadable, workers are that home's
+# tasks that have a worker and queued its queued tasks that have none, both in
+# the same shape as a project's tasks and projected from that home's own input.
+# Its open questions and its other work without a worker stay on its own
+# board, so projects[] and counts cover this home only.
 # --prs names one fm-live-board-prs.v1 document (bin/fm-live-board-prs.sh owns
 # it); this command reads no forge itself. pull_requests is {status,
 # collected_at_epoch, repos[]} with status not-collected when no file was
