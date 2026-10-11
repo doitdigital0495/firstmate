@@ -28,7 +28,7 @@ body {
 }
 * { box-sizing: border-box; }
 a { color: var(--ocean); overflow-wrap: anywhere; }
-a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus-visible, .q-opt:focus-within { outline: none; box-shadow: var(--focus); border-radius: 6px; }
+a:focus-visible, button:focus-visible, summary:focus-visible, .idle li:focus-visible, input:focus-visible, textarea:focus-visible, .q-opt:focus-within { outline: none; box-shadow: var(--focus); border-radius: 6px; }
 .lb { max-width: 1180px; margin: 0 auto; padding: 20px 20px 48px; }
 .lb-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; }
 .lb-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -47,14 +47,32 @@ a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visibl
 .b-info { background: var(--ocean-soft); color: var(--ocean); border-color: #2f5574; }
 .b-muted { background: var(--bg-inset); color: var(--text-muted); border-color: var(--line); }
 .dot { width: 8px; height: 8px; flex: none; }
+.lb-toc { margin: 0 0 14px; min-width: 0; }
+.lb-toc[hidden], .proj-body[hidden] { display: none; }
+.toc-box { background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 10px; padding: 0 12px; min-width: 0; }
+.toc-box summary { cursor: pointer; padding: 10px 0; color: var(--text-muted); font-size: 0.85rem; }
+.toc-box summary b { color: var(--text-strong); }
+.toc-box ol { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; padding: 0; list-style: none; min-width: 0; }
+.toc-box li { min-width: 0; }
+.toc-box:not([open]) ol { display: none; }
+.toc-link { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-height: 32px; max-width: 100%; padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg-inset); color: var(--text-strong); font-size: 0.84rem; text-decoration: none; }
+.toc-link:hover { border-color: #6b5326; }
+.toc-count { color: var(--gold); font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+.toc-quiet { color: var(--text-faint); font-size: 0.78rem; white-space: nowrap; }
 .lb-banner { margin: 0 0 16px; border-radius: 10px; padding: 10px 14px; border: 1px solid #6b3527; background: var(--rust-soft); color: var(--text-strong); }
 .lb-empty { text-align: center; padding: 40px 16px; margin: 0 0 14px; background: var(--bg-raised); border: 1px dashed var(--line); border-radius: 14px; color: var(--text-muted); }
 .lb-empty h2 { color: var(--text-strong); margin: 8px 0 4px; font-size: 1.1rem; }
 .proj { background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 14px; margin: 0 0 14px; min-width: 0; }
 .proj.has-q { border-color: #6b5326; }
 .proj-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--line-soft); display: grid; gap: 6px; min-width: 0; }
-.proj-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-.proj-title h2 { margin: 0; font-size: 1.15rem; color: var(--text-strong); min-width: 0; overflow-wrap: anywhere; flex: 1 1 auto; }
+.proj-title { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 6px 10px; min-width: 0; }
+.proj-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; min-height: 44px; }
+.proj-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 0.85rem; }
+.proj-chev { display: inline-flex; }
+.proj.is-collapsed .proj-chev { transform: rotate(-90deg); }
+.proj.is-collapsed .proj-head { border-bottom: 0; }
+.proj.is-collapsed .proj-desc, .proj.is-collapsed .prog, .proj.is-collapsed .proj-latest { display: none; }
+.proj-name h2 { margin: 0; font-size: 1.15rem; color: var(--text-strong); min-width: 0; overflow-wrap: anywhere; flex: 1 1 auto; }
 .proj-desc { margin: 0; color: var(--text-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
 .proj-status { margin: 0; color: var(--text-strong); font-weight: 600; overflow-wrap: anywhere; }
 .prog { display: grid; gap: 4px; }
@@ -205,6 +223,9 @@ textarea.q-note { min-height: 88px; resize: vertical; }
   .lb-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .q-answered { grid-template-columns: minmax(0, 1fr); }
   .lb-stat span { font-size: 0.68rem; letter-spacing: 0.04em; }
+  .toc-box ol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .toc-box li { display: grid; }
+  .toc-link { display: flex; min-height: 44px; border-radius: 10px; overflow-wrap: anywhere; }
 }
 </style>
 </head>
@@ -222,6 +243,7 @@ textarea.q-note { min-height: 88px; resize: vertical; }
   </header>
   <div id="lb-banner"></div>
   <section class="lb-stats" id="lb-stats" aria-label="Totals"></section>
+  <nav class="lb-toc" id="lb-toc" aria-label="Table of contents" hidden></nav>
   <div id="lb-tray" aria-live="polite"></div>
   <div id="lb-projects"></div>
   <div id="lb-notes"></div>
@@ -238,6 +260,7 @@ __FM_LIVE_BOARD_DATA__
     warn: '<svg class="dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#e0a52e"/></svg>',
     danger: '<svg class="dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#e08365"/></svg>'
   };
+  var CHEVRON = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4 L6 8 L10 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   /* The projection decides each task's lane and reason; the page only words them. */
   var LANES = [
     ["doing", "Doing now", "A worker is on this right now.", "Nothing is being worked on right now."],
@@ -883,17 +906,91 @@ __FM_LIVE_BOARD_DATA__
     return box;
   }
 
-  function projectSection(p) {
+  /* Which cards the captain collapsed outlives the page's reloads, by project
+     name, in two places: a hidden field Lavish restores after each live
+     reload, as a card's queued answer is, and the browser's own storage,
+     which Lavish's frame refuses but a page opened on its own has. Either
+     being refused or garbled only forgets; the page never depends on them. */
+  var FOLD_STORE = "fm-live-board.collapsed.v1:" + (board.home && board.home.label || "");
+  var folds = [];
+  var foldKept = el("input");
+  foldKept.type = "hidden"; foldKept.name = "collapsed";
+  function foldNames(text) {
+    try {
+      var kept = JSON.parse(text);
+      return Array.isArray(kept) ? kept : [];
+    } catch (e) { return []; }
+  }
+  function keepFolds() {
+    var names = [];
+    folds.forEach(function (f) { if (f.collapsed()) names.push(f.name); });
+    foldKept.value = JSON.stringify(names);
+    announce(foldKept);
+    try { window.localStorage.setItem(FOLD_STORE, foldKept.value); } catch (e) { /* the hidden field still holds it */ }
+  }
+  function syncFolds() {
+    var names = foldNames(foldKept.value);
+    folds.forEach(function (f) {
+      var want = names.indexOf(f.name) !== -1;
+      if (want !== f.collapsed()) f.fold(want);
+    });
+  }
+  try { foldKept.value = JSON.stringify(foldNames(window.localStorage.getItem(FOLD_STORE))); } catch (e) { foldKept.value = "[]"; }
+
+  /* A contents entry jumps to its card or quiet line, opening whatever hides
+     it. Lavish takes a press on a plain link as a request to annotate it, so
+     each entry is marked as an action of the page's own. */
+  var tocList = el("ol");
+  function tocEntry(p, id, reveal, focusOn) {
+    var li = el("li");
+    var a = el("a", "toc-link");
+    a.href = "#" + id;
+    a.setAttribute("data-toc", p.name);
+    a.setAttribute("data-lavish-action", "");
+    a.appendChild(el("span", "", p.name));
+    if ((p.counts || {}).questions) a.appendChild(el("span", "toc-count", plural(p.counts.questions, "question")));
+    if (!p.active) a.appendChild(el("span", "toc-quiet", "quiet"));
+    a.addEventListener("click", function (ev) {
+      var target = reveal();
+      /* Without scripted scrolling the link's own jump still lands on it. */
+      if (typeof target.scrollIntoView !== "function") return;
+      ev.preventDefault();
+      target.scrollIntoView({ block: "start" });
+      try { focusOn.focus({ preventScroll: true }); } catch (e) { /* the jump itself already happened */ }
+    });
+    li.appendChild(a);
+    tocList.appendChild(li);
+  }
+
+  function projectSection(p, id) {
     var c = p.counts || {};
-    var sec = el("section", "proj" + (c.questions ? " has-q" : ""));
+    var cls = "proj" + (c.questions ? " has-q" : "");
+    var sec = el("section", cls);
+    sec.setAttribute("id", id);
     sec.setAttribute("data-project", p.name);
     sec.setAttribute("data-project-key", p.key);
     var head = el("div", "proj-head");
     var title = el("div", "proj-title");
-    title.appendChild(el("h2", "", p.name));
-    if (c.urgent) title.appendChild(badge("b-danger", plural(c.urgent, "urgent question")));
-    if (c.questions - (c.urgent || 0) > 0) title.appendChild(badge("b-warn", plural(c.questions - (c.urgent || 0), "question")));
-    if (c.stuck) title.appendChild(badge("b-danger", c.stuck + " stuck"));
+    var name = el("div", "proj-name");
+    var h2 = el("h2", "", p.name);
+    h2.setAttribute("id", id + "-name");
+    name.appendChild(h2);
+    if (c.urgent) name.appendChild(badge("b-danger", plural(c.urgent, "urgent question")));
+    if (c.questions - (c.urgent || 0) > 0) name.appendChild(badge("b-warn", plural(c.questions - (c.urgent || 0), "question")));
+    if (c.stuck) name.appendChild(badge("b-danger", c.stuck + " stuck"));
+    title.appendChild(name);
+    var toggle = el("button", "btn btn-quiet proj-toggle");
+    toggle.type = "button";
+    toggle.setAttribute("id", id + "-toggle");
+    toggle.setAttribute("data-project-toggle", "");
+    toggle.setAttribute("aria-controls", id + "-body");
+    toggle.setAttribute("aria-labelledby", id + "-toggle " + id + "-name");
+    var chev = el("span", "proj-chev");
+    chev.innerHTML = CHEVRON;
+    toggle.appendChild(chev);
+    var toggleSay = el("span");
+    toggle.appendChild(toggleSay);
+    title.appendChild(toggle);
     head.appendChild(title);
     if (p.description) head.appendChild(el("p", "proj-desc", p.description));
     head.appendChild(el("p", "proj-status", p.status));
@@ -908,6 +1005,23 @@ __FM_LIVE_BOARD_DATA__
     }
     sec.appendChild(head);
     var body = el("div", "proj-body");
+    body.setAttribute("id", id + "-body");
+    /* A collapsed card keeps its name, badges and status line. */
+    var collapsed = false;
+    function fold(to) {
+      collapsed = to;
+      sec.className = cls + (collapsed ? " is-collapsed" : "");
+      body.hidden = collapsed;
+      toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      toggleSay.textContent = collapsed ? "Expand" : "Collapse";
+    }
+    fold(foldNames(foldKept.value).indexOf(p.name) !== -1);
+    folds.push({ name: p.name, fold: fold, collapsed: function () { return collapsed; } });
+    toggle.addEventListener("click", function () { fold(!collapsed); keepFolds(); });
+    tocEntry(p, id, function () {
+      if (collapsed) { fold(false); keepFolds(); }
+      return sec;
+    }, toggle);
     if ((p.questions || []).length) {
       body.appendChild(el("div", "sec-label", "Questions for you"));
       p.questions.forEach(function (q) { body.appendChild(questionCard(q, p.name)); });
@@ -935,15 +1049,18 @@ __FM_LIVE_BOARD_DATA__
       : "No open work was found, but the board could not see everything - see the board notes below."));
     host.appendChild(empty);
   }
-  active.forEach(function (p) { host.appendChild(projectSection(p)); });
+  active.forEach(function (p, i) { host.appendChild(projectSection(p, "lb-card-" + (i + 1))); });
   if (quiet.length) {
     var box = el("details", "idle");
     box.setAttribute("data-idle", String(quiet.length));
     box.appendChild(el("summary", "", plural(quiet.length, "quiet project") + " with no open work"));
     var ul = el("ul");
-    quiet.forEach(function (p) {
+    quiet.forEach(function (p, i) {
       var li = el("li");
+      li.setAttribute("id", "lb-quiet-" + (i + 1));
+      li.setAttribute("tabindex", "-1");
       li.setAttribute("data-quiet-project", p.name);
+      tocEntry(p, "lb-quiet-" + (i + 1), function () { box.open = true; return li; }, li);
       li.appendChild(el("b", "", p.name));
       var extra = [];
       if (p.counts && p.counts.finished) extra.push(p.counts.finished + " done in the last 2 weeks");
@@ -956,10 +1073,27 @@ __FM_LIVE_BOARD_DATA__
     box.appendChild(ul);
     host.appendChild(box);
   }
+  var toc = document.getElementById("lb-toc");
+  toc.hidden = !tocList.firstChild;
+  if (tocList.firstChild) {
+    toc.setAttribute("data-lavish-question", "live-board-collapsed");
+    var tocBox = el("details", "toc-box");
+    /* A phone gets the contents folded to one line, so the cards stay near the top. */
+    tocBox.open = true;
+    try { tocBox.open = window.matchMedia("(min-width: 641px)").matches; } catch (e) { /* it stays open */ }
+    var tocSay = el("summary");
+    tocSay.appendChild(el("b", "", "Contents"));
+    tocSay.appendChild(el("span", "", " · " + plural(active.length + quiet.length, "project")));
+    tocBox.appendChild(tocSay);
+    tocBox.appendChild(tocList);
+    toc.appendChild(tocBox);
+    toc.appendChild(foldKept);
+  }
 
   function syncRestored() {
     syncAnswers();
     pinSyncs.forEach(function (sync) { sync(); });
+    syncFolds();
   }
   syncAnswers();
   paintTray();

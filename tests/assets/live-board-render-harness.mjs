@@ -23,9 +23,23 @@
 //                         (mouseleave, blur) and the click on mouse-up lands
 //                         only if that node is still on the page, else the
 //                         spec's status is `replaced`
+// Three specs drive the table of contents and the collapsing of project cards:
+//   `!fold=<project>`     press that card's collapse or expand control
+//   `!jump=<project>`     press that project's table of contents entry
+//   `!reload`             run the page again from scratch, as a live reload
+//                         does, keeping only what the page put in browser storage
+//   `!folds=<kept>`       put <kept> back in the table of contents' hidden
+//                         collapsed-cards field and deliver a parent message,
+//                         as Lavish does after a reload
+// and two, read before the page first runs, set what the browser is like:
+//   `!storage=blocked`    every use of browser storage throws
+//   `!storage=corrupt`    every entry reads back as text that is not JSON
+//   `!screen=narrow`      the page is as narrow as a phone
 // Prints one JSON document:
-//   { freshness, banner, stats:{}, notes:[], empty, idle:{count,names,lines}, foot,
-//     projects:[{label, key, badges, description, status, progress, latest, text,
+//   { freshness, banner, stats:{}, notes:[], empty, idle:{count,names,lines,ids,open}, foot,
+//     toc:{hidden,open,summary,lavishQuestion,kept,entries:[{name,href,parts:[],lavishAction,target:null|{kind:card|quiet,name}}]},
+//     projects:[{label, id, collapsed, bodyHidden, toggle:{tag,type,expanded,text,controlsBody},
+//       key, badges, description, status, progress, latest, text,
 //       questions:[{id,mode,title,topic,why,urgent,badges,answerable,lavishQuestion,
 //         readonly,options:[{value,label,detail,recommended}],noteField,modeText,
 //         submit,answer,answered,kept,change,status}],
@@ -76,11 +90,10 @@ class Node {
   }
 }
 
-const ids = ["lb-root", "lb-home", "lb-fresh", "lb-banner", "lb-stats", "lb-notes", "lb-projects", "lb-tray", "lb-foot"];
-const byId = new Map(ids.map((id) => [id, new Node("div")]));
+const ids = ["lb-root", "lb-home", "lb-fresh", "lb-banner", "lb-stats", "lb-toc", "lb-notes", "lb-projects", "lb-tray", "lb-foot"];
+const byId = new Map();
 const data = new Node("script");
 data.textContent = html.split('<script id="live-board-data" type="application/json">')[1].split("</script>")[0];
-byId.set("live-board-data", data);
 const code = html.split("<script>").pop().split("</script>")[0];
 
 const queued = [];
@@ -88,15 +101,35 @@ const tickers = [];
 const nowMs = (nowArg ? Number(nowArg) : Date.now() / 1000) * 1000;
 const document = { getElementById: (id) => byId.get(id) || null, createElement: (t) => new Node(t) };
 const messageListeners = [];
+const stored = new Map();
+const storage = {
+  getItem: (key) => (answers.includes("!storage=corrupt") ? "{not json" : stored.has(key) ? stored.get(key) : null),
+  setItem: (key, value) => { stored.set(key, String(value)); },
+};
 const window = {
   lavish: { queuePrompt: (prompt, options) => queued.push({ prompt, options }) },
   addEventListener: (type, fn) => { if (type === "message") messageListeners.push(fn); },
+  matchMedia: () => ({ matches: !answers.includes("!screen=narrow") }),
+  get localStorage() {
+    if (answers.includes("!storage=blocked")) throw new Error("storage is blocked");
+    return storage;
+  },
 };
 function FakeDate(...args) { return new Date(...args); }
 FakeDate.now = () => nowMs;
 FakeDate.parse = (s) => Date.parse(s);
-new Function("window", "document", "setInterval", "setTimeout", "Date", code)(
-  window, document, (fn, ms) => tickers.push(ms), (fn) => fn(), FakeDate);
+let root;
+// Run the page's script against a fresh, empty page.
+function boot() {
+  for (const id of ids) byId.set(id, new Node("div"));
+  byId.set("live-board-data", data);
+  messageListeners.length = 0;
+  tickers.length = 0;
+  new Function("window", "document", "setInterval", "setTimeout", "Date", code)(
+    window, document, (fn, ms) => tickers.push(ms), (fn) => fn(), FakeDate);
+  root = byId.get("lb-projects");
+}
+boot();
 
 const text = (n) => n.textContent.replace(/\s+/g, " ").trim();
 const badges = (n) => n.find((c) => c.hasClass("badge")).map(text);
@@ -106,7 +139,6 @@ const say = (q, part, tag) => {
   const node = box && tag ? box.find((c) => c.tagName === tag)[0] : box;
   return node ? text(node) : null;
 };
-const root = byId.get("lb-projects");
 
 // A project's section, or its line among the quiet projects.
 const projectNode = (name) => root.find((c) =>
@@ -183,6 +215,29 @@ const submits = [];
 let focused = null;  // the pull request marker the pointer last pressed
 const cardOf = (id) => root.find((c) => c.getAttribute("data-question") === id)[0];
 for (const spec of answers) {
+  if (spec.startsWith("!storage=") || spec.startsWith("!screen=")) continue;
+  if (spec === "!reload") {
+    boot();
+    focused = null;
+    submits.push({ id: spec, status: "reloaded" });
+    continue;
+  }
+  if (spec.startsWith("!folds=")) {
+    const field = byId.get("lb-toc").find((c) => c.name === "collapsed")[0];
+    if (field) { field.value = spec.slice(7); for (const fn of messageListeners) fn({}); }
+    submits.push({ id: spec, status: field ? "restored" : "no-collapsed-field" });
+    continue;
+  }
+  if (spec.startsWith("!fold=") || spec.startsWith("!jump=")) {
+    const name = spec.slice(6);
+    const card = root.find((c) => c.getAttribute("data-project") === name)[0];
+    const target = spec.startsWith("!fold=")
+      ? card && card.find((c) => c.getAttribute("data-project-toggle") !== null)[0]
+      : byId.get("lb-toc").find((c) => c.getAttribute("data-toc") === name)[0];
+    if (target) target.dispatch("click");
+    submits.push({ id: spec, status: target ? "pressed" : "no-target" });
+    continue;
+  }
   if (spec.startsWith("!change=")) {
     const target = cardOf(spec.slice(8));
     const change = target && target.find((c) => c.getAttribute("data-change") !== null)[0];
@@ -237,8 +292,15 @@ for (const s of byId.get("lb-stats").children) stats[s.getAttribute("data-stat")
 const projects = root.children.filter((c) => c.getAttribute("data-project") !== null).map((p) => {
   const head = p.children[0];
   const one = (cls) => { const n = head.find((c) => c.hasClass(cls))[0]; return n ? text(n) : null; };
+  const toggle = p.find((c) => c.getAttribute("data-project-toggle") !== null)[0];
+  const controlled = toggle && p.find((c) => c.getAttribute("id") === toggle.getAttribute("aria-controls"))[0];
   return {
     label: p.getAttribute("data-project"),
+    id: p.getAttribute("id"),
+    collapsed: p.hasClass("is-collapsed"),
+    bodyHidden: p.children[1].hidden,
+    toggle: toggle ? { tag: toggle.tagName, type: toggle.type, expanded: toggle.getAttribute("aria-expanded"),
+      text: text(toggle), controlsBody: controlled === p.children[1] } : null,
     key: p.getAttribute("data-project-key"),
     badges: badges(head.children[0]),
     description: one("proj-desc"),
@@ -313,6 +375,15 @@ const projects = root.children.filter((c) => c.getAttribute("data-project") !== 
 });
 const idle = root.find((c) => c.getAttribute("data-idle") !== null)[0];
 const idleProjects = idle ? idle.find((c) => c.getAttribute("data-quiet-project") !== null) : [];
+// What a table of contents entry points at: the one node carrying its id.
+const tocTarget = (href) => {
+  const hits = root.find((c) => "#" + c.getAttribute("id") === href);
+  if (hits.length !== 1) return null;
+  return hits[0].getAttribute("data-project") !== null ? { kind: "card", name: hits[0].getAttribute("data-project") }
+    : hits[0].getAttribute("data-quiet-project") !== null ? { kind: "quiet", name: hits[0].getAttribute("data-quiet-project") }
+    : null;
+};
+const toc = byId.get("lb-toc");
 
 console.log(JSON.stringify({
   freshness: fresh ? fresh.getAttribute("data-freshness") : null,
@@ -324,10 +395,20 @@ console.log(JSON.stringify({
   empty: root.find((c) => c.getAttribute("data-empty") !== null).map(text)[0] || null,
   idle: idle ? { count: Number(idle.getAttribute("data-idle")),
     names: idle.find((c) => c.getAttribute("data-quiet-project") !== null).map((c) => c.getAttribute("data-quiet-project")),
+    ids: idleProjects.map((c) => c.getAttribute("id")),
+    open: idle.open === true,
     lines: idle.find((c) => c.getAttribute("data-quiet-project") !== null).map(text),
     timelines: Object.fromEntries(idleProjects.map((c) => [c.getAttribute("data-quiet-project"), timelineOf(c)])),
     environments: Object.fromEntries(idleProjects.map((c) => [c.getAttribute("data-quiet-project"), environmentsOf(c)])) } : null,
   foot: text(byId.get("lb-foot")),
+  toc: { hidden: toc.hidden,
+    ...((box) => ({ open: box ? box.open === true : null, summary: box ? text(box.children[0]) : null }))(
+      toc.find((c) => c.tagName === "DETAILS")[0]),
+    lavishQuestion: toc.getAttribute("data-lavish-question"),
+    kept: ((field) => (field ? field.value : null))(toc.find((c) => c.name === "collapsed")[0]),
+    entries: toc.find((c) => c.getAttribute("data-toc") !== null).map((a) => ({
+      name: a.getAttribute("data-toc"), href: a.href, parts: a.children.map(text), target: tocTarget(a.href),
+      lavishAction: a.getAttribute("data-lavish-action") !== null })) },
   projects,
   submits,
   queued: queued.map((q) => ({ prompt: q.prompt, tag: q.options.tag, data: q.options.data })),
