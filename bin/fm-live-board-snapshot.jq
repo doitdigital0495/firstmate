@@ -104,15 +104,19 @@ def home_tasks($home_key):
        unregistered_decisions:(if $row.hold_kind == "captain" and $row.hold_reason != null then []
          else ($worker.hints.open_decisions // [] | map({key,verb,summary:((.summary // "")[:240])})) end)});
 # A registered home contributes its workers and its queued work that has no
-# worker yet; its question cards stay on its own board.
+# worker yet; its question cards stay on its own board. A stale home
+# contributes the same from its last good input, whose age is its own
+# collected_at_epoch.
 def registered_home($home_key):
   . as $home
   | ([$home_key,$home.id] | tojson) as $key
-  | ($home.status == "collected" and ($home.input | type == "object" and valid_input)) as $read
+  | ($home.status | IN("collected","stale")) as $given
+  | ($given and ($home.input | type == "object" and valid_input)) as $read
   | (if $read then [$home.input | home_tasks($key)[]] else [] end) as $rows
   | {key:$key,id:$home.id,label:$home.id,
-     status:(if $read then "collected" elif $home.status == "collected" then "unreadable" else $home.status end),
-     reason:(if $read then null elif $home.status == "collected" then "its board input is malformed" else $home.reason end),
+     status:(if $read then $home.status elif $given then "unreadable" else $home.status end),
+     reason:(if $read then (if $home.status == "stale" then $home.reason else null end)
+       elif $given then "its board input is malformed" else $home.reason end),
      collected_at_epoch:(if $read then $home.input.generated_epoch else null end),
      workers:[$rows[] | select(.worker_present)],
      queued:[$rows[] | select(.state == "queued")]};

@@ -86,7 +86,7 @@ Each effective `FM_HOME` contains private operational directories.
 - Watcher and wake-queue coordination, away-mode state, and generated Relay artifacts.
 - Inactive terminal-outcome receipts under `state/terminal-outcomes/`.
 - Enabled extension working namespaces under `state/extensions/`.
-- Parent-side remote ledger copies under `state/secondmate-summary-cache/`.
+- Parent-side remote ledger copies, and each registered local home's last good live-board input, under `state/secondmate-summary-cache/`.
 - One-shot Bearings reconcile requests under `state/reconcile-notify/`.
 - Private secondmate config-reread generations with their retry and quarantine state.
 - Per-task steering-inbox records under `state/<id>.inbox/` (`bin/fm-task-inbox-lib.sh`).
@@ -1589,6 +1589,7 @@ Doing now holds every task that has a worker, one line each with what the worker
 Every open task sits in exactly one lane; Next and Charted next show three cards and fold the rest, and projects with no question and no open work fold away.
 A task whose worker waits on the captain or has finished stays in Charted next.
 The lanes cover this home and, for every registered secondmate home on the same machine, that home's workers and its queued work that has no worker yet, each marked with the second mate's name; the board notes name a home that could not be read.
+A second mate whose home was not read in time keeps the lines of its last good read, each marked "as of N minutes ago", and the board notes say so.
 Every project and every lane card carries a one-line "What this is" that expands to say where it came from: the task's own note in the backlog (the indented lines under its row), else the plain-language "about" of its captain question, else its hold reason, and for a project its `description` in `config/live-board-projects.json`.
 A card with none of those shows "No explanation recorded yet", and the board notes count such cards, so a short label never stands alone and a missing explanation is visible.
 A table of contents under the totals jumps to each project, and every project card has a Collapse control that leaves only its name, badges and status line showing.
@@ -2530,11 +2531,11 @@ FM_HOME_SUMMARY_TIMEOUT=60     # seconds bounding the complete best-effort home-
 FM_HOME_SUMMARY_ERROR_LOG_MAX_BYTES=65536   # approximate size cap for state/.home-summary-refresh.log before it is trimmed to the newest 200 lines; invalid or zero values use 65536
 FM_LIVE_BOARD_TIMEOUT=45   # seconds bounding one live-board snapshot collection in bin/fm-live-board.sh; a timed-out build keeps the previous page; invalid or zero values use 45
 FM_HOME_SUMMARY_FAILURE_REPORT=2   # recorded publication failures since the ledger's own last publication before session start reports a HOME_SUMMARY line; invalid or zero values use 2
-FM_SNAPSHOT_BOARD_HOMES_TIMEOUT=30   # seconds bounding each registered secondmate home's read for the live board's project lanes inside bin/fm-fleet-snapshot.sh --live-board-input; a home not read in time is named on the page
-FM_SNAPSHOT_CREW_STATE_TIMEOUT=10   # seconds bounding each local per-task current-state read inside bin/fm-fleet-snapshot.sh; remote endpoint liveness is not probed on the snapshot path
-FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=8   # maximum local tasks whose current-state and endpoint observations are collected concurrently during snapshot composition
+FM_SNAPSHOT_BOARD_HOMES_TIMEOUT=30   # seconds bounding each registered secondmate home's read for the live board's project lanes inside bin/fm-fleet-snapshot.sh --live-board-input; a home not read in time is named on the page and shows its last good read with its age
+FM_SNAPSHOT_CREW_STATE_TIMEOUT=10   # seconds bounding each local per-task current-state read inside bin/fm-fleet-snapshot.sh; remote endpoint liveness is not probed on the snapshot path; each no-mistakes query inside a read gets half this bound unless FM_CREW_STATE_NM_TIMEOUT is set
+FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=8   # maximum local tasks whose current-state and endpoint observations, and then whose rows, are composed concurrently during snapshot composition; a finished task frees its slot at once
 FM_SNAPSHOT_BUDGET=5                # one total seconds budget for all concurrent remote home-ledger reads
-FM_SNAPSHOT_CACHE_DIR=$FM_HOME/state/secondmate-summary-cache   # private parent-side cache of successfully fetched remote home ledgers
+FM_SNAPSHOT_CACHE_DIR=$FM_HOME/state/secondmate-summary-cache   # private parent-side cache of successfully fetched remote home ledgers and of each registered local home's last good live-board input
 FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS=14  # floored elapsed-day threshold at which an undated captain hold (no hold-until; age from its UTC hold-set timestamp, falling back to since for legacy unstamped holds) is projected as a Charted Next gate instead of a live Captain's Call; 0 applies once the computed age is non-negative
 FM_RECONCILE_REQUEST_MAX_BYTES=1048576   # maximum captured Bearings or fleet snapshot accepted for durable reconcile-notify request publication
 FM_HEARTBEAT=600        # base seconds between heartbeat scans; no-change heartbeats are absorbed while idle

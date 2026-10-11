@@ -21,7 +21,10 @@
 # build    Refresh the pull request data when it is due (see TIMELINE), collect
 #          one snapshot, bounded by FM_LIVE_BOARD_TIMEOUT seconds (default 45),
 #          inject it, and atomically replace the stable board file. A failed or
-#          timed-out build leaves the previous board intact.
+#          timed-out build leaves the previous board intact. The default is
+#          the longest build that keeps a healthy board clear of the page's
+#          stale mark at the default refresh: a build, the wait for the next
+#          refresh and the next build then span 45 + 60 + 45 = 150 seconds.
 #          Prints `board: <path>`. Starts no session and arms nothing.
 # refresh  The periodic entry point bin/fm-watch.sh calls on every poll. When
 #          the board is enabled (see CONFIG) and the board file is missing or
@@ -109,9 +112,11 @@
 # while it works, and when it paused or got stuck and said so itself;
 # otherwise it is what the status means, so no internal state label reaches
 # the page. Stuck or stopped lines lead, then working, validation, merge and
-# outside wait. A registered home that is on another machine, fails its
-# registration checks or was not read in time is named in the board notes
-# instead of being counted as empty.
+# outside wait. A registered home that is on another machine or fails its
+# registration checks is named in the board notes instead of being counted as
+# empty. One that was not read in time keeps the lines of its last good read,
+# each marked "as of N minutes ago" beside its second mate's name, and the
+# board notes say so; only a home never read before is named as not shown.
 #
 # EXPLANATIONS. Every project and every lane card carries a "What this is"
 # line, folded to one line and expanding to name its source: the task's own
