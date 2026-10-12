@@ -156,6 +156,14 @@ check "$TMP_ROOT/clock-input.json" '.tasks[0].last_meaningful_event.verb == "not
   and .tasks[0].last_meaningful_event.emitted_at_epoch == null' 'malformed clock swallowed event head or note'
 pass 'strict append-order history accepts milestones and resolutions, skips malformed tails, preserves unknown time'
 
+# A tag value holding a colon (a PR URL) once left the tag parse stripping nothing forever and froze every snapshot.
+printf 'working [at=200] [pr=https://forge.invalid/org/repo/pullrequest/1452]: PR opened\n' >> "$h/state/history.status"
+timeout 30 env FM_HOME="$h" FM_ROOT_OVERRIDE="$ROOT" FM_SNAPSHOT_NOW=2026-07-25T00:00:00Z "$FLEET" --live-board-input > "$TMP_ROOT/url-tag-input.json" \
+  || fail 'a status line with a colon in a tag value hung or failed the live-board snapshot'
+check "$TMP_ROOT/url-tag-input.json" '.tasks[0].last_meaningful_event.verb == "note"
+  and .tasks[0].last_meaningful_event.note == "malformed readable clock"' 'a colon in a tag value changed which line is the last meaningful event'
+pass 'a URL in a status tag value ends the tag parse instead of hanging the snapshot'
+
 # A secondmate status decision is not an independently answerable hold.
 h=$(home decisions)
 fm_write_meta "$h/state/mate.meta" 'kind=secondmate' 'project=alpha' 'remote_host=fixture.invalid'

@@ -313,6 +313,9 @@ status_last_meaningful_event() {  # <captured-status-file>
         *) token=${rest%%[[:space:]]*} ;;
       esac
       if ! [[ "$token" =~ $tag_re ]] && ! _fm_classify_is_corr_token "$token"; then break; fi
+      # A tag value holding a colon (a URL) is cut by the head split above, so its
+      # token never matches the head and nothing strips: that line is not a tag line.
+      [ "${rest#"$token"}" != "$rest" ] || break
       rest=${rest#"$token"}
     done
     [ -z "$rest" ] || continue
