@@ -1,0 +1,18 @@
+== claude --version: 2.1.296 (Claude Code); tmux tmux 3.2a
+== BASE 9695b55 (old mapping /exit): fm-control.sh t1 exit
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.69MEIn
+error: exit-delivered t1 interrupt=not-needed exit-command=delivered agent-state=alive exit=unconfirmed; the agent did not stop within 30s
+rc=1 after 38s
+== pane after base exit attempt
+claude --dangerously-skip-permissions --setting-sources '' --strict-mcp-config --disable-slash-commands; echo AGENT-EXITED rc=$?
+daan@Workstation:/tmp/fm-lab.69MEIn/wt-t1$ claude --dangerously-skip-permissions --setting-sources '' --strict-mcp-config --disable-slash-commands; echo AGENT-E
+XITED rc=$?
+ ▐▛███▛█   Claude Code v2.1.296
+▝▜██████▀  Opus 5.5 · Claude Max
+ ▝▝   ▝▝   /tmp/fm-lab.69MEIn/wt-t1
+● Unknown command: /exit
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+== pane_current_command: claude

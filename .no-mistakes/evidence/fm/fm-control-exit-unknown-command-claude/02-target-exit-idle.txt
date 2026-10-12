@@ -1,0 +1,36 @@
+== TARGET 14e03ba (new mapping exit): bin/fm-control.sh t1 exit, same idle worker that just answered 'Unknown command: /exit'
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.69MEIn
+stopped t1 harness=claude backend=tmux endpoint=fmses:fm-t1 worktree=/tmp/fm-lab.69MEIn/wt-t1
+rc=0 after 5s
+== pane after
+claude --dangerously-skip-permissions --setting-sources '' --strict-mcp-config --disable-slash-commands; echo AGENT-EXITED rc=$?
+daan@Workstation:/tmp/fm-lab.69MEIn/wt-t1$ claude --dangerously-skip-permissions --setting-sources '' --strict-mcp-config --disable-slash-commands; echo AGENT-E
+XITED rc=$?
+ ▐▛███▛█   Claude Code v2.1.296
+▝▜██████▀  Opus 5.5 · Claude Max
+ ▝▝   ▝▝   /tmp/fm-lab.69MEIn/wt-t1
+● Unknown command: /exit
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ exit
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+Resume this session with:
+claude --resume f96b4351-0d99-4c30-9e59-6b72a563cafc
+AGENT-EXITED rc=0
+daan@Workstation:/tmp/fm-lab.69MEIn/wt-t1$
+== pane_current_command: bash
+== idempotent second exit
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.69MEIn
+already-stopped t1 harness=claude backend=tmux endpoint=fmses:fm-t1 worktree=/tmp/fm-lab.69MEIn/wt-t1
+rc=0
+== meta
+window=fmses:fm-t1
+endpoint_task_id=t1
+worktree=/tmp/fm-lab.69MEIn/wt-t1
+project=/tmp/fm-lab.69MEIn/projects/p
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+model=default
+effort=default

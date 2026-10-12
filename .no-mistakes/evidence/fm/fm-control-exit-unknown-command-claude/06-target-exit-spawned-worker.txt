@@ -1,0 +1,20 @@
+== worker launched by the product's own fm-spawn --relaunch; its claude argv:
+claude --dangerously-skip-permissions --add-dir /tmp/fm-lab.69MEIn/state/operational-inbox --add-dir /tmp/fm-lab.69MEIn/state/t1.inbox --add-dir /tmp/fm-lab.69MEIn/data/t1 --add-dir /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4RABJA7W01YRSXG37Y3QVEN/.agents/skills --settings /tmp/fm-lab.69MEIn/state/t1.claude-settings.json --setting-sources  --strict-mcp-config --disable-slash-commands --tools Read,Bash,Edit,Write --append-system-prompt # Firstmate worker contract  Stay within assigned task and files it names. Never read, print, expose, or persist a secret. Take no destructive or irrever
+== TARGET bin/fm-control.sh t1 exit
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.69MEIn
+stopped t1 harness=claude backend=tmux endpoint=fmses:fm-t1 worktree=/tmp/fm-lab.69MEIn/wt-t1
+rc=0 after 4s
+== pane tail
+  - pwd: run once, printing /tmp/fm-lab.69MEIn/wt-t1, so the shell is in the worktree and not inside the inbox directory.
+  Two things differ from the generic brief, both because the spec said to do nothing else:
+  - No fm/t1 branch: the worktree is still on task-t1, where it was at launch (not the detached HEAD the brief describes).
+  - Uncommitted file: inbox-proof.txt is left untracked. I wrote no status line or report.
+✻ Cooked for 17s · done 5:12 PM
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ exit
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+Resume this session with:
+claude --resume d155710a-495a-45a4-bde8-d505ad31a9b6
+daan@Workstation:/tmp/fm-lab.69MEIn/wt-t1$
+== pane_current_command: bash
