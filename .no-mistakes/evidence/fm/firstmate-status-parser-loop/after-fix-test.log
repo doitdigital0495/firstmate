@@ -1,0 +1,20 @@
+ok - empty home is explicit, not an all-fleet clear verdict
+ok - registry enumeration reuses mechanical posture, preserves idle projects and discloses duplicates
+ok - full open inventory retains programs, queued work, conflicting repo/id, current-state provenance and recent finishes
+ok - more than twenty holds retain all buckets with structured priority and oldest-first order
+ok - strict append-order history accepts milestones and resolutions, skips malformed tails, preserves unknown time
+ok - a URL in a status tag value ends the tag parse instead of hanging the snapshot
+ok - unregistered keyed calls remain owner-registration warnings, not another answer path
+ok - allowlisted replay strips raw paths/bodies, rejects unsafe links and qualifies ids by home
+ok - unknown or malformed input fails closed without partial board output
+ok - default canonical and original Bearings contracts remain separate from the live board
+ok - canonical owner context preserves explicit modes and summaries; legacy, stale, duplicate and malformed calls stay read-only
+ok - pull request summaries are short plain manager notes, or the cleaned title when the description cannot give one
+ok - deploy outcomes cover failed, running, succeeded, none, waiting, unreadable, too old, open and closed without guessing
+ok - a missing, malformed or unsupported pull request document is disclosed and never fails the snapshot
+ok - only a well-formed environment place leaves the snapshot, and older pull requests keep their title without a manager note
+ok - registered homes contribute their workers and queued work through their own input; remote, invalid, malformed and unread homes are named, and a home that stops reading keeps its last good input with its age
+
+real	0m16.381s
+user	0m15.430s
+sys	0m3.307s

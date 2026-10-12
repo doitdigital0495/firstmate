@@ -1,0 +1,19 @@
+--- input:
+  working [at=100]: started
+  working [at=200] [pr=https://forge.invalid/org/repo/pullrequest/1452]: PR opened
+  => working [at=100]: started
+rc=0
+--- input:
+  working [at=100]: started
+  done [at=300] [pr=7]: merged
+  => done [at=300] [pr=7]: merged
+rc=0
+--- input:
+  working [at=100]: started
+  working [at=200] [x=a:b] [y=c:d:e]: weird
+  => working [at=100]: started
+rc=0
+--- input:
+  working [at=100] [k=v]: plain tag line
+  => working [at=100] [k=v]: plain tag line
+rc=0

@@ -1,0 +1,10 @@
+ok - empty home is explicit, not an all-fleet clear verdict
+ok - registry enumeration reuses mechanical posture, preserves idle projects and discloses duplicates
+ok - full open inventory retains programs, queued work, conflicting repo/id, current-state provenance and recent finishes
+ok - more than twenty holds retain all buckets with structured priority and oldest-first order
+ok - strict append-order history accepts milestones and resolutions, skips malformed tails, preserves unknown time
+not ok - a status line with a colon in a tag value hung or failed the live-board snapshot
+
+real	0m33.511s
+user	0m3.517s
+sys	0m1.053s
