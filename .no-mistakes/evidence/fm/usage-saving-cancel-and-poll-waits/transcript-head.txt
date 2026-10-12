@@ -1,0 +1,183 @@
+
+=== [head] code under test ===
+07b0d29812d7feffa23cfe4336182b3c30a3a7f7
+FM_INHERITABLE_CONFIG=crew-dispatch.json dispatch-never-send crew-harness backlog-backend backend claude-shaped-store herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode lavish-axi-host keep-ai-trailers supervision-host-off wait-no-turns
+
+=== [head] 1. start: neither home has the flag; secondmate crew brief ===
+  <PRIMARY_HOME>/config/wait-no-turns: absent
+  <SECONDMATE_HOME>/config/wait-no-turns: absent
+$ FM_HOME=<SECONDMATE_HOME> <SECONDMATE_HOME>/bin/fm-brief.sh crew-before some-proj --mode no-mistakes
+(exit 0)
+  "# Waiting" section headings in brief: 0
+  drive sentence: So background the drive call instead of sitting in one blocking hold your harness will kill, and read its return when it finishes.
+  inbox no-poll line: 0
+
+=== [head] 2. primary opts in, then pushes config to live secondmate homes ===
+$ touch <PRIMARY_HOME>/config/wait-no-turns
+(exit 0)
+$ /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4QPQYJ5PK5NEQA9JF2VEZEM/bin/fm-config-push.sh
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+config-push: <PRIMARY_HOME> -> live secondmate homes
+secondmate labsmhead (<SECONDMATE_HOME>):
+  crew-dispatch.json: unchanged
+  dispatch-never-send: unchanged
+  crew-harness: unchanged
+  backlog-backend: unchanged
+  backend: unchanged
+  claude-shaped-store: unchanged
+  herdr-presentation-spaces: unchanged
+  startup-memory-budget: unchanged
+  trace-context: unchanged - session-scoped
+  launch-env-allowlist: unchanged
+  claude-permission-mode: unchanged
+  lavish-axi-host: unchanged
+  keep-ai-trailers: unchanged
+  supervision-host-off: unchanged
+  wait-no-turns: pushed
+  data/captain-shared.md: unchanged
+CONFIG_REREAD: secondmate labsmhead: send failed: error: refusing fleet lifecycle from inside a no-mistakes gate worktree (/home/daan/.no-mistakes/repos/cf62ac6bfd91.git)
+(exit 1)
+  <PRIMARY_HOME>/config/wait-no-turns: PRESENT
+  <SECONDMATE_HOME>/config/wait-no-turns: PRESENT
+  secondmate home git status for the flag: 0 dirty line(s); check-ignore: config/wait-no-turns
+$ FM_HOME=<SECONDMATE_HOME> <SECONDMATE_HOME>/bin/fm-brief.sh crew-opted-in some-proj --mode no-mistakes
+(exit 0)
+  "# Waiting" section headings in brief: 1
+  drive sentence: Drive the run with ONE foreground `no-mistakes axi run` and let it block.
+  inbox no-poll line: 1
+
+=== [head] 3. second push with nothing changed ===
+$ /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4QPQYJ5PK5NEQA9JF2VEZEM/bin/fm-config-push.sh
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+config-push: <PRIMARY_HOME> -> live secondmate homes
+secondmate labsmhead (<SECONDMATE_HOME>):
+  crew-dispatch.json: unchanged
+  dispatch-never-send: unchanged
+  crew-harness: unchanged
+  backlog-backend: unchanged
+  backend: unchanged
+  claude-shaped-store: unchanged
+  herdr-presentation-spaces: unchanged
+  startup-memory-budget: unchanged
+  trace-context: unchanged - session-scoped
+  launch-env-allowlist: unchanged
+  claude-permission-mode: unchanged
+  lavish-axi-host: unchanged
+  keep-ai-trailers: unchanged
+  supervision-host-off: unchanged
+  wait-no-turns: unchanged
+  data/captain-shared.md: unchanged
+CONFIG_REREAD: secondmate labsmhead: send failed: error: refusing fleet lifecycle from inside a no-mistakes gate worktree (/home/daan/.no-mistakes/repos/cf62ac6bfd91.git)
+(exit 1)
+
+=== [head] 4. primary opts out, pushes again ===
+$ rm -f <PRIMARY_HOME>/config/wait-no-turns
+(exit 0)
+$ /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4QPQYJ5PK5NEQA9JF2VEZEM/bin/fm-config-push.sh
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+config-push: <PRIMARY_HOME> -> live secondmate homes
+secondmate labsmhead (<SECONDMATE_HOME>):
+  crew-dispatch.json: unchanged
+  dispatch-never-send: unchanged
+  crew-harness: unchanged
+  backlog-backend: unchanged
+  backend: unchanged
+  claude-shaped-store: unchanged
+  herdr-presentation-spaces: unchanged
+  startup-memory-budget: unchanged
+  trace-context: unchanged - session-scoped
+  launch-env-allowlist: unchanged
+  claude-permission-mode: unchanged
+  lavish-axi-host: unchanged
+  keep-ai-trailers: unchanged
+  supervision-host-off: unchanged
+  wait-no-turns: pushed - mirrored primary absence
+  data/captain-shared.md: unchanged
+CONFIG_REREAD: secondmate labsmhead: send failed: error: refusing fleet lifecycle from inside a no-mistakes gate worktree (/home/daan/.no-mistakes/repos/cf62ac6bfd91.git)
+(exit 1)
+  <PRIMARY_HOME>/config/wait-no-turns: absent
+  <SECONDMATE_HOME>/config/wait-no-turns: absent
+$ FM_HOME=<SECONDMATE_HOME> <SECONDMATE_HOME>/bin/fm-brief.sh crew-opted-out some-proj --mode no-mistakes
+(exit 0)
+  "# Waiting" section headings in brief: 0
+  drive sentence: So background the drive call instead of sitting in one blocking hold your harness will kill, and read its return when it finishes.
+  inbox no-poll line: 0
+
+=== [head] 5. adversarial: secondmate sets the flag on its own while the primary has none ===
+$ touch <SECONDMATE_HOME>/config/wait-no-turns
+(exit 0)
+  <PRIMARY_HOME>/config/wait-no-turns: absent
+  <SECONDMATE_HOME>/config/wait-no-turns: PRESENT
+$ /home/daan/.no-mistakes/worktrees/cf62ac6bfd91/01M4QPQYJ5PK5NEQA9JF2VEZEM/bin/fm-config-push.sh
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+config-push: <PRIMARY_HOME> -> live secondmate homes
+secondmate labsmhead (<SECONDMATE_HOME>):
+  crew-dispatch.json: unchanged
+  dispatch-never-send: unchanged
+  crew-harness: unchanged
+  backlog-backend: unchanged
+  backend: unchanged
+  claude-shaped-store: unchanged
+  herdr-presentation-spaces: unchanged
+  startup-memory-budget: unchanged
+  trace-context: unchanged - session-scoped
+  launch-env-allowlist: unchanged
+  claude-permission-mode: unchanged
+  lavish-axi-host: unchanged
+  keep-ai-trailers: unchanged
+  supervision-host-off: unchanged
+  wait-no-turns: pushed - mirrored primary absence
+  data/captain-shared.md: unchanged
+CONFIG_REREAD: secondmate labsmhead: send failed: error: refusing fleet lifecycle from inside a no-mistakes gate worktree (/home/daan/.no-mistakes/repos/cf62ac6bfd91.git)
+(exit 1)
+  <PRIMARY_HOME>/config/wait-no-turns: absent
+  <SECONDMATE_HOME>/config/wait-no-turns: absent
+$ FM_HOME=<SECONDMATE_HOME> <SECONDMATE_HOME>/bin/fm-brief.sh crew-local-optin some-proj --mode no-mistakes
+(exit 0)
+  "# Waiting" section headings in brief: 0
+  drive sentence: So background the drive call instead of sitting in one blocking hold your harness will kill, and read its return when it finishes.
+  inbox no-poll line: 0
+
+=== [head] 6. reread pointers queued for the secondmate (durable inbox records) ===
+--- <SECONDMATE_HOME>/state/.fm-inherited-config-reread.20261012T092907.00000001.tFF4oZ
+These inherited config files changed. Re-read and apply their exact contents at every future intake. They are defaults/rules and do not remove your judgment to choose differently when warranted.
+
+config/wait-no-turns
+-----BEGIN config/wait-no-turns-----
+-----END config/wait-no-turns-----
+
+--- <SECONDMATE_HOME>/state/.fm-inherited-config-reread.20261012T092907.00000001.tFF4oZ.pending
+<SECONDMATE_HOME>/state/.fm-inherited-config-reread.20261012T092907.00000001.tFF4oZ
+
+--- <SECONDMATE_HOME>/state/.fm-inherited-config-reread.20261012T092910.00000002.O9J1mX
+These inherited config files changed. Re-read and apply their exact contents at every future intake. They are defaults/rules and do not remove your judgment to choose differently when warranted.
+
+config/wait-no-turns
+-----BEGIN config/wait-no-turns-----
+ABSENT
+-----END config/wait-no-turns-----
+
+--- <SECONDMATE_HOME>/state/.fm-inherited-config-reread.20261012T092910.00000002.O9J1mX.pending
+<SECONDMATE_HOME>/state/.fm-inherited-config-reread.20261012T092910.00000002.O9J1mX
+
+--- <SECONDMATE_HOME>/state/.fm-inherited-config-reread.20261012T092911.00000003.FRVQoE
+These inherited config files changed. Re-read and apply their exact contents at every future intake. They are defaults/rules and do not remove your judgment to choose differently when warranted.
+
+config/wait-no-turns
+-----BEGIN config/wait-no-turns-----
+ABSENT
+-----END config/wait-no-turns-----
+
+--- <SECONDMATE_HOME>/state/.fm-inherited-config-reread.20261012T092911.00000003.FRVQoE.pending
+<SECONDMATE_HOME>/state/.fm-inherited-config-reread.20261012T092911.00000003.FRVQoE
+
+=== [head] done ===
+
+=== [head] secondmate pane (fm-labsmhead) as the doorbell left it ===
+bash-5.1$

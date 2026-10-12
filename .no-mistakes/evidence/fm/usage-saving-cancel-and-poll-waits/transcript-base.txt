@@ -1,0 +1,143 @@
+
+=== [base] code under test ===
+fb5985f90ee4da2424b89b548d51db7eabd077b1
+FM_INHERITABLE_CONFIG=crew-dispatch.json dispatch-never-send crew-harness backlog-backend backend claude-shaped-store herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode lavish-axi-host keep-ai-trailers supervision-host-off
+
+=== [base] 1. start: neither home has the flag; secondmate crew brief ===
+  <PRIMARY_HOME>/config/wait-no-turns: absent
+  <SECONDMATE_HOME>/config/wait-no-turns: absent
+$ FM_HOME=<SECONDMATE_HOME> <SECONDMATE_HOME>/bin/fm-brief.sh crew-before some-proj --mode no-mistakes
+(exit 0)
+  "# Waiting" section headings in brief: 0
+  drive sentence: So background the drive call instead of sitting in one blocking hold your harness will kill, and read its return when it finishes.
+  inbox no-poll line: 0
+
+=== [base] 2. primary opts in, then pushes config to live secondmate homes ===
+$ touch <PRIMARY_HOME>/config/wait-no-turns
+(exit 0)
+$ <SCRATCH>/base-root/bin/fm-config-push.sh
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+config-push: <PRIMARY_HOME> -> live secondmate homes
+secondmate labsmbase (<SECONDMATE_HOME>):
+  crew-dispatch.json: unchanged
+  dispatch-never-send: unchanged
+  crew-harness: unchanged
+  backlog-backend: unchanged
+  backend: unchanged
+  claude-shaped-store: unchanged
+  herdr-presentation-spaces: unchanged
+  startup-memory-budget: unchanged
+  trace-context: unchanged - session-scoped
+  launch-env-allowlist: unchanged
+  claude-permission-mode: unchanged
+  lavish-axi-host: unchanged
+  keep-ai-trailers: unchanged
+  supervision-host-off: unchanged
+  data/captain-shared.md: unchanged
+(exit 0)
+  <PRIMARY_HOME>/config/wait-no-turns: PRESENT
+  <SECONDMATE_HOME>/config/wait-no-turns: absent
+  secondmate home git status for the flag: 0 dirty line(s); check-ignore: config/wait-no-turns
+$ FM_HOME=<SECONDMATE_HOME> <SECONDMATE_HOME>/bin/fm-brief.sh crew-opted-in some-proj --mode no-mistakes
+(exit 0)
+  "# Waiting" section headings in brief: 0
+  drive sentence: So background the drive call instead of sitting in one blocking hold your harness will kill, and read its return when it finishes.
+  inbox no-poll line: 0
+
+=== [base] 3. second push with nothing changed ===
+$ <SCRATCH>/base-root/bin/fm-config-push.sh
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+config-push: <PRIMARY_HOME> -> live secondmate homes
+secondmate labsmbase (<SECONDMATE_HOME>):
+  crew-dispatch.json: unchanged
+  dispatch-never-send: unchanged
+  crew-harness: unchanged
+  backlog-backend: unchanged
+  backend: unchanged
+  claude-shaped-store: unchanged
+  herdr-presentation-spaces: unchanged
+  startup-memory-budget: unchanged
+  trace-context: unchanged - session-scoped
+  launch-env-allowlist: unchanged
+  claude-permission-mode: unchanged
+  lavish-axi-host: unchanged
+  keep-ai-trailers: unchanged
+  supervision-host-off: unchanged
+  data/captain-shared.md: unchanged
+(exit 0)
+
+=== [base] 4. primary opts out, pushes again ===
+$ rm -f <PRIMARY_HOME>/config/wait-no-turns
+(exit 0)
+$ <SCRATCH>/base-root/bin/fm-config-push.sh
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+config-push: <PRIMARY_HOME> -> live secondmate homes
+secondmate labsmbase (<SECONDMATE_HOME>):
+  crew-dispatch.json: unchanged
+  dispatch-never-send: unchanged
+  crew-harness: unchanged
+  backlog-backend: unchanged
+  backend: unchanged
+  claude-shaped-store: unchanged
+  herdr-presentation-spaces: unchanged
+  startup-memory-budget: unchanged
+  trace-context: unchanged - session-scoped
+  launch-env-allowlist: unchanged
+  claude-permission-mode: unchanged
+  lavish-axi-host: unchanged
+  keep-ai-trailers: unchanged
+  supervision-host-off: unchanged
+  data/captain-shared.md: unchanged
+(exit 0)
+  <PRIMARY_HOME>/config/wait-no-turns: absent
+  <SECONDMATE_HOME>/config/wait-no-turns: absent
+$ FM_HOME=<SECONDMATE_HOME> <SECONDMATE_HOME>/bin/fm-brief.sh crew-opted-out some-proj --mode no-mistakes
+(exit 0)
+  "# Waiting" section headings in brief: 0
+  drive sentence: So background the drive call instead of sitting in one blocking hold your harness will kill, and read its return when it finishes.
+  inbox no-poll line: 0
+
+=== [base] 5. adversarial: secondmate sets the flag on its own while the primary has none ===
+$ touch <SECONDMATE_HOME>/config/wait-no-turns
+(exit 0)
+  <PRIMARY_HOME>/config/wait-no-turns: absent
+  <SECONDMATE_HOME>/config/wait-no-turns: PRESENT
+$ <SCRATCH>/base-root/bin/fm-config-push.sh
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+config-push: <PRIMARY_HOME> -> live secondmate homes
+secondmate labsmbase (<SECONDMATE_HOME>):
+  crew-dispatch.json: unchanged
+  dispatch-never-send: unchanged
+  crew-harness: unchanged
+  backlog-backend: unchanged
+  backend: unchanged
+  claude-shaped-store: unchanged
+  herdr-presentation-spaces: unchanged
+  startup-memory-budget: unchanged
+  trace-context: unchanged - session-scoped
+  launch-env-allowlist: unchanged
+  claude-permission-mode: unchanged
+  lavish-axi-host: unchanged
+  keep-ai-trailers: unchanged
+  supervision-host-off: unchanged
+  data/captain-shared.md: unchanged
+(exit 0)
+  <PRIMARY_HOME>/config/wait-no-turns: absent
+  <SECONDMATE_HOME>/config/wait-no-turns: PRESENT
+$ FM_HOME=<SECONDMATE_HOME> <SECONDMATE_HOME>/bin/fm-brief.sh crew-local-optin some-proj --mode no-mistakes
+(exit 0)
+  "# Waiting" section headings in brief: 1
+  drive sentence: Drive the run with ONE foreground `no-mistakes axi run` and let it block.
+  inbox no-poll line: 1
+
+=== [base] 6. reread pointers queued for the secondmate (durable inbox records) ===
+=== [base] done ===
+
+=== [base] secondmate pane (fm-labsmbase) as the doorbell left it ===
+bash-5.1$
