@@ -15,8 +15,8 @@
 #   B) Inheritance. The primary pushes a declared, extensible set of LOCAL
 #      (gitignored) config items - config/crew-dispatch.json, config/crew-harness,
 #      config/backlog-backend, config/backend, config/herdr-presentation-spaces,
-#      config/startup-memory-budget, config/trace-context, and
-#      config/supervision-host-off -
+#      config/startup-memory-budget, config/trace-context,
+#      config/supervision-host-off, and config/wait-no-turns -
 #      down into each secondmate home's config/, so the secondmate's OWN crewmates,
 #      dispatch profiles, backlog backend, runtime-backend default, Herdr
 #      presentation choice, startup-memory budget, and trace context inherit the
@@ -1097,7 +1097,7 @@ new_world() {
     [ "$dispatch_ignore" = no ] || printf 'config/crew-dispatch.json\n'
     printf 'config/crew-harness\nconfig/secondmate-harness\nconfig/backlog-backend\n'
     printf 'config/backend\nconfig/herdr-presentation-spaces\nconfig/startup-memory-budget\n'
-    printf 'config/claude-permission-mode\n'
+    printf 'config/claude-permission-mode\nconfig/wait-no-turns\n'
   } > "$w/main/.gitignore"
   printf 'v1\n' > "$w/main/AGENTS.md"
   printf 'r1\n' > "$w/main/README.md"
@@ -1570,6 +1570,41 @@ test_claude_permission_mode_inheritance_present_and_absent() {
   expect_code 0 "$status" "claude-permission-mode absence push should succeed"
   [ -e "$w/sm/config/claude-permission-mode" ] && fail "claude-permission-mode not removed on primary absence"
   pass "B12c claude-permission-mode inheritance: present values and primary absence converge exactly"
+}
+
+# A secondmate's crewmates read their brief from the secondmate home's config,
+# so the primary's wait-no-turns choice reaches them only through inheritance.
+test_wait_no_turns_inheritance_reaches_secondmate_briefs() {
+  local w head out err status brief_home brief
+  w=$(new_world wait-no-turns-inherit)
+  head=$(git -C "$w/main" rev-parse HEAD)
+  add_sm_worktree "$w" sm "$head"
+  brief_home="$w/sm-brief-home"
+  mkdir -p "$brief_home/data"
+  brief="$brief_home/data/sm-crew/brief.md"
+
+  : > "$w/home/config/wait-no-turns"
+  err="$w/wait-no-turns-inherit.err"
+  out=$(run_config_push "$w" 2>"$err"); status=$?
+  expect_code 0 "$status" "wait-no-turns present push should succeed"
+  assert_contains "$out" "wait-no-turns: pushed" "wait-no-turns present flag should report pushed"
+  [ -e "$w/sm/config/wait-no-turns" ] || fail "wait-no-turns present flag not pushed"
+  FM_HOME="$brief_home" FM_CONFIG_OVERRIDE="$w/sm/config" \
+    "$ROOT/bin/fm-brief.sh" sm-crew some-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "brief scaffold failed under the secondmate config"
+  grep -q '^# Waiting$' "$brief" || fail "a secondmate crew brief lacks the Waiting section after the primary opted in"
+  grep -qF "Drive the run with ONE foreground \`no-mistakes axi run\`" "$brief" \
+    || fail "a secondmate crew brief does not drive the pipeline with one foreground call after the primary opted in"
+
+  rm -f "$w/home/config/wait-no-turns" "$brief"
+  out=$(run_config_push "$w" 2>"$err"); status=$?
+  expect_code 0 "$status" "wait-no-turns absence push should succeed"
+  [ -e "$w/sm/config/wait-no-turns" ] && fail "wait-no-turns not removed on primary absence"
+  FM_HOME="$brief_home" FM_CONFIG_OVERRIDE="$w/sm/config" \
+    "$ROOT/bin/fm-brief.sh" sm-crew some-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "brief scaffold failed under the secondmate config after primary absence"
+  grep -q '^# Waiting$' "$brief" && fail "a secondmate crew brief kept the Waiting section after the primary opted out"
+  pass "B12d wait-no-turns inheritance: the primary's choice reaches secondmate crew briefs and its absence mirrors"
 }
 
 test_backend_inheritance_present_and_absent() {
@@ -2774,6 +2809,7 @@ test_backend_inheritance_present_and_absent
 test_spawn_secondmate_claude_permission_mode_auto
 test_spawn_secondmate_claude_grants_parent_inbox_dir
 test_claude_permission_mode_inheritance_present_and_absent
+test_wait_no_turns_inheritance_reaches_secondmate_briefs
 test_presentation_inheritance_default_on_and_opt_out
 test_bootstrap_sweep_surfaces_config_propagation_failure
 test_bootstrap_rereads_after_partial_propagation
