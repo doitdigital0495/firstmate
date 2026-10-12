@@ -1353,6 +1353,35 @@ test_wait_no_turns_absent_keeps_the_previous_brief() {
   pass "fm-brief: without config/wait-no-turns the brief and drive text stay as they were"
 }
 
+# Contract: every brief that names the steering inbox keeps the worker's shell
+# inside its worktree, so a persistent cwd left in the inbox cannot break the
+# project hooks that resolve from it.
+test_inbox_section_keeps_the_shell_in_the_worktree() {
+  local home id brief section
+  home="$TMP_ROOT/inbox-cwd"
+  mkdir -p "$home/data"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" inbox-cwd-ship some-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "fm-brief.sh ship scaffold exited non-zero"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" inbox-cwd-scout some-proj --scout >/dev/null 2>&1 \
+    || fail "fm-brief.sh scout scaffold exited non-zero"
+  FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" inbox-cwd-sm --secondmate --no-projects >/dev/null 2>&1 \
+    || fail "fm-brief.sh secondmate scaffold exited non-zero"
+  for id in inbox-cwd-ship inbox-cwd-scout inbox-cwd-sm; do
+    brief="$home/data/$id/brief.md"
+    section=$(awk '/^# Firstmate instruction inbox$/{on=1; next} on && /^# /{exit} on' "$brief")
+    case "$section" in
+      *"Reach the inbox only by these absolute paths and never \`cd\` into it or anywhere else outside your worktree"*) ;;
+      *) fail "$id: the inbox section does not keep the shell inside the worktree" ;;
+    esac
+    case "$section" in
+      *"$home/state/$id.inbox"*) ;;
+      *) fail "$id: the inbox section does not name the absolute inbox path" ;;
+    esac
+  done
+  pass "fm-brief: the inbox section keeps every worker's shell inside its worktree"
+}
+
 test_worker_role_scope() {
   local kind home brief
   home="$TMP_ROOT/worker-role"
@@ -1657,6 +1686,7 @@ test_branch_prefix_command_is_shell_safe() {
 }
 
 test_worker_role_scope
+test_inbox_section_keeps_the_shell_in_the_worktree
 
 # Rule 2 governs file edits rather than pool administration, so every crewmate
 # scaffold must prohibit the administrative act itself. The rule is emitted from

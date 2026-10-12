@@ -226,10 +226,17 @@ fm_control_interrupt_ack_source() {  # <harness>
   esac
 }
 
-# The command that exits the agent from its own composer.
+# The command that exits the agent from its own composer. claude takes the
+# bare word `exit`, never `/exit`: a task worker launches with
+# --disable-slash-commands (bin/fm-spawn.sh), which unregisters every built-in
+# slash command, so `/exit` only prints "Unknown command: /exit" and the agent
+# keeps running. The bare word is handled locally - it exits idle or mid-turn,
+# with or without that flag, and never reaches the model (verified Claude Code
+# 2.1.296, docs/verification/runtime-backends.md "Claude exit command").
 fm_control_exit_command() {  # <harness>
   case "${1-}" in
-    claude|opencode|grok|kimi|cursor|muse|rovo) printf '/exit' ;;
+    claude) printf 'exit' ;;
+    opencode|grok|kimi|cursor|muse|rovo) printf '/exit' ;;
     codex|pi|pi-signed|omp|gemini|agy|devin) printf '/quit' ;;
     *) return 1 ;;
   esac

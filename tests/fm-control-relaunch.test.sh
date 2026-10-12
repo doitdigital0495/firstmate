@@ -77,7 +77,7 @@ case "${1:-}" in
       esac
       printf '%s\n' "$payload" >> "$D/literal"
       case "$payload" in
-        /exit|/quit)
+        /exit|/quit|exit)
           printf 'zsh' > "$D/command"
           [ -z "${FM_FAKE_EXIT_TRANSPORT_FAIL_AFTER_STOP:-}" ] || exit 1
           ;;
@@ -393,7 +393,7 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
     || fail "a relaunch must arm a fresh busy generation, got '$gen_after'"
   [ "$(journal_field "$dir" rl1 phase)" = complete ] \
     || fail "the transaction journal should end complete"
-  assert_grep "/exit" "$dir/fake/literal" "the previous agent should have been exited"
+  grep -qx exit "$dir/fake/literal" || fail "the previous agent should have been exited"
   assert_grep "cd -- '$dir/wt'" "$dir/fake/keys" "the replacement launch must enter the recorded worktree"
   assert_grep "Firstmate operational input waiting: read" "$dir/fake/literal" "the replacement should have been launched"
   pass "fm-control relaunch: a same-harness relaunch replaces the agent in the same endpoint and worktree"
@@ -412,8 +412,8 @@ test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text() {
     "the refusal should name the pending composer text"
   [ "$(cat "$dir/fake/command")" = claude ] \
     || fail "a pending composer refusal must leave the old agent running"
-  assert_no_grep "/exit" "$dir/fake/literal" \
-    "the exit command must not be concatenated onto pending composer text"
+  ! grep -qxE '/?exit' "$dir/fake/literal" \
+    || fail "the exit command must not be concatenated onto pending composer text"
   pass "fm-control relaunch: pending composer text refuses before the exit command is typed"
 }
 
@@ -432,8 +432,8 @@ test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven() {
     "an unreadable composer is not the same claim as observed pending text"
   [ "$(cat "$dir/fake/command")" = claude ] \
     || fail "an unproven composer refusal must leave the old agent running"
-  assert_no_grep "/exit" "$dir/fake/literal" \
-    "the exit command must not be typed when the composer state is not proven empty"
+  ! grep -qxE '/?exit' "$dir/fake/literal" \
+    || fail "the exit command must not be typed when the composer state is not proven empty"
   pass "fm-control relaunch: an unreadable composer fails safe before the exit command is typed"
 }
 

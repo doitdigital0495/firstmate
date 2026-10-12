@@ -1466,6 +1466,41 @@ The watcher does not read the picker: a pane parked on it keeps the ordinary sta
 No recorded screen was available for a model-downgrade confirmation, an MCP approval, or a Claude exit confirmation other than this picker, so those dialogs are not covered.
 Refusing an Enter that would confirm a dialog restores an existing safety path, so it is not gated behind a flag.
 
+### Claude exit command
+
+Measured 2026-10-12 against Claude Code 2.1.296 and tmux 3.2a on an isolated tmux server, with no fleet pane involved.
+A Claude task worker launches with `--disable-slash-commands` (`bin/fm-spawn.sh`), and on this version that flag unregisters every built-in slash command, not only skills.
+`/exit`, `/quit`, and `/help` all answer `Unknown command`, so the old `/exit` mapping never stopped a task worker and `bin/fm-control.sh exit` timed out as `exit=unconfirmed`.
+The bare word `exit` (and `quit`) is handled locally by Claude Code: it exits idle or mid-turn, with or without the flag, and the session transcript records no user turn for it, so it never reaches the model.
+Without the flag, the bare word is echoed as `/exit` and opens the [background-task exit picker](#claude-background-task-exit-picker) exactly as `/exit` does, so that guard still covers a secondmate.
+With the flag, it exits straight away even while a background shell is running, and that shell does not outlive the agent.
+Ctrl+D twice and Ctrl+C twice also exit, after a `Press Ctrl-D again to exit` or `Press Ctrl-C again to exit` hint, but `fm_control_exit_command` stays a typed command.
+
+```sh
+claude --version
+# Worker flags; the pane runs: <flags>; echo AGENT-EXITED rc=$?
+claude --dangerously-skip-permissions --setting-sources '' --strict-mcp-config --disable-slash-commands
+# type each line, Enter: /exit, /quit, /help, exit, quit; and exit mid-turn
+# End to end: a temporary FM_HOME whose state/t1.meta records harness=claude and that tmux window.
+FM_HOME="$LAB/home" bin/fm-control.sh t1 exit
+```
+
+```text
+2.1.296 (Claude Code)
+/exit typed: No commands match "/exit"
+/exit after Enter: ● Unknown command: /exit
+/quit after Enter: ● Unknown command: /quit
+/help after Enter: ● Unknown command: /help
+exit after Enter: AGENT-EXITED rc=0
+quit after Enter: AGENT-EXITED rc=0
+exit during a running turn: AGENT-EXITED rc=0
+old mapping: error: exit-delivered t1 interrupt=not-needed exit-command=delivered agent-state=alive exit=unconfirmed; the agent did not stop within 30s
+new mapping, idle: stopped t1 harness=claude backend=tmux endpoint=fmses:fm-t1 ... (rc=0 after 4s)
+new mapping, busy: stopped t1 harness=claude backend=tmux endpoint=fmses:fm-t1 ... (rc=0 after 3s)
+```
+
+`tests/fm-control.test.sh` pins the `exit` mapping without credentials.
+
 ### Prune and respawn
 
 The real label-collision reproduction is owned by:

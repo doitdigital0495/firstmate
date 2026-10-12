@@ -71,7 +71,7 @@ case "${1:-}" in
       esac
       printf '%s\n' "$payload" >> "$D/literal"
       case "$payload" in
-        /exit|/quit)
+        /exit|/quit|exit)
           if [ -e "$D/remote-relaunch-start" ] && [ ! -e "$D/remote-relaunch-end" ]; then
             : > "$D/local-relaunch-during-remote"
           fi
@@ -265,7 +265,7 @@ test_persist_gates_and_asks_only_for_open_records() {
   assert_not_contains "$out" "restarted: sm1" "a mate that never confirmed must not be restarted"
   assert_contains "$out" "summary: 0 of 1 restarted" "the summary must not claim a reload"
   # The agent is untouched: nothing exited, nothing relaunched.
-  assert_no_grep '^/exit$' "$dir/fake/literal" "the agent was stopped without a confirmed persist"
+  ! grep -qxE '/?exit' "$dir/fake/literal" || fail "the agent was stopped without a confirmed persist"
   assert_absent "$dir/home/state/sm1.control-relaunch" \
     "a restart transaction was opened without a confirmed persist"
   grep -h '^phase=' "$dir/home/state/pending-replies"/* | grep -q '^phase=awaiting_report$' \
@@ -298,7 +298,7 @@ test_persist_precedes_restart() {
   # The pane transcript orders the two phases: the instruction doorbell first,
   # the harness exit command only after it.
   doorbell_line=$(grep -n '^: Firstmate instruction waiting: ' "$dir/fake/literal" | head -1 | cut -d: -f1)
-  exit_line=$(grep -n '^/exit$' "$dir/fake/literal" | head -1 | cut -d: -f1)
+  exit_line=$(grep -n '^exit$' "$dir/fake/literal" | head -1 | cut -d: -f1)
   [ -n "$doorbell_line" ] || fail "the persist request never reached the mate"
   [ -n "$exit_line" ] || fail "the mate was never stopped, so it was not restarted"
   [ "$doorbell_line" -lt "$exit_line" ] \
@@ -420,7 +420,7 @@ test_refused_restart_falls_back_without_claiming_a_reload() {
   assert_not_contains "$out" "restarted: sm1" "a refused restart must not be reported as restarted"
   [ "$(cat "$dir/fake/command")" = "$before" ] \
     || fail "a refusal before the stop should leave the running agent exactly as it was"
-  assert_no_grep '^/exit$' "$dir/fake/literal" "a pre-stop refusal must not have stopped the agent"
+  ! grep -qxE '/?exit' "$dir/fake/literal" || fail "a pre-stop refusal must not have stopped the agent"
   pass "T5 a refused restart leaves the mate running and reports an unknown outcome"
 }
 
@@ -648,7 +648,7 @@ SH
 
   expect_code 3 "$rc" "an unrelated concurrent answer must not release the persist gate"$'\n'"$out"
   assert_not_contains "$out" "restarted: sm1" "the unrelated answer authorized a restart"
-  assert_no_grep '^/exit$' "$dir/fake/literal" "the unrelated answer stopped the mate"
+  ! grep -qxE '/?exit' "$dir/fake/literal" || fail "the unrelated answer stopped the mate"
   pass "T9 the persist gate retains its explicitly allocated correlation"
 }
 
@@ -663,7 +663,7 @@ test_persist_waits_are_polled_together() {
   out=$(FM_TEST_PERSIST_WAIT=3 run_restart "$dir" sm1 sm2); rc=$?
 
   expect_code 3 "$rc" "the unanswered mate should fall back after the confirmed mate restarts"$'\n'"$out"
-  exit_line=$(grep -n '^/exit$' "$dir/fake/literal" | head -1 | cut -d: -f1)
+  exit_line=$(grep -n '^exit$' "$dir/fake/literal" | head -1 | cut -d: -f1)
   nudge_line=$(grep -n '^: Firstmate instruction waiting: ' "$dir/fake/literal" | tail -1 | cut -d: -f1)
   [ -n "$exit_line" ] && [ -n "$nudge_line" ] && [ "$exit_line" -lt "$nudge_line" ] \
     || fail "the first mate's timeout held the confirmed second mate behind it: $out"
@@ -824,7 +824,7 @@ test_already_current_mate_restarts_end_to_end() {
     "the pass must report the reload it performed"
   # Persist strictly before replace, read off the pane transcript.
   doorbell_line=$(grep -n '^: Firstmate instruction waiting: ' "$dir/fake/literal" | head -1 | cut -d: -f1)
-  exit_line=$(grep -n '^/exit$' "$dir/fake/literal" | head -1 | cut -d: -f1)
+  exit_line=$(grep -n '^exit$' "$dir/fake/literal" | head -1 | cut -d: -f1)
   [ -n "$doorbell_line" ] || fail "the persist request never reached the already-current mate"
   [ -n "$exit_line" ] || fail "the already-current mate was never stopped, so it was not restarted"
   [ "$doorbell_line" -lt "$exit_line" ] \
@@ -868,7 +868,7 @@ test_already_current_unprovable_mate_stays_on_the_nudge_path() {
   assert_not_contains "$out" "restarted: sm1" "an unprovable mate must never be reported as reloaded"
   [ "$(cat "$dir/fake/command")" = "$before" ] \
     || fail "the unprovable mate's agent was stopped anyway"
-  assert_no_grep '^/exit$' "$dir/fake/literal" "nothing may be stopped on the nudge path"
+  ! grep -qxE '/?exit' "$dir/fake/literal" || fail "nothing may be stopped on the nudge path"
   pass "T16 an already-current mate with an unprovable runtime keeps the honest nudge path"
 }
 
