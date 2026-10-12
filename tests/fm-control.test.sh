@@ -43,7 +43,7 @@ VERIFIED_HARNESSES="claude codex opencode pi pi-signed grok kimi cursor muse omp
 # its composer empty on cancel.
 verified_adapter_contract() {  # <harness> -> exit command, interrupt key, repeat, clear key
   case "$1" in
-    claude) printf '/exit\tEscape\t1\t\n' ;;
+    claude) printf 'exit\tEscape\t1\t\n' ;;
     codex) printf '/quit\tEscape\t1\t\n' ;;
     opencode) printf '/exit\tEscape\t2\t\n' ;;
     pi) printf '/quit\tEscape\t1\t\n' ;;
@@ -128,7 +128,7 @@ case "${1:-}" in
     if [ "$literal" = 1 ]; then
       printf '%s\n' "$payload" >> "$D/literal"
       if [ -z "${FM_FAKE_NEVER_DIES:-}" ] \
-         && { [ "$payload" = /exit ] || [ "$payload" = /quit ]; }; then
+         && { [ "$payload" = /exit ] || [ "$payload" = /quit ] || [ "$payload" = exit ]; }; then
         printf 'zsh' > "$D/command"
       fi
       case "$payload" in
@@ -846,7 +846,7 @@ test_busy_agent_is_interrupted_before_the_exit_command() {
   expect_code 0 "$rc" "exiting a busy agent should succeed"$'\n'"$out"
   [ "$(keys_sent "$dir")" = "Escape" ] \
     || fail "a busy agent should be interrupted once before its exit command, got: $(keys_sent "$dir")"
-  [ "$(literals "$dir")" = "/exit" ] || fail "the exit command should follow the interrupt"
+  [ "$(literals "$dir")" = exit ] || fail "the exit command should follow the interrupt"
   pass "fm-control exit: a busy agent receives interrupt delivery before the exit command"
 }
 
@@ -890,7 +890,7 @@ test_exit_refuses_the_confirming_enter() {
   assert_contains "$out" "blocked on a prompt: Claude background-task exit picker" \
     "the refusal should name the dialog"
   assert_not_contains "$out" "Esc" "the refusal must not name a dismissal key"
-  [ "$(literals "$dir")" = /exit ] || fail "the exit command should still be typed, got '$(literals "$dir")'"
+  [ "$(literals "$dir")" = exit ] || fail "the exit command should still be typed, got '$(literals "$dir")'"
   enters=$(grep -c '^Enter$' "$dir/fake/keys" || true)
   [ "$enters" -eq 1 ] || fail "only the submitting Enter should be sent, got $enters"
   pass "fm-control exit: the Enter that opens the background-task picker is not followed by a confirming Enter"
@@ -932,7 +932,7 @@ test_idle_agent_is_not_interrupted() {
   expect_code 0 "$rc" "exiting an idle agent should succeed"$'\n'"$out"
   [ -z "$(keys_sent "$dir")" ] \
     || fail "an idle agent needs no interrupt, got keys: $(keys_sent "$dir")"
-  [ "$(literals "$dir")" = "/exit" ] || fail "the exit command should still be sent"
+  [ "$(literals "$dir")" = exit ] || fail "the exit command should still be sent"
   pass "fm-control exit: an idle agent goes straight to its exit command"
 }
 
@@ -1055,7 +1055,7 @@ test_agent_that_does_not_stop_fails_closed() {
     "the failure must not deny the lifecycle input that was delivered"
   [ "$(keys_sent "$dir")" = Escape ] \
     || fail "a stubborn busy agent should receive its interrupt sequence"
-  [ "$(literals "$dir")" = /exit ] \
+  [ "$(literals "$dir")" = exit ] \
     || fail "a stubborn busy agent should receive its exit command"
   grep -q "^busy_gen=$gen$" "$dir/home/state/t1.meta" \
     || fail "a failed exit must leave busy_gen in the task record"
@@ -1102,7 +1102,7 @@ test_secondmate_control_command_carries_no_marker() {
   out=$(run_control "$dir" domain exit); rc=$?
   expect_code 0 "$rc" "exiting a secondmate's agent should succeed"$'\n'"$out"
   typed=$(literals "$dir")
-  [ "$typed" = "/exit" ] \
+  [ "$typed" = exit ] \
     || fail "a secondmate control command must be the bare exit command, got: $typed"
   case "$typed" in
     *"$FM_FROMFIRST_MARK"*) fail "a control command must never carry the from-firstmate marker" ;;
