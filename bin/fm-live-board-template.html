@@ -163,21 +163,6 @@ textarea.q-note { min-height: 88px; resize: vertical; }
 .what[data-explain="missing"] summary span { color: var(--gold); }
 .what-src { margin: 4px 0 0; color: var(--text-faint); font-size: 0.78rem; }
 .what:not([open]) > .what-src { display: none; }
-.asked { margin: 0 0 14px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-raised); min-width: 0; }
-.asked[hidden] { display: none; }
-.asked h2 { margin: 0; font-size: 1.05rem; color: var(--text-strong); display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-.asked-say { margin: 2px 0 10px; color: var(--text-muted); font-size: 0.85rem; }
-.asked-list, .asked-more-body { display: grid; gap: 10px; min-width: 0; }
-.asked-more { margin-top: 10px; min-width: 0; }
-.asked-more summary { cursor: pointer; color: var(--text-muted); font-size: 0.85rem; min-height: 28px; }
-.asked-more:not([open]) > .asked-more-body { display: none; }
-.qa { display: grid; gap: 6px; padding: 11px 12px; border: 1px solid var(--line-soft); border-left: 3px solid var(--sea); border-radius: 9px; background: var(--bg-card); min-width: 0; }
-.qa[data-qa-status="open"] { border-left-color: var(--gold); }
-.qa-head { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; color: var(--text-faint); font-size: 0.78rem; }
-.qa-q { margin: 0; color: var(--text-strong); font-weight: 600; overflow-wrap: anywhere; white-space: pre-wrap; }
-.qa-on { margin: 0; color: var(--text-faint); font-size: 0.78rem; overflow-wrap: anywhere; }
-.qa-a { margin: 0; padding: 9px 11px; border-radius: 8px; background: var(--bg-inset); color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
-.qa-src { margin: 0; color: var(--text-muted); font-size: 0.8rem; overflow-wrap: anywhere; }
 .tl { display: grid; gap: 8px; min-width: 0; padding: 10px; border: 1px solid var(--line-soft); border-top: 3px solid var(--text-faint); border-radius: 10px; background: var(--bg-inset); }
 .tl-gap { margin: 0; color: var(--rust); font-size: 0.8rem; overflow-wrap: anywhere; }
 .tl-track { display: flex; flex-wrap: wrap; gap: 6px 0; min-width: 0; }
@@ -276,7 +261,6 @@ textarea.q-note { min-height: 88px; resize: vertical; }
   <div id="lb-banner"></div>
   <section class="lb-stats" id="lb-stats" aria-label="Totals"></section>
   <nav class="lb-toc" id="lb-toc" aria-label="Table of contents" hidden></nav>
-  <section class="asked" id="lb-asked" aria-labelledby="lb-asked-name" hidden></section>
   <div id="lb-tray" aria-live="polite"></div>
   <div id="lb-projects"></div>
   <div id="lb-notes"></div>
@@ -640,67 +624,6 @@ __FM_LIVE_BOARD_DATA__
     box.appendChild(say);
     box.appendChild(el("p", "what-src", EXPLAIN_SOURCE[known ? source : "missing"] || EXPLAIN_SOURCE.note));
     return box;
-  }
-
-  function when(epoch) {
-    if (typeof epoch !== "number") return "";
-    var d = new Date(epoch * 1000);
-    if (isNaN(d.getTime())) return "";
-    var m = d.getMinutes();
-    return d.getDate() + " " + MONTHS[d.getMonth()] + ", " + d.getHours() + ":" + (m < 10 ? "0" : "") + m;
-  }
-  /* What the captain typed on this board and Firstmate's answer to each;
-     bin/fm-live-board-answer.sh owns the list, the page only shows it. */
-  var ASKED_SHOWN = 5;
-  function askedCard(q) {
-    var open = q.status !== "answered";
-    var card = el("article", "qa");
-    card.setAttribute("data-qa", q.key || "");
-    card.setAttribute("data-qa-status", open ? "open" : "answered");
-    var head = el("div", "qa-head");
-    head.appendChild(el("span", "", "You asked" + (when(q.asked_at_epoch) ? " · " + when(q.asked_at_epoch) : "")));
-    if (open) head.appendChild(badge("b-warn", "Not answered yet", "warn"));
-    card.appendChild(head);
-    card.appendChild(el("p", "qa-q", q.question));
-    if (q.on) card.appendChild(el("p", "qa-on", "Typed on: " + q.on));
-    if (open) {
-      card.appendChild(el("p", "qa-src", "Firstmate has this question and has not answered it here yet."));
-      return card;
-    }
-    card.appendChild(el("p", "qa-a", q.answer));
-    var src = [];
-    if (when(q.answered_at_epoch)) src.push("Answered " + when(q.answered_at_epoch));
-    src.push(q.source ? "Source: " + q.source : "No source recorded");
-    card.appendChild(el("p", "qa-src", src.join(" · ")));
-    return card;
-  }
-  function paintAsked(asked) {
-    var host = document.getElementById("lb-asked");
-    var items = asked && Array.isArray(asked.items) ? asked.items : [];
-    var broken = !asked || asked.status !== "ok";
-    if (!items.length && !broken) return;
-    host.hidden = false;
-    var waiting = items.filter(function (q) { return q.status !== "answered"; }).length;
-    var name = el("h2");
-    name.setAttribute("id", "lb-asked-name");
-    name.appendChild(el("span", "", "Your questions and answers"));
-    name.appendChild(el("span", "lane-count", String(items.length)));
-    if (waiting) name.appendChild(badge("b-warn", waiting + " not answered yet"));
-    host.appendChild(name);
-    host.appendChild(el("p", "asked-say", "What you typed on this board, newest first, each with Firstmate's answer."));
-    if (broken) host.appendChild(el("p", "lb-banner", "The saved answers could not be read, so only unanswered questions show. Firstmate must repair the record."));
-    var list = el("div", "asked-list");
-    items.slice(0, ASKED_SHOWN).forEach(function (q) { list.appendChild(askedCard(q)); });
-    host.appendChild(list);
-    if (items.length > ASKED_SHOWN) {
-      var more = el("details", "asked-more");
-      more.setAttribute("data-asked-more", String(items.length - ASKED_SHOWN));
-      more.appendChild(el("summary", "", "Show " + (items.length - ASKED_SHOWN) + " earlier"));
-      var body = el("div", "asked-more-body");
-      items.slice(ASKED_SHOWN).forEach(function (q) { body.appendChild(askedCard(q)); });
-      more.appendChild(body);
-      host.appendChild(more);
-    }
   }
 
   /* A worker's status is always an icon and a word, never colour alone. */
@@ -1215,7 +1138,6 @@ __FM_LIVE_BOARD_DATA__
   }
 
   var host = document.getElementById("lb-projects");
-  paintAsked(payload.asked);
   var active = view.projects.filter(function (p) { return p.active; });
   var quiet = view.projects.filter(function (p) { return !p.active; });
   if (!active.length) {

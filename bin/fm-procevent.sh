@@ -11,7 +11,7 @@
 #   fm-procevent.sh ensure-listening <source-id>
 #   fm-procevent.sh reconcile
 #   fm-procevent.sh classify <result-file>
-#   fm-procevent.sh handled <source-id> <sequence> [--no-answer-needed <reason>]
+#   fm-procevent.sh handled <source-id> <sequence>
 #   fm-procevent.sh retire <source-id> [--if-absent|--if-matches <adapter> -- <argv>...|--if-owner <registration-token>]
 #   fm-procevent.sh sweep-home [--preflight]
 #   fm-procevent.sh binding-retirement-preflight <binding-digest>
@@ -105,12 +105,6 @@
 #            exception: acknowledging the terminal round of a task-owned source
 #            is that board's conclude step, so it also drops the registration
 #            that kept the board with its owner, and reports `retired:` too.
-#            A result not yet handled first passes its adapter's answer gate
-#            (`owes-answer`): when the adapter says the captain is still owed
-#            an answer where the question was asked, this refuses, prints the
-#            adapter's own instruction, and records nothing.
-#            --no-answer-needed <reason> hands the adapter that reason
-#            instead, for a result that asks nothing.
 # retire     Drop a registration, stop a runner this home owns, release the claim.
 #            Idempotent, and still the supported explicit path after a source has
 #            already retired itself on its adapter's terminal verdict. Existing
@@ -400,23 +394,6 @@ adapter_result_is_silent() {  # <adapter> <result-file>
   script=$(adapter_script "$1")
   [ -f "$script" ] && [ ! -L "$script" ] || return 1
   "$script" silent "$2" >/dev/null 2>&1
-}
-
-# Ask the source's own adapter whether a captured result still owes the captain
-# an answer where they asked. Exit 3 is the only refusal, and its output is the
-# instruction to print; a missing adapter, an adapter without the command, an
-# extension result and every other exit let the result be handled, so a broken
-# gate can never wedge acknowledgement. A reason is the caller's statement that
-# no answer is needed, which the adapter records.
-adapter_result_owes_answer() {  # <adapter> <source-id> <sequence> <result-file> [<reason>]
-  local script owner_state
-  fm_procevent_result_extension_load "$4"
-  owner_state=$?
-  [ "$owner_state" -eq 1 ] || return 0
-  script=$(adapter_script "$1")
-  [ -f "$script" ] && [ ! -L "$script" ] || return 0
-  shift
-  "$script" owes-answer "$@" 2>/dev/null
 }
 
 # Ask the adapter whether its autohandled results announce themselves through a
@@ -2103,27 +2080,9 @@ cmd_classify() {
 
 cmd_handled() {
   local id=${1-} seq=${2-} status result='' result_adapter='' conclude=0 registration='' retained=''
-  local owed='' gate=0
-  local -a waiver=()
   fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
   case "$seq" in ''|*[!0-9]*) die "sequence must be a nonnegative integer: $seq" ;; esac
-  case "$#" in
-    2) ;;
-    4) [ "$3" = --no-answer-needed ] || usage
-       case "$4" in *[![:space:]]*) waiver=("$4") ;; *) die "--no-answer-needed needs a reason" ;; esac ;;
-    *) usage ;;
-  esac
-  result="$(fm_procevent_inbox_dir "$STATE")/$id.$seq.result"
-  if ! fm_procevent_is_handled "$STATE" "$id" "$seq" \
-    && result_adapter=$(fm_procevent_result_adapter "$result" 2>/dev/null); then
-    owed=$(adapter_result_owes_answer "$result_adapter" "$id" "$seq" "$result" ${waiver[@]+"${waiver[@]}"}) || gate=$?
-    if [ "$gate" -eq 3 ]; then
-      [ -n "$owed" ] || owed="the captain is still owed an answer for $id $seq"
-      printf '%s\n' "$owed" >&2
-      exit 1
-    fi
-  fi
-  result='' result_adapter=''
+  [ "$#" -eq 2 ] || usage
   owner_lease_refresh
   fm_procevent_source_lock_acquire "$id" || die "cannot lock source: $id"
   if [ "$(source_kind "$id" 2>/dev/null || true)" = task-owned ]; then
