@@ -1,0 +1,7 @@
+board: /tmp/fm-live-board-evidence.Ipj068/lab/data/live-board/board.html
+run-step working: validating (running)   -> In validation | Its work is being reviewed and checked automatically.
+run-step parked: parked at review: 3 finding(s) -> Waiting on review | The automatic review stopped at a step and waits for the worker to go through it.
+run-step parked: parked at test: 1 finding(s) -> Waiting on validation | The automatic review stopped at a step and waits for the worker to go through it.
+run-step working: ci running             -> Checks running | The checks on its pull request are running.
+run-step done: checks green: PR ready for review -> Waiting for a merge | Its pull request is ready and waits to be merged.
+run-step done: run completed             -> (not listed: finished) | 
