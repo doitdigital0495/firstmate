@@ -1,0 +1,20 @@
+== load: 30 busy loops on 10 cpus
+-- new test run 1
+ok - large local snapshot overlaps local reads with byte-identical serial and concurrent projections
+EXIT=0
+-- new test run 2
+ok - large local snapshot overlaps local reads with byte-identical serial and concurrent projections
+EXIT=0
+-- new test run 3
+ok - large local snapshot overlaps local reads with byte-identical serial and concurrent projections
+EXIT=0
+-- base test run 1
+ok - large local snapshot overlaps local reads with byte-identical serial and concurrent projections
+EXIT=0
+-- base test run 2
+ok - large local snapshot overlaps local reads with byte-identical serial and concurrent projections
+EXIT=0
+-- base test run 3
+ok - large local snapshot overlaps local reads with byte-identical serial and concurrent projections
+EXIT=0
+ 15:16:54 up 2 days,  5:27, 16 users,  load average: 47.80, 32.16, 23.75
