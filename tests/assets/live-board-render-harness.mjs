@@ -52,6 +52,8 @@
 //           links:[{href,text}],close,text}}}],
 //       environments:null|{mode,say,strips:[{repo,status,why,notes:[],
 //         cells:[{name,kind,label,last,waiting,wait,titles:[],direct}]}]}}],
+//     running:{title,none,rows:[{key,title,project,doing,stage,home,asOf}],text},
+//     delivery:{title,none,rows:[{project,registration,mode,approval,flags,home,asOf}]},
 //     headings: every second-level heading the page built, in any of its parts,
 //     statusOutsideLanes: how many worker statuses sit outside a project's lanes,
 //     idle.timelines:{<name>:timeline}, idle.environments:{<name>:environments},
@@ -96,7 +98,7 @@ class Node {
   }
 }
 
-const ids = ["lb-root", "lb-home", "lb-fresh", "lb-banner", "lb-stats", "lb-toc", "lb-asked", "lb-notes", "lb-projects", "lb-tray", "lb-foot"];
+const ids = ["lb-root", "lb-home", "lb-fresh", "lb-banner", "lb-stats", "lb-toc", "lb-asked", "lb-running", "lb-delivery", "lb-notes", "lb-projects", "lb-tray", "lb-foot"];
 const byId = new Map();
 const data = new Node("script");
 data.textContent = html.split('<script id="live-board-data" type="application/json">')[1].split("</script>")[0];
@@ -456,6 +458,33 @@ console.log(JSON.stringify({
       more: more ? Number(more.getAttribute("data-asked-more")) : 0,
       items: host.find((c) => c.getAttribute("data-qa") !== null).map((q) => ({ ...askedOf(q), folded: folded.has(q) })) };
   })(byId.get("lb-asked")),
+  running: ((box) => ({
+    title: text(box.children[0]),
+    none: box.find((c) => c.hasClass("lane-none")).map(text)[0] || null,
+    rows: box.find((c) => c.getAttribute("data-running-worker") !== null).map((w) => ({
+      key: w.getAttribute("data-running-worker"),
+      title: text(w.find((c) => c.hasClass("w-title"))[0]),
+      project: text(w.find((c) => c.hasClass("running-project"))[0]),
+      doing: text(w.find((c) => c.hasClass("w-note"))[0]),
+      stage: marked(w, "data-running-stage"),
+      home: w.find((c) => c.hasClass("running-home")).map(text)[0] || null,
+      asOf: w.find((c) => c.hasClass("b-warn") && c.getAttribute("data-running-stage") === null).map(text)[0] || null,
+    })),
+    text: text(box),
+  }))(byId.get("lb-running")),
+  delivery: ((box) => ({
+    title: text(box.children[0]),
+    none: box.find((c) => c.hasClass("lane-none")).map(text)[0] || null,
+    rows: box.find((c) => c.getAttribute("data-delivery-project") !== null).map((p) => ({
+      project: p.getAttribute("data-delivery-project"),
+      registration: text(p.find((c) => c.hasClass("running-project"))[0]),
+      mode: text(p.find((c) => c.hasClass("delivery-mode"))[0]),
+      approval: text(p.find((c) => c.hasClass("delivery-approval"))[0]),
+      flags: p.find((c) => c.hasClass("w-note") && !c.hasClass("delivery-approval")).map(text),
+      home: p.find((c) => c.hasClass("running-home")).map(text)[0] || null,
+      asOf: p.find((c) => c.hasClass("b-warn")).map(text)[0] || null,
+    })),
+  }))(byId.get("lb-delivery")),
   headings: everywhere.filter((n) => n.tagName === "H2").map(text),
   statusOutsideLanes: everywhere.filter((n) => n.getAttribute("data-worker-status") !== null).length
     - root.find((c) => c.getAttribute("data-lane-box") !== null)

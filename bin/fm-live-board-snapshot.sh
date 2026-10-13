@@ -36,7 +36,11 @@
 # No Bearings caps apply; counts are exact for the local structured inventory.
 # Unstructured work, missing registry, inventory gaps and uncollected other homes
 # are explicit. registered_homes lists each registered secondmate home in the
-# input as {key,id,label,status,reason,collected_at_epoch,workers[],queued[]}:
+# input as {key,id,label,status,reason,collected_at_epoch,projects[],workers[],queued[]}:
+# projects lists its registered and observed projects as {name,registration},
+# with the same posture as a local project's registration. That posture comes
+# only from fm-project-mode.sh --list-json: {name,mode,yolo,recognised,annotation,flags},
+# never a task's chosen delivery mode. A missing registration is null.
 # status is collected, stale, remote, invalid or unreadable, workers are that
 # home's tasks that have a worker and queued its queued tasks that have none,
 # both in the same shape as a project's tasks and projected from that home's

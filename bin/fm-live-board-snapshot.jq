@@ -107,6 +107,7 @@ def home_tasks($home_key):
 # worker yet; its question cards stay on its own board. A stale home
 # contributes the same from its last good input, whose age is its own
 # collected_at_epoch.
+def project_registration: {name,mode,yolo,recognised,annotation,flags:(.flags // [])};
 def registered_home($home_key):
   . as $home
   | ([$home_key,$home.id] | tojson) as $key
@@ -118,6 +119,11 @@ def registered_home($home_key):
      reason:(if $read then (if $home.status == "stale" then $home.reason else null end)
        elif $given then "its board input is malformed" else $home.reason end),
      collected_at_epoch:(if $read then $home.input.generated_epoch else null end),
+     projects:(if $read then
+       ([$home.input.registry.projects[].name] + [$rows[].project] | unique)
+       | map(. as $name | {name:$name,
+           registration:([$home.input.registry.projects[] | select(.name == $name) | project_registration][0] // null)})
+       else [] end),
      workers:[$rows[] | select(.worker_present)],
      queued:[$rows[] | select(.state == "queued")]};
 if valid_input then . else error("unsupported or malformed fm-live-board-input.v1") end
@@ -147,7 +153,7 @@ if valid_input then . else error("unsupported or malformed fm-live-board-input.v
    | ([$questions[] | select(.project == $name)]
       | sort_by([.priority // 5,((.hold.set // .since) | date_key) // 1e30,.id,.key])) as $calls
    | {key:([$home_key,$name] | tojson),name:$name,label:($name // "Unassigned"),
-      registration:([$input.registry.projects[] | select(.name == $name) | {name,mode,yolo,recognised,annotation}][0] // null),
+      registration:([$input.registry.projects[] | select(.name == $name) | project_registration][0] // null),
       counts:counts($rows;$calls),tasks:$rows,questions:$calls}]
 | sort_by([(if .counts.urgent_questions > 0 then 0 elif .counts.questions > 0 then 1
     elif any(.tasks[]; .worker_present or .backlog_state == "in_flight") then 2

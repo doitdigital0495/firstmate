@@ -40,14 +40,16 @@ REG
 FM_HOME="$h" "$MODE" --list-json > "$TMP_ROOT/registry.json"
 check "$TMP_ROOT/registry.json" '.present and .duplicates == ["alpha"]
   and (.projects|length == 3)
-  and any(.projects[]; .name == "alpha" and .mode == "no-mistakes-prod-only" and .yolo == "on")
+  and any(.projects[]; .name == "alpha" and .mode == "no-mistakes-prod-only" and .yolo == "on" and .flags == ["preview-on-push"])
   and any(.projects[]; .name == "typo" and .recognised == false and .mode == "no-mistakes" and .yolo == "off")' 'registry enumeration loses registered posture or duplicate disclosure'
 [ "$(FM_HOME="$h" "$MODE" alpha)" = 'no-mistakes on' ] || fail 'mechanical mode mapping changed'
 [ "$(FM_HOME="$h" "$MODE" --raw alpha)" = 'no-mistakes-prod-only on' ] || fail 'raw mapping changed'
 FM_HOME="$h" "$BOARD" > "$TMP_ROOT/portfolio.json"
 check "$TMP_ROOT/portfolio.json" '(.projects|length == 3) and .counts.open_tasks == 0
   and any(.warnings[]; .kind == "duplicate-project-registration")
-  and any(.warnings[]; .kind == "unrecognised-project-posture")' 'idle registry or posture warnings absent'
+  and any(.warnings[]; .kind == "unrecognised-project-posture")
+  and any(.projects[]; .name == "alpha" and .registration.flags == ["preview-on-push"])
+  and any(.projects[]; .name == "beta" and .registration.flags == [])' 'idle registry or posture warnings absent'
 pass 'registry enumeration reuses mechanical posture, preserves idle projects and discloses duplicates'
 
 h=$(home inventory)
