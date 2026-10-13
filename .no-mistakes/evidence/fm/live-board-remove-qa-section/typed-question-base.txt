@@ -1,0 +1,10 @@
+# BASE 3f115f3, same typed question:
+{"lbAsked":null,"payloadKeys":null,"asked":"Your questions and answers11 not answered yet"}
+$ bin/fm-procevent.sh handled lavish-d51887ec5505ebff 1
+not handled: the captain typed on the live board and 1 item has no answer on the board yet (result lavish-d51887ec5505ebff 1).
+  item 1: Is the pilot planned yet?
+Answer each one where it was asked, then mark the result handled:
+  bin/fm-live-board-answer.sh record lavish-d51887ec5505ebff 1 --item 1 --source "<where the answer comes from>" --file <answer.txt>
+Or, when nothing in this result asks for an answer, say why:
+  bin/fm-procevent.sh handled lavish-d51887ec5505ebff 1 --no-answer-needed "<reason>"
+exit=1

@@ -1,0 +1,3 @@
+$ bin/fm-live-board.sh build
+board: /tmp/fm-lab.VxWlgH/data/live-board/board.html
+exit=0

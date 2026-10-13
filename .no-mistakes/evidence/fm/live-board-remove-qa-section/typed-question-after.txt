@@ -1,0 +1,28 @@
+# captain typed a freeform question on the board (captured lavish result lavish-d7dcc3536ca8365c.1)
+$ bin/fm-live-board.sh refresh
+exit=0
+# rendered after refresh:
+{"lbAsked":null,"payloadKeys":["board","refresh_seconds","view"],"headings":["Nothing running and no questions for you"]}
+$ bin/fm-procevent.sh handled lavish-d7dcc3536ca8365c 1 --no-answer-needed 'asks nothing'
+error: process-event state root is not a private directory
+exit=1
+$ bin/fm-procevent.sh handled lavish-d7dcc3536ca8365c 1
+error: process-event state root is not a private directory
+exit=1
+lavish-d7dcc3536ca8365c.1.adapter
+lavish-d7dcc3536ca8365c.1.result
+$ ls bin/fm-live-board-answer.sh
+ls: cannot access 'bin/fm-live-board-answer.sh': No such file or directory
+exit=2
+# (state dir tightened to 0700 as tests/fm-live-board.test.sh make_home does)
+$ bin/fm-procevent.sh handled lavish-d7dcc3536ca8365c 1 --no-answer-needed 'asks nothing'
+Usage:
+  fm-procevent.sh handled <source-id> <sequence>
+           source claim. Terminal rounds are concluded with `handled`. A
+exit=2
+$ bin/fm-procevent.sh handled lavish-d7dcc3536ca8365c 1
+handled: lavish-d7dcc3536ca8365c 1
+exit=0
+lavish-d7dcc3536ca8365c.1.adapter
+lavish-d7dcc3536ca8365c.1.handled
+lavish-d7dcc3536ca8365c.1.result

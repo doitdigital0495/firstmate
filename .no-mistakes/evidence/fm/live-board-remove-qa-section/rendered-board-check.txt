@@ -1,0 +1,14 @@
+# rendered page (harness): element ids, payload keys, headings
+{
+  "lbAsked": null,
+  "payloadKeys": [
+    "board",
+    "refresh_seconds",
+    "view"
+  ],
+  "headings": [
+    "Nothing running and no questions for you"
+  ]
+}
+# published HTML occurrences of lb-asked / "Your questions":
+0

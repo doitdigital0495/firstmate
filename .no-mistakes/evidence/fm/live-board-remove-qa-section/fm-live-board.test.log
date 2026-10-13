@@ -1,0 +1,41 @@
+ok - the board stays off unless a regular, valid, enabled config opts in
+ok - an empty fleet renders its empty state with idle registered projects folded away
+ok - a board whose payload exceeds one environment string still builds and renders
+ok - doing now holds the tasks with a worker, next what starts automatically, charted next what waits, and every task sits in exactly one lane
+ok - each project's Doing now lists its workers one line each with a plain status, and the page has no separate Workers section
+ok - a worker's line is worded from the resolved current state, and one waiting on the captain or finished stays in charted next
+ok - a second mate's workers and queued work sit in their project's lanes, and a home that could not be read is named
+ok - a second mate that could not be read keeps its last good lines marked with their age, and the notes say so
+ok - a review query that never answers still leaves a worker its own reported status
+ok - repository fallback leads with real questions and explained options, then the three lanes
+ok - each card leads with project, what it is about and what it is for; an unexplained one says so and still answers
+ok - a project map groups work under the captain's names; unmatched work and bad maps fall back by repository
+ok - the table of contents lists every card and quiet project in page order, and each entry jumps to its own
+ok - every card collapses and expands from a real button, stays that way across reloads, and a contents jump expands it
+ok - each project shows a timeline of its pull requests, and a merge with a failed run is marked by shape and word
+ok - pointing at or focusing a pull request shows what changed in plain words and whether the runs after its merge succeeded
+ok - pressing a pull request pins its detail with a link to it, across reloads, until it is pressed again or closed
+ok - a project whose merges start no run says so, and a project whose pull requests could not be read is named
+ok - a pull request belongs to the named project its task belongs to
+ok - the pull request read is cached outside the directory Lavish serves
+ok - pull requests are read at most once per interval, and a failed or hung read keeps the last good timeline and says so
+ok - a merge waiting for its runs is drawn as running, and one whose only run was cancelled as replaced
+ok - the newest merge stays on the strip however long ago its pull request was opened
+ok - a project that could not be read says why, and only a read that found nothing says no pull requests were found
+ok - each card shows its environments: the last change in each, its runs, what still waits before it, and unknown with the reason
+ok - environments follow the captain's project names, and a project with no repository says nothing
+ok - an invalid environment list is named in the board notes, and a home without one says nothing about environments
+ok - Queue answer emits one choice with the owner close mode and lifecycle, or plain free text
+ok - the captain picks an option, optionally adds a note and queues; answered cards shrink, keep Change answer and survive a reload
+ok - the page ages its own data from live to stale to out of date
+ok - refresh rebuilds only when due and keeps the last good board on failure
+ok - open serves the board, binds its answers, then arms the source
+ok - answered questions leave the page on the next refresh, and work an answer lets continue moves to its lane
+ok - every project and every lane row says what it is, from its note or hold reason, or says that no explanation is recorded
+ok - a registered second mate's workers and queued work say what they are, and their raw notes stay off the page
+ok - the board has no Q&A section, projection or counts; chat feedback stays readable and can be acknowledged without on-board answers
+ok - a running watcher keeps an enabled board published
+
+real	4m21.748s
+user	0m54.599s
+sys	0m13.074s
