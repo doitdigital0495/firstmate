@@ -60,6 +60,14 @@ a:focus-visible, button:focus-visible, summary:focus-visible, .idle li:focus-vis
 .toc-count { color: var(--gold); font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
 .toc-quiet { color: var(--text-faint); font-size: 0.78rem; white-space: nowrap; }
 .crew-icon { display: inline-flex; flex: none; }
+.running { margin: 0 0 14px; padding: 12px; border: 1px solid var(--line); border-top: 3px solid var(--sea); border-radius: 12px; background: var(--bg-raised); min-width: 0; }
+.running h2 { margin: 0; color: var(--text-strong); font-size: 1.1rem; }
+.running-say { margin: 4px 0 10px; color: var(--text-muted); font-size: 0.85rem; }
+.running-list { display: grid; gap: 8px; list-style: none; padding: 0; margin: 0; }
+.running-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 180px); gap: 6px 14px; align-items: center; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 9px; background: var(--bg-card); min-width: 0; overflow-wrap: anywhere; }
+.running-name { display: grid; gap: 3px; min-width: 0; }
+.running-project, .running-home { color: var(--text-muted); font-size: 0.8rem; }
+.running-row .badge { white-space: normal; justify-self: start; }
 .lb-banner { margin: 0 0 16px; border-radius: 10px; padding: 10px 14px; border: 1px solid #6b3527; background: var(--rust-soft); color: var(--text-strong); }
 .lb-empty { text-align: center; padding: 40px 16px; margin: 0 0 14px; background: var(--bg-raised); border: 1px dashed var(--line); border-radius: 14px; color: var(--text-muted); }
 .lb-empty h2 { color: var(--text-strong); margin: 8px 0 4px; font-size: 1.1rem; }
@@ -226,7 +234,7 @@ textarea.q-note { min-height: 88px; resize: vertical; }
 .lb-notes { margin: 0 0 14px; border: 1px solid var(--line-soft); background: var(--bg-raised); border-radius: 10px; padding: 8px 14px; font-size: 0.85rem; }
 .lb-foot { margin-top: 20px; color: var(--text-faint); font-size: 0.78rem; overflow-wrap: anywhere; }
 @media (max-width: 900px) {
-  .lanes, .w-line { grid-template-columns: minmax(0, 1fr); }
+  .lanes, .w-line, .running-row { grid-template-columns: minmax(0, 1fr); }
   .w-line .w-title, .w-line .w-note { display: block; }
   .w-line .w-when { grid-column: 1; text-align: left; }
 }
@@ -262,6 +270,8 @@ textarea.q-note { min-height: 88px; resize: vertical; }
   <section class="lb-stats" id="lb-stats" aria-label="Totals"></section>
   <nav class="lb-toc" id="lb-toc" aria-label="Table of contents" hidden></nav>
   <div id="lb-tray" aria-live="polite"></div>
+  <section class="running" id="lb-running" aria-labelledby="lb-running-name"></section>
+  <section class="running" id="lb-delivery" aria-labelledby="lb-delivery-name"></section>
   <div id="lb-projects"></div>
   <div id="lb-notes"></div>
   <p class="lb-foot" id="lb-foot"></p>
@@ -640,6 +650,67 @@ __FM_LIVE_BOARD_DATA__
     var icon = el("span", "crew-icon");
     icon.innerHTML = CREW_ICON[status] || "";
     return icon;
+  }
+  function paintDelivery() {
+    var box = document.getElementById("lb-delivery");
+    var projects = view.delivery || [];
+    var name = el("h2", "", "Project delivery and merging");
+    name.setAttribute("id", "lb-delivery-name");
+    box.appendChild(name);
+    box.appendChild(el("p", "running-say", "Registered settings for each project, including those with no work running. A particular task may use a different route."));
+    if (!projects.length) {
+      box.appendChild(el("p", "lane-none", "No projects were found. See the board notes if the project list could not be read."));
+      return;
+    }
+    var list = el("ul", "running-list");
+    projects.forEach(function (p) {
+      var row = el("li", "running-row");
+      row.setAttribute("data-delivery-project", p.project);
+      var project = el("div", "running-name");
+      project.appendChild(el("b", "w-title", p.project));
+      project.appendChild(el("span", "running-project", p.registration));
+      if (p.home) project.appendChild(el("span", "running-home", "Second mate: " + p.home));
+      if (p.home_as_of) project.appendChild(badge("b-warn", p.home_as_of));
+      row.appendChild(project);
+      var route = el("div", "running-name");
+      route.appendChild(el("span", "delivery-mode", p.mode));
+      (p.flags || []).forEach(function (flag) { route.appendChild(el("span", "w-note", flag)); });
+      row.appendChild(route);
+      row.appendChild(el("span", "delivery-approval w-note", p.approval));
+      list.appendChild(row);
+    });
+    box.appendChild(list);
+  }
+  function paintRunning() {
+    var box = document.getElementById("lb-running");
+    var workers = view.workers || [];
+    var name = el("h2");
+    name.setAttribute("id", "lb-running-name");
+    name.appendChild(el("span", "", "Running workers"));
+    name.appendChild(el("span", "lane-count", " · " + workers.length));
+    box.appendChild(name);
+    box.appendChild(el("p", "running-say", "Across all projects, including workers waiting for checks or a decision. Stopped or unreadable workers stay visible until their work is finished."));
+    if (!workers.length) {
+      box.appendChild(el("p", "lane-none", "No running workers were found. See the board notes if any work could not be read."));
+      return;
+    }
+    var list = el("ul", "running-list");
+    workers.forEach(function (w) {
+      var row = el("li", "running-row");
+      row.setAttribute("data-running-worker", w.key);
+      var task = el("div", "running-name");
+      task.appendChild(el("b", "w-title", w.title));
+      task.appendChild(el("span", "running-project", "Project: " + w.project));
+      if (w.home) task.appendChild(el("span", "running-home", "Second mate: " + w.home));
+      if (w.home_as_of) task.appendChild(badge("b-warn", w.home_as_of));
+      row.appendChild(task);
+      row.appendChild(el("span", "w-note", w.doing));
+      var stage = badge(CREW_BADGE[w.status] || "b-warn", w.stage);
+      stage.setAttribute("data-running-stage", "");
+      row.appendChild(stage);
+      list.appendChild(row);
+    });
+    box.appendChild(list);
   }
   /* The view decides each task's lane, its reason, and a worker's status and
      words. A Doing now row is one line per worker: status, task, what it is
@@ -1138,6 +1209,8 @@ __FM_LIVE_BOARD_DATA__
   }
 
   var host = document.getElementById("lb-projects");
+  paintRunning();
+  paintDelivery();
   var active = view.projects.filter(function (p) { return p.active; });
   var quiet = view.projects.filter(function (p) { return !p.active; });
   if (!active.length) {

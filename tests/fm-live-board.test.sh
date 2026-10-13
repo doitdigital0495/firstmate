@@ -134,8 +134,9 @@ check "$out" '.empty != null and (.empty | test("Nothing running"))
   and .stats.questions == 0 and .stats.doing == 0 and .stats.next == 0 and .stats.charted == 0
   and .tray == null and .freshness == "live"' \
   "an empty fleet did not render the explicit empty state"
-check "$out" '(.headings | any(test("^Workers")) | not) and .statusOutsideLanes == 0' \
-  "a page with no workers rendered a Workers section of its own"
+check "$out" '.running.title == "Running workers · 0" and .running.rows == []
+  and (.running.none | test("No running workers were found")) and .statusOutsideLanes == 0' \
+  "a page with no workers did not show the separate section with an explicit empty state"
 check "$out" '.toc.hidden == false and .toc.summary == "Contents · 1 project" and (.toc.entries | map(.name)) == ["quiet"]
   and .toc.entries[0].target == {"kind":"quiet","name":"quiet"}' \
   "a page with only a quiet project did not list it in the table of contents"
@@ -154,6 +155,42 @@ check "$(render "$home")" '(.projects | map(.label)) == ["big"] and .idle == nul
   and (.projects[0].lanes.next | .count == 2 and (.cards | map(.id)) == ["big-a","big-b"])' \
   "a large board lost its waiting work"
 pass "a board whose payload exceeds one environment string still builds and renders"
+
+# --- Registered delivery and merge approval, including idle repositories --------
+home=$(make_home delivery)
+printf '%s\n' \
+  '- checked [no-mistakes] - fixture (added 2026-01-01)' \
+  '- direct [direct-PR +yolo preview-on-push branch=work/] - fixture (added 2026-01-01)' \
+  '- local [local-only] - fixture (added 2026-01-01)' \
+  '- product [no-mistakes-prod-only +yolo] - fixture (added 2026-01-01)' \
+  '- legacy - fixture (added 2026-01-01)' \
+  '- typo [unknown-mode +yolo] - fixture (added 2026-01-01)' > "$home/data/projects.md"
+tasks_in "$home" add dl-unregistered "Investigate the new shop" --repo unregistered --kind scout
+# A metadata path and a registry name can refer to the same repository.
+worker "$home" dl-path busy "project=$home/projects/direct"
+printf '%s\n' '{"schema":"fm-live-board-projects.v1","projects":[{"name":"Combined work","match":[{"repo":"checked"},{"repo":"direct"}]}]}' \
+  > "$home/config/live-board-projects.json"
+in_home "$home" "$LIVE" build >/dev/null || fail "the delivery list board did not build"
+for screen in '!screen=wide' '!screen=narrow'; do
+  out=$(render "$home" "" "$screen") || fail "the delivery list failed to render"
+  check "$out" '.delivery.title == "Project delivery and merging" and .delivery.none == null
+    and (.delivery.rows | map(.project)) == ["checked","direct","legacy","local","product","typo","unregistered"]
+    and (.delivery.rows | all(.home == null and .asOf == null))
+    and (.delivery.rows[0] | .mode == "No-mistakes" and .approval == "Your approval required to merge")
+    and (.delivery.rows[1] | .mode == "Direct PR" and .approval == "Automatic merging when checks pass"
+      and .flags == ["Preview builds when changes are published"] and .registration == "Registered")
+    and (.delivery.rows[2] | .mode == "No-mistakes" and .registration == "Registered")
+    and (.delivery.rows[3].mode == "Local only")
+    and (.delivery.rows[4] | .mode == "No-mistakes for product work; Direct PR for internal work"
+      and .approval == "Automatic merging when checks pass")
+    and (.delivery.rows[5] | .registration == "Unrecognized setting; using defaults"
+      and .mode == "No-mistakes" and .approval == "Your approval required to merge")
+    and (.delivery.rows[6] | .registration == "Unregistered"
+      and .mode == "No-mistakes" and .approval == "Your approval required to merge")
+    and (.delivery.rows | tostring | test("dl-unregistered|branch=|preview-on-push|yolo|pipeline") | not)' \
+    "the project delivery list lost a registered setting, an idle project, or the unregistered defaults"
+done
+pass "the delivery section lists every project, its registered route, merge approval and preview setting on desktop and phone"
 
 # --- Three lanes: doing now, next, charted next -------------------------------
 home=$(make_home lanes)
@@ -232,13 +269,23 @@ check "$out" '.projects[0].lanes.doing.cards
     and (.[3] | (.note | test("^waiting for the supplier")) and (.when | test("^for [0-9]+s$")))
     and all(.home == null and .links == [] and .hints == [.title,.note])' \
   "a worker's line did not say in one sentence what it is doing, with its status and how long"
-check "$out" '(.headings | any(test("^Workers")) | not) and .statusOutsideLanes == 0
+check "$out" '.running.title == "Running workers · 4" and .statusOutsideLanes == 0
+  and (.running.rows | map(.title)) == ["Build the new checkout","Fix the payment error","Speed up search","Wait for the supplier release"]
+  and (.running.rows | all(.project == "Project: shop" and .home == null and .asOf == null
+    and (.doing | length > 0) and (.stage | length > 0)))
+  and (.running.rows[0] | .doing == "wiring the basket into the new checkout page" and .stage == "Doing the work")
+  and (.running.rows[1].stage == "Needs help") and (.running.rows[2].stage == "Stopped or status unknown")
+  and (.running.rows[3].stage == "Waiting outside the team")
+  and (.running.text | test("ln-[a-z]|run-step|status-log|harness|pipeline|herdr|/projects/|wt-|[0-9]+%") | not)
   and ([.projects[].lanes[].cards[] | select(.status != null)] | length) == 4
   and ([.projects[].text] | join(" ") | test("ln-[a-z]|run-step|status-log|\\bpane\\b|herdr|/projects/|wt-") | not)' \
-  "the page kept a Workers section of its own, or a worker line leaked an internal label"
+  "the running workers section lost an unfinished worker, included finished work, or leaked an internal label"
 check "$(render "$home" "" '!screen=narrow')" '.projects[0].lanes.doing | .count == 4 and .more == 0 and (.cards | all(.folded | not))' \
   "a phone-width page did not show every worker line"
-pass "each project's Doing now lists its workers one line each with a plain status, and the page has no separate Workers section"
+check "$(render "$home" "" '!screen=narrow' '!fold=shop' '!reload')" '.projects[0].collapsed
+  and .running.title == "Running workers · 4" and (.running.rows | length == 4)' \
+  "collapsing a project or reloading on a phone hid the separate running workers section"
+pass "the separate running workers section lists every unfinished worker with its task, project, activity and stage, including on a phone"
 
 # Each status words the current state the snapshot already resolved.
 in_home "$home" "$ROOT/bin/fm-fleet-snapshot.sh" --live-board-input > "$TMP_ROOT/crew-input.json" \
@@ -249,7 +296,8 @@ crew_row() {  # <jq edit of the collected input> -> the ln-doing task's row in i
     | jq -c -L "$ROOT/bin" 'include "fm-live-board-projects";
         lb_view(null) | [.projects[].lanes[][]] as $rows
         | [$rows[] | select(.id == "ln-doing")] as $own
-        | $own[0] + {placed:($own | length),rows:($rows | length),with_status:([$rows[] | select(.status != null)] | length),
+        | $own[0] + {running:([.workers[] | select(.id == "ln-doing")][0]),
+            placed:($own | length),rows:($rows | length),with_status:([$rows[] | select(.status != null)] | length),
             doing:([.projects[].lanes.doing[]] | length)}'
 }
 # A status that puts the task in Doing now is that line's status; the other two
@@ -294,11 +342,46 @@ check "$(crew_row "$held | (.tasks[] | select(.id == \"ln-doing\") | .current_st
 check "$(crew_row "$held")" '.lane == "doing" and .status == "working"' "a working worker lost its line to a question on its task"
 pass "a worker's line is worded from the resolved current state, and one waiting on the captain or finished stays in charted next"
 
+# The fleet-wide section includes decision waits even outside Doing now, uses
+# authoritative stages over old reports, and never guesses a completion percent.
+while IFS='|' read -r state source detail stage; do
+  got=$(crew_row "(.tasks[] | select(.id == \"ln-doing\") | .current_state)
+    |= . + {state:\"$state\",source:\"$source\",detail:\"$detail\"}") || fail "could not project stage $stage"
+  check "$got" ".running.stage == \"$stage\" and .running.project == \"shop\"
+    and (.running.doing | length > 0) and (.running | has(\"percent\") | not)
+    and (.running.doing | test(\"run-step|status-log|pipeline|harness|no-mistakes|parked at|validating|[0-9]+%\") | not)" \
+    "the running worker did not show its real stage $stage in plain words"
+done <<'STAGES'
+working|pane|harness busy (claude-hook)|Doing the work
+working|run-step|validating (running)|In validation
+working|run-step|validating (fixing)|In validation
+working|run-step|ci running|Checks running
+parked|run-step|parked at review: 3 finding(s)|Waiting on review
+parked|run-step|parked at test: 1 finding(s)|Waiting on validation
+parked|run-step|parked at review: 1 finding(s) · ask-user: authority decision|Waiting for a decision
+parked|status-log|which courier should we use for the launch|Waiting for a decision
+paused|status-log|waiting for the supplier to publish their release|Waiting outside the team
+done|run-step|checks green: PR ready for review|Waiting for a merge
+blocked|status-log|the payment sandbox keeps refusing our test card|Needs help
+failed|run-step|run failed|Work failed
+unknown|none|backend target gone|Stopped or status unknown
+STAGES
+check "$(crew_row '(.tasks[] | select(.id == "ln-doing") | .current_state) |= . + {state:"done",source:"run-step",detail:"run completed"}')" \
+  '.running == null' "a finished worker remained in the running workers section"
+check "$(crew_row '(.tasks[] | select(.id == "ln-doing") | .last_meaningful_event.note) = "no-mistakes pipeline running in the worktree with the claude harness"')" \
+  '.running.doing == "A worker is doing this now."' "the running worker activity leaked operational jargon"
+check "$(crew_row "$held | (.tasks[] | select(.id == \"ln-doing\") | .current_state) |= . + {state:\"paused\",source:\"status-log\"}")" \
+  '.running.stage == "Waiting for a decision" and .running.doing == "Waiting for an answer before work can continue."' \
+  "a worker waiting for the captain vanished from the running workers section"
+pass "fleet-wide worker stages reuse resolved current state, retain decision waits, omit finished work and invent no percentages"
+
 # A second mate's workers and queued work join their project's lanes, named as its.
 home=$(make_home crew)
 mate=$(make_home crew-mate)
 mkdir -p "$mate/bin"
 printf '# Firstmate fixture\n' > "$mate/AGENTS.md"
+printf '%s\n' '- desk [direct-PR +yolo preview-on-push] - fixture (added 2026-01-01)' \
+  '- handbook [local-only] - fixture (added 2026-01-01)' > "$mate/data/projects.md"
 printf 'ai-desk\n' > "$mate/.fm-secondmate-home"
 printf -- '- shop [no-mistakes] - fixture (added 2026-01-01)\n' > "$home/data/projects.md"
 printf -- '- ai-desk - fixture (home: %s; scope: fixture; projects: desk; added 2026-07-11)\n- lost-desk - fixture (home: %s/no-such-home; scope: fixture; projects: desk; added 2026-07-11)\n' \
@@ -326,12 +409,20 @@ check "$out" '(.projects | map(.label)) == ["Help desk","shop"] and .stats == (.
       ["cr-wrap","Finished, cleanup pending","Second mate: Ai desk"]])
   and .projects[0].status == "1 with a worker, 1 starting automatically, 2 not starting on their own"
   and (.projects[1].lanes.doing.cards | map([.id,.status,.home])) == [["cr-own","working",null]]
-  and (.headings | any(test("^Workers")) | not) and .statusOutsideLanes == 0
+  and .running.title == "Running workers · 2" and .statusOutsideLanes == 0
+  and (.running.rows | map([.title,.project,.home,.stage])) == [["Answer the refund question","Project: Help desk","Second mate: Ai desk","Doing the work"],
+    ["Build the new checkout","Project: shop",null,"Doing the work"]]
+  and (.running.rows | map(.key) | unique | length == 2)
   and ([.projects[].text] | join(" ") | test("cr-[a-z]|crew-mate|no-such-home") | not)' \
   "a second mate's workers and queued work did not join their project's lanes under its name"
 check "$out" '(.notes | index("The work of second mate Lost desk is not shown: its registration could not be checked.") != null)
   and (.notes | any(test("Workers list|this home.s work only")) | not)' \
   "a second mate whose home could not be read was not named in the board notes"
+check "$out" '.delivery.rows | map([.project,.mode,.approval,.home]) == [
+  ["desk","Direct PR","Automatic merging when checks pass","Second mate: Ai desk"],
+  ["handbook","Local only","Your approval required to merge","Second mate: Ai desk"],
+  ["shop","No-mistakes","Your approval required to merge",null]]' \
+  "the delivery list lost a secondmate project or read its posture from the wrong home"
 pass "a second mate's workers and queued work sit in their project's lanes, and a home that could not be read is named"
 
 # A second mate whose home stops reading keeps the lines of its last good read,
@@ -352,6 +443,10 @@ check "$out" '(.projects | map(.label)) == ["Help desk","shop"]
 check "$out" '(.notes | index("The work of second mate Ai desk is shown as of 7 minutes ago, from its last good read: the read failed or took too long this time.") != null)
   and (.notes | any(test("Ai desk is not shown")) | not)' \
   "the board notes did not say a second mate's work is its last good read"
+check "$out" '(.running.rows | map([.project,.asOf])) == [["Project: Help desk","as of 7 minutes ago"],["Project: shop",null]]' \
+  "a stale secondmate worker was presented as current in the fleet-wide section"
+check "$out" '(.delivery.rows | map(.asOf)) == ["as of 7 minutes ago","as of 7 minutes ago",null]' \
+  "stale secondmate delivery settings were presented as current"
 rmdir "$mate/state/broken.meta"
 in_home "$home" env FM_SNAPSHOT_NOW_EPOCH="$((base + 480))" "$LIVE" build >/dev/null || fail "a board whose second mate reads again did not build"
 out=$(render "$home")

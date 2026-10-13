@@ -296,6 +296,29 @@ def lb_worker_since:
      at_is_since:($at != null and .current_state.source == "status-log"
        and {"working":"working","needs-decision":"parked","blocked":"blocked","paused":"paused",
             "done":"done","failed":"failed"}[$event.verb // ""] == .current_state.state)};
+# Fleet-wide stages word only the resolved current state, never a guessed
+# percentage or an old report. The per-project status rules stay unchanged.
+def lb_worker_stage($status):
+  if $status == "working" then "Doing the work"
+  elif $status == "validation" then
+    (if .current_state.state == "parked" then
+       (if .current_state.detail | startswith("parked at review") then "Waiting on review"
+        else "Waiting on validation" end)
+     else "In validation" end)
+  elif $status == "merge" then
+    (if .current_state.state == "working" then "Checks running" else "Waiting for a merge" end)
+  elif $status == "you" then "Waiting for a decision"
+  elif $status == "external" then "Waiting outside the team"
+  elif .current_state.state == "blocked" then "Needs help"
+  elif .current_state.state == "failed" then "Work failed"
+  else "Stopped or status unknown" end;
+# Reuse Doing now's sentence, but keep operational jargon out of this section.
+def lb_running_doing($status; $ids):
+  if $status == "you" then "Waiting for an answer before work can continue."
+  else lb_worker_doing($status; $ids) as $say
+    | if $say | test("\\b(no-mistakes|pipeline|harness|run-step|status-log|worktree|daemon|tmux|herdr|codex|claude|opencode|pi|gate|axi|awaiting_approval|fix_review|checks-passed)\\b"; "i")
+      then lb_worker_say($status) else $say end
+  end;
 def lb_home_name: gsub("[-_.]+"; " ") | (.[:1] | ascii_upcase) + .[1:];
 def lb_home_unread_why:
   if .status == "remote" then "that home is on another machine"
@@ -309,6 +332,18 @@ def lb_as_of($seconds):
     else lb_plural($seconds / 86400 | round; "day"; "days") end) + " ago";
 def lb_home_as_of($board):
   if .status == "stale" then lb_as_of(($board.collected_at_epoch // 0) - (.collected_at_epoch // 0)) else null end;
+
+# Delivery posture is registered per repository, not per named project group
+# or per task. Both sections consume the same snapshot, including idle projects.
+def lb_delivery_row($home; $as_of):
+  .registration as $r
+  | {project:(.name | lb_repo // "Unassigned"),home:$home,home_as_of:$as_of,
+     registration:(if $r == null then "Unregistered"
+       elif $r.recognised == false then "Unrecognized setting; using defaults" else "Registered" end),
+     mode:({"no-mistakes":"No-mistakes","direct-PR":"Direct PR","local-only":"Local only",
+            "no-mistakes-prod-only":"No-mistakes for product work; Direct PR for internal work"}[$r.mode // "no-mistakes"] // "No-mistakes"),
+     approval:(if $r.yolo == "on" then "Automatic merging when checks pass" else "Your approval required to merge" end),
+     flags:[($r.flags // [])[] | select(. == "preview-on-push") | "Preview builds when changes are published"]};
 
 def lb_view($map):
 . as $board
@@ -487,4 +522,18 @@ def lb_view($map):
          else "The work of second mate \(.label | lb_home_name) is not shown: \(lb_home_unread_why)." end),
      ($board.warnings // [] | map(select(.kind != "question-needs-owner-review")) | group_by(.kind)[]
        | "\(length) board warning\(if length == 1 then "" else "s" end) for Firstmate: \(.[0].kind | gsub("-"; " "))")],
+   workers:([$placed[] | . as $p | .task as $t | select($t.worker_present)
+     | ($t | lb_worker_status) as $status | select($status != "finished")
+     | {key:$t.key,id:$t.id,title:($t.title | lb_title($ids) // "Untitled work"),
+        project:([$groups[] | select(.key == $p.key) | .name][0]),
+        home:$p.home,home_as_of:$p.as_of,status:$status,
+        doing:($t | lb_running_doing($status; $ids)),stage:($t | lb_worker_stage($status))}]
+     | sort_by([(.project | ascii_downcase), .title, .key])),
+   delivery:([$board.projects[] | lb_delivery_row(null; null)]
+     + [$homes[] | (.label | lb_home_name) as $home | lb_home_as_of($board) as $as_of
+        | .projects[]? | lb_delivery_row($home; $as_of)]
+     | group_by([.project,.home])
+     | map((map(select(.registration == "Registered"))[0]
+         // map(select(.registration != "Unregistered"))[0] // .[0]))
+     | sort_by([(.project | ascii_downcase), .home // ""])),
    projects:$groups};

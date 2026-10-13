@@ -83,10 +83,21 @@
 # Doing now is as wide as the card and lists every line; Next and Charted next
 # sit side by side under it, show three cards and fold the rest.
 #
-# WORKERS. The page has no separate worker list: a task that has a worker is a
-# line in its project's Doing now, in this home and in each registered
-# secondmate home the snapshot read (bin/fm-live-board-snapshot.sh's header
-# owns `registered_homes`). A second mate's workers and its queued work that
+# WORKERS. A top-level Running workers section lists unfinished workers across
+# all projects, from this home and each registered secondmate home the snapshot
+# already read (bin/fm-live-board-snapshot.sh's header owns `registered_homes`).
+# Each row has the task title, its named project, what it is doing now, and a
+# plain stage from the resolved current state: doing the work, in validation,
+# waiting on review or validation, checks running, waiting for a merge or a
+# decision, an outside wait, or needing help. Stopped and unreadable workers
+# remain visible with that uncertainty; finished workers are omitted, except
+# those whose pull request still waits for a merge. Stale secondmate rows keep
+# their last-good-read age, and unavailable homes stay named in the board notes.
+# The state supplies no measurable completion fraction, so no percentage is
+# invented. `lb_worker_stage` and `lb_running_doing` word these rows in
+# bin/fm-live-board-projects.jq; the page adds no state read. The existing
+# per-project lanes are unchanged: a task that has a worker remains a line in
+# its project's Doing now by the LANES rule. A second mate's workers and its queued work that
 # has no worker yet sit in their project's lanes by the LANES rule, each
 # marked with that second mate's name; its questions stay on its own board.
 # Each worker has exactly one plain status, and `lb_worker_status` in
@@ -117,6 +128,19 @@
 # empty. One that was not read in time keeps the lines of its last good read,
 # each marked "as of N minutes ago" beside its second mate's name, and the
 # board notes say so; only a home never read before is named as not shown.
+#
+# DELIVERY. A compact Project delivery and merging section lists every
+# registered or observed repository, including idle projects and those from
+# collected or stale secondmate homes, with its registered delivery route,
+# merge approval setting, and whether publishing changes builds a preview.
+# It reads only the snapshot's registration, already collected through
+# fm-project-mode.sh --list-json, never a task's delivery choice or a second
+# registry reader. Unregistered projects are labelled and show the defaults:
+# No-mistakes, with the captain's approval required to merge. Unrecognized
+# settings also show those defaults, with their warning. Named project groups
+# can span repositories with different settings, so this list uses repository
+# names rather than merging their policies. A stale home's entries keep their
+# last-good-read age; homes not read stay named in the board notes.
 #
 # EXPLANATIONS. Every project and every lane card carries a "What this is"
 # line, folded to one line and expanding to name its source: the task's own
