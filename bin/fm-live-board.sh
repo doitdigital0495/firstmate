@@ -9,12 +9,12 @@
 #
 # The live board is a separate captain-facing browser page, never a Bearings
 # mode: the shipped dark template (bin/fm-live-board-template.html) plus one
-# injected payload {refresh_seconds, board, view, asked}, where board is exactly one
+# injected payload {refresh_seconds, board, view}, where board is exactly one
 # `fm-live-board-snapshot.sh --json` document (schema fm-live-board.v1) less its
 # per-repository pull request lists and each task's about, and view is the whole document's
 # fm-live-board-view.v1 grouping into the captain's named projects (see
-# PROJECTS), carrying the pull requests each project shows, and asked is the
-# `fm-live-board-answer.sh list` document (see QUESTIONS). The snapshot owns every fact; bin/fm-live-board-projects.jq owns
+# PROJECTS), carrying the pull requests each project shows.
+# The snapshot owns every fact; bin/fm-live-board-projects.jq owns
 # the grouping, ordering and captain-facing wording; this script reads no other
 # home state and the page computes nothing beyond display and local freshness.
 #
@@ -148,15 +148,6 @@
 # hold reason, and for a project its description in the project map. With none
 # it reads "No explanation recorded yet", and the board notes count such
 # cards. `lb_explain` in bin/fm-live-board-projects.jq is the one rule.
-#
-# QUESTIONS. Whatever the captain types on the page that is not a keyed answer
-# is a question answered on the page. "Your questions and answers", under the
-# table of contents, lists each newest first with its answer, when it was answered and
-# its source, or "Not answered yet"; it shows five and folds the rest, and is
-# absent while nothing was ever asked. bin/fm-live-board-answer.sh's header
-# owns the record, how an answer is recorded, when a question counts as open
-# and the rule that its result cannot be marked handled without an answer. A
-# list that cannot be read is shown as unreadable, never as nothing asked.
 #
 # ANSWERS. A question card offers answer controls when the snapshot marks it
 # answerable with owner-authored context (bin/fm-captain-hold.sh owns that
@@ -366,7 +357,7 @@ refresh_prs() {
 }
 
 build_board() {  # <refresh-seconds>
-  local refresh=$1 board tmp snap asked json extracted map
+  local refresh=$1 board tmp snap json extracted map
   local -a prs=()
   command -v jq >/dev/null 2>&1 || fail "jq is required"
   [ -f "$TEMPLATE" ] && [ ! -L "$TEMPLATE" ] || fail "board template is missing: $TEMPLATE"
@@ -377,23 +368,18 @@ build_board() {  # <refresh-seconds>
   (umask 077; mkdir -p "${board%/*}") || fail "cannot create ${board%/*}"
   snap=$(umask 077; mktemp "${board%/*}/.snapshot.XXXXXX") || fail "cannot stage the snapshot"
   tmp=$(umask 077; mktemp "${board%/*}/.board.XXXXXX") || { rm -f -- "$snap"; fail "cannot stage the board"; }
-  asked=$(umask 077; mktemp "${board%/*}/.asked.XXXXXX") || { rm -f -- "$snap" "$tmp"; fail "cannot stage the questions"; }
   # shellcheck disable=SC2064 # Expand the staged paths now; they are fixed.
-  trap "rm -f -- '$snap' '$tmp' '$asked'" EXIT
+  trap "rm -f -- '$snap' '$tmp'" EXIT
   refresh_prs
   [ ! -f "$PRS_FILE" ] || [ -L "$PRS_FILE" ] || prs=(--prs "$PRS_FILE")
   if ! fm_run_timed "$BUILD_TIMEOUT" "$SCRIPT_DIR/fm-live-board-snapshot.sh" --json ${prs[@]+"${prs[@]}"} > "$snap"; then
     fail "the live-board snapshot failed or exceeded ${BUILD_TIMEOUT}s; the previous board is unchanged"
   fi
   map=$(project_map_json)
-  # A question list that cannot be read is shown as such, never as none asked.
-  { "$SCRIPT_DIR/fm-live-board-answer.sh" list > "$asked" 2>/dev/null \
-      && jq -e '.schema == "fm-live-board-questions.v1" and (.items | type == "array")' "$asked" >/dev/null 2>&1; } \
-    || printf '{"schema":"fm-live-board-questions.v1","status":"unreadable","items":[]}\n' > "$asked"
-  json=$(jq -c -L "$SCRIPT_DIR" --argjson refresh "$refresh" --argjson map "$map" --slurpfile asked "$asked" '
+  json=$(jq -c -L "$SCRIPT_DIR" --argjson refresh "$refresh" --argjson map "$map" '
     include "fm-live-board-projects";
     if .schema == "fm-live-board.v1" and (.projects | type == "array")
-    then {refresh_seconds:$refresh, asked:$asked[0], view:lb_view($map),
+    then {refresh_seconds:$refresh, view:lb_view($map),
       board:(del(.projects[].tasks[].about, (.registered_homes[] | .workers[], .queued[]? | .about))
         | if (.pull_requests.repos | type) == "array" then .pull_requests.repos |= map(del(.prs)) else . end)}
     else error("not fm-live-board.v1") end' "$snap" 2>/dev/null) \
@@ -413,7 +399,7 @@ build_board() {  # <refresh-seconds>
   printf '%s\n' "$extracted" | jq -e '.board.schema == "fm-live-board.v1" and .view.schema == "fm-live-board-view.v1"' >/dev/null 2>&1 \
     || fail "the built board does not carry a readable fm-live-board.v1 payload"
   { chmod 0600 "$tmp" && mv -f -- "$tmp" "$board"; } || fail "cannot publish the board"
-  rm -f -- "$snap" "$asked"
+  rm -f -- "$snap"
   trap - EXIT
   printf 'board: %s\n' "$board"
 }

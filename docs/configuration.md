@@ -1624,9 +1624,7 @@ The captain picks an option, optionally adds a note, and queues the answer; the 
 A shrunken card always keeps Change answer, which reopens it; a new answer replaces the earlier one if Lavish has not sent it yet.
 The page cannot see what Lavish still holds or has sent, so it shows no queued count and never marks a card sent.
 An answered question leaves the page on the first refresh after its answer is recorded; a question the captain put off until a later day keeps its card, badged with that day, beside its Charted next card.
-Anything else the captain types on the page, as a freeform message or as a comment on part of it, is a question Firstmate answers on the page: "Your questions and answers", under the table of contents, lists each one newest first with its answer, when it was answered and its source, and shows "Not answered yet" from the moment the question is captured until its answer is recorded.
-Firstmate records an answer with `bin/fm-live-board-answer.sh record <source-id> <sequence>`, reading plain text from a file or standard input, which stores it in `data/live-board/answers.json` and rebuilds the page; Lavish serves that directory beside the page, so an answer must hold no secret.
-`bin/fm-procevent.sh handled` refuses to mark such a result handled until every typed item has an answer, and names the exact command to run, unless it is given `--no-answer-needed <reason>`; [`bin/fm-live-board-answer.sh`](../bin/fm-live-board-answer.sh)'s header owns the record, the commands and that rule.
+The board has no Q&A section; questions the captain asks as a freeform message or as a comment on the page are answered in the chat pane.
 Each project also shows a timeline of its 15 newest pull requests by merge or close time, oldest on the left, read from the forge of each registered project's clone (GitHub through `gh`, Azure DevOps through `az`) and from the home's own checkout.
 The GitHub read takes the most recently updated pull requests, so a pull request opened long ago and merged today is on the strip.
 Comment activity on old pull requests uses places in that read too, so on a repository with very heavy checks, where the board falls back to a small read, the strip often omits recent merges.
@@ -1646,7 +1644,7 @@ Each environment then shows the newest of the project's changes merged into it, 
 A change is seen in an environment when that environment's branch holds its merge commit or a cherry-pick of it that git recorded (`git cherry-pick -x`), so a change redone there by hand stays listed as not yet seen.
 A project in a repository the file does not list says it has no separate environments, and a repository whose pull requests or branch history could not be read shows "Not known" with the reason instead of a count.
 The branch history is fetched read-only into `state/.live-board-git`, never into the project's clone; [`bin/fm-live-board.sh`](../bin/fm-live-board.sh)'s header owns the file's schema and what the card shows, and [`bin/fm-live-board-prs.sh`](../bin/fm-live-board-prs.sh)'s header owns how a change is recognised in an environment.
-Set `enabled` to false in `config/live-board.json` or delete that file to stop refreshing; the published page and any recorded answers stay in place.
+Set `enabled` to false in `config/live-board.json` or delete that file to stop refreshing; the published page stays in place.
 
 ## Mail plane (.env)
 

@@ -4894,7 +4894,7 @@ test_structured_context_keeps_origin_and_encoded_reason() {
   local home identity board reason=$'Choose (go)\nfor café'
   home=$(make_home context-origin-union)
   write_origin_meta "$home" sample-origin
-  printf '%s\n' '{"schema":"fm-captain-question.v1","close":"release"}' > "$home/context.json"
+  printf '{"schema":"fm-captain-question.v1","close":"release",%s}\n' "$PLAIN" > "$home/context.json"
   FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-context-origin \
     --title 'Structured separate call' --reason "$reason" --origin sample-origin \
     --context-file "$home/context.json" >/dev/null || fail "context/origin hold failed"

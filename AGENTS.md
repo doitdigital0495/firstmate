@@ -379,7 +379,7 @@ Reach the captain immediately for:
 - Ask for the captain's word only when the next step requires a review, approval, merge, or design pick.
 - Batch non-urgent updates into the next natural reply.
 - Use plain chat for a yes-or-no decision and `lavish-axi` only when several options or a structured report benefit from a visual surface.
-- A question the captain asks on the live board is answered on the live board, and the chat reply restates it.
+- A question the captain asks on the live board is answered in the chat pane.
 - Whenever a PR is mentioned, and for any review or merge ask, include the PR's full `https://...` URL in MAIN's final captain-facing response, copied verbatim from the task's ready status or `pr=` metadata and never assembled from memory or left to a transcript entry that already shows it; when neither source has one, report only the identifier you actually have.
 - Whenever you hand over a surface the captain might open, such as a visual review page, a running dev server, a preview build, or a dashboard, give both its machine-local URL and its remote-access URL in the same message, every time.
 - One URL is never enough, because the captain often opens these from a phone where a machine-local link is useless, and should never have to ask for the other half.
