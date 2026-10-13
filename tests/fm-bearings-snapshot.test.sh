@@ -3091,9 +3091,23 @@ SH
   pass "reused live state is discarded when task generation changes"
 }
 
+# Summary of a fake no-mistakes delayed-read log: prints "<reads> <span-ms>",
+# where reads is the number of started reads and span-ms runs from the first
+# read's start stamp to the last read's end stamp. A missing or unreadable log
+# summarizes as zero reads, so a run that never recorded cannot pass a span
+# assertion by accident.
+fake_read_log_span() {  # <log>
+  awk '
+    $1 == "start" { reads++; if (min == "" || $3 + 0 < min) min = $3 + 0 }
+    $1 == "end" { if ($3 + 0 > max) max = $3 + 0 }
+    END { printf "%d %d\n", reads + 0, (min == "" ? 0 : max - min) }
+  ' "$1" 2>/dev/null || printf '0 0\n'
+}
+
 test_large_local_snapshot_overlaps_local_reads_without_projection_drift() {
   local home fakebin worktree serial parallel parallel_file snapshot_pid i
-  local serial_started serial_elapsed parallel_started parallel_elapsed saved
+  local serial_read_log parallel_read_log serial_reads serial_span_ms
+  local parallel_reads parallel_span_ms saved_ms
   home=$(make_home large-local-snapshot)
   worktree="$home/projects/shared-worktree"
   fm_git_init_commit "$worktree"
@@ -3101,9 +3115,30 @@ test_large_local_snapshot_overlaps_local_reads_without_projection_drift() {
   fakebin=$(make_fakebin "$home")
   cat > "$fakebin/no-mistakes" <<'SH'
 #!/usr/bin/env bash
+# Milliseconds since the epoch: EPOCHREALTIME first (a builtin, no fork), then
+# GNU date, then whole seconds. Degrading the granularity never loses the stamp.
+now_ms() {
+  local raw=${EPOCHREALTIME:-} sec frac
+  case "$raw" in
+    *[0-9][.,][0-9]*)
+      sec=${raw%%[.,]*} frac=${raw#*[.,]} frac="${frac}000" frac=${frac:0:3}
+      case "$sec$frac" in
+        *[!0-9]*|'') ;;
+        *) printf '%s\n' "$(( sec * 1000 + 10#$frac ))"; return 0 ;;
+      esac
+      ;;
+  esac
+  raw=$(date +%s%N 2>/dev/null || true)
+  case "$raw" in
+    *[!0-9]*|'') sec=$(date +%s 2>/dev/null || printf '0'); printf '%s\n' "$(( sec * 1000 ))" ;;
+    *) printf '%s\n' "$(( raw / 1000000 ))" ;;
+  esac
+}
 if [ "$*" = "axi status" ] && [ "${FAKE_NM_DELAY:-0}" = 1 ]; then
   [ -z "${FAKE_NM_SIGNAL:-}" ] || : > "$FAKE_NM_SIGNAL"
+  [ -z "${FAKE_NM_READ_LOG:-}" ] || printf 'start %s %s\n' "$$" "$(now_ms)" >> "$FAKE_NM_READ_LOG"
   sleep 1
+  [ -z "${FAKE_NM_READ_LOG:-}" ] || printf 'end %s %s\n' "$$" "$(now_ms)" >> "$FAKE_NM_READ_LOG"
 fi
 exit 0
 SH
@@ -3135,19 +3170,23 @@ SH
   serial=$(FAKE_NM_DELAY=0 FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=1 run "$home" "$fakebin" --json)
 
   # Serialized reads pay every worker's delay end to end while concurrent reads
-  # overlap them. Time both runs and compare, because the two pay the same
-  # composition overhead: the difference isolates the overlap this change
-  # delivers, where an absolute wall-clock budget would instead measure how
-  # loaded the host happens to be and flake on a busy runner.
-  serial_started=$(date +%s)
-  FAKE_NM_DELAY=1 FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=1 \
+  # overlap them. Comparing whole seconds of wall clock flaked on a loaded
+  # runner, where second-granularity rounding plus composition noise can eat
+  # the whole margin, so measure the delayed reads themselves: the fake
+  # no-mistakes stamps each one-second read's start and end in milliseconds,
+  # and the span from the first read's start to the last read's end excludes
+  # the snapshot's composition overhead by construction, leaving host load
+  # nothing to hide in. The sleeps carry no CPU work, so load cannot stretch
+  # the spans it measures either.
+  serial_read_log="$home/serial-reads.log"
+  FAKE_NM_DELAY=1 FAKE_NM_READ_LOG="$serial_read_log" FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=1 \
     run "$home" "$fakebin" --json >/dev/null \
     || fail "serialized local snapshot failed"
-  serial_elapsed=$(( $(date +%s) - serial_started ))
+  read -r serial_reads serial_span_ms <<< "$(fake_read_log_span "$serial_read_log")"
 
-  parallel_started=$(date +%s)
+  parallel_read_log="$home/parallel-reads.log"
   parallel_file="$home/parallel-snapshot.json"
-  FAKE_NM_DELAY=1 FAKE_NM_SIGNAL="$home/nm-started" \
+  FAKE_NM_DELAY=1 FAKE_NM_SIGNAL="$home/nm-started" FAKE_NM_READ_LOG="$parallel_read_log" \
     FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=8 \
     run "$home" "$fakebin" --json > "$parallel_file" &
   snapshot_pid=$!
@@ -3163,13 +3202,23 @@ SH
   fi
   wait "$snapshot_pid" || fail "concurrent local snapshot failed"
   parallel=$(<"$parallel_file")
-  parallel_elapsed=$(( $(date +%s) - parallel_started ))
-  # Five one-second reads serialize into five seconds and overlap into about
-  # one, so at least two of those four seconds must show up as real savings.
-  # Serializing the reads again collapses that difference to roughly zero.
-  saved=$(( serial_elapsed - parallel_elapsed ))
-  [ "$saved" -ge 2 ] \
-    || fail "concurrent local reads saved no measurable time (serial ${serial_elapsed}s vs concurrent ${parallel_elapsed}s)"
+  read -r parallel_reads parallel_span_ms <<< "$(fake_read_log_span "$parallel_read_log")"
+  # Five one-second reads serialize into a span of about five seconds and
+  # overlap into about one, so the measured spans must clear wide bounds on
+  # both sides: the serialized baseline pays at least four of its five seconds,
+  # the concurrent reads all fit inside two and a half, and at least two of the
+  # four saved seconds show up between the spans. Reads that were serialized
+  # again span the same five seconds as the baseline and fail both later
+  # bounds, so the overlap assertion cannot pass while the reads are serial.
+  [ "$serial_reads" -eq 5 ] && [ "$parallel_reads" -eq 5 ] \
+    || fail "delayed-read log lost reads (serial ${serial_reads}, concurrent ${parallel_reads})"
+  [ "$serial_span_ms" -ge 4000 ] \
+    || fail "serialized local reads did not pay their delays end to end (${serial_span_ms}ms span)"
+  [ "$parallel_span_ms" -le 2500 ] \
+    || fail "concurrent local reads did not overlap (span ${parallel_span_ms}ms vs serialized ${serial_span_ms}ms)"
+  saved_ms=$(( serial_span_ms - parallel_span_ms ))
+  [ "$saved_ms" -ge 2000 ] \
+    || fail "concurrent local reads saved no measurable time (serial ${serial_span_ms}ms vs concurrent ${parallel_span_ms}ms)"
   [ "$parallel" = "$serial" ] \
     || fail "concurrent local observation changed the fm-bearings.v1 projection"
   printf '%s' "$parallel" | jq -e '
