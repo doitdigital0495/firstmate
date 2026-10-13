@@ -3091,23 +3091,23 @@ SH
   pass "reused live state is discarded when task generation changes"
 }
 
-# Summary of a fake no-mistakes delayed-read log: prints "<reads> <span-ms>",
-# where reads is the number of started reads and span-ms runs from the first
-# read's start stamp to the last read's end stamp. A missing or unreadable log
-# summarizes as zero reads, so a run that never recorded cannot pass a span
-# assertion by accident.
-fake_read_log_span() {  # <log>
-  awk '
-    $1 == "start" { reads++; if (min == "" || $3 + 0 < min) min = $3 + 0 }
-    $1 == "end" { if ($3 + 0 > max) max = $3 + 0 }
-    END { printf "%d %d\n", reads + 0, (min == "" ? 0 : max - min) }
-  ' "$1" 2>/dev/null || printf '0 0\n'
+# Summary of a fake no-mistakes delayed-read log: prints "<starts> <ends>
+# <peak>", where peak is the most reads in flight at once. Events replay in
+# stamp order with an end sorted before a start on the same stamp, so reads
+# that merely touch do not count as overlapping. A missing or unreadable log
+# summarizes as zero reads, so a run that never recorded cannot pass by accident.
+fake_read_log_overlap() {  # <log>
+  sort -k3,3n -k1,1 "$1" 2>/dev/null | awk '
+    $1 == "start" { starts++; if (++open > peak) peak = open }
+    $1 == "end" { ends++; open-- }
+    END { printf "%d %d %d\n", starts + 0, ends + 0, peak + 0 }
+  '
 }
 
 test_large_local_snapshot_overlaps_local_reads_without_projection_drift() {
   local home fakebin worktree serial parallel parallel_file snapshot_pid i
-  local serial_read_log parallel_read_log serial_reads serial_span_ms
-  local parallel_reads parallel_span_ms saved_ms
+  local serial_read_log parallel_read_log serial_starts serial_ends serial_peak
+  local parallel_starts parallel_ends parallel_peak
   home=$(make_home large-local-snapshot)
   worktree="$home/projects/shared-worktree"
   fm_git_init_commit "$worktree"
@@ -3172,17 +3172,16 @@ SH
   # Serialized reads pay every worker's delay end to end while concurrent reads
   # overlap them. Comparing whole seconds of wall clock flaked on a loaded
   # runner, where second-granularity rounding plus composition noise can eat
-  # the whole margin, so measure the delayed reads themselves: the fake
+  # the whole margin, so assert overlap directly instead of timing it: the fake
   # no-mistakes stamps each one-second read's start and end in milliseconds,
-  # and the span from the first read's start to the last read's end excludes
-  # the snapshot's composition overhead by construction, leaving host load
-  # nothing to hide in. The sleeps carry no CPU work, so load cannot stretch
-  # the spans it measures either.
+  # and the log shows how many reads were in flight at once. Host load can
+  # delay when a read starts but cannot make serialized reads overlap, and a
+  # one-second read leaves the concurrent jobs a wide window to meet.
   serial_read_log="$home/serial-reads.log"
   FAKE_NM_DELAY=1 FAKE_NM_READ_LOG="$serial_read_log" FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=1 \
     run "$home" "$fakebin" --json >/dev/null \
     || fail "serialized local snapshot failed"
-  read -r serial_reads serial_span_ms <<< "$(fake_read_log_span "$serial_read_log")"
+  read -r serial_starts serial_ends serial_peak <<< "$(fake_read_log_overlap "$serial_read_log")"
 
   parallel_read_log="$home/parallel-reads.log"
   parallel_file="$home/parallel-snapshot.json"
@@ -3202,23 +3201,18 @@ SH
   fi
   wait "$snapshot_pid" || fail "concurrent local snapshot failed"
   parallel=$(<"$parallel_file")
-  read -r parallel_reads parallel_span_ms <<< "$(fake_read_log_span "$parallel_read_log")"
-  # Five one-second reads serialize into a span of about five seconds and
-  # overlap into about one, so the measured spans must clear wide bounds on
-  # both sides: the serialized baseline pays at least four of its five seconds,
-  # the concurrent reads all fit inside two and a half, and at least two of the
-  # four saved seconds show up between the spans. Reads that were serialized
-  # again span the same five seconds as the baseline and fail both later
-  # bounds, so the overlap assertion cannot pass while the reads are serial.
-  [ "$serial_reads" -eq 5 ] && [ "$parallel_reads" -eq 5 ] \
-    || fail "delayed-read log lost reads (serial ${serial_reads}, concurrent ${parallel_reads})"
-  [ "$serial_span_ms" -ge 4000 ] \
-    || fail "serialized local reads did not pay their delays end to end (${serial_span_ms}ms span)"
-  [ "$parallel_span_ms" -le 2500 ] \
-    || fail "concurrent local reads did not overlap (span ${parallel_span_ms}ms vs serialized ${serial_span_ms}ms)"
-  saved_ms=$(( serial_span_ms - parallel_span_ms ))
-  [ "$saved_ms" -ge 2000 ] \
-    || fail "concurrent local reads saved no measurable time (serial ${serial_span_ms}ms vs concurrent ${parallel_span_ms}ms)"
+  read -r parallel_starts parallel_ends parallel_peak <<< "$(fake_read_log_overlap "$parallel_read_log")"
+  # Every one of the five reads must start and finish in both runs, so a read
+  # cut short cannot fake a result. The serialized baseline never has two reads
+  # in flight, and the concurrent run must: reads that were serialized again
+  # keep a peak of one and fail the overlap assertion.
+  [ "$serial_starts" -eq 5 ] && [ "$serial_ends" -eq 5 ] \
+    && [ "$parallel_starts" -eq 5 ] && [ "$parallel_ends" -eq 5 ] \
+    || fail "delayed-read log lost reads (serial ${serial_starts}/${serial_ends}, concurrent ${parallel_starts}/${parallel_ends} started/ended)"
+  [ "$serial_peak" -eq 1 ] \
+    || fail "serialized local reads overlapped (${serial_peak} in flight)"
+  [ "$parallel_peak" -ge 2 ] \
+    || fail "concurrent local reads did not overlap (peak ${parallel_peak} in flight)"
   [ "$parallel" = "$serial" ] \
     || fail "concurrent local observation changed the fm-bearings.v1 projection"
   printf '%s' "$parallel" | jq -e '
