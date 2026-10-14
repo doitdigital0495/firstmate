@@ -487,13 +487,35 @@ def lb_view($map):
 | sort_by([(if .counts.urgent > 0 then 0 elif .counts.questions > 0 then 1
       elif .counts.stuck > 0 then 2 elif .counts.doing > 0 then 3 elif .active then 4 else 5 end),
     (if .order == null then 1 else 0 end),(.order // 0),(.name | ascii_downcase),.key]) as $groups
+# Every unfinished worker, the ones that need someone first, then nearest the work.
+| ([$placed[] | . as $p | .task as $t | select($t.worker_present)
+   | ($t | lb_worker_status) as $status | select($status != "finished")
+   | ($t | lb_worker_since) as $since
+   | {key:$t.key,id:$t.id,title:($t.title | lb_title($ids) // "Untitled work"),
+      project:([$groups[] | select(.key == $p.key) | .name][0]),
+      home:$p.home,home_as_of:$p.as_of,status:$status,
+      doing:($t | lb_running_doing($status; $ids)),stage:($t | lb_worker_stage($status)),
+      at:$since.at,at_is_since:$since.at_is_since}]
+   | sort_by([({"stuck":0,"you":1}[.status] // (.status | lb_worker_rank) + 2),
+       (.project | ascii_downcase), .title, .key])) as $crew
+# Pull requests merged in the 24 hours before collection, newest first, each
+# under the project its timeline shows it in.
+| ([$merged[] | .key as $key | .pr
+    | select(.state == "merged" and (.at // 0) >= ($board.collected_at_epoch // 0) - 86400)
+    | (.deploy | lb_deploy_words) as $words
+    | {key:.url,project:([$groups[] | select(.key == $key) | .name][0]),title,url,
+       forge:(.forge | lb_forge_name),at,tag:$words[0],label:$words[1]}]
+   | unique_by(.key) | sort_by([-.at, .project, .key])) as $landed
 | {schema:"fm-live-board-view.v1",
    grouping:(if $map == null then "repo" elif $named == null then "invalid-map" else "map" end),
    counts:{questions:([$groups[].counts.questions]|add // 0),urgent:([$groups[].counts.urgent]|add // 0),
      active_projects:([$groups[] | select(.active)]|length),
      doing:([$groups[].counts.doing]|add // 0),next:([$groups[].counts.next]|add // 0),
      charted:([$groups[].counts.charted]|add // 0),stuck:([$groups[].counts.stuck]|add // 0),
-     finished:([$groups[].counts.finished]|add // 0)},
+     finished:([$groups[].counts.finished]|add // 0),
+     running:([$crew[] | select(.status | IN("working","validation","merge"))]|length),
+     outside:([$crew[] | select(.status == "external")]|length),
+     landed:($landed|length)},
    notes:[
      if $map != null and $named == null then
        "The project map is invalid, so work is grouped by repository until Firstmate fixes it." else empty end,
@@ -522,13 +544,8 @@ def lb_view($map):
          else "The work of second mate \(.label | lb_home_name) is not shown: \(lb_home_unread_why)." end),
      ($board.warnings // [] | map(select(.kind != "question-needs-owner-review")) | group_by(.kind)[]
        | "\(length) board warning\(if length == 1 then "" else "s" end) for Firstmate: \(.[0].kind | gsub("-"; " "))")],
-   workers:([$placed[] | . as $p | .task as $t | select($t.worker_present)
-     | ($t | lb_worker_status) as $status | select($status != "finished")
-     | {key:$t.key,id:$t.id,title:($t.title | lb_title($ids) // "Untitled work"),
-        project:([$groups[] | select(.key == $p.key) | .name][0]),
-        home:$p.home,home_as_of:$p.as_of,status:$status,
-        doing:($t | lb_running_doing($status; $ids)),stage:($t | lb_worker_stage($status))}]
-     | sort_by([(.project | ascii_downcase), .title, .key])),
+   workers:$crew,
+   landed:$landed,
    delivery:([$board.projects[] | lb_delivery_row(null; null)]
      + [$homes[] | (.label | lb_home_name) as $home | lb_home_as_of($board) as $as_of
         | .projects[]? | lb_delivery_row($home; $as_of)]

@@ -173,6 +173,7 @@ printf '%s\n' '{"schema":"fm-live-board-projects.v1","projects":[{"name":"Combin
 in_home "$home" "$LIVE" build >/dev/null || fail "the delivery list board did not build"
 for screen in '!screen=wide' '!screen=narrow'; do
   out=$(render "$home" "" "$screen") || fail "the delivery list failed to render"
+  # shellcheck disable=SC2016 # $yours is a jq variable.
   check "$out" '.delivery.title == "Project delivery and merging" and .delivery.none == null
     and (.delivery.rows | map(.project)) == ["checked","direct","legacy","local","product","typo","unregistered"]
     and (.delivery.rows | all(.home == null and .asOf == null))
@@ -187,7 +188,9 @@ for screen in '!screen=wide' '!screen=narrow'; do
       and .mode == "No-mistakes" and .approval == "Your approval required to merge")
     and (.delivery.rows[6] | .registration == "Unregistered"
       and .mode == "No-mistakes" and .approval == "Your approval required to merge")
-    and (.delivery.rows | tostring | test("dl-unregistered|branch=|preview-on-push|yolo|pipeline") | not)' \
+    and (.delivery.rows | tostring | test("dl-unregistered|branch=|preview-on-push|yolo|pipeline") | not)
+    and ([.delivery.rows[] | select(.approval == "Your approval required to merge")] | length) as $yours
+    | .delivery.summary == "7 projects: \($yours) need your approval to merge, \(7 - $yours) merge on their own when checks pass"' \
     "the project delivery list lost a registered setting, an idle project, or the unregistered defaults"
 done
 pass "the delivery section lists every project, its registered route, merge approval and preview setting on desktop and phone"
@@ -270,12 +273,16 @@ check "$out" '.projects[0].lanes.doing.cards
     and all(.home == null and .links == [] and .hints == [.title,.note])' \
   "a worker's line did not say in one sentence what it is doing, with its status and how long"
 check "$out" '.running.title == "Running workers · 4" and .statusOutsideLanes == 0
-  and (.running.rows | map(.title)) == ["Build the new checkout","Fix the payment error","Speed up search","Wait for the supplier release"]
-  and (.running.rows | all(.project == "Project: shop" and .home == null and .asOf == null
+  and (.running.rows | map(.title)) == ["Fix the payment error","Speed up search","Build the new checkout","Wait for the supplier release"]
+  and (.running.rows | map(.status)) == ["stuck","stuck","working","external"]
+  and (.running.rows | all(.project == "shop" and .home == null and .asOf == null
     and (.doing | length > 0) and (.stage | length > 0)))
-  and (.running.rows[0] | .doing == "wiring the basket into the new checkout page" and .stage == "Doing the work")
-  and (.running.rows[1].stage == "Needs help") and (.running.rows[2].stage == "Stopped or status unknown")
+  and (.running.rows[2] | .doing == "wiring the basket into the new checkout page" and .stage == "Doing the work"
+    and (.when | test("^reported [0-9]+s ago$")))
+  and (.running.rows[0] | .stage == "Needs help" and (.when | test("^for [0-9]+s$")))
+  and (.running.rows[1] | .stage == "Stopped or status unknown" and .when == null)
   and (.running.rows[3].stage == "Waiting outside the team")
+  and .stats.running == 1 and .stats.outside == 1 and .stats.stuck == 2 and .stats.landed == 0
   and (.running.text | test("ln-[a-z]|run-step|status-log|harness|pipeline|herdr|/projects/|wt-|[0-9]+%") | not)
   and ([.projects[].lanes[].cards[] | select(.status != null)] | length) == 4
   and ([.projects[].text] | join(" ") | test("ln-[a-z]|run-step|status-log|\\bpane\\b|herdr|/projects/|wt-") | not)' \
@@ -410,8 +417,8 @@ check "$out" '(.projects | map(.label)) == ["Help desk","shop"] and .stats == (.
   and .projects[0].status == "1 with a worker, 1 starting automatically, 2 not starting on their own"
   and (.projects[1].lanes.doing.cards | map([.id,.status,.home])) == [["cr-own","working",null]]
   and .running.title == "Running workers · 2" and .statusOutsideLanes == 0
-  and (.running.rows | map([.title,.project,.home,.stage])) == [["Answer the refund question","Project: Help desk","Second mate: Ai desk","Doing the work"],
-    ["Build the new checkout","Project: shop",null,"Doing the work"]]
+  and (.running.rows | map([.title,.project,.home,.stage])) == [["Answer the refund question","Help desk","Second mate: Ai desk","Doing the work"],
+    ["Build the new checkout","shop",null,"Doing the work"]]
   and (.running.rows | map(.key) | unique | length == 2)
   and ([.projects[].text] | join(" ") | test("cr-[a-z]|crew-mate|no-such-home") | not)' \
   "a second mate's workers and queued work did not join their project's lanes under its name"
@@ -443,7 +450,7 @@ check "$out" '(.projects | map(.label)) == ["Help desk","shop"]
 check "$out" '(.notes | index("The work of second mate Ai desk is shown as of 7 minutes ago, from its last good read: the read failed or took too long this time.") != null)
   and (.notes | any(test("Ai desk is not shown")) | not)' \
   "the board notes did not say a second mate's work is its last good read"
-check "$out" '(.running.rows | map([.project,.asOf])) == [["Project: Help desk","as of 7 minutes ago"],["Project: shop",null]]' \
+check "$out" '(.running.rows | map([.project,.asOf])) == [["Help desk","as of 7 minutes ago"],["shop",null]]' \
   "a stale secondmate worker was presented as current in the fleet-wide section"
 check "$out" '(.delivery.rows | map(.asOf)) == ["as of 7 minutes ago","as of 7 minutes ago",null]' \
   "stale secondmate delivery settings were presented as current"
@@ -537,6 +544,15 @@ check "$out" '(.projects[0].questions[0] | .answerable and .mode == "options"
     and .options == [] and .noteField == "textarea" and .lavishQuestion == "live-board:ws-legacy"
     and .title == "Logo </script><b>x</b>" and (.modeText | test("records your words")))' \
   "owner context did not drive the real question, its explained options, or the free-text fallback"
+check "$out" '(.needs.title | startswith("Needs you")) and .needs.none == null and .needs.workers == []
+  and (.needs.rows | map(.id)) == ["ws-carrier","ws-legacy","data-window","data-note-only"]
+  and (.needs.rows[0] | .what == "The web shop needs one company to deliver the spring orders to customers."
+    and (.where | startswith("web-shop · Which carrier? · urgent · asked "))
+    and .choice == "Choice: DHL / PostNL" and .recommends == "Firstmate recommends: PostNL" and .later == false
+    and .go.text == "Answer" and .go.lavishAction and .go.target == "ws-carrier")
+  and (.needs.rows | all(.go.target == .id))
+  and ((.needs.rows[] | select(.id == "ws-legacy")) | .choice == "Choice: answer in your own words" and .recommends == null)' \
+  "the Needs you list did not give every decision one plain line with its choice, recommendation and a jump to its card"
 check "$out" '(.projects[0].lanes.doing.cards | map(.id)) == ["ws-redesign"]
   and (.projects[0].lanes.doing.cards[0] | .title == "Redesign checkout" and .status == "working" and .statusLabel == "Working"
     and .links == [{href:"https://github.com/example/web-shop/pull/42",text:"pull request"}]
@@ -744,6 +760,16 @@ check "$out" '(.projects | map(.label)) == ["web-shop"] and (.projects[0].badges
     and (.marks[2].label | test("^Merged .*: One-step checkout\\. Runs after merge failed\\.$"))
     and .detail.shown == null and (.detail.text | test("Point at a pull request")))' \
   "a project did not show its pull requests as a timeline, oldest first, with the failed runs after merge marked in words"
+check "$out" '.stats.landed >= 2
+  and (.landed.title | startswith("Landed in the last 24 hours")) and .landed.none == null
+  and (.landed.projects[0] | .project == "web-shop" and .badges == ["1 failed","1 running"]
+    and .latest == "Latest: Refunds in one click"
+    and (.prs | map(.key | split("/") | .[-1])) == ["4","1"] and (.prs | map(.tag)) == ["running","failed"]
+    and (.prs | map(.links)) == [["https://github.com/acme/web-shop/pull/4"],["https://github.com/acme/web-shop/pull/1"]])
+  and (.projects[0].ship | .open == false and (.summary | startswith("PRs and environments"))
+    and (.badges[0] | test("^last merge [0-9]{1,2} [A-Z][a-z]{2} · running$"))
+    and .badges[1:] == ["1 failed after merge","1 open PR"])' \
+  "the landed list or a project's folded PR line did not say what merged in the last day and how its runs went"
 pass "each project shows a timeline of its pull requests, and a merge with a failed run is marked by shape and word"
 
 out=$(TZ=UTC render "$tl" "$tl_now" "!pr=mouseenter=web-shop=$(shop_pr 1)")
@@ -1323,7 +1349,7 @@ touch -t 202001010000 "$board"
 in_home "$home" "$LIVE" refresh
 out=$(render "$home")
 check "$out" "$no_qa" "captured questions or legacy answers brought Q&A back"
-check "$out" '.stats == {questions:0,urgent:0,doing:0,next:0,charted:0,finished:0}' \
+check "$out" '.stats == {questions:0,urgent:0,doing:0,next:0,charted:0,finished:0,stuck:0,running:0,outside:0,landed:0}' \
   "captured chat questions changed board counts"
 [ "$(printf '%s' "$before" | jq -c '[.projects,.stats,.notes,.tray]')" = \
   "$(printf '%s' "$out" | jq -c '[.projects,.stats,.notes,.tray]')" ] \
