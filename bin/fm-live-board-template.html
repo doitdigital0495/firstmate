@@ -1334,7 +1334,7 @@ __FM_LIVE_BOARD_DATA__
   }
   try { foldKept.value = JSON.stringify(foldNames(window.localStorage.getItem(FOLD_STORE))); } catch (e) { foldKept.value = "[]"; }
   /* Which folded summaries the captain opened - a project's PRs and
-     environments, a project's landed PRs - outlives reloads the same way. */
+     environments - outlives reloads the same way. */
   var OPEN_STORE = "fm-live-board.opened.v1:" + (board.home && board.home.label || "");
   var opens = [];
   var openKept = el("input");

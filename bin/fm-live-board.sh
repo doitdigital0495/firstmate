@@ -197,9 +197,9 @@
 # TIMELINE. Each project folds its environments and its pull request strip
 # under one line naming the newest merge and its runs, failed runs and open
 # pull requests among those shown, and changes waiting for each environment.
-# Which of these lines, and which landed projects, the captain opened lives in
-# a second hidden field beside the collapsed-cards one and in browser storage,
-# exactly as collapsed cards do; a restored pin opens its line.
+# Which of these lines the captain opened lives in a second hidden field
+# beside the collapsed-cards one and in browser storage, exactly as collapsed
+# cards do; a restored pin opens its line. A landed project's fold is not kept.
 # Each project shows its 15 newest pull requests as a strip, oldest
 # on the left. Pointing at one, moving keyboard focus to it, or pressing it
 # shows the same detail under the strip: the cleaned title, a plain summary of

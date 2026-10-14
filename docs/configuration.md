@@ -1598,7 +1598,7 @@ A Project delivery and merging section, folded under one summary line, lists eve
 Every project and every lane card carries a one-line "What this is" that expands to say where it came from: the task's own note in the backlog (the indented lines under its row), else the plain-language "about" of its captain question, else its hold reason, and for a project its `description` in `config/live-board-projects.json`.
 A card with none of those shows "No explanation recorded yet", and the board notes count such cards, so a short label never stands alone and a missing explanation is visible.
 A table of contents under the totals jumps to each project, and every project card has a Collapse control that leaves only its name, badges and status line showing.
-The page remembers which cards are collapsed, and which folded lines the captain opened, so they stay that way across its refreshes.
+The page remembers which cards are collapsed, and which project timelines the captain opened, so they stay that way across its refreshes.
 It is separate from `/bearings lavish` and renders only the canonical `bin/fm-live-board-snapshot.sh` projection; [`bin/fm-live-board.sh`](../bin/fm-live-board.sh)'s header owns its commands, config schemas, grouping, freshness thresholds, and answer path.
 
 To enable it in a home, create the local, gitignored `config/live-board.json`:
