@@ -1,0 +1,1682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>Firstmate live board</title>
+<link rel="icon" href="data:," />
+<style>
+/* Shipped renderer for bin/fm-live-board.sh. Self-contained: no external
+   fonts, scripts, images or requests. Palette follows the Firstmate
+   navy/gold/rust/sea tokens, adapted to an explicitly dark surface. */
+:root {
+  color-scheme: dark;
+  --bg: #10162a; --bg-raised: #171f36; --bg-card: #1d2640; --bg-inset: #141b30;
+  --line: #2c3858; --line-soft: #222c4a;
+  --text: #e9e3d3; --text-strong: #fbf4e2; --text-muted: #a7afc6; --text-faint: #8590ad;
+  --gold: #e0a52e; --gold-soft: #3a3020; --rust: #e08365; --rust-soft: #3b2421;
+  --sea: #7cc4a0; --sea-soft: #1f3a30; --ocean: #8cc0dd; --ocean-soft: #1d3346;
+  --focus: 0 0 0 3px #f0d38c;
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+html { background: var(--bg); color: var(--text); }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.45 var(--font); -webkit-text-size-adjust: 100%;
+}
+* { box-sizing: border-box; }
+a { color: var(--ocean); overflow-wrap: anywhere; }
+a:focus-visible, button:focus-visible, summary:focus-visible, .idle li:focus-visible, input:focus-visible, textarea:focus-visible, .q-opt:focus-within, .q:focus-visible { outline: none; box-shadow: var(--focus); border-radius: 6px; }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.lb { max-width: 1180px; margin: 0 auto; padding: 20px 20px 48px; }
+.lb-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.lb-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.lb-title h1 { margin: 0; font-size: 1.35rem; color: var(--text-strong); letter-spacing: 0.01em; }
+.lb-home { color: var(--text-faint); font-size: 0.8rem; overflow-wrap: anywhere; }
+.lb-fresh { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text-muted); font-size: 0.85rem; }
+/* Summary strip: five headline numbers, then the quieter totals in one row. */
+.lb-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 16px 0 18px; }
+.lb-stat { display: grid; align-content: start; gap: 2px; background: var(--bg-raised); border: 1px solid var(--line-soft); border-top: 3px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.lb-stat b { display: block; font-size: 1.7rem; line-height: 1.1; color: var(--text-strong); font-variant-numeric: tabular-nums; }
+.lb-stat span { color: var(--text-muted); font-size: 0.8rem; line-height: 1.3; }
+.lb-stat .lb-stat-sub { color: var(--text-faint); font-size: 0.74rem; }
+.lb-stat.is-zero b { color: var(--text-faint); }
+.lb-stat.tone-you { border-top-color: var(--gold); }
+.lb-stat.tone-you.is-hot { background: var(--gold-soft); border-color: #6b5326; border-top-color: var(--gold); }
+.lb-stat.tone-stuck { border-top-color: var(--rust); }
+.lb-stat.tone-stuck.is-hot { background: var(--rust-soft); border-color: #6b3527; border-top-color: var(--rust); }
+.lb-stat.tone-run { border-top-color: var(--sea); }
+.lb-stat.tone-wait { border-top-color: var(--text-faint); }
+.lb-stat.tone-land { border-top-color: var(--ocean); }
+.lb-stat.minor-first { grid-column-start: 1; }
+.lb-stat.minor { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; background: transparent; border: 0; border-radius: 0; padding: 0 2px; }
+.lb-stat.minor b { display: inline; font-size: 0.95rem; color: var(--text); }
+.lb-stat.minor span { font-size: 0.8rem; }
+.badge { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 2px 9px; font-size: 0.74rem; font-weight: 600; letter-spacing: 0.02em; white-space: nowrap; border: 1px solid transparent; }
+.b-live { background: var(--sea-soft); color: var(--sea); border-color: #2f6b4f; }
+.b-warn { background: var(--gold-soft); color: var(--gold); border-color: #6b5326; }
+.b-danger { background: var(--rust-soft); color: var(--rust); border-color: #6b3527; }
+.b-info { background: var(--ocean-soft); color: var(--ocean); border-color: #2f5574; }
+.b-muted { background: var(--bg-inset); color: var(--text-muted); border-color: var(--line); }
+.dot { width: 8px; height: 8px; flex: none; }
+/* Sections share one head: a title with its count, then one muted line. */
+.sec { margin: 0 0 18px; min-width: 0; }
+.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin: 0 2px 8px; }
+.sec h2, .running h2 { margin: 0; color: var(--text-strong); font-size: 1.1rem; }
+.lane-count, .sec-count { color: var(--text-muted); font-weight: 500; font-size: 0.85rem; }
+.running-say, .sec-say { margin: 0; color: var(--text-faint); font-size: 0.82rem; flex-basis: 100%; }
+.sec-none { margin: 0; padding: 10px 14px; border: 1px dashed var(--line); border-radius: 10px; color: var(--text-muted); font-size: 0.88rem; }
+.lb-toc { margin: 0 0 18px; min-width: 0; }
+.lb-toc[hidden], .proj-body[hidden] { display: none; }
+.toc-box { min-width: 0; }
+.toc-box summary { cursor: pointer; padding: 4px 2px 8px; color: var(--text-muted); font-size: 0.85rem; }
+.toc-box summary b { color: var(--text-strong); }
+.toc-box ol { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; min-width: 0; }
+.toc-box li { min-width: 0; }
+.toc-box:not([open]) ol { display: none; }
+.toc-link { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-height: 32px; max-width: 100%; padding: 2px 10px; border: 1px solid var(--line-soft); border-radius: 999px; background: var(--bg-raised); color: var(--text); font-size: 0.82rem; text-decoration: none; }
+.toc-link:hover { border-color: #6b5326; }
+.toc-count { color: var(--gold); font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+.toc-quiet { color: var(--text-faint); font-size: 0.76rem; white-space: nowrap; }
+.toc-legend { margin: 8px 2px 0; color: var(--text-faint); font-size: 0.78rem; }
+.crew-icon { display: inline-flex; flex: none; }
+/* Needs you: one line per decision, each jumping to its answer card. */
+.needs-list { display: grid; gap: 6px; list-style: none; padding: 0; margin: 0; }
+.need { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 14px; align-items: center; padding: 10px 14px; border: 1px solid #6b5326; border-left: 4px solid var(--gold); border-radius: 10px; background: var(--bg-raised); min-width: 0; }
+.need.is-urgent { border-color: #6b3527; border-left-color: var(--rust); }
+.need.is-later { border-color: var(--line-soft); border-left-color: var(--text-faint); }
+.need-main { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.need-what { color: var(--text-strong); font-weight: 600; }
+.need-where { color: var(--text-muted); font-size: 0.8rem; }
+.need-choice { color: var(--text); font-size: 0.86rem; }
+.need-choice b, .need-rec b { color: var(--text-muted); font-weight: 600; }
+.need-rec { color: var(--sea); font-size: 0.86rem; }
+.need-go { display: inline-flex; align-items: center; min-height: 40px; padding: 6px 14px; border-radius: 9px; border: 1px solid #6b5326; background: var(--gold); color: #1a2238; font-weight: 600; font-size: 0.88rem; text-decoration: none; white-space: nowrap; }
+.need.is-later .need-go { background: transparent; color: var(--text); border-color: var(--line); }
+.need-crew { margin: 10px 2px 4px; color: var(--text-muted); font-size: 0.8rem; font-weight: 600; }
+.need.is-crew { border-color: var(--line-soft); border-left-color: var(--gold); grid-template-columns: minmax(0, 1fr); }
+/* Running workers: one compact row each - status, task and project, what it does, age. */
+.running { margin: 0 0 18px; min-width: 0; }
+.running > h2 { margin: 0 2px; }
+.running > .running-say { margin: 2px 2px 8px; }
+.running-list { display: grid; gap: 0; list-style: none; padding: 0; margin: 0; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--bg-raised); overflow: hidden; }
+.running-row { display: grid; grid-template-columns: 196px minmax(0, 1.1fr) minmax(0, 1fr) 92px; gap: 4px 14px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--line-soft); min-width: 0; overflow-wrap: anywhere; }
+.running-row:first-child { border-top: 0; }
+.running-row[data-status="stuck"] { background: linear-gradient(90deg, var(--rust-soft), transparent 40%); }
+.running-row[data-status="you"] { background: linear-gradient(90deg, var(--gold-soft), transparent 40%); }
+.running-name { display: grid; gap: 2px; min-width: 0; }
+.running-row .w-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-weight: 600; }
+.running-row .w-note { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.running-project, .running-home { color: var(--text-muted); font-size: 0.8rem; }
+.running-row .badge { white-space: normal; justify-self: start; order: -1; }
+.running-when { color: var(--text-faint); font-size: 0.78rem; text-align: right; }
+/* Landed: merged PRs of the last day, one line per project. */
+.landed-list { display: grid; gap: 0; list-style: none; padding: 0; margin: 0; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--bg-raised); overflow: hidden; }
+.landed-proj { border-top: 1px solid var(--line-soft); min-width: 0; }
+.landed-proj:first-child { border-top: 0; }
+.landed-proj > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; padding: 10px 14px; cursor: pointer; list-style: none; min-width: 0; }
+.landed-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; color: var(--text-strong); font-weight: 600; overflow-wrap: anywhere; }
+.landed-name .sec-count { font-weight: 500; }
+.landed-last { grid-column: 1 / -1; color: var(--text-muted); font-size: 0.82rem; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; }
+.landed-tags { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.landed-prs { list-style: none; margin: 0; padding: 0 14px 10px; display: grid; gap: 4px; }
+.landed-pr { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 2px 10px; align-items: baseline; font-size: 0.85rem; color: var(--text); overflow-wrap: anywhere; }
+.landed-time { color: var(--text-faint); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.landed-tag { font-size: 0.74rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.landed-tag.t-passed { color: var(--sea); } .landed-tag.t-failed { color: var(--rust); text-transform: uppercase; } .landed-tag.t-running { color: var(--gold); }
+.lb-banner { margin: 0 0 16px; border-radius: 10px; padding: 10px 14px; border: 1px solid #6b3527; background: var(--rust-soft); color: var(--text-strong); }
+.lb-empty { text-align: center; padding: 40px 16px; margin: 0 0 14px; background: var(--bg-raised); border: 1px dashed var(--line); border-radius: 14px; color: var(--text-muted); }
+.lb-empty h2 { color: var(--text-strong); margin: 8px 0 4px; font-size: 1.1rem; }
+.lb-projects-head { margin: 26px 2px 8px; }
+.lb-projects-head h2 { margin: 0; color: var(--text-strong); font-size: 1.1rem; }
+.proj { background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 14px; margin: 0 0 12px; min-width: 0; }
+.proj.has-q { border-color: #6b5326; box-shadow: inset 4px 0 0 var(--gold); }
+.proj-head { padding: 12px 16px; display: grid; gap: 6px; min-width: 0; }
+.proj-title { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 10px; min-width: 0; }
+.proj-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.proj-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 4px 10px; font-size: 0.8rem; color: var(--text-muted); }
+.proj-chev { display: inline-flex; }
+.proj.is-collapsed .proj-chev { transform: rotate(-90deg); }
+.proj.is-collapsed .proj-desc, .proj.is-collapsed .proj-head > .what, .proj.is-collapsed .proj-latest { display: none; }
+.proj-name h2 { margin: 0; font-size: 1.08rem; color: var(--text-strong); min-width: 0; overflow-wrap: anywhere; }
+.proj-desc { margin: 0; color: var(--text-muted); font-size: 0.84rem; overflow-wrap: anywhere; }
+.proj-status { margin: 0; color: var(--text); font-size: 0.9rem; overflow-wrap: anywhere; }
+.prog { display: grid; gap: 5px; }
+.prog-bar { display: flex; height: 6px; border-radius: 999px; overflow: hidden; background: var(--bg-inset); }
+.prog-bar span { display: block; height: 100%; }
+.pb-done { background: var(--sea); } .pb-doing { background: var(--ocean); } .pb-next { background: #5b6788; } .pb-charted { background: var(--gold); }
+.prog-text { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--text-muted); font-size: 0.78rem; overflow-wrap: anywhere; }
+.prog-key { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.prog-key svg { flex: none; }
+.prog-text .quiet { color: var(--text-faint); }
+.proj-latest { margin: 0; font-size: 0.84rem; color: var(--text-muted); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.proj-latest b { color: var(--text); font-weight: 600; }
+.proj-body { padding: 4px 12px 12px; display: grid; gap: 10px; min-width: 0; border-top: 1px solid var(--line-soft); }
+.sec-label { margin: 8px 4px 0; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-faint); }
+.q { background: var(--bg-card); border: 1px solid #6b5326; border-left: 4px solid var(--gold); border-radius: 10px; padding: 12px 14px; min-width: 0; scroll-margin-top: 12px; }
+.q.q-urgent { border-color: #6b3527; border-left-color: var(--rust); }
+.q.is-queued { border-color: #2f6b4f; border-left-color: var(--sea); padding: 8px 14px; }
+.q.is-queued > *, .q.is-queued .q-form > * { display: none; }
+.q.is-queued > .q-form, .q.is-queued .q-form > .q-answered { display: grid; margin-top: 0; }
+.q-answered { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; min-width: 0; }
+.q-answered-main { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.q-answered-main b { color: var(--sea); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.q-answered-main span { color: var(--text-strong); }
+.q-answered-acts { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.q-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.q h3 { margin: 0; font-size: 1.02rem; line-height: 1.4; color: var(--text-strong); overflow-wrap: anywhere; white-space: pre-wrap; }
+.q-project { margin: 8px 0 0; color: var(--text-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+.q-project b { color: var(--text-strong); font-weight: 600; }
+.q-topic::before { content: "\00b7"; margin: 0 6px; }
+.q-part { margin: 10px 0 0; min-width: 0; }
+.q-label { margin: 0 0 2px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faint); }
+.q-say { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.q-missing { display: grid; gap: 1px; margin: 8px 0 0; padding: 2px 0 2px 10px; border-left: 2px solid var(--rust); min-width: 0; overflow-wrap: anywhere; }
+.q-missing b { color: var(--rust); font-size: 0.82rem; }
+.q-missing span { color: var(--text-muted); font-size: 0.8rem; }
+.q-why { margin: 8px 0 0; color: var(--text); font-size: 0.88rem; overflow-wrap: anywhere; white-space: pre-wrap; }
+.q-why b { color: var(--text-muted); font-weight: 600; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; color: var(--text-faint); font-size: 0.8rem; }
+.q-form { margin-top: 10px; display: grid; gap: 8px; min-width: 0; }
+.q-opts { display: grid; gap: 8px; }
+.q-opt { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 4px 12px; min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-inset); cursor: pointer; min-width: 0; }
+.q-opt:hover { border-color: #6b5326; }
+.q-opt.is-rec { border-color: var(--sea); background: var(--sea-soft); }
+.q-opt input { width: 20px; height: 20px; accent-color: var(--gold); margin: 1px 0 0; }
+.q-opt-body { display: grid; gap: 2px; min-width: 0; }
+.q-opt-label { color: var(--text-strong); font-weight: 600; overflow-wrap: anywhere; }
+.q-opt-result { color: var(--text); font-size: 0.86rem; overflow-wrap: anywhere; }
+.q-opt-lead { color: var(--text-muted); }
+.q-note { width: 100%; min-height: 44px; padding: 8px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg-inset); color: var(--text); font: inherit; }
+textarea.q-note { min-height: 88px; resize: vertical; }
+.q-note::placeholder { color: var(--text-faint); }
+.q-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.btn { min-height: 44px; padding: 8px 18px; border-radius: 9px; border: 1px solid #6b5326; background: var(--gold); color: #1a2238; font: 600 0.95rem var(--font); cursor: pointer; }
+.btn:hover { background: #f0d38c; }
+.btn-quiet { background: transparent; color: var(--text); border-color: var(--line); font-weight: 500; }
+.btn-quiet:hover { background: var(--bg-inset); }
+.tray { margin: -8px 2px 18px; color: var(--text-muted); font-size: 0.82rem; min-width: 0; }
+.tray-text { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.q-mode { color: var(--text-muted); font-size: 0.8rem; }
+.q-status { font-size: 0.85rem; color: var(--sea); }
+.q-status.err { color: var(--rust); }
+.q-readonly { margin-top: 8px; padding: 8px 12px; border-radius: 9px; background: var(--bg-inset); border: 1px dashed var(--line); color: var(--text-muted); font-size: 0.85rem; }
+/* Lanes: Doing now full width, Next and Charted next side by side. */
+.lanes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: start; min-width: 0; margin-top: 6px; }
+.lane { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.lane-head { display: grid; gap: 2px; min-width: 0; }
+.lane-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 0 2px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); }
+.lane-name .lane-count { font-size: 0.78rem; letter-spacing: 0; }
+.lane-hint { color: var(--text-faint); font-size: 0.74rem; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.lane-doing { grid-column: 1 / -1; }
+.lane-doing .lane-name { color: var(--sea); } .lane-next .lane-name { color: var(--ocean); } .lane-charted .lane-name { color: var(--gold); }
+.lane-none { margin: 0 2px; color: var(--text-faint); font-size: 0.84rem; }
+.lane.is-empty { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.lane-more { min-width: 0; }
+.lane-more summary { cursor: pointer; color: var(--text-muted); font-size: 0.84rem; min-height: 28px; padding: 0 2px; }
+.lane-more-body { display: grid; gap: 6px; margin-top: 6px; min-width: 0; }
+.lane-more:not([open]) > .lane-more-body { display: none; }
+.w { display: grid; gap: 3px; padding: 8px 11px; border: 1px solid var(--line-soft); border-radius: 9px; background: var(--bg-card); min-width: 0; }
+.w .badge { justify-self: start; white-space: normal; }
+.lane-next .w [data-reason] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.lane-next .w { position: relative; }
+.w-line { grid-template-columns: 196px minmax(0, 1fr) minmax(0, 1fr) 150px; align-items: center; gap: 4px 12px; min-height: 40px; padding: 6px 11px; }
+.w-line .w-title, .w-line .w-note { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.w-line .w-when { grid-column: 4; text-align: right; }
+.w-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.w-title { color: var(--text-strong); overflow-wrap: anywhere; font-size: 0.92rem; }
+.w-note { color: var(--text-muted); font-size: 0.84rem; overflow-wrap: anywhere; }
+.w-when { color: var(--text-faint); font-size: 0.76rem; }
+.what { min-width: 0; font-size: 0.8rem; color: var(--text-muted); }
+.what summary { cursor: pointer; min-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.what[open] summary { white-space: normal; overflow-wrap: anywhere; }
+.w-line .what { grid-column: 1 / -1; }
+.what summary b { color: var(--text-faint); font-weight: 600; }
+.what[data-explain="missing"] { color: var(--text-faint); font-style: italic; }
+.what[data-explain="missing"] summary b { font-style: normal; }
+.what-src { margin: 4px 0 0; color: var(--text-faint); font-size: 0.78rem; }
+.what:not([open]) > .what-src { display: none; }
+/* Pull requests and environments fold under one line per project. */
+.ship { min-width: 0; border-top: 1px solid var(--line-soft); padding-top: 8px; margin-top: 2px; }
+.ship > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; cursor: pointer; min-height: 32px; color: var(--text-muted); font-size: 0.84rem; padding: 0 2px; }
+.ship > summary b { color: var(--text); font-weight: 600; margin-right: 4px; }
+.ship > summary::-webkit-details-marker, .landed-proj > summary::-webkit-details-marker { display: none; }
+.ship > summary { list-style: none; }
+.ship > summary::before, .landed-name::before { content: "\25B8"; color: var(--text-faint); font-size: 0.8rem; width: 10px; }
+.ship[open] > summary::before, .landed-proj[open] .landed-name::before { content: "\25BE"; }
+.ship-body { display: grid; gap: 10px; margin-top: 8px; min-width: 0; }
+.ship:not([open]) > .ship-body { display: none; }
+.tl { display: grid; gap: 8px; min-width: 0; padding: 10px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--bg-inset); }
+.tl .lane-name, .stages .lane-name { color: var(--text-muted); }
+.lane-say { margin: 0 2px; color: var(--text-faint); font-size: 0.8rem; overflow-wrap: anywhere; }
+.lane > .lane-head > .lane-say { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.tl-gap { margin: 0; color: var(--rust); font-size: 0.8rem; overflow-wrap: anywhere; }
+.tl-track { display: flex; flex-wrap: wrap; gap: 6px 0; min-width: 0; }
+.tl-item { position: relative; flex: 0 0 auto; }
+.tl-item::before { content: ""; position: absolute; left: 0; right: 0; top: 22px; height: 2px; background: var(--line); }
+.tl-item:first-child::before { left: 50%; }
+.tl-item:last-child::before { right: 50%; }
+.tl-pr { position: relative; display: grid; justify-items: center; align-content: start; gap: 2px; width: 66px; min-height: 76px; padding: 5px 2px 6px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--text-muted); font: inherit; cursor: pointer; }
+.tl-pr:hover, .tl-pr.is-shown { background: var(--bg-card); border-color: var(--ocean); box-shadow: 0 0 0 1px var(--ocean); }
+.tl-pr.is-pinned { background: var(--bg-card); border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+.tl-mark { display: block; width: 34px; height: 34px; border-radius: 50%; background: var(--bg-inset); }
+.tl-mark svg { display: block; }
+.tl-tag { font-size: 0.7rem; font-weight: 600; line-height: 1.2; }
+.tl-date { font-size: 0.68rem; line-height: 1.2; color: var(--text-faint); }
+.tl-pr.tl-succeeded .tl-tag { color: var(--sea); }
+.tl-pr.tl-running .tl-tag { color: var(--gold); }
+.tl-pr.tl-open .tl-tag { color: var(--ocean); }
+.tl-pr.tl-failed { background: var(--rust-soft); border-color: #6b3527; }
+.tl-pr.tl-failed .tl-tag { color: var(--rust); text-transform: uppercase; letter-spacing: 0.04em; }
+.tl-pr.tl-failed:hover, .tl-pr.tl-failed.is-shown { background: var(--rust-soft); border-color: var(--ocean); }
+.tl-pr.tl-failed.is-pinned { background: var(--rust-soft); border-color: var(--gold); }
+.tl-detail { min-height: 44px; min-width: 0; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 9px; background: var(--bg-card); color: var(--text-muted); font-size: 0.88rem; overflow-wrap: anywhere; }
+.tl-detail.is-on { border-style: solid; color: var(--text); }
+.tl-detail.is-pinned { border-color: #6b5326; }
+.tl-detail.tl-failed { border-color: #6b3527; border-left: 4px solid var(--rust); }
+.tl-d-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tl-d-top .badge { white-space: normal; }
+.tl-d-title { margin: 8px 0 0; font-size: 1rem; line-height: 1.35; color: var(--text-strong); }
+.tl-d-sum { margin: 6px 0 0; color: var(--text); }
+.tl-d-dep { margin: 8px 0 0; color: var(--text); }
+.tl-d-dep b { color: var(--text-muted); font-weight: 600; }
+.tl-d-runs { margin: 4px 0 0; padding-left: 18px; color: var(--text-muted); font-size: 0.84rem; }
+.tl-d-runs .is-failed { color: var(--rust); font-weight: 600; }
+.tl-d-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 10px; color: var(--text-muted); font-size: 0.82rem; }
+.tl-d-foot .btn { min-height: 36px; padding: 4px 14px; font-size: 0.85rem; }
+.stages { display: grid; gap: 8px; min-width: 0; padding: 10px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--bg-inset); }
+.stage-strip { display: grid; gap: 6px; min-width: 0; }
+.stage-repo { margin: 0; color: var(--text-muted); font-size: 0.8rem; font-weight: 600; overflow-wrap: anywhere; }
+.stage-why { margin: 0; color: var(--rust); font-size: 0.84rem; overflow-wrap: anywhere; }
+.stage-track { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; min-width: 0; }
+.stage-cell { display: grid; align-content: start; gap: 6px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-left: 4px solid var(--text-faint); border-radius: 9px; background: var(--bg-card); }
+.stage-cell.stage-succeeded { border-left-color: var(--sea); }
+.stage-cell.stage-running { border-left-color: var(--gold); }
+.stage-cell.stage-failed { border-color: #6b3527; border-left-color: var(--rust); background: var(--rust-soft); }
+.stage-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.stage-top .badge { white-space: normal; }
+.stage-name { font-size: 0.95rem; font-weight: 700; letter-spacing: 0.04em; color: var(--text-strong); overflow-wrap: anywhere; }
+.stage-last, .stage-wait { margin: 0; font-size: 0.86rem; overflow-wrap: anywhere; }
+.stage-last b { color: var(--text-muted); font-weight: 600; }
+.stage-wait { color: var(--text-muted); }
+.stage-wait.is-waiting { color: var(--text-strong); font-weight: 600; }
+.stage-list { margin: 0; padding-left: 18px; color: var(--text-muted); font-size: 0.82rem; }
+.stage-list li { overflow-wrap: anywhere; margin: 2px 0; }
+.stage-note { margin: 0; color: var(--text-faint); font-size: 0.78rem; overflow-wrap: anywhere; }
+.idle .tl, .idle .stages { margin: 6px 0 10px; }
+.idle { background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 12px; padding: 8px 14px; margin: 0 0 12px; }
+.idle summary, .lb-notes summary, .delivery-more > summary { cursor: pointer; color: var(--text-muted); min-height: 28px; }
+.idle ul, .lb-notes ul { margin: 8px 0 0; padding-left: 20px; color: var(--text-muted); }
+.idle li, .lb-notes li { overflow-wrap: anywhere; margin: 3px 0; }
+.idle li b { color: var(--text); font-weight: 600; }
+/* Delivery settings are reference: one summary line, the list folded under it. */
+.delivery-more { border: 1px solid var(--line-soft); border-radius: 12px; background: var(--bg-raised); padding: 8px 14px; min-width: 0; }
+.delivery-more > summary { font-size: 0.86rem; }
+.delivery-more > .running-list { margin-top: 8px; border: 0; border-radius: 0; background: transparent; }
+.delivery-more .running-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr); padding: 8px 0; }
+.delivery-more .running-row .w-title { font-weight: 600; }
+.delivery-mode { font-size: 0.88rem; }
+.lb-notes { margin: 0 0 12px; border: 1px solid var(--line-soft); background: var(--bg-raised); border-radius: 12px; padding: 8px 14px; font-size: 0.85rem; }
+.lb-foot { margin-top: 20px; color: var(--text-faint); font-size: 0.76rem; overflow-wrap: anywhere; }
+@media (max-width: 900px) {
+  .lanes, .w-line { grid-template-columns: minmax(0, 1fr); }
+  .w-line .w-title, .w-line .w-note { display: block; }
+  .w-line .w-when { grid-column: 1; text-align: left; }
+  .running-row { grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; }
+  .running-row > .badge { grid-column: 1; grid-row: 1; }
+  .running-row > .running-when { grid-column: 2; grid-row: 1; }
+  .running-row > .running-name, .running-row > .w-note { grid-column: 1 / -1; }
+  .delivery-more .running-row { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+}
+@media (max-width: 640px) {
+  .lb { padding: 14px 10px 40px; }
+  .lb-stats { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+  .lb-stat { grid-column: span 2; padding: 8px 10px; }
+  .lb-stat:nth-child(4), .lb-stat:nth-child(5), .lb-stat.minor { grid-column: span 3; }
+  .lb-stat.minor-first { grid-column: 1 / span 3; }
+  .lb-stat b { font-size: 1.4rem; }
+  .lb-stat span { font-size: 0.74rem; }
+  .proj-head { padding: 12px; }
+  .proj-body { padding: 4px 8px 10px; }
+  .q { padding: 10px 12px; }
+  .q-opt { grid-template-columns: auto minmax(0, 1fr); }
+  .q-opt .rec { grid-column: 2; justify-self: start; }
+  .q-answered { grid-template-columns: minmax(0, 1fr); }
+  .need { grid-template-columns: minmax(0, 1fr); padding: 10px 12px; }
+  .need-go { justify-self: start; }
+  .running-row { padding: 10px 12px; }
+  .landed-proj > summary { grid-template-columns: minmax(0, 1fr); padding: 10px 12px; }
+  .landed-tags { justify-content: flex-start; }
+  .landed-pr { grid-template-columns: 44px minmax(0, 1fr); }
+  .landed-pr .landed-tag { grid-column: 2; }
+  .toc-box ol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .toc-box li { display: grid; }
+  .toc-link { display: flex; min-height: 44px; border-radius: 10px; overflow-wrap: anywhere; }
+}
+</style>
+</head>
+<body>
+<main class="lb" id="lb-root">
+  <header class="lb-head">
+    <div class="lb-title">
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="12" fill="#1f2843" stroke="#e0a52e" stroke-width="2"/><path d="M14 5 L17 14 L14 23 L11 14 Z" fill="#e0a52e"/><circle cx="14" cy="14" r="2.2" fill="#11172a"/></svg>
+      <div>
+        <h1>Your projects</h1>
+        <div class="lb-home" id="lb-home"></div>
+      </div>
+    </div>
+    <div class="lb-fresh" id="lb-fresh" aria-live="polite"></div>
+  </header>
+  <div id="lb-banner"></div>
+  <section class="lb-stats" id="lb-stats" aria-label="At a glance"></section>
+  <section class="sec" id="lb-needs" aria-labelledby="lb-needs-name"></section>
+  <div id="lb-tray" aria-live="polite"></div>
+  <section class="running" id="lb-running" aria-labelledby="lb-running-name"></section>
+  <section class="sec" id="lb-landed" aria-labelledby="lb-landed-name"></section>
+  <nav class="lb-toc" id="lb-toc" aria-label="Table of contents" hidden></nav>
+  <div id="lb-projects"></div>
+  <section class="running" id="lb-delivery" aria-labelledby="lb-delivery-name"></section>
+  <div id="lb-notes"></div>
+  <p class="lb-foot" id="lb-foot"></p>
+</main>
+<script id="live-board-data" type="application/json">
+{"refresh_seconds":60,"view":{"schema":"fm-live-board-view.v1","grouping":"repo","counts":{"questions":2,"urgent":0,"active_projects":1,"doing":4,"next":2,"charted":4,"stuck":2,"finished":0,"running":1,"outside":1,"landed":0},"notes":["2 questions still need a plain-language explanation from Firstmate.","Pull requests for shop could not be read: this home has no copy of its repository.","7 items have no explanation recorded yet; Firstmate adds one by giving the task a note.","1 board warning for Firstmate: owner must register call"],"workers":[{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-stuck\",\"4\"]","id":"ln-stuck","title":"Fix the payment error","project":"shop","home":null,"home_as_of":null,"status":"stuck","doing":"the payment sandbox keeps refusing our test card","stage":"Needs help","at":1792005823,"at_is_since":true},{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-lost\",\"1\"]","id":"ln-lost","title":"Speed up search","project":"shop","home":null,"home_as_of":null,"status":"stuck","doing":"Its current state could not be read.","stage":"Stopped or status unknown","at":null,"at_is_since":false},{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-doing\",\"5\"]","id":"ln-doing","title":"Build the new checkout","project":"shop","home":null,"home_as_of":null,"status":"working","doing":"wiring the basket into the new checkout page","stage":"Doing the work","at":1792005823,"at_is_since":false},{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-paused\",\"3\"]","id":"ln-paused","title":"Wait for the supplier release","project":"shop","home":null,"home_as_of":null,"status":"external","doing":"waiting for the supplier to publish their release","stage":"Waiting outside the team","at":1792005823,"at_is_since":true}],"landed":[],"delivery":[{"project":"shop","home":null,"home_as_of":null,"registration":"Registered","mode":"No-mistakes","approval":"Your approval required to merge","flags":[]}],"projects":[{"key":"repo:shop","source":"repo","name":"shop","description":null,"explain":"No explanation recorded yet","order":null,"counts":{"questions":2,"urgent":0,"doing":4,"next":2,"charted":4,"stuck":2,"stopped":2,"finished":0},"active":true,"status":"2 questions wait for you, 4 with a worker (2 stuck or stopped), 2 starting automatically, 4 not starting on their own","latest":{"title":"Wait for the supplier release","note":"waiting for the supplier to publish their release","at":1792005823},"last_finished":null,"questions":[{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-ask\",\"9\"]","id":"ln-ask","urgent":false,"priority":null,"text":"Which courier?","topic":null,"about":null,"purpose":null,"needs_explanation":true,"why":"Pick a courier.","asked":"2026-10-14T19:23:43Z","deferred_until":null,"waiting_on_other_work":false,"mode":"free-text","readonly":"legacy","close":null,"lifecycle":null,"recommendation":null,"options":[]},{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-later\",\"10\"]","id":"ln-later","urgent":false,"priority":null,"text":"Pick a loyalty partner","topic":null,"about":null,"purpose":null,"needs_explanation":true,"why":"Decide after the summer.","asked":"2026-10-14T19:23:44Z","deferred_until":"2099-01-01","waiting_on_other_work":false,"mode":"free-text","readonly":"legacy","close":null,"lifecycle":null,"recommendation":null,"options":[]}],"timeline":{"status":"ok","total":0,"unread":[{"repo":"shop","say":"Pull requests for shop could not be read: this home has no copy of its repository."}],"items":[]},"environments":{"say":null,"strips":[]},"lanes":{"doing":[{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-stuck\",\"4\"]","id":"ln-stuck","title":"Fix the payment error","home":null,"home_as_of":null,"lane":"doing","why":"worker","why_label":"With a worker","state":"blocked","explain":"No explanation recorded yet","explain_source":"missing","note":"the payment sandbox keeps refusing our test card","at":1792005823,"pr":null,"status":"stuck","status_label":"Stuck or stopped","at_is_since":true},{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-lost\",\"1\"]","id":"ln-lost","title":"Speed up search","home":null,"home_as_of":null,"lane":"doing","why":"worker","why_label":"With a worker","state":"unknown","explain":"No explanation recorded yet","explain_source":"missing","note":"Its current state could not be read.","at":null,"pr":null,"status":"stuck","status_label":"Stuck or stopped","at_is_since":false},{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-doing\",\"5\"]","id":"ln-doing","title":"Build the new checkout","home":null,"home_as_of":null,"lane":"doing","why":"worker","why_label":"With a worker","state":"working","explain":"No explanation recorded yet","explain_source":"missing","note":"wiring the basket into the new checkout page","at":1792005823,"pr":null,"status":"working","status_label":"Working","at_is_since":false},{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-paused\",\"3\"]","id":"ln-paused","title":"Wait for the supplier release","home":null,"home_as_of":null,"lane":"doing","why":"worker","why_label":"With a worker","state":"paused","explain":"No explanation recorded yet","explain_source":"missing","note":"waiting for the supplier to publish their release","at":1792005823,"pr":null,"status":"external","status_label":"Paused on an outside wait","at_is_since":true}],"next":[{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-next-top\",\"6\"]","id":"ln-next-top","title":"Add order tracking","home":null,"home_as_of":null,"lane":"next","why":"ready","why_label":"Starts automatically","state":"queued","explain":"No explanation recorded yet","explain_source":"missing","note":null,"at":null,"pr":null},{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-next-b\",\"7\"]","id":"ln-next-b","title":"Rename the basket","home":null,"home_as_of":null,"lane":"next","why":"ready","why_label":"Starts automatically","state":"queued","explain":"No explanation recorded yet","explain_source":"missing","note":null,"at":null,"pr":null}],"charted":[{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-ask\",\"9\"]","id":"ln-ask","title":"Which courier?","home":null,"home_as_of":null,"lane":"charted","why":"your-answer","why_label":"Waits for your answer","state":"queued","explain":"Captain hold set: 2026-10-14T19:23:43Z","explain_source":"note","note":null,"at":null,"pr":null},{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-held\",\"8\"]","id":"ln-held","title":"Switch payment provider","home":null,"home_as_of":null,"lane":"charted","why":"on-hold","why_label":"Waiting until 2099-01-01","state":"queued","explain":"The supplier contract is still being signed","explain_source":"hold","note":"The supplier contract is still being signed","at":null,"pr":null},{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-later\",\"10\"]","id":"ln-later","title":"Pick a loyalty partner","home":null,"home_as_of":null,"lane":"charted","why":"deferred","why_label":"You put this off until 2099-01-01","state":"queued","explain":"Captain hold set: 2026-10-14T19:23:44Z","explain_source":"note","note":null,"at":null,"pr":null},{"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-finished\",\"2\"]","id":"ln-finished","title":"Tidy the product page","home":null,"home_as_of":null,"lane":"charted","why":"wrap-up","why_label":"Finished, cleanup pending","state":"finished-awaiting-processing","explain":"No explanation recorded yet","explain_source":"missing","note":"product page tidied and checked on a phone","at":1792005823,"pr":null}]}}]},"board":{"collected_at":"2026-10-14T19:23:45Z","collected_at_epoch":1792005825,"collection_duration_seconds":0,"counts":{"blocked":1,"open_tasks":10,"questions":2,"queued":5,"unknown":1,"urgent_questions":0,"working":1},"coverage":{"local":{"complete":true,"metadata_only":0,"shown":10,"structured_open":10,"total_open":10,"truncated":false,"trustworthy":true},"registered_homes":{"collected":0,"complete":true,"reason":null,"total":0}},"home":{"key":"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753","label":"lanes"},"omissions":[],"projects":[{"counts":{"blocked":1,"open_tasks":10,"questions":2,"queued":5,"unknown":1,"urgent_questions":0,"working":1},"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"shop\"]","label":"shop","name":"shop","questions":[{"answerable":false,"blockers":[],"context":null,"context_status":"legacy","hold":{"age_days":0,"bucket":"live","kind":"captain","reason":"Pick a courier.","set":"2026-10-14T19:23:43Z","until":null},"home_key":"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753","id":"ln-ask","integrity":[],"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-ask\",\"9\"]","priority":null,"project":"shop","since":"2026-10-14","title":"Which courier?","unresolved_blockers":[],"urgent":false},{"answerable":false,"blockers":[],"context":null,"context_status":"legacy","hold":{"age_days":0,"bucket":"dated","kind":"captain","reason":"Decide after the summer.","set":"2026-10-14T19:23:44Z","until":"2099-01-01"},"home_key":"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753","id":"ln-later","integrity":[],"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-later\",\"10\"]","priority":null,"project":"shop","since":"2026-10-14","title":"Pick a loyalty partner","unresolved_blockers":[],"urgent":false}],"registration":{"annotation":"no-mistakes","flags":[],"mode":"no-mistakes","name":"shop","recognised":true,"yolo":"off"},"tasks":[{"backlog_state":"in_flight","blockers":[],"current_state":{"detail":"the payment sandbox keeps refusing our test card","freshness":"fresh","observed_at":"2026-10-14T19:23:45Z","source":"status-log","state":"blocked"},"hold":{"age_days":0,"bucket":null,"kind":null,"reason":null,"set":null,"until":null},"home_key":"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753","id":"ln-stuck","integrity":[],"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-stuck\",\"4\"]","kind":"ship","last_meaningful_event":{"age_seconds":2,"emitted_at_epoch":1792005823,"name":null,"note":"the payment sandbox keeps refusing our test card","observed_at_epoch":1792005825,"type":"event","verb":"blocked"},"owner":{"harness":"claude","kind":"ship"},"pr":{"source":"absent","url":null},"priority":null,"project":"shop","question_context":null,"question_context_status":"legacy","role":"worker","since":"2026-10-14","state":"blocked","title":"Fix the payment error","unregistered_decisions":[{"key":"default","summary":"the payment sandbox keeps refusing our test card","verb":"blocked"}],"unresolved_blockers":[],"worker_present":true},{"backlog_state":"in_flight","blockers":[],"current_state":{"detail":"harness busy (claude-hook)","freshness":"fresh","observed_at":"2026-10-14T19:23:45Z","source":"pane","state":"working"},"hold":{"age_days":0,"bucket":null,"kind":null,"reason":null,"set":null,"until":null},"home_key":"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753","id":"ln-doing","integrity":[],"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-doing\",\"5\"]","kind":"ship","last_meaningful_event":{"age_seconds":2,"emitted_at_epoch":1792005823,"name":null,"note":"wiring the basket into the new checkout page","observed_at_epoch":1792005825,"type":"event","verb":"working"},"owner":{"harness":"claude","kind":"ship"},"pr":{"source":"absent","url":null},"priority":null,"project":"shop","question_context":null,"question_context_status":"legacy","role":"worker","since":"2026-10-14","state":"working","title":"Build the new checkout","unregistered_decisions":[],"unresolved_blockers":[],"worker_present":true},{"backlog_state":"in_flight","blockers":[],"current_state":{"detail":"product page tidied and checked on a phone","freshness":"fresh","observed_at":"2026-10-14T19:23:45Z","source":"status-log","state":"done"},"hold":{"age_days":0,"bucket":null,"kind":null,"reason":null,"set":null,"until":null},"home_key":"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753","id":"ln-finished","integrity":[],"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-finished\",\"2\"]","kind":"ship","last_meaningful_event":{"age_seconds":2,"emitted_at_epoch":1792005823,"name":null,"note":"product page tidied and checked on a phone","observed_at_epoch":1792005825,"type":"event","verb":"done"},"owner":{"harness":"claude","kind":"ship"},"pr":{"source":"absent","url":null},"priority":null,"project":"shop","question_context":null,"question_context_status":"legacy","role":"worker","since":"2026-10-14","state":"finished-awaiting-processing","title":"Tidy the product page","unregistered_decisions":[],"unresolved_blockers":[],"worker_present":true},{"backlog_state":"in_flight","blockers":[],"current_state":{"detail":"waiting for the supplier to publish their release","freshness":"fresh","observed_at":"2026-10-14T19:23:45Z","source":"status-log","state":"paused"},"hold":{"age_days":0,"bucket":null,"kind":null,"reason":null,"set":null,"until":null},"home_key":"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753","id":"ln-paused","integrity":[],"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-paused\",\"3\"]","kind":"ship","last_meaningful_event":{"age_seconds":2,"emitted_at_epoch":1792005823,"name":null,"note":"waiting for the supplier to publish their release","observed_at_epoch":1792005825,"type":"event","verb":"paused"},"owner":{"harness":"claude","kind":"ship"},"pr":{"source":"absent","url":null},"priority":null,"project":"shop","question_context":null,"question_context_status":"legacy","role":"worker","since":"2026-10-14","state":"paused","title":"Wait for the supplier release","unregistered_decisions":[],"unresolved_blockers":[],"worker_present":true},{"backlog_state":"queued","blockers":[],"current_state":null,"hold":{"age_days":0,"bucket":"live","kind":"captain","reason":"Pick a courier.","set":"2026-10-14T19:23:43Z","until":null},"home_key":"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753","id":"ln-ask","integrity":[],"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-ask\",\"9\"]","kind":"captain","last_meaningful_event":null,"owner":null,"pr":{"source":"absent","url":null},"priority":null,"project":"shop","question_context":null,"question_context_status":"legacy","role":"queued","since":"2026-10-14","state":"queued","title":"Which courier?","unregistered_decisions":[],"unresolved_blockers":[],"worker_present":false},{"backlog_state":"queued","blockers":[],"current_state":null,"hold":{"age_days":0,"bucket":null,"kind":"external","reason":"The supplier contract is still being signed","set":null,"until":"2099-01-01"},"home_key":"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753","id":"ln-held","integrity":[],"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-held\",\"8\"]","kind":"ship","last_meaningful_event":null,"owner":null,"pr":{"source":"absent","url":null},"priority":null,"project":"shop","question_context":null,"question_context_status":"legacy","role":"queued","since":"2026-10-14","state":"queued","title":"Switch payment provider","unregistered_decisions":[],"unresolved_blockers":[],"worker_present":false},{"backlog_state":"queued","blockers":[],"current_state":null,"hold":{"age_days":0,"bucket":"dated","kind":"captain","reason":"Decide after the summer.","set":"2026-10-14T19:23:44Z","until":"2099-01-01"},"home_key":"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753","id":"ln-later","integrity":[],"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-later\",\"10\"]","kind":"captain","last_meaningful_event":null,"owner":null,"pr":{"source":"absent","url":null},"priority":null,"project":"shop","question_context":null,"question_context_status":"legacy","role":"queued","since":"2026-10-14","state":"queued","title":"Pick a loyalty partner","unregistered_decisions":[],"unresolved_blockers":[],"worker_present":false},{"backlog_state":"queued","blockers":[],"current_state":null,"hold":{"age_days":0,"bucket":null,"kind":null,"reason":null,"set":null,"until":null},"home_key":"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753","id":"ln-next-b","integrity":[],"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-next-b\",\"7\"]","kind":"ship","last_meaningful_event":null,"owner":null,"pr":{"source":"absent","url":null},"priority":null,"project":"shop","question_context":null,"question_context_status":"legacy","role":"queued","since":"2026-10-14","state":"queued","title":"Rename the basket","unregistered_decisions":[],"unresolved_blockers":[],"worker_present":false},{"backlog_state":"queued","blockers":[],"current_state":null,"hold":{"age_days":0,"bucket":null,"kind":null,"reason":null,"set":null,"until":null},"home_key":"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753","id":"ln-next-top","integrity":[],"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-next-top\",\"6\"]","kind":"ship","last_meaningful_event":null,"owner":null,"pr":{"source":"absent","url":null},"priority":1,"project":"shop","question_context":null,"question_context_status":"legacy","role":"queued","since":"2026-10-14","state":"queued","title":"Add order tracking","unregistered_decisions":[],"unresolved_blockers":[],"worker_present":false},{"backlog_state":"in_flight","blockers":[],"current_state":{"detail":"no current-state source available","freshness":"fresh","observed_at":"2026-10-14T19:23:45Z","source":"none","state":"unknown"},"hold":{"age_days":0,"bucket":null,"kind":null,"reason":null,"set":null,"until":null},"home_key":"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753","id":"ln-lost","integrity":[],"key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-lost\",\"1\"]","kind":"ship","last_meaningful_event":null,"owner":{"harness":"claude","kind":"ship"},"pr":{"source":"absent","url":null},"priority":null,"project":"shop","question_context":null,"question_context_status":"legacy","role":"worker","since":"2026-10-14","state":"unknown","title":"Speed up search","unregistered_decisions":[],"unresolved_blockers":[],"worker_present":true}]}],"pull_requests":{"collected_at_epoch":1792005824,"environment_config":"absent","repos":[{"environments":null,"forge":"none","project":"shop","reason":"no-clone","status":"none","window_full":false}],"status":"collected"},"recently_finished":[],"registered_homes":[],"schema":"fm-live-board.v1","warnings":[{"context_status":"legacy","id":"ln-ask","kind":"question-needs-owner-review","task_key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-ask\",\"9\"]"},{"context_status":"legacy","id":"ln-later","kind":"question-needs-owner-review","task_key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-later\",\"10\"]"},{"decision":{"key":"default","summary":"the payment sandbox keeps refusing our test card","verb":"blocked"},"id":"ln-stuck","kind":"owner-must-register-call","task_key":"[\"home-5e258119b2acc52a14b2497ca4c380e66efea98abf376d5bab432ffcc2c68753\",\"ln-stuck\",\"4\"]"}],"revision":"77425b43a17885f53bd1fc3b5d40bf5addeeacd1f37e751b232911d5a427a5e9"}}
+</script>
+<script>
+(function () {
+  "use strict";
+  var DOT = {
+    live: '<svg class="dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#7cc4a0"/></svg>',
+    warn: '<svg class="dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#e0a52e"/></svg>',
+    danger: '<svg class="dot" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#e08365"/></svg>'
+  };
+  var CHEVRON = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4 L6 8 L10 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  /* The projection decides each task's lane and reason; the page only words them. */
+  var LANES = [
+    ["doing", "Doing now", "The workers running for this project: what each one is doing and its status.", "No worker is running for this project right now."],
+    ["next", "Next", "Not with a worker yet. Each starts automatically, without you; nothing is in its way.", "Nothing is lined up to start automatically."],
+    ["charted", "Charted next", "These will not start on their own. Each one says what it waits for.", "Nothing is waiting."]
+  ];
+  var LANE_SHOWN = 3;
+  var LANE_HINT = { next: "start on their own", charted: "each says what it waits for" };
+  var WHY_CLASS = { ready: "b-info", stuck: "b-danger", "your-answer": "b-warn", deferred: "b-warn" };
+  var READONLY = {
+    stale: "This question changed after its answer options were written. Firstmate must refresh it before you can answer here.",
+    duplicate: "This question carries conflicting answer options. Firstmate must review it before you can answer here.",
+    invalid: "This question's answer options are malformed. Firstmate must review it before you can answer here.",
+    ambiguous: "Firstmate cannot tell exactly which piece of work this question belongs to. It must review it before you can answer here."
+  };
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = String(text);
+    return n;
+  }
+  function badge(cls, text, dot) {
+    var b = el("span", "badge " + cls);
+    if (dot) { var d = el("span"); d.innerHTML = DOT[dot]; b.appendChild(d); }
+    b.appendChild(el("span", "", text));
+    return b;
+  }
+  function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
+  function plural(n, one, many) { return n + " " + (n === 1 ? one : (many || one + "s")); }
+  function ago(seconds) {
+    if (seconds < 0) seconds = 0;
+    if (seconds < 90) return Math.round(seconds) + "s ago";
+    if (seconds < 5400) return Math.round(seconds / 60) + " min ago";
+    if (seconds < 172800) return Math.round(seconds / 3600) + " h ago";
+    return Math.round(seconds / 86400) + " days ago";
+  }
+  function dateEpoch(text) {
+    if (typeof text !== "string" || !text) return null;
+    var iso = /^\d{4}-\d{2}-\d{2}$/.test(text) ? text + "T00:00:00Z" : text;
+    var t = Date.parse(iso);
+    return isNaN(t) ? null : t / 1000;
+  }
+  function utf8Bytes(s) {
+    var n = 0;
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (c < 0x80) n += 1; else if (c < 0x800) n += 2;
+      else if (c >= 0xd800 && c <= 0xdbff) { n += 4; i++; } else n += 3;
+    }
+    return n;
+  }
+  function safePr(url) {
+    return typeof url === "string" && /^https:\/\/[A-Za-z0-9.-]+(:[0-9]+)?\/[^\s<>"?#]+\/pull\/[0-9]+$/.test(url) ? url : null;
+  }
+
+  var payload;
+  try {
+    payload = JSON.parse(document.getElementById("live-board-data").textContent);
+  } catch (e) { payload = null; }
+  var board = payload && payload.board;
+  var view = payload && payload.view;
+  if (!board || board.schema !== "fm-live-board.v1" || !view || view.schema !== "fm-live-board-view.v1"
+      || !Array.isArray(view.projects)) {
+    document.getElementById("lb-banner").appendChild(
+      el("div", "lb-banner", "The board data could not be read. Run fm-live-board.sh build to rebuild it."));
+    return;
+  }
+  var refresh = typeof payload.refresh_seconds === "number" && payload.refresh_seconds > 0 ? payload.refresh_seconds : 60;
+  var staleAfter = Math.max(150, Math.round(refresh * 2.5));
+  var unavailableAfter = Math.max(600, staleAfter * 2);
+
+  document.getElementById("lb-home").textContent = "Firstmate live board · " + (board.home && board.home.label || "unknown home");
+
+  /* Freshness is recomputed locally, so a board whose rebuilds stopped says so. */
+  var fresh = document.getElementById("lb-fresh");
+  var banner = document.getElementById("lb-banner");
+  function paintFreshness() {
+    var age = Date.now() / 1000 - board.collected_at_epoch;
+    clear(fresh);
+    clear(banner);
+    var state;
+    if (age > unavailableAfter) {
+      state = badge("b-danger", "out of date", "danger");
+      banner.appendChild(el("div", "lb-banner",
+        "This board has not been rebuilt for " + ago(age).replace(" ago", "") +
+        ". Automatic refresh has stopped; what you see may no longer be true."));
+    } else if (age > staleAfter) {
+      state = badge("b-warn", "stale", "warn");
+    } else {
+      state = badge("b-live", "live", "live");
+    }
+    state.setAttribute("data-freshness", age > unavailableAfter ? "unavailable" : age > staleAfter ? "stale" : "live");
+    fresh.appendChild(state);
+    fresh.appendChild(el("span", "", "updated " + ago(age) + " · refreshes every " + refresh + "s"));
+  }
+  paintFreshness();
+  setInterval(paintFreshness, 5000);
+
+  /* Five headline numbers lead: what needs the captain, what is stuck, what
+     is moving, what waits outside the team, and what landed. The quieter
+     totals follow on one line. The view counts everything; this only lays it out. */
+  var counts = view.counts || {};
+  var stats = document.getElementById("lb-stats");
+  var waitingOnYou = (view.workers || []).filter(function (w) { return w.status === "you"; }).length;
+  [["questions", "questions for you", "tone-you", counts.urgent ? plural(counts.urgent, "urgent") : ""],
+   ["stuck", "stuck or stopped", "tone-stuck", ""],
+   ["running", "workers moving", "tone-run", waitingOnYou ? plural(waitingOnYou, "more waits", "more wait") + " on a decision" : ""],
+   ["outside", "waiting outside", "tone-wait", ""],
+   ["landed", "PRs landed, last 24 h", "tone-land", ""]].forEach(function (s) {
+    var n = counts[s[0]] || 0;
+    var hot = (s[0] === "questions" || s[0] === "stuck") && n;
+    var box = el("div", "lb-stat " + s[2] + (hot ? " is-hot" : "") + (n ? "" : " is-zero"));
+    box.setAttribute("data-stat", s[0]);
+    box.appendChild(el("b", "", n));
+    box.appendChild(el("span", "", s[1]));
+    if (s[3]) box.appendChild(el("span", "lb-stat-sub", s[3]));
+    stats.appendChild(box);
+  });
+  [["doing", "with a worker"], ["next", "start on their own"], ["charted", "will not start on their own"],
+   ["finished", "done, last 2 weeks"], ["urgent", "urgent"]].forEach(function (s, i) {
+    var box = el("div", "lb-stat minor" + (i ? "" : " minor-first"));
+    box.setAttribute("data-stat", s[0]);
+    box.appendChild(el("b", "", counts[s[0]] || 0));
+    box.appendChild(el("span", "", s[1]));
+    stats.appendChild(box);
+  });
+
+  /* A queued answer shrinks its card to one line. That lives in a hidden field
+     of the card's own form, which Lavish restores after each live reload, so
+     the card stays shrunk until the next board no longer has it. The page
+     cannot see what Lavish still holds or has sent, so it claims neither. */
+  var cards = [];
+  var tray = document.getElementById("lb-tray");
+  function announce(node) {
+    try { node.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) { /* the state stays page-local */ }
+  }
+  function paintTray() {
+    clear(tray);
+    if (!cards.length) return;
+    var bar = el("div", "tray");
+    bar.setAttribute("data-tray", "");
+    bar.appendChild(el("div", "tray-text", "Answers you queue are delivered to Firstmate when you press Send in the Lavish panel."));
+    tray.appendChild(bar);
+  }
+  function syncAnswers() {
+    cards.forEach(function (paint) { paint(); });
+  }
+
+  function cardPart(name, label, node) {
+    var box = el("div", "q-part");
+    box.setAttribute("data-part", name);
+    box.appendChild(el("div", "q-label", label));
+    box.appendChild(node);
+    return box;
+  }
+
+  function questionCard(q, project) {
+    var urgent = q.urgent === true;
+    var base = "q" + (urgent ? " q-urgent" : "");
+    var card = el("article", base);
+    card.setAttribute("data-question", q.id);
+    card.setAttribute("data-mode", q.mode);
+    var top = el("div", "q-top");
+    top.appendChild(badge(urgent ? "b-danger" : "b-warn", urgent ? "urgent question" : "question for you"));
+    if (q.deferred_until) top.appendChild(badge("b-muted", "you deferred this until " + q.deferred_until));
+    if (q.waiting_on_other_work) top.appendChild(badge("b-muted", "waits on other work first"));
+    card.appendChild(top);
+    var where = el("p", "q-project");
+    where.setAttribute("data-part", "project");
+    where.appendChild(el("b", "", project));
+    if (q.topic) where.appendChild(el("span", "q-topic", q.topic));
+    card.appendChild(where);
+    if (q.about) card.appendChild(cardPart("about", "What this is about", el("p", "q-say", q.about)));
+    if (q.purpose) card.appendChild(cardPart("purpose", "What it is for", el("p", "q-say", q.purpose)));
+    // A card a manager cannot place says so itself; it never just looks short.
+    var bare = q.needs_explanation !== false || !q.about || !q.purpose;
+    if (bare) {
+      var missing = el("div", "q-missing");
+      missing.setAttribute("data-part", "needs-explanation");
+      missing.setAttribute("role", "note");
+      missing.appendChild(el("b", "", "Needs a plain-language explanation"));
+      missing.appendChild(el("span", "", "Firstmate has not yet written in plain words " +
+        (q.about ? "what answering this is for" : q.purpose ? "what this is about" : "what this is about and what answering it is for") +
+        ". Ask Firstmate to explain it before you answer."));
+      card.appendChild(missing);
+    }
+    card.appendChild(cardPart("question", "The question", el("h3", "", q.text)));
+    if (bare && q.why && q.why !== q.text) {
+      var why = el("p", "q-why");
+      why.appendChild(el("b", "", "Why it is asked: "));
+      why.appendChild(el("span", "", q.why));
+      card.appendChild(why);
+    }
+    var meta = el("div", "meta");
+    var since = dateEpoch(q.asked);
+    meta.appendChild(el("span", "", since === null ? "asked at an unknown time" : "asked " + ago(Date.now() / 1000 - since)));
+    card.appendChild(meta);
+
+    var options = Array.isArray(q.options) ? q.options : [];
+    if (q.mode === "options" || q.mode === "text") {
+      if (!q.lifecycle || (q.close !== "done" && q.close !== "release")) q.mode = "read-only";
+    }
+    if (q.mode !== "options" && q.mode !== "text" && q.mode !== "free-text") {
+      var ro = el("div", "q-readonly", READONLY[q.readonly] || READONLY.invalid);
+      ro.setAttribute("data-readonly", q.readonly || "unknown");
+      card.appendChild(ro);
+      return card;
+    }
+    var guarded = q.mode !== "free-text";
+    if (!guarded) options = [];
+
+    var form = el("form", "q-form");
+    form.setAttribute("data-lavish-question", "live-board:" + q.id + (guarded ? "#" + q.lifecycle : ""));
+    var opts = el("div", "q-opts");
+    if (!options.length) opts.hidden = true;
+    else {
+      opts.setAttribute("data-part", "options");
+      form.appendChild(el("div", "q-label", "Your options"));
+    }
+    var radios = [];
+    options.forEach(function (o) {
+      var rec = q.recommendation && q.recommendation === o.value;
+      var lab = el("label", "q-opt" + (rec ? " is-rec" : ""));
+      lab.setAttribute("data-option", o.value);
+      var input = document.createElement("input");
+      input.type = "radio"; input.name = "answer"; input.value = o.value;
+      radios.push(input);
+      lab.appendChild(input);
+      var body = el("span", "q-opt-body");
+      body.appendChild(el("span", "q-opt-label", o.label));
+      if (o.detail) {
+        var result = el("span", "q-opt-result");
+        result.appendChild(el("span", "q-opt-lead", "If you pick this: "));
+        result.appendChild(el("span", "q-opt-detail", o.detail));
+        body.appendChild(result);
+      }
+      lab.appendChild(body);
+      if (rec) { var r = badge("b-live", "Firstmate recommends this"); r.className += " rec"; lab.appendChild(r); }
+      opts.appendChild(lab);
+    });
+    form.appendChild(opts);
+    var note;
+    if (options.length) {
+      note = document.createElement("input");
+      note.type = "text";
+      note.placeholder = "optional note for Firstmate";
+      note.setAttribute("aria-label", "Optional note");
+    } else {
+      note = document.createElement("textarea");
+      note.placeholder = "Type your answer";
+      note.setAttribute("aria-label", "Your answer");
+    }
+    note.name = "note"; note.className = "q-note";
+    form.appendChild(note);
+    var foot = el("div", "q-foot");
+    var btn = el("button", "btn", "Queue answer");
+    btn.type = "submit";
+    foot.appendChild(btn);
+    foot.appendChild(el("span", "q-mode", !guarded
+      ? "Firstmate records your words as the answer and closes this question."
+      : q.close === "release"
+        ? "Answering lets the paused work continue."
+        : "Answering closes this question."));
+    var status = el("span", "q-status");
+    status.setAttribute("role", "status");
+    foot.appendChild(status);
+    form.appendChild(foot);
+
+    var kept = document.createElement("input");
+    kept.type = "hidden"; kept.name = "queued"; kept.value = "";
+    form.appendChild(kept);
+    var answered = el("div", "q-answered");
+    answered.hidden = true;
+    var said = el("div", "q-answered-main");
+    var saidText = el("span");
+    said.appendChild(el("b", "", "Answer queued in Lavish")); said.appendChild(saidText);
+    answered.appendChild(said);
+    var acts = el("div", "q-answered-acts");
+    var change = el("button", "btn btn-quiet", "Change answer");
+    change.type = "button";
+    change.setAttribute("data-change", "");
+    acts.appendChild(change);
+    answered.appendChild(acts);
+    form.appendChild(answered);
+    /* stamp TAB answer; a stamp from an earlier asking is ignored. */
+    var stamp = String(q.lifecycle || q.asked || "");
+    function keptAnswer() {
+      var value = String(kept.value || ""), at = value.indexOf("\t");
+      return at >= 0 && value.slice(0, at) === stamp ? value.slice(at + 1) : "";
+    }
+    function setKept(shown) {
+      kept.value = shown ? stamp + "\t" + shown : "";
+      announce(kept);
+      syncAnswers();
+    }
+    cards.push(function () {
+      var shown = keptAnswer();
+      card.className = base + (shown ? " is-queued" : "");
+      card.setAttribute("data-answer", shown ? "queued" : "open");
+      answered.hidden = !shown;
+      saidText.textContent = q.text + " - " + shown;
+    });
+    change.addEventListener("click", function () {
+      setKept("");
+      status.className = "q-status";
+      status.textContent = "Queue a new answer; it replaces the earlier one if that has not been sent yet.";
+    });
+
+    form.addEventListener("submit", function (ev) {
+      if (ev && ev.preventDefault) ev.preventDefault();
+      status.className = "q-status";
+      var value = "";
+      radios.forEach(function (r) { if (r.checked) value = r.value; });
+      var noteText = (note.value || "").replace(/\s+/g, " ").trim();
+      if (!value && !noteText) {
+        status.className = "q-status err";
+        status.textContent = options.length ? "Pick one of the options or write a note first." : "Write your answer first.";
+        return;
+      }
+      var label = value;
+      options.forEach(function (o) { if (o.value === value) label = o.label; });
+      var shown = value ? (noteText ? label + " - " + noteText : label) : noteText;
+      if (utf8Bytes(value) + utf8Bytes(noteText) + 3 > 512 || utf8Bytes(shown) > 512) {
+        status.className = "q-status err";
+        status.textContent = "The answer is too long to send (512 bytes maximum).";
+        return;
+      }
+      if (!(window.lavish && window.lavish.queuePrompt)) {
+        status.className = "q-status err";
+        status.textContent = "Answers can only be sent when this board is open in Lavish.";
+        return;
+      }
+      var data = { schema: "fm-bearings-answer.v1", question: q.id, selection: value, note: noteText };
+      if (guarded) { data.close = q.close; data.lifecycle = q.lifecycle; }
+      window.lavish.queuePrompt(
+        "Live board answer - " + q.text + ": " + shown,
+        { tag: "choice", text: q.text + " -> " + shown, element: form, data: data });
+      status.textContent = "";
+      setKept(shown);
+    });
+    card.appendChild(form);
+    return card;
+  }
+
+  /* The projection writes every explanation and names its source; the page
+     folds it to one line and never leaves a label without one. */
+  var NO_EXPLANATION = "No explanation recorded yet";
+  var EXPLAIN_SOURCE = {
+    note: "From this item's own note in the task list.",
+    call: "From the question Firstmate asked you about this item.",
+    hold: "From the reason this item is on hold.",
+    project: "From the project list Firstmate keeps for this board.",
+    missing: "Firstmate has not written what this is yet."
+  };
+  function whatIsThis(text, source) {
+    var known = typeof text === "string" && text && source !== "missing";
+    var box = el("details", "what");
+    box.setAttribute("data-explain", known ? (EXPLAIN_SOURCE[source] ? source : "note") : "missing");
+    var say = el("summary");
+    say.appendChild(el("b", "", "What this is: "));
+    say.appendChild(el("span", "", known ? text : NO_EXPLANATION));
+    box.appendChild(say);
+    box.appendChild(el("p", "what-src", EXPLAIN_SOURCE[known ? source : "missing"] || EXPLAIN_SOURCE.note));
+    return box;
+  }
+
+  /* A worker's status is always an icon and a word, never colour alone. */
+  var CREW_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">';
+  var CREW_ICON = {
+    working: CREW_SVG + '<path d="M4 2.5 L11.5 7 L4 11.5 Z" fill="currentColor"/></svg>',
+    validation: CREW_SVG + '<circle cx="6" cy="6" r="3.8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 9 L12.3 12.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    merge: CREW_SVG + '<circle cx="3.5" cy="3" r="1.7" fill="currentColor"/><circle cx="3.5" cy="11" r="1.7" fill="currentColor"/><circle cx="10.5" cy="7" r="1.7" fill="currentColor"/><path d="M3.5 3 L3.5 11 M3.5 7 L10.5 7" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
+    external: CREW_SVG + '<path d="M4.5 3 L4.5 11 M9.5 3 L9.5 11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
+    stuck: CREW_SVG + '<path d="M7 1.5 L13 12.5 L1 12.5 Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7 5.5 L7 8.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="7" cy="10.6" r="0.9" fill="currentColor"/></svg>'
+  };
+  CREW_ICON.you = CREW_SVG + '<circle cx="7" cy="7" r="5.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5.3 5.4 C5.3 3.6 8.7 3.6 8.7 5.4 C8.7 6.7 7 6.6 7 8.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="10.2" r="0.9" fill="currentColor"/></svg>';
+  var CREW_BADGE = { working: "b-live", validation: "b-info", merge: "b-info", stuck: "b-danger", you: "b-warn", external: "b-muted" };
+  function crewIcon(status) {
+    var icon = el("span", "crew-icon");
+    icon.innerHTML = CREW_ICON[status] || "";
+    return icon;
+  }
+  function paintDelivery() {
+    var box = document.getElementById("lb-delivery");
+    var projects = view.delivery || [];
+    var name = el("h2", "", "Project delivery and merging");
+    name.setAttribute("id", "lb-delivery-name");
+    box.appendChild(name);
+    box.appendChild(el("p", "running-say", "Registered settings for each project, including those with no work running. A particular task may use a different route."));
+    if (!projects.length) {
+      box.appendChild(el("p", "lane-none", "No projects were found. See the board notes if the project list could not be read."));
+      return;
+    }
+    var yours = projects.filter(function (p) { return p.approval === "Your approval required to merge"; }).length;
+    var more = el("details", "delivery-more");
+    more.setAttribute("data-delivery-summary", "");
+    var own = projects.length - yours;
+    more.appendChild(el("summary", "", plural(projects.length, "project") + ": " +
+      (!yours ? "all merge on their own when checks pass"
+        : yours + (yours === 1 ? " needs" : " need") + " your approval to merge" +
+          (own ? ", " + own + (own === 1 ? " merges on its own" : " merge on their own") + " when checks pass" : ""))));
+    var list = el("ul", "running-list");
+    projects.forEach(function (p) {
+      var row = el("li", "running-row");
+      row.setAttribute("data-delivery-project", p.project);
+      var project = el("div", "running-name");
+      project.appendChild(el("b", "w-title", p.project));
+      project.appendChild(el("span", "running-project", p.registration));
+      if (p.home) project.appendChild(el("span", "running-home", "Second mate: " + p.home));
+      if (p.home_as_of) project.appendChild(badge("b-warn", p.home_as_of));
+      row.appendChild(project);
+      var route = el("div", "running-name");
+      route.appendChild(el("span", "delivery-mode", p.mode));
+      (p.flags || []).forEach(function (flag) { route.appendChild(el("span", "w-note", flag)); });
+      row.appendChild(route);
+      row.appendChild(el("span", "delivery-approval w-note", p.approval));
+      list.appendChild(row);
+    });
+    more.appendChild(list);
+    box.appendChild(more);
+  }
+  /* One row per worker: its status first, then the task and its project, what
+     it is doing, and how long ago it last reported. Ones that need someone lead. */
+  function paintRunning() {
+    var box = document.getElementById("lb-running");
+    var workers = view.workers || [];
+    var name = el("h2");
+    name.setAttribute("id", "lb-running-name");
+    name.appendChild(el("span", "", "Running workers"));
+    name.appendChild(el("span", "lane-count", " · " + workers.length));
+    box.appendChild(name);
+    box.appendChild(el("p", "running-say", "Across all projects, including workers waiting for checks or a decision. Stopped or unreadable workers stay visible until their work is finished."));
+    if (!workers.length) {
+      box.appendChild(el("p", "lane-none sec-none", "No running workers were found. See the board notes if any work could not be read."));
+      return;
+    }
+    var list = el("ul", "running-list");
+    workers.forEach(function (w) {
+      var row = el("li", "running-row");
+      row.setAttribute("data-running-worker", w.key);
+      row.setAttribute("data-status", w.status || "");
+      var task = el("div", "running-name");
+      var title = el("b", "w-title", w.title);
+      title.setAttribute("title", w.title);
+      task.appendChild(title);
+      task.appendChild(el("span", "running-project", w.project));
+      if (w.home) task.appendChild(el("span", "running-home", "Second mate: " + w.home));
+      if (w.home_as_of) task.appendChild(badge("b-warn", w.home_as_of));
+      row.appendChild(task);
+      var doing = el("span", "w-note", w.doing);
+      doing.setAttribute("title", w.doing);
+      row.appendChild(doing);
+      var stage = el("span", "badge " + (CREW_BADGE[w.status] || (w.status === "you" ? "b-warn" : "b-muted")));
+      stage.setAttribute("data-running-stage", "");
+      stage.appendChild(crewIcon(w.status));
+      stage.appendChild(el("span", "", w.stage));
+      row.appendChild(stage);
+      var when = el("span", "running-when");
+      if (typeof w.at === "number") {
+        var age = ago(Date.now() / 1000 - w.at);
+        when.textContent = w.at_is_since ? "for " + age.replace(" ago", "") : "reported " + age;
+      }
+      row.appendChild(when);
+      list.appendChild(row);
+    });
+    box.appendChild(list);
+  }
+  /* Merged PRs of the last day, one folded line per project: how many, how
+     their runs after merge went, and the newest title. */
+  var LANDED_BADGE = { passed: "b-live", failed: "b-danger", running: "b-warn" };
+  function clock(epoch) {
+    var d = new Date(epoch * 1000);
+    if (isNaN(d.getTime())) return "";
+    return (d.getHours() < 10 ? "0" : "") + d.getHours() + ":" + (d.getMinutes() < 10 ? "0" : "") + d.getMinutes();
+  }
+  function paintLanded() {
+    var box = document.getElementById("lb-landed");
+    var landed = Array.isArray(view.landed) ? view.landed : [];
+    var head = el("div", "sec-head");
+    var name = el("h2", "", "Landed in the last 24 hours");
+    name.setAttribute("id", "lb-landed-name");
+    head.appendChild(name);
+    head.appendChild(el("span", "sec-count", plural(landed.length, "PR") + " merged"));
+    box.appendChild(head);
+    if (!landed.length) {
+      box.appendChild(el("p", "sec-none", (board.pull_requests || {}).status === "collected"
+        ? "No PR was merged in the last 24 hours." : "PRs have not been read, so what landed is not known."));
+      return;
+    }
+    var order = [], byProject = {};
+    landed.forEach(function (pr) {
+      var key = pr.project || "Unsorted work";
+      if (!byProject[key]) { byProject[key] = []; order.push(key); }
+      byProject[key].push(pr);
+    });
+    var list = el("div", "landed-list");
+    order.forEach(function (project) {
+      var prs = byProject[project];
+      var item = el("details", "landed-proj");
+      item.setAttribute("data-landed-project", project);
+      var sum = el("summary");
+      var label = el("span", "landed-name");
+      label.appendChild(el("span", "", project));
+      label.appendChild(el("span", "sec-count", plural(prs.length, "PR")));
+      sum.appendChild(label);
+      var tags = el("span", "landed-tags");
+      ["failed", "running", "passed"].forEach(function (tag) {
+        var n = prs.filter(function (pr) { return pr.tag === tag; }).length;
+        if (n) tags.appendChild(badge(LANDED_BADGE[tag], n + " " + tag));
+      });
+      sum.appendChild(tags);
+      sum.appendChild(el("span", "landed-last", "Latest: " + prs[0].title));
+      item.appendChild(sum);
+      var ul = el("ul", "landed-prs");
+      prs.forEach(function (pr) {
+        var li = el("li", "landed-pr");
+        li.setAttribute("data-landed-pr", pr.key);
+        li.appendChild(el("span", "landed-time", clock(pr.at)));
+        var href = safeForgeLink(pr.url);
+        if (href) {
+          var a = el("a", "", pr.title); a.href = href; a.target = "_blank"; a.rel = "noopener";
+          li.appendChild(a);
+        } else li.appendChild(el("span", "", pr.title));
+        var tag = el("span", "landed-tag t-" + (pr.tag || "unknown"), pr.tag || "unknown");
+        tag.setAttribute("title", pr.label || "");
+        li.appendChild(tag);
+        ul.appendChild(li);
+      });
+      item.appendChild(ul);
+      list.appendChild(item);
+    });
+    box.appendChild(list);
+  }
+  /* The view decides each task's lane, its reason, and a worker's status and
+     words. A Doing now row is one line per worker: status, task, what it is
+     doing; the other lanes stack a card under the reason it waits or starts. */
+  function taskCard(t) {
+    var doing = t.lane === "doing";
+    var row = el("div", doing ? "w w-line" : "w");
+    row.setAttribute("data-task", t.id);
+    row.setAttribute("data-lane", t.lane);
+    row.setAttribute("data-why", t.why || "");
+    if (doing) {
+      row.setAttribute("data-worker-status", t.status || "");
+      var status = el("span", "badge " + (CREW_BADGE[t.status] || "b-muted"));
+      status.setAttribute("data-worker-chip", "");
+      status.appendChild(crewIcon(t.status));
+      status.appendChild(el("span", "", t.status_label || "Status unknown"));
+      row.appendChild(status);
+    }
+    var name = el("span", "w-name");
+    var title = el("span", "w-title", t.title);
+    name.appendChild(title);
+    if (t.home) {
+      var home = badge("b-info", "Second mate: " + t.home);
+      home.setAttribute("data-home", t.home);
+      name.appendChild(home);
+      if (t.home_as_of) {
+        var asOf = badge("b-warn", t.home_as_of);
+        asOf.setAttribute("data-home-as-of", "");
+        asOf.setAttribute("title", "This second mate could not be read this time, so this is its last good read.");
+        name.appendChild(asOf);
+      }
+    }
+    row.appendChild(name);
+    /* A stacked card says what it is under its title; a Doing now line keeps
+       its one line and says it on a row of its own beneath. */
+    var what = whatIsThis(t.explain, t.explain_source);
+    if (!doing) {
+      row.appendChild(what);
+      var reason = badge(WHY_CLASS[t.why] || "b-muted", t.why_label || "Waiting");
+      reason.setAttribute("data-reason", "");
+      row.appendChild(reason);
+    }
+    var note = t.note ? el("span", "w-note", t.note) : null;
+    if (note) row.appendChild(note);
+    /* A wide line shows two rows of each at most; pointing at one shows it whole. */
+    if (doing) {
+      title.setAttribute("title", t.title);
+      if (note) note.setAttribute("title", t.note);
+    }
+    var when = [];
+    if (typeof t.at === "number") {
+      var age = ago(Date.now() / 1000 - t.at);
+      when.push(doing && t.at_is_since ? "for " + age.replace(" ago", "") : "last update " + age);
+    }
+    var line = el("span", "w-when", when.join(" · "));
+    var pr = safePr(t.pr);
+    if (pr) {
+      if (when.length) line.appendChild(el("span", "", " · "));
+      var a = el("a", "", "pull request"); a.href = pr; a.target = "_blank"; a.rel = "noopener";
+      line.appendChild(a);
+    }
+    if (when.length || pr) row.appendChild(line);
+    if (doing) row.appendChild(what);
+    return row;
+  }
+
+  /* The projection decides the outcome of each pull request's runs after merge and its words;
+     the page only draws the strip and shows one pull request's detail. */
+  var TL_RING = '<svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="14" ';
+  var TL_ICON = {
+    succeeded: TL_RING + 'fill="#1f3a30" stroke="#7cc4a0" stroke-width="2"/><path d="M10.5 17.5 L15 22 L23.5 12.5" fill="none" stroke="#7cc4a0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    failed: TL_RING + 'fill="#e08365" stroke="#e08365" stroke-width="2"/><path d="M11.5 11.5 L22.5 22.5 M22.5 11.5 L11.5 22.5" fill="none" stroke="#11172a" stroke-width="3.2" stroke-linecap="round"/></svg>',
+    running: TL_RING + 'fill="#3a3020" stroke="#e0a52e" stroke-width="2"/><circle cx="11" cy="17" r="2.2" fill="#e0a52e"/><circle cx="17" cy="17" r="2.2" fill="#e0a52e"/><circle cx="23" cy="17" r="2.2" fill="#e0a52e"/></svg>',
+    open: TL_RING + 'fill="#1d3346" stroke="#8cc0dd" stroke-width="2" stroke-dasharray="4 3"/></svg>',
+    closed: TL_RING + 'fill="#161d33" stroke="#7f89a6" stroke-width="2"/><path d="M11 17 L23 17" fill="none" stroke="#7f89a6" stroke-width="3" stroke-linecap="round"/></svg>',
+    none: TL_RING + 'fill="#161d33" stroke="#7f89a6" stroke-width="2"/><circle cx="17" cy="17" r="4" fill="#7f89a6"/></svg>',
+    unknown: TL_RING + 'fill="#161d33" stroke="#a7afc6" stroke-width="2"/><path d="M13 13.5 C13 9.5 21 9.5 21 13.5 C21 16.5 17 16 17 19.5" fill="none" stroke="#a7afc6" stroke-width="2.6" stroke-linecap="round"/><circle cx="17" cy="24" r="1.7" fill="#a7afc6"/></svg>'
+  };
+  var TL_BADGE = { succeeded: "b-live", failed: "b-danger", running: "b-warn", open: "b-info" };
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function dayText(epoch) {
+    if (typeof epoch !== "number") return "";
+    var d = new Date(epoch * 1000);
+    return isNaN(d.getTime()) ? "" : d.getDate() + " " + MONTHS[d.getMonth()];
+  }
+  function safeForgeLink(url) {
+    return typeof url === "string" && (/^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/pull\/[0-9]+$/.test(url)
+      || /^https:\/\/dev\.azure\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/_git\/[A-Za-z0-9._-]+\/pullrequest\/[0-9]+$/.test(url)) ? url : null;
+  }
+  function tlKind(item) {
+    var outcome = item.deploy && item.deploy.outcome;
+    if (outcome === "succeeded" || outcome === "failed" || outcome === "running" || outcome === "none") return outcome;
+    if (outcome === "not-deployed") return item.state === "merged" ? "running" : item.state === "closed" ? "closed" : "open";
+    return "unknown";
+  }
+  /* A pinned pull request lives in a hidden field of its timeline, which
+     Lavish restores after each live reload exactly as it does a card's
+     answer, so the pin stays put while the board refreshes under it. */
+  var pinSyncs = [];
+  var prs = board.pull_requests || {};
+
+  function timelineSection(p, holder) {
+    var tl = p.timeline || {};
+    var items = Array.isArray(tl.items) ? tl.items : [];
+    var box = el("section", "tl");
+    box.setAttribute("data-timeline", tl.status || "not-collected");
+    var head = el("div", "lane-head");
+    var name = el("h3", "lane-name");
+    name.appendChild(el("span", "", "Pull requests"));
+    if (items.length) {
+      name.appendChild(el("span", "lane-count", tl.total > items.length
+        ? items.length + " newest of " + tl.total : String(items.length)));
+    }
+    head.appendChild(name);
+    var say;
+    if (tl.status === "unreadable") say = "The pull request data could not be read, so nothing can be shown here.";
+    else if (tl.status !== "ok") say = "Pull requests have not been read yet.";
+    else if (!items.length) say = (tl.unread || []).length ? "No pull requests can be shown for this project."
+      : "No pull requests were found for this project.";
+    else {
+      say = "Oldest on the left. Point at one, or press it, to see what changed and whether the runs after its merge succeeded.";
+      if (typeof prs.collected_at_epoch === "number") say += " Read " + ago(Date.now() / 1000 - prs.collected_at_epoch) + ".";
+    }
+    head.appendChild(el("p", "lane-say", say));
+    (tl.unread || []).forEach(function (unread) {
+      var gap = el("p", "tl-gap", unread.say);
+      gap.setAttribute("data-timeline-gap", unread.repo);
+      head.appendChild(gap);
+    });
+    box.appendChild(head);
+    if (!items.length) return box;
+
+    var track = el("div", "tl-track");
+    track.setAttribute("role", "list");
+    var detail = el("div", "tl-detail");
+    detail.setAttribute("data-pr-detail", "");
+    detail.setAttribute("aria-live", "polite");
+    var pinned = null, preview = null, marks = [], drawn = null;
+    var kept = el("input");
+    kept.type = "hidden"; kept.name = "pinned"; kept.value = "";
+    box.setAttribute("data-lavish-question", "live-board-pin:" + p.key);
+    box.appendChild(kept);
+
+    function paint() {
+      var shown = preview || pinned;
+      marks.forEach(function (m) {
+        m.node.className = "tl-pr tl-" + m.kind + (m.item === pinned ? " is-pinned" : "") + (m.item === shown ? " is-shown" : "");
+        m.node.setAttribute("aria-pressed", m.item === pinned ? "true" : "false");
+      });
+      /* Leaving a pinned pull request for its own link or Close shows the
+         same thing; redrawing would replace that control under the pointer
+         between mouse-down and mouse-up, and the press would be lost. */
+      if (drawn && drawn.item === shown && drawn.pinned === (shown === pinned)) return;
+      drawn = { item: shown, pinned: shown === pinned };
+      clear(detail);
+      if (!shown) {
+        detail.className = "tl-detail";
+        detail.setAttribute("data-pr-shown", "");
+        detail.setAttribute("data-pr-pinned", "false");
+        detail.appendChild(el("span", "", "Point at a pull request to see it here, or press it to keep it open."));
+        return;
+      }
+      var kind = tlKind(shown), isPinned = shown === pinned, deploy = shown.deploy || {};
+      detail.className = "tl-detail is-on tl-" + kind + (isPinned ? " is-pinned" : "");
+      detail.setAttribute("data-pr-shown", shown.key);
+      detail.setAttribute("data-pr-pinned", isPinned ? "true" : "false");
+      var top = el("div", "tl-d-top");
+      var verdict = badge(TL_BADGE[kind] || "b-muted", deploy.label || "Runs after merge could not be read");
+      verdict.setAttribute("data-pr-deploy", deploy.outcome || "unknown");
+      top.appendChild(verdict);
+      var day = dayText(shown.at);
+      top.appendChild(badge("b-muted", (shown.state_label || "") + (day ? " · " + day : "")));
+      detail.appendChild(top);
+      detail.appendChild(el("h4", "tl-d-title", shown.title));
+      if (shown.summary) detail.appendChild(el("p", "tl-d-sum", shown.summary));
+      var dep = el("p", "tl-d-dep");
+      dep.appendChild(el("b", "", "Runs after merge: "));
+      dep.appendChild(el("span", "", deploy.detail || ""));
+      detail.appendChild(dep);
+      if ((deploy.runs || []).length) {
+        var runs = el("ul", "tl-d-runs");
+        deploy.runs.forEach(function (r) {
+          var li = el("li", r.result === "failed" ? "is-failed" : "", r.name + " - " + r.label);
+          li.setAttribute("data-pr-run", r.result);
+          runs.appendChild(li);
+        });
+        if (deploy.more_runs) runs.appendChild(el("li", "", "and " + deploy.more_runs + " more"));
+        detail.appendChild(runs);
+      }
+      var foot = el("div", "tl-d-foot");
+      if (isPinned) {
+        var href = safeForgeLink(shown.url);
+        if (href) {
+          var a = el("a", "", "Open this pull request on " + shown.forge);
+          a.href = href; a.target = "_blank"; a.rel = "noopener";
+          foot.appendChild(a);
+        }
+        var close = el("button", "btn btn-quiet", "Close");
+        close.type = "button";
+        close.setAttribute("data-pr-close", "");
+        close.addEventListener("click", function () { pin(null); });
+        foot.appendChild(close);
+      } else {
+        foot.appendChild(el("span", "", "Press it to keep this open and get its link."));
+      }
+      detail.appendChild(foot);
+    }
+    function pin(item) {
+      pinned = item;
+      preview = null;
+      kept.value = item ? item.key : "";
+      announce(kept);
+      paint();
+    }
+    pinSyncs.push(function () {
+      var found = null;
+      items.forEach(function (item) { if (item.key === kept.value) found = item; });
+      if (found !== pinned) { pinned = found; paint(); }
+      if (found && holder && !holder.open) holder.open = true;
+    });
+
+    items.forEach(function (item) {
+      var kind = tlKind(item), deploy = item.deploy || {};
+      var cell = el("div", "tl-item");
+      cell.setAttribute("role", "listitem");
+      var mark = el("button", "tl-pr tl-" + kind);
+      mark.type = "button";
+      mark.setAttribute("data-pr", item.key);
+      mark.setAttribute("data-pr-kind", kind);
+      mark.setAttribute("aria-label", (item.state_label || "") + (dayText(item.at) ? " " + dayText(item.at) : "") +
+        ": " + item.title + ". " + (deploy.label || "") + ".");
+      var icon = el("span", "tl-mark");
+      icon.innerHTML = TL_ICON[kind];
+      mark.appendChild(icon);
+      mark.appendChild(el("span", "tl-tag", deploy.tag || "unknown"));
+      mark.appendChild(el("span", "tl-date", dayText(item.at)));
+      mark.addEventListener("mouseenter", function () { preview = item; paint(); });
+      mark.addEventListener("mouseleave", function () { preview = null; paint(); });
+      mark.addEventListener("focus", function () { preview = item; paint(); });
+      mark.addEventListener("blur", function () { preview = null; paint(); });
+      mark.addEventListener("click", function () { pin(pinned === item ? null : item); });
+      marks.push({ node: mark, item: item, kind: kind });
+      cell.appendChild(mark);
+      track.appendChild(cell);
+    });
+    box.appendChild(track);
+    box.appendChild(detail);
+    paint();
+    return box;
+  }
+
+  /* The view decides everything a strip says; this only lays it out. */
+  var STAGE_BADGE = { succeeded: "b-live", failed: "b-danger", running: "b-warn" };
+  function dated(row) { return row.title + (dayText(row.at) ? " (" + dayText(row.at) + ")" : ""); }
+  function stageSection(p) {
+    var env = p.environments || {};
+    var strips = Array.isArray(env.strips) ? env.strips : [];
+    if (!strips.length && !env.say) return null;
+    var box = el("section", "stages");
+    box.setAttribute("data-environments", strips.length ? "strip" : "none");
+    var head = el("div", "lane-head");
+    var name = el("h3", "lane-name");
+    name.appendChild(el("span", "", "Environments"));
+    head.appendChild(name);
+    head.appendChild(el("p", "lane-say", strips.length
+      ? "Where this project's merged changes are, left to right in the order a change travels."
+      : env.say));
+    box.appendChild(head);
+    strips.forEach(function (strip) {
+      var wrap = el("div", "stage-strip");
+      wrap.setAttribute("data-environment-repo", strip.repo || "");
+      wrap.setAttribute("data-environment-status", strip.status || "unknown");
+      if (strips.length > 1) wrap.appendChild(el("p", "stage-repo", strip.repo));
+      if (strip.say) wrap.appendChild(el("p", "stage-why", strip.say));
+      var track = el("div", "stage-track");
+      track.setAttribute("role", "list");
+      (strip.stages || []).forEach(function (stage) {
+        var kind = stage.kind || "unknown";
+        var cell = el("div", "stage-cell stage-" + kind);
+        cell.setAttribute("role", "listitem");
+        cell.setAttribute("data-environment", stage.name);
+        cell.setAttribute("data-environment-kind", kind);
+        var top = el("div", "stage-top");
+        top.appendChild(el("span", "stage-name", stage.name));
+        top.appendChild(badge(STAGE_BADGE[kind] || "b-muted", stage.label || "Not known"));
+        cell.appendChild(top);
+        if (stage.last) {
+          var last = el("p", "stage-last");
+          last.appendChild(el("b", "", "Last change: "));
+          last.appendChild(el("span", "", dated(stage.last)));
+          cell.appendChild(last);
+        } else if (stage.none) {
+          cell.appendChild(el("p", "stage-last", stage.none));
+        }
+        if (stage.waiting) {
+          var wait = el("p", "stage-wait" + (stage.waiting.count ? " is-waiting" : ""), stage.waiting.say);
+          wait.setAttribute("data-environment-waiting", String(stage.waiting.count));
+          cell.appendChild(wait);
+          if ((stage.waiting.titles || []).length) {
+            var list = el("ul", "stage-list");
+            stage.waiting.titles.forEach(function (row) { list.appendChild(el("li", "", dated(row))); });
+            if (stage.waiting.more) list.appendChild(el("li", "", "and " + stage.waiting.more + " more"));
+            cell.appendChild(list);
+          }
+          if (stage.waiting.direct) cell.appendChild(el("p", "stage-note stage-direct", stage.waiting.direct));
+        }
+        track.appendChild(cell);
+      });
+      wrap.appendChild(track);
+      (strip.notes || []).forEach(function (note) { wrap.appendChild(el("p", "stage-note", note)); });
+      box.appendChild(wrap);
+    });
+    return box;
+  }
+
+  function laneSection(lane, rows) {
+    var box = el("section", "lane lane-" + lane[0]);
+    box.setAttribute("data-lane-box", lane[0]);
+    var head = el("div", "lane-head");
+    var name = el("h3", "lane-name");
+    name.appendChild(el("span", "", lane[1]));
+    name.appendChild(el("span", "lane-count", String(rows.length)));
+    if (rows.length && LANE_HINT[lane[0]]) name.appendChild(el("span", "lane-hint", LANE_HINT[lane[0]]));
+    head.appendChild(name);
+    head.appendChild(el("p", "lane-say", lane[2]));
+    box.appendChild(head);
+    if (!rows.length) {
+      box.className += " is-empty";
+      box.appendChild(el("p", "lane-none", lane[3]));
+      return box;
+    }
+    var shown = lane[0] === "doing" ? rows.length : LANE_SHOWN;
+    rows.slice(0, shown).forEach(function (t) { box.appendChild(taskCard(t)); });
+    if (rows.length > shown) {
+      var more = el("details", "lane-more");
+      more.setAttribute("data-lane-more", String(rows.length - shown));
+      more.appendChild(el("summary", "", "Show " + (rows.length - shown) + " more"));
+      var body = el("div", "lane-more-body");
+      rows.slice(shown).forEach(function (t) { body.appendChild(taskCard(t)); });
+      more.appendChild(body);
+      box.appendChild(more);
+    }
+    return box;
+  }
+
+  var PROG_KEY = { "pb-done": "#7cc4a0", "pb-doing": "#8cc0dd", "pb-next": "#5b6788", "pb-charted": "#e0a52e" };
+  function progress(c) {
+    var box = el("div", "prog");
+    var segs = [["pb-done", c.finished || 0, "done, last 2 weeks"], ["pb-doing", c.doing || 0, "with a worker"],
+      ["pb-next", c.next || 0, "start on their own"], ["pb-charted", c.charted || 0, "will not start on their own"]];
+    var total = segs.reduce(function (sum, seg) { return sum + seg[1]; }, 0);
+    if (total > 0) {
+      var bar = el("div", "prog-bar");
+      bar.setAttribute("aria-hidden", "true");
+      segs.forEach(function (seg) {
+        if (!seg[1]) return;
+        var s = el("span", seg[0]);
+        s.style = "width:" + (100 * seg[1] / total).toFixed(1) + "%";
+        bar.appendChild(s);
+      });
+      box.appendChild(bar);
+    }
+    /* The bar's key doubles as the counts, so colour never carries meaning alone. */
+    var text = el("div", "prog-text");
+    segs.forEach(function (seg, i) {
+      if (i && !seg[1]) return;
+      var key = el("span", "prog-key" + (seg[1] ? "" : " quiet"));
+      var swatch = el("span");
+      swatch.innerHTML = '<svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><rect width="8" height="8" rx="2" fill="' + PROG_KEY[seg[0]] + '"/></svg>';
+      key.appendChild(swatch);
+      key.appendChild(el("span", "", seg[1] + " " + seg[2]));
+      text.appendChild(key);
+    });
+    box.appendChild(text);
+    return box;
+  }
+
+  /* Which cards the captain collapsed outlives the page's reloads, by project
+     name, in two places: a hidden field Lavish restores after each live
+     reload, as a card's queued answer is, and the browser's own storage,
+     which Lavish's frame refuses but a page opened on its own has. Either
+     being refused or garbled only forgets; the page never depends on them. */
+  var FOLD_STORE = "fm-live-board.collapsed.v1:" + (board.home && board.home.label || "");
+  var folds = [];
+  var foldKept = el("input");
+  foldKept.type = "hidden"; foldKept.name = "collapsed";
+  function foldNames(text) {
+    try {
+      var kept = JSON.parse(text);
+      return Array.isArray(kept) ? kept : [];
+    } catch (e) { return []; }
+  }
+  function keepFolds() {
+    var names = [];
+    folds.forEach(function (f) { if (f.collapsed()) names.push(f.name); });
+    foldKept.value = JSON.stringify(names);
+    announce(foldKept);
+    try { window.localStorage.setItem(FOLD_STORE, foldKept.value); } catch (e) { /* the hidden field still holds it */ }
+  }
+  function syncFolds() {
+    var names = foldNames(foldKept.value);
+    folds.forEach(function (f) {
+      var want = names.indexOf(f.name) !== -1;
+      if (want !== f.collapsed()) f.fold(want);
+    });
+  }
+  try { foldKept.value = JSON.stringify(foldNames(window.localStorage.getItem(FOLD_STORE))); } catch (e) { foldKept.value = "[]"; }
+  /* Which folded summaries the captain opened - a project's PRs and
+     environments, a project's landed PRs - outlives reloads the same way. */
+  var OPEN_STORE = "fm-live-board.opened.v1:" + (board.home && board.home.label || "");
+  var opens = [];
+  var openKept = el("input");
+  openKept.type = "hidden"; openKept.name = "opened";
+  try { openKept.value = JSON.stringify(foldNames(window.localStorage.getItem(OPEN_STORE))); } catch (e) { openKept.value = "[]"; }
+  function keepOpens() {
+    var names = [];
+    opens.forEach(function (o) { if (o.box.open) names.push(o.name); });
+    if (JSON.stringify(names) === openKept.value) return;
+    openKept.value = JSON.stringify(names);
+    announce(openKept);
+    try { window.localStorage.setItem(OPEN_STORE, openKept.value); } catch (e) { /* the hidden field still holds it */ }
+  }
+  function remembered(box, name) {
+    box.open = foldNames(openKept.value).indexOf(name) !== -1;
+    opens.push({ box: box, name: name });
+    box.addEventListener("toggle", keepOpens);
+  }
+  function syncOpens() {
+    var names = foldNames(openKept.value);
+    opens.forEach(function (o) {
+      var want = names.indexOf(o.name) !== -1;
+      if (o.box.open !== want) o.box.open = want;
+    });
+  }
+
+  /* A contents entry jumps to its card or quiet line, opening whatever hides
+     it. Lavish takes a press on a plain link as a request to annotate it, so
+     each entry is marked as an action of the page's own. */
+  var tocList = el("ol");
+  function tocEntry(p, id, reveal, focusOn) {
+    var li = el("li");
+    var a = el("a", "toc-link");
+    a.href = "#" + id;
+    a.setAttribute("data-toc", p.name);
+    a.setAttribute("data-lavish-action", "");
+    a.appendChild(el("span", "", p.name));
+    if ((p.counts || {}).questions) a.appendChild(el("span", "toc-count", plural(p.counts.questions, "question")));
+    if (!p.active) a.appendChild(el("span", "toc-quiet", "quiet"));
+    a.addEventListener("click", function (ev) {
+      var target = reveal();
+      /* Without scripted scrolling the link's own jump still lands on it. */
+      if (typeof target.scrollIntoView !== "function") return;
+      ev.preventDefault();
+      target.scrollIntoView({ block: "start" });
+      try { focusOn.focus({ preventScroll: true }); } catch (e) { /* the jump itself already happened */ }
+    });
+    li.appendChild(a);
+    tocList.appendChild(li);
+  }
+
+  /* One line for a project's PRs and environments: the newest merge and how
+     its runs went, failures and open PRs among those shown, and what waits to
+     move to the next environment. Everything else unfolds under it. */
+  function shipSummary(p) {
+    var sum = el("summary");
+    sum.appendChild(el("b", "", "PRs and environments"));
+    var items = ((p.timeline || {}).items) || [];
+    var merged = items.filter(function (item) { return item.state === "merged"; });
+    var last = merged[merged.length - 1];
+    if (last) {
+      var kind = tlKind(last);
+      sum.appendChild(badge(TL_BADGE[kind] || "b-muted", "last merge " + dayText(last.at) + " · " + ((last.deploy || {}).tag || "unknown")));
+    }
+    var failed = items.filter(function (item) { return tlKind(item) === "failed"; }).length;
+    if (failed) sum.appendChild(badge("b-danger", failed + " failed after merge"));
+    var open = items.filter(function (item) { return item.state === "open"; }).length;
+    if (open) sum.appendChild(badge("b-info", plural(open, "open PR")));
+    ((p.environments || {}).strips || []).forEach(function (strip) {
+      (strip.stages || []).forEach(function (stage) {
+        if (stage.waiting && stage.waiting.count) sum.appendChild(badge("b-warn", stage.waiting.count + " waiting for " + stage.name));
+      });
+    });
+    if (!items.length) sum.appendChild(el("span", "", (p.timeline || {}).status === "ok" && !((p.timeline || {}).unread || []).length
+      ? "no PRs found" : "PRs could not be read"));
+    return sum;
+  }
+
+  function projectSection(p, id) {
+    var c = p.counts || {};
+    var cls = "proj" + (c.questions ? " has-q" : "");
+    var sec = el("section", cls);
+    sec.setAttribute("id", id);
+    sec.setAttribute("data-project", p.name);
+    sec.setAttribute("data-project-key", p.key);
+    var head = el("div", "proj-head");
+    var title = el("div", "proj-title");
+    var name = el("div", "proj-name");
+    var h2 = el("h2", "", p.name);
+    h2.setAttribute("id", id + "-name");
+    name.appendChild(h2);
+    if (c.urgent) name.appendChild(badge("b-danger", plural(c.urgent, "urgent question")));
+    if (c.questions - (c.urgent || 0) > 0) name.appendChild(badge("b-warn", plural(c.questions - (c.urgent || 0), "question")));
+    if (c.stuck) name.appendChild(badge("b-danger", c.stuck + " stuck"));
+    title.appendChild(name);
+    var toggle = el("button", "btn btn-quiet proj-toggle");
+    toggle.type = "button";
+    toggle.setAttribute("id", id + "-toggle");
+    toggle.setAttribute("data-project-toggle", "");
+    toggle.setAttribute("aria-controls", id + "-body");
+    toggle.setAttribute("aria-labelledby", id + "-toggle " + id + "-name");
+    var chev = el("span", "proj-chev");
+    chev.innerHTML = CHEVRON;
+    toggle.appendChild(chev);
+    var toggleSay = el("span");
+    toggle.appendChild(toggleSay);
+    title.appendChild(toggle);
+    head.appendChild(title);
+    if (p.description && p.description === p.explain) head.appendChild(el("p", "proj-desc", p.description));
+    else {
+      if (p.description) head.appendChild(el("p", "proj-desc", p.description));
+      head.appendChild(whatIsThis(p.explain, p.explain === NO_EXPLANATION ? "missing" : "project"));
+    }
+    head.appendChild(el("p", "proj-status", p.status));
+    head.appendChild(progress(c));
+    if (p.latest) {
+      var latest = el("p", "proj-latest");
+      latest.setAttribute("data-latest", "");
+      latest.appendChild(el("b", "", "Latest: "));
+      latest.appendChild(el("span", "", p.latest.title + " - " + p.latest.note +
+        (typeof p.latest.at === "number" ? " (" + ago(Date.now() / 1000 - p.latest.at) + ")" : "")));
+      head.appendChild(latest);
+    }
+    sec.appendChild(head);
+    var body = el("div", "proj-body");
+    body.setAttribute("id", id + "-body");
+    /* A collapsed card keeps its name, badges and status line. */
+    var collapsed = false;
+    function fold(to) {
+      collapsed = to;
+      sec.className = cls + (collapsed ? " is-collapsed" : "");
+      body.hidden = collapsed;
+      toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      toggleSay.textContent = collapsed ? "Expand" : "Collapse";
+    }
+    fold(foldNames(foldKept.value).indexOf(p.name) !== -1);
+    folds.push({ name: p.name, fold: fold, collapsed: function () { return collapsed; } });
+    toggle.addEventListener("click", function () { fold(!collapsed); keepFolds(); });
+    function reveal() {
+      if (collapsed) { fold(false); keepFolds(); }
+      return sec;
+    }
+    tocEntry(p, id, reveal, toggle);
+    if ((p.questions || []).length) {
+      body.appendChild(el("div", "sec-label", "Questions for you"));
+      p.questions.forEach(function (q) {
+        var card = questionCard(q, p.name);
+        card.setAttribute("id", "lb-q-" + (needs.length + 1));
+        card.setAttribute("tabindex", "-1");
+        needs.push({ q: q, project: p.name, card: card, reveal: reveal });
+        body.appendChild(card);
+      });
+    }
+    var lanes = el("div", "lanes");
+    LANES.forEach(function (lane) { lanes.appendChild(laneSection(lane, (p.lanes || {})[lane[0]] || [])); });
+    body.appendChild(lanes);
+    var ship = el("details", "ship");
+    ship.setAttribute("data-ship", "");
+    ship.appendChild(shipSummary(p));
+    var shipBody = el("div", "ship-body");
+    var stages = stageSection(p);
+    if (stages) shipBody.appendChild(stages);
+    shipBody.appendChild(timelineSection(p, ship));
+    ship.appendChild(shipBody);
+    remembered(ship, "ship:" + p.name);
+    body.appendChild(ship);
+    sec.appendChild(body);
+    return sec;
+  }
+
+  /* Needs you: every open decision as one plain line - what it is about, the
+     choice, Firstmate's recommendation - jumping to its answer card in its
+     project, plus workers that wait on a decision asked elsewhere. A put-off
+     decision goes last and quieter. */
+  function paintNeeds() {
+    var box = document.getElementById("lb-needs");
+    var crew = (view.workers || []).filter(function (w) {
+      return w.status === "you" && !needs.some(function (n) { return n.q.id === w.id; });
+    });
+    var head = el("div", "sec-head");
+    var name = el("h2", "", "Needs you");
+    name.setAttribute("id", "lb-needs-name");
+    head.appendChild(name);
+    head.appendChild(el("span", "sec-count", needs.length ? plural(needs.length, "decision") : "nothing to decide"));
+    box.appendChild(head);
+    if (!needs.length && !crew.length) {
+      box.appendChild(el("p", "sec-none", "No decision waits for you right now."));
+      return;
+    }
+    var rows = needs.slice().sort(function (a, b) {
+      return (a.q.deferred_until ? 1 : 0) - (b.q.deferred_until ? 1 : 0) || (b.q.urgent ? 1 : 0) - (a.q.urgent ? 1 : 0);
+    });
+    var list = el("ul", "needs-list");
+    rows.forEach(function (n) {
+      var q = n.q;
+      var li = el("li", "need" + (q.urgent ? " is-urgent" : "") + (q.deferred_until ? " is-later" : ""));
+      li.setAttribute("data-need", q.id);
+      var main = el("div", "need-main");
+      main.appendChild(el("span", "need-what", q.about || q.text));
+      main.appendChild(el("span", "need-where", [n.project, q.topic, q.urgent ? "urgent" : null,
+        q.deferred_until ? "you put this off until " + q.deferred_until : null,
+        q.waiting_on_other_work ? "waits on other work first" : null,
+        dateEpoch(q.asked) === null ? null : "asked " + ago(Date.now() / 1000 - dateEpoch(q.asked))]
+        .filter(Boolean).join(" · ")));
+      var options = Array.isArray(q.options) ? q.options : [];
+      var choice = el("span", "need-choice");
+      choice.appendChild(el("b", "", "Choice: "));
+      choice.appendChild(el("span", "", options.length ? options.map(function (o) { return o.label; }).join(" / ")
+        : q.about ? q.text : "answer in your own words"));
+      main.appendChild(choice);
+      var rec = null;
+      options.forEach(function (o) { if (q.recommendation && o.value === q.recommendation) rec = o.label; });
+      if (rec) {
+        var r = el("span", "need-rec");
+        r.appendChild(el("b", "", "Firstmate recommends: "));
+        r.appendChild(el("span", "", rec));
+        main.appendChild(r);
+      }
+      li.appendChild(main);
+      var go = el("a", "need-go", q.deferred_until ? "Open" : "Answer");
+      go.href = "#" + n.card.getAttribute("id");
+      go.setAttribute("data-lavish-action", "");
+      go.addEventListener("click", function (ev) {
+        n.reveal();
+        if (typeof n.card.scrollIntoView !== "function") return;
+        ev.preventDefault();
+        n.card.scrollIntoView({ block: "start" });
+        try { n.card.focus({ preventScroll: true }); } catch (e) { /* the jump itself already happened */ }
+      });
+      li.appendChild(go);
+      list.appendChild(li);
+    });
+    box.appendChild(list);
+    if (crew.length) {
+      box.appendChild(el("p", "need-crew", plural(crew.length, "worker waits", "workers wait") + " on a decision asked outside this board"));
+      var cl = el("ul", "needs-list");
+      crew.forEach(function (w) {
+        var li = el("li", "need is-crew");
+        li.setAttribute("data-need-worker", w.key);
+        var main = el("div", "need-main");
+        main.appendChild(el("span", "need-what", w.title));
+        main.appendChild(el("span", "need-where", [w.project, w.home ? "second mate " + w.home : null,
+          typeof w.at !== "number" ? null : w.at_is_since ? "waiting for " + ago(Date.now() / 1000 - w.at).replace(" ago", "")
+            : "reported " + ago(Date.now() / 1000 - w.at)]
+          .filter(Boolean).join(" · ")));
+        li.appendChild(main);
+        cl.appendChild(li);
+      });
+      box.appendChild(cl);
+    }
+  }
+
+  var needs = [];
+  var host = document.getElementById("lb-projects");
+  paintRunning();
+  paintLanded();
+  paintDelivery();
+  var active = view.projects.filter(function (p) { return p.active; });
+  var quiet = view.projects.filter(function (p) { return !p.active; });
+  if (!active.length) {
+    var empty = el("div", "lb-empty");
+    empty.setAttribute("data-empty", "true");
+    empty.innerHTML = '<svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="18" fill="#1f3a30"/><path d="M12 20 L18 26 L29 14" fill="none" stroke="#7cc4a0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    empty.appendChild(el("h2", "", "Nothing running and no questions for you"));
+    empty.appendChild(el("p", "", (board.coverage && board.coverage.local && board.coverage.local.trustworthy)
+      ? "No project has open work right now."
+      : "No open work was found, but the board could not see everything - see the board notes below."));
+    host.appendChild(empty);
+  }
+  active.forEach(function (p, i) { host.appendChild(projectSection(p, "lb-card-" + (i + 1))); });
+  if (quiet.length) {
+    var box = el("details", "idle");
+    box.setAttribute("data-idle", String(quiet.length));
+    box.appendChild(el("summary", "", plural(quiet.length, "quiet project") + " with no open work"));
+    var ul = el("ul");
+    quiet.forEach(function (p, i) {
+      var li = el("li");
+      li.setAttribute("id", "lb-quiet-" + (i + 1));
+      li.setAttribute("tabindex", "-1");
+      li.setAttribute("data-quiet-project", p.name);
+      tocEntry(p, "lb-quiet-" + (i + 1), function () { box.open = true; return li; }, li);
+      li.appendChild(el("b", "", p.name));
+      li.appendChild(whatIsThis(p.explain, p.explain === NO_EXPLANATION || !p.explain ? "missing" : "project"));
+      var extra = [];
+      if (p.counts && p.counts.finished) extra.push(p.counts.finished + " done in the last 2 weeks");
+      if (extra.length) li.appendChild(el("span", "", " - " + extra.join(" · ")));
+      var stages = stageSection(p);
+      if (stages) li.appendChild(stages);
+      if (p.timeline && ((p.timeline.items || []).length || (p.timeline.unread || []).length)) li.appendChild(timelineSection(p));
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+    host.appendChild(box);
+  }
+  var toc = document.getElementById("lb-toc");
+  toc.hidden = !tocList.firstChild;
+  if (tocList.firstChild) {
+    toc.setAttribute("data-lavish-question", "live-board-collapsed");
+    var tocBox = el("details", "toc-box");
+    /* A phone gets the contents folded to one line, so the cards stay near the top. */
+    tocBox.open = true;
+    try { tocBox.open = window.matchMedia("(min-width: 641px)").matches; } catch (e) { /* it stays open */ }
+    var tocSay = el("summary");
+    tocSay.appendChild(el("b", "", "Contents"));
+    tocSay.appendChild(el("span", "", " · " + plural(active.length + quiet.length, "project")));
+    tocBox.appendChild(tocSay);
+    tocBox.appendChild(tocList);
+    toc.appendChild(tocBox);
+    toc.appendChild(foldKept);
+    toc.appendChild(openKept);
+  }
+
+  function syncRestored() {
+    syncAnswers();
+    pinSyncs.forEach(function (sync) { sync(); });
+    syncFolds();
+    syncOpens();
+  }
+  syncAnswers();
+  paintNeeds();
+  paintTray();
+  /* Lavish restores form fields by message after a reload, so repaint then. */
+  if (typeof window.addEventListener === "function") {
+    window.addEventListener("message", function () {
+      setTimeout(syncRestored, 0);
+      setTimeout(syncRestored, 300);
+    });
+  }
+
+  if ((view.notes || []).length) {
+    var notes = el("details", "lb-notes");
+    notes.appendChild(el("summary", "", plural(view.notes.length, "board note")));
+    var nl = el("ul");
+    view.notes.forEach(function (t) { nl.appendChild(el("li", "", t)); });
+    notes.appendChild(nl);
+    document.getElementById("lb-notes").appendChild(notes);
+  }
+
+  document.getElementById("lb-foot").textContent =
+    "Collected " + board.collected_at + " in " + board.collection_duration_seconds + "s · revision " +
+    String(board.revision || "").slice(0, 12) + " · answers go through Firstmate's captain-hold intake.";
+})();
+</script>
+</body>
+</html>
