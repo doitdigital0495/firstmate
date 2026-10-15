@@ -974,6 +974,103 @@ test_explicit_model_wins_over_the_recorded_one() {
   pass "fm-control relaunch: explicit model and effort win over the recorded ones"
 }
 
+# --- dispatch receipt gate (contract: bin/fm-dispatch-receipt-lib.sh) ---------
+# enable_routing_table <case-dir>: give the case's home routing rows.
+enable_routing_table() {
+  mkdir -p "$1/home/config"
+  printf '%s\n' '{"rules":[{"when":"cheap follow-up work","use":[{"harness":"claude","model":"sonnet","effort":"low"},{"harness":"codex","model":"gpt-5","effort":"medium"}]}],"default":{"harness":"claude","model":"opus","effort":"medium"}}' \
+    > "$1/home/config/crew-dispatch.json"
+}
+
+# route_relaunch <case-dir> <id> <row> <harness> [model] [effort]: record the
+# routed choice through the real producer, one accounting entry per candidate.
+route_relaunch() {
+  local dir=$1 id=$2 row=$3 harness=$4 model=${5:-} effort=${6:-}
+  local args=(choose "$dir/home/data/$id/brief.md" --task "$id" --row "$row" --harness "$harness")
+  [ -z "$model" ] || args+=(--model "$model")
+  [ -z "$effort" ] || args+=(--effort "$effort")
+  mkdir -p "$dir/home/state/quota-intake"
+  printf '{}\n' > "$dir/home/state/quota-intake/quota-fixture.json"
+  jq --arg row "$row" '
+    (if $row == "default" then .default else .rules[($row | ltrimstr("rule_") | tonumber) - 1].use end)
+    | (if type == "array" then . else [.] end)
+    | map({harness, model: (.model // ""), effort: (.effort // ""), account: (.account // ""),
+           catalog: "fixture catalog lists this model", plan: "fixture plan",
+           quotaIntakeRecord: "quota-fixture.json", spendPriority: 1, eligible: true, reason: "ok"})' \
+    "$dir/home/config/crew-dispatch.json" > "$dir/accounting.json" || return 1
+  printf 'relaunch routed from row %s\n' "$row" > "$dir/rationale.txt"
+  FM_HOME="$dir/home" "$ROOT/bin/fm-dispatch-resolve.sh" "${args[@]}" \
+    --accounting-file "$dir/accounting.json" --rationale-file "$dir/rationale.txt" >/dev/null
+}
+
+test_relaunch_onto_a_new_profile_needs_a_dispatch_receipt() {
+  local dir out rc
+  dir=$(new_case receipt rl70)
+  add_ship_task "$dir" rl70 claude
+  enable_routing_table "$dir"
+  cp "$dir/home/state/rl70.meta" "$dir/meta.before"
+
+  # A hand-picked model and effort: refused before anything is stopped.
+  out=$(run_control "$dir" rl70 relaunch --model sonnet --effort low --note "dialling down"); rc=$?
+  [ "$rc" -ne 0 ] || fail "a relaunch onto a new model with no receipt must be refused"$'\n'"$out"
+  assert_contains "$out" "dispatch receipt gate: refusing - no dispatch receipt binds the brief of rl70" \
+    "the refusal must name the missing receipt"
+  assert_contains "$out" "A hand-picked --harness claude --model sonnet --effort low is not a routing decision" \
+    "the refusal must name the hand-picked profile"
+  assert_contains "$out" "relaunch of rl70 onto a new harness, model, effort, or account is not routed from config/crew-dispatch.json; the running agent was left untouched and nothing changed" \
+    "the refusal must say the running agent was left untouched"
+  [ "$(cat "$dir/fake/command")" = claude ] \
+    || fail "a refused relaunch must not stop the agent (command flipped to $(cat "$dir/fake/command"))"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused relaunch must send nothing to the pane"
+  [ ! -e "$dir/home/state/rl70.control-relaunch" ] || fail "a refused relaunch must not create a journal"
+  cmp -s "$dir/home/state/rl70.meta" "$dir/meta.before" || fail "a refused relaunch must leave the record untouched"
+  cmp -s "$dir/home/data/rl70/brief.md" <(sed '/^## Progress note/,$d' "$dir/home/data/rl70/brief.md") \
+    || fail "a refused relaunch must not append a progress note"
+
+  # A hand-picked harness is the same bypass.
+  out=$(run_control "$dir" rl70 relaunch --harness codex --note "switching runtime"); rc=$?
+  [ "$rc" -ne 0 ] || fail "a relaunch onto a new harness with no receipt must be refused"$'\n'"$out"
+  assert_contains "$out" "A hand-picked --harness codex is not a routing decision" \
+    "the harness refusal must name the hand-picked profile"
+  [ "$(meta_field "$dir" rl70 harness)" = claude ] || fail "a refused harness switch must leave the record untouched"
+
+  # A receipt for one candidate of the row does not admit another profile.
+  route_relaunch "$dir" rl70 rule_1 claude sonnet low || fail "could not record the routed relaunch"
+  out=$(run_control "$dir" rl70 relaunch --model sonnet --effort max --note "dialling up"); rc=$?
+  [ "$rc" -ne 0 ] || fail "a relaunch that differs from its receipt must be refused"$'\n'"$out"
+  assert_contains "$out" "profile.effort is 'low' on the receipt but the launch passes 'max'" \
+    "the refusal must name the mismatching receipt field"
+  cmp -s "$dir/home/state/rl70.meta" "$dir/meta.before" || fail "a mismatching relaunch must leave the record untouched"
+
+  # The routed profile relaunches, and the launch consumes the receipt even
+  # though the relaunch appended its progress note to the brief in between.
+  out=$(run_control "$dir" rl70 relaunch --model sonnet --effort low --note "dialling down"); rc=$?
+  expect_code 0 "$rc" "a relaunch onto the routed profile should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" rl70 model)" = sonnet ] || fail "the routed model should be recorded"
+  [ "$(meta_field "$dir" rl70 effort)" = low ] || fail "the routed effort should be recorded"
+  assert_grep "## Progress note" "$dir/home/data/rl70/brief.md" "the relaunch should have appended its progress note"
+  [ "$(find "$dir/home/state/dispatch-receipt" -name '*.spent' | wc -l | tr -d ' ')" = 1 ] \
+    || fail "the relaunch must consume exactly one receipt"
+  pass "fm-control relaunch: a new model, effort, or harness is refused before the agent is stopped without a receipt, and the routed profile relaunches"
+}
+
+test_same_profile_relaunch_needs_no_dispatch_receipt() {
+  local dir out rc
+  dir=$(new_case receiptsame rl71)
+  add_ship_task "$dir" rl71 claude
+  sed 's/^model=default$/model=opus/; s/^effort=default$/effort=high/' \
+    "$dir/home/state/rl71.meta" > "$dir/home/state/rl71.meta.tmp"
+  mv "$dir/home/state/rl71.meta.tmp" "$dir/home/state/rl71.meta"
+  enable_routing_table "$dir"
+  out=$(run_control "$dir" rl71 relaunch --note "same profile"); rc=$?
+  expect_code 0 "$rc" "a relaunch that keeps the recorded profile should need no receipt"$'\n'"$out"
+  [ "$(meta_field "$dir" rl71 model)" = opus ] || fail "the model should carry across the relaunch"
+  [ "$(meta_field "$dir" rl71 effort)" = high ] || fail "the effort should carry across the relaunch"
+  [ -z "$(find "$dir/home/state/dispatch-receipt" -name 'dispatch-*.json' 2>/dev/null)" ] \
+    || fail "a same-profile relaunch must not need or create a receipt"
+  pass "fm-control relaunch: keeping the recorded profile needs no dispatch receipt"
+}
+
 test_relaunch_onto_an_unverified_harness_is_refused() {
   local dir out rc
   dir=$(new_case badharness rl8)
@@ -2850,6 +2947,8 @@ test_pinned_relaunch_shapes_only_the_pinned_store
 test_pi_exclude_tools_follow_the_relaunch
 test_exclude_tools_refusals_happen_before_the_agent_stops
 test_explicit_model_wins_over_the_recorded_one
+test_relaunch_onto_a_new_profile_needs_a_dispatch_receipt
+test_same_profile_relaunch_needs_no_dispatch_receipt
 test_relaunch_onto_an_unverified_harness_is_refused
 test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm

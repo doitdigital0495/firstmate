@@ -533,6 +533,14 @@ test_spawn_split_and_inherit() {
   printf 'zellij\n' > "$w/home/config/backend"
   : > "$w/home/config/supervision-host-off"
   make_seeded_home "$sm" sm
+  # codex is the configured secondmate harness, not a row of this home's
+  # dispatch table, so the launch departs from the table on a recorded override.
+  mkdir -p "$w/home/state" "$w/home/data"
+  printf 'test fixture: launch sm on the configured codex secondmate harness\n' > "$w/override-words.txt"
+  FM_HOME="$w/home" FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
+    FM_CONFIG_OVERRIDE="$w/home/config" "$ROOT/bin/fm-dispatch-resolve.sh" override "$sm/data/charter.md" \
+    --task sm --harness codex --words-file "$w/override-words.txt" >/dev/null \
+    || fail "split: could not record the dispatch override"
 
   spawn_secondmate "$w" sm "$sm"
 

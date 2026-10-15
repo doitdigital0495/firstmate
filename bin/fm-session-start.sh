@@ -49,7 +49,9 @@
 #   6. fleet digest   - a compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
 #                       the away posture (state/.afk-contract and the legacy
-#                       state/.afk daemon flag), and a cheap per-task
+#                       state/.afk daemon flag), the last week's captain
+#                       overrides of the dispatch table
+#                       (data/dispatch-overrides.jsonl), and a cheap per-task
 #                       endpoint-liveness read, each bounded and crash-
 #                       isolated so one task's read can never abort the
 #                       digest: read-only, always runs. The per-task reads
@@ -988,6 +990,20 @@ if fm_pf_relay_active "$FM_HOME" \
     printf 'Reconcile terminal results with %s/bin/fm-public-followup.sh consume, then deliver a ready one with\n' "$FM_ROOT"
     printf '%s/bin/fm-public-followup.sh deliver <id>. Hand a delivered loop on with rechain, or close it with\n' "$FM_ROOT"
     printf '%s/bin/fm-public-followup.sh retire <id> --reason "...". Load fmx-respond for the procedure.\n' "$FM_ROOT"
+  fi
+fi
+
+# Captain overrides of the dispatch table (bin/fm-dispatch-receipt-lib.sh owns
+# the log). A launch that departed from the table is surfaced from disk at every
+# session start for a week, so an override is never silent. A home with no
+# override on record runs one [ -f ] test and prints no subsection.
+if [ -f "$DATA/dispatch-overrides.jsonl" ]; then
+  DISPATCH_OVERRIDES=$("$SCRIPT_DIR/fm-dispatch-resolve.sh" overrides --recent 2>/dev/null) || DISPATCH_OVERRIDES=
+  if [ -n "$DISPATCH_OVERRIDES" ]; then
+    subsection "Dispatch table overrides (data/dispatch-overrides.jsonl, last 7 days)"
+    printf '%s\n' "$DISPATCH_OVERRIDES"
+    printf '\nEach line is a launch that departed from config/crew-dispatch.json on the captain'"'"'s recorded words for that one task.\n'
+    printf 'It grants nothing for any other task: every other launch still routes from the table.\n'
   fi
 fi
 
