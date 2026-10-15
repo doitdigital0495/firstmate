@@ -51,9 +51,13 @@
 //         detail:{shown,pinned,deploy,badges,title,summary,deployText,runs:[{result,text}],
 //           links:[{href,text}],close,text}}}],
 //       environments:null|{mode,say,strips:[{repo,status,why,notes:[],
-//         cells:[{name,kind,label,last,waiting,wait,titles:[],direct}]}]}}],
-//     running:{title,none,rows:[{key,title,project,doing,stage,home,asOf}],text},
-//     delivery:{title,none,rows:[{project,registration,mode,approval,flags,home,asOf}]},
+//         cells:[{name,kind,label,last,waiting,wait,titles:[],direct}]}]},
+//       ship:null|{summary,badges,open}}],
+//     needs:{title,none,rows:[{id,what,where,choice,recommends,later,go:{text,href,lavishAction,target}}],
+//       workers:[{key,what,where}]},
+//     running:{title,none,rows:[{key,title,project,doing,stage,status,when,home,asOf}],text},
+//     landed:{title,none,projects:[{project,badges,latest,prs:[{key,tag,links}]}]},
+//     delivery:{title,summary,none,rows:[{project,registration,mode,approval,flags,home,asOf}]},
 //     headings: every second-level heading the page built, in any of its parts,
 //     statusOutsideLanes: how many worker statuses sit outside a project's lanes,
 //     idle.timelines:{<name>:timeline}, idle.environments:{<name>:environments},
@@ -399,6 +403,8 @@ const projects = root.children.filter((c) => c.getAttribute("data-project") !== 
     })),
     timeline: timelineOf(p),
     environments: environmentsOf(p),
+    ship: ((d) => (d ? { summary: text(d.children[0]), badges: badges(d.children[0]), open: d.open === true } : null))(
+      p.find((c) => c.getAttribute("data-ship") !== null)[0]),
     text: text(p),
   };
 });
@@ -450,13 +456,50 @@ console.log(JSON.stringify({
       project: text(w.find((c) => c.hasClass("running-project"))[0]),
       doing: text(w.find((c) => c.hasClass("w-note"))[0]),
       stage: marked(w, "data-running-stage"),
+      status: w.getAttribute("data-status"),
+      when: text(w.find((c) => c.hasClass("running-when"))[0]) || null,
       home: w.find((c) => c.hasClass("running-home")).map(text)[0] || null,
       asOf: w.find((c) => c.hasClass("b-warn") && c.getAttribute("data-running-stage") === null).map(text)[0] || null,
     })),
     text: text(box),
   }))(byId.get("lb-running")),
+  needs: ((box) => ({
+    title: text(box.children[0]),
+    none: box.find((c) => c.hasClass("sec-none")).map(text)[0] || null,
+    rows: box.find((c) => c.getAttribute("data-need") !== null).map((n) => ({
+      id: n.getAttribute("data-need"),
+      what: text(n.find((c) => c.hasClass("need-what"))[0]),
+      where: text(n.find((c) => c.hasClass("need-where"))[0]),
+      choice: ((c) => (c ? text(c) : null))(n.find((c) => c.hasClass("need-choice"))[0]),
+      recommends: ((c) => (c ? text(c) : null))(n.find((c) => c.hasClass("need-rec"))[0]),
+      later: n.hasClass("is-later"),
+      go: ((a) => ({ text: text(a), href: a.href, lavishAction: a.getAttribute("data-lavish-action") !== null,
+        target: ((hits) => (hits.length === 1 ? hits[0].getAttribute("data-question") : null))(
+          root.find((c) => "#" + c.getAttribute("id") === a.href)) }))(n.find((c) => c.tagName === "A")[0]),
+    })),
+    workers: box.find((c) => c.getAttribute("data-need-worker") !== null).map((n) => ({
+      key: n.getAttribute("data-need-worker"),
+      what: text(n.find((c) => c.hasClass("need-what"))[0]),
+      where: text(n.find((c) => c.hasClass("need-where"))[0]),
+    })),
+  }))(byId.get("lb-needs")),
+  landed: ((box) => ({
+    title: text(box.children[0]),
+    none: box.find((c) => c.hasClass("sec-none")).map(text)[0] || null,
+    projects: box.find((c) => c.getAttribute("data-landed-project") !== null).map((p) => ({
+      project: p.getAttribute("data-landed-project"),
+      badges: badges(p),
+      latest: text(p.find((c) => c.hasClass("landed-last"))[0]),
+      prs: p.find((c) => c.getAttribute("data-landed-pr") !== null).map((li) => ({
+        key: li.getAttribute("data-landed-pr"),
+        tag: text(li.find((c) => c.hasClass("landed-tag"))[0]),
+        links: li.find((c) => c.tagName === "A").map((a) => a.href),
+      })),
+    })),
+  }))(byId.get("lb-landed")),
   delivery: ((box) => ({
     title: text(box.children[0]),
+    summary: box.find((c) => c.getAttribute("data-delivery-summary") !== null).map((d) => text(d.children[0]))[0] || null,
     none: box.find((c) => c.hasClass("lane-none")).map(text)[0] || null,
     rows: box.find((c) => c.getAttribute("data-delivery-project") !== null).map((p) => ({
       project: p.getAttribute("data-delivery-project"),

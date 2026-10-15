@@ -1585,17 +1585,20 @@ Arm the check once per home with `bin/fm-tool-update-check.sh arm`.
 ## Live board (config/live-board.json)
 
 The live board is an opt-in browser page that shows the captain's projects in this home, each with its open captain questions first and then its open work in three lanes, and refreshes about once a minute.
+It opens with five headline numbers - questions for the captain, stuck or stopped work, workers moving, workers waiting outside the team, and pull requests merged in the last 24 hours - with the quieter totals on one line under them.
+A Needs you section then gives every open captain question one line - what it is about, the choice, and Firstmate's recommendation - with an Answer link that jumps to its card, and names workers that wait on a decision asked elsewhere.
 Doing now holds every task that has a worker, one line each with what the worker is doing and its status - working, waiting for validation, waiting for a merge or CI, paused on an outside wait, or stuck or stopped - Next holds queued work with no hold and no unfinished prerequisite that a worker will start without the captain, and Charted next holds everything that will not start or move on its own, each card saying what it waits for.
 Every open task sits in exactly one lane; Next and Charted next show three cards and fold the rest, and projects with no question and no open work fold away.
 A task whose worker waits on the captain or has finished stays in Charted next.
 The lanes cover this home and, for every registered secondmate home on the same machine, that home's workers and its queued work that has no worker yet, each marked with the second mate's name; the board notes name a home that could not be read.
 A second mate whose home was not read in time keeps the lines of its last good read, each marked "as of N minutes ago", and the board notes say so.
-A Running workers section lists every unfinished worker across those homes and projects, each with what it is doing and a plain stage such as doing the work, waiting on validation or review, or waiting for a merge; it shows no percentage, because the worker state records none.
-A Project delivery and merging section lists every registered or observed repository with its registered delivery route (No-mistakes, Direct PR, Local only), whether merging needs the captain's approval, and whether publishing builds a preview; an unregistered project is labelled and shows the defaults.
+A Running workers section lists every unfinished worker across those homes and projects, those that need someone first, each with what it is doing, a plain stage such as doing the work, waiting on validation or review, or waiting for a merge, and how long ago it last reported; it shows no percentage, because the worker state records none.
+A Landed in the last 24 hours section groups the pull requests merged in that day by project, with how their runs after merge went.
+A Project delivery and merging section, folded under one summary line, lists every registered or observed repository with its registered delivery route (No-mistakes, Direct PR, Local only), whether merging needs the captain's approval, and whether publishing builds a preview; an unregistered project is labelled and shows the defaults.
 Every project and every lane card carries a one-line "What this is" that expands to say where it came from: the task's own note in the backlog (the indented lines under its row), else the plain-language "about" of its captain question, else its hold reason, and for a project its `description` in `config/live-board-projects.json`.
 A card with none of those shows "No explanation recorded yet", and the board notes count such cards, so a short label never stands alone and a missing explanation is visible.
 A table of contents under the totals jumps to each project, and every project card has a Collapse control that leaves only its name, badges and status line showing.
-The page remembers which cards are collapsed, so they stay collapsed across its refreshes.
+The page remembers which cards are collapsed, and which project timelines the captain opened, so they stay that way across its refreshes.
 It is separate from `/bearings lavish` and renders only the canonical `bin/fm-live-board-snapshot.sh` projection; [`bin/fm-live-board.sh`](../bin/fm-live-board.sh)'s header owns its commands, config schemas, grouping, freshness thresholds, and answer path.
 
 To enable it in a home, create the local, gitignored `config/live-board.json`:
@@ -1625,7 +1628,7 @@ A shrunken card always keeps Change answer, which reopens it; a new answer repla
 The page cannot see what Lavish still holds or has sent, so it shows no queued count and never marks a card sent.
 An answered question leaves the page on the first refresh after its answer is recorded; a question the captain put off until a later day keeps its card, badged with that day, beside its Charted next card.
 The board has no Q&A section; questions the captain asks as a freeform message or as a comment on the page are answered in the chat pane.
-Each project also shows a timeline of its 15 newest pull requests by merge or close time, oldest on the left, read from the forge of each registered project's clone (GitHub through `gh`, Azure DevOps through `az`) and from the home's own checkout.
+Each project also shows, folded under one line that names its newest merge, failed runs, open pull requests and changes waiting for the next environment, a timeline of its 15 newest pull requests by merge or close time, oldest on the left, read from the forge of each registered project's clone (GitHub through `gh`, Azure DevOps through `az`) and from the home's own checkout.
 The GitHub read takes the most recently updated pull requests, so a pull request opened long ago and merged today is on the strip.
 Comment activity on old pull requests uses places in that read too, so on a repository with very heavy checks, where the board falls back to a small read, the strip often omits recent merges.
 Pointing at a pull request, moving keyboard focus to it, or pressing it shows what changed in one to three plain sentences drawn from its description, or its cleaned title when the description is missing or too technical, and whether the runs its merge started succeeded, failed, are still running, were replaced by a newer run, have not happened yet, or do not exist for that project.

@@ -65,14 +65,28 @@
 # and reasons drop links, paths, branches, run ids and task ids, so ids appear
 # only in data attributes.
 #
+# SUMMARY. The page opens with five headline numbers from the view's counts:
+# questions for the captain, stuck or stopped work, workers moving (working,
+# in validation, or waiting for a merge or CI), workers paused on an outside
+# wait, and pull requests merged in the 24 hours before collection; the lane
+# totals, recent finishes and urgent questions follow on one quieter line.
+# A Needs you section gives each open captain question one line - its about
+# (else its question), the option labels, and the recommended option - with
+# an Answer link to its card, opening a collapsed project first; a put-off
+# question goes last. It also names workers waiting on a decision that has no
+# card on this board. Answering still happens only on the card (ANSWERS).
+# A Landed in the last 24 hours section groups those merged pull requests by
+# project, newest first, folded to a count, run outcomes and the newest title.
+#
 # LANES. Every open task sits in exactly one of three lanes per project, and
 # `lb_lane` in bin/fm-live-board-projects.jq is the one rule that decides it:
 #   Doing now     the task has a worker, and that worker neither waits on the
 #                 captain nor is finished (see WORKERS).
 #   Next          queued, not held and with no unfinished prerequisite - the
 #                 same "ready queued (dispatchable now)" set session start
-#                 lists - so a worker starts it without the captain; each
-#                 card says "Starts automatically".
+#                 lists - so a worker starts it without the captain; the
+#                 lane says so once, and each card's "Starts automatically"
+#                 is kept for screen readers only.
 #   Charted next  everything else, each card naming why it will not start or
 #                 move on its own: waiting for the captain's answer, put off
 #                 by the captain until a date, on another hold, waiting for
@@ -86,8 +100,10 @@
 # WORKERS. A top-level Running workers section lists unfinished workers across
 # all projects, from this home and each registered secondmate home the snapshot
 # already read (bin/fm-live-board-snapshot.sh's header owns `registered_homes`).
-# Each row has the task title, its named project, what it is doing now, and a
-# plain stage from the resolved current state: doing the work, in validation,
+# Rows lead with workers that are stuck or stopped, then those waiting on a
+# decision, then by `lb_worker_rank`, each by project. Each row has the task
+# title, its named project, what it is doing now, how long ago it last
+# reported, and a plain stage from the resolved current state: doing the work, in validation,
 # waiting on review or validation, checks running, waiting for a merge or a
 # decision, an outside wait, or needing help. Stopped and unreadable workers
 # remain visible with that uncertainty; finished workers are omitted, except
@@ -129,7 +145,8 @@
 # each marked "as of N minutes ago" beside its second mate's name, and the
 # board notes say so; only a home never read before is named as not shown.
 #
-# DELIVERY. A compact Project delivery and merging section lists every
+# DELIVERY. A Project delivery and merging section, folded under one line
+# counting which merges need the captain's approval, lists every
 # registered or observed repository, including idle projects and those from
 # collected or stale secondmate homes, with its registered delivery route,
 # merge approval setting, and whether publishing changes builds a preview.
@@ -177,7 +194,13 @@
 # its lane. A call the captain put off until a later day is not answered: it
 # keeps its card, badged with that day, beside its Charted next row.
 #
-# TIMELINE. Each project shows its 15 newest pull requests as a strip, oldest
+# TIMELINE. Each project folds its environments and its pull request strip
+# under one line naming the newest merge and its runs, failed runs and open
+# pull requests among those shown, and changes waiting for each environment.
+# Which of these lines the captain opened lives in a second hidden field
+# beside the collapsed-cards one and in browser storage, exactly as collapsed
+# cards do; a restored pin opens its line. A landed project's fold is not kept.
+# Each project shows its 15 newest pull requests as a strip, oldest
 # on the left. Pointing at one, moving keyboard focus to it, or pressing it
 # shows the same detail under the strip: the cleaned title, a plain summary of
 # what changed when the description yields one, and whether the runs its merge
