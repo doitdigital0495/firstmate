@@ -124,6 +124,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-quota-choose.sh`     | Choose the first candidate with known positive quota from an ordered harness:model list |
 | `fm-quota-intake.sh`     | Record every usage window, reset time, plan size, and Notes entry as used percents, and gate each launch on a fresh unspent record |
 | `fm-dispatch-receipt-lib.sh` | Own the dispatch receipt format and the launch gate that refuses a profile not routed from `config/crew-dispatch.json`; `fm-dispatch-resolve.sh` is its only writer |
+| `fm-jevd-dispatch.py`, `fm-dispatch-bounded.py` | Private resolver helpers for the jevd socket and deadline-bound quota subprocesses; see [typed dispatch resolution](configuration.md#typed-dispatch-resolution-jevd-socket) |
 | `fm-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
 | `fm-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, divergence, supervision-host outcome, recovery, and supervision checks |
 | `fm-wake-grant.sh`       | Serialize Pi supervision-branch wake-row claim activation, publication, release, and deactivation |

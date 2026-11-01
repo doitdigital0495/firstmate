@@ -2669,20 +2669,25 @@ EOF
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   assert_not_contains "$out" "Dispatch table overrides" "a home with no override on record must print no override subsection"
 
-  # Recorded through the real producer, the only writer of the durable log.
+  # Historical override logs stay visible even though minting is disabled.
   mkdir -p "$home/data/ov1"
   printf '# Task\n## Captain'"'"'s intent\nA task launched off the table.\n' > "$home/data/ov1/brief.md"
   printf 'put this one on fable at max\n' > "$home/data/ov1/words.txt"
-  FM_HOME="$home" "$ROOT/bin/fm-dispatch-resolve.sh" override "$home/data/ov1/brief.md" --task ov1 \
-    --harness claude --model fable --effort max --words-file "$home/data/ov1/words.txt" >/dev/null \
-    || fail "could not record the override"
+  jq -cn --argjson now "$(date +%s)" '{atEpoch:$now,task:"ov1",profile:{harness:"claude",model:"fable",effort:"max",account:""},words:"put this one on fable at max"}' \
+    > "$home/data/dispatch-overrides.jsonl"
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   assert_contains "$out" "Dispatch table overrides (data/dispatch-overrides.jsonl, last 7 days)" \
     "the digest must surface a recorded override"
   assert_contains "$out" 'task=ov1  --harness claude --model fable --effort max  captain: "put this one on fable at max"' \
     "the digest must list the task, the profile, and the captain's words"
-  pass "a recorded dispatch-table override is listed in the next session-start digest"
+  mkdir -p "$home/state/dispatch-receipt"
+  jq -cn --argjson now "$(date +%s)" '{issuedAtEpoch:$now,source:"degraded",task:"dv1",receipt:"dispatch-fixture.json",degraded:{reason:"jevd down after one retry"}}' \
+    > "$home/state/dispatch-receipt/dispatch-fixture.json"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" 'Degraded dispatch receipts (last 24 hours)' 'degraded routes must remain visible'
+  assert_contains "$out" 'task=dv1 source=degraded' 'degraded task and source are named'
+  pass "historical overrides and recent degraded receipts are listed in the next session-start digest"
 }
 
 # --- fleet-state digest: no in-flight tasks ----------------------------------

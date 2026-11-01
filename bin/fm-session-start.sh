@@ -1007,6 +1007,14 @@ if [ -f "$DATA/dispatch-overrides.jsonl" ]; then
   fi
 fi
 
+if [ -d "$STATE/dispatch-receipt" ]; then
+  DISPATCH_DEGRADED=$("$SCRIPT_DIR/fm-dispatch-resolve.sh" degraded-recent 2>/dev/null) || DISPATCH_DEGRADED=
+  if [ -n "$DISPATCH_DEGRADED" ]; then
+    subsection "Degraded dispatch receipts (last 24 hours)"
+    printf '%s\n' "$DISPATCH_DEGRADED"
+  fi
+fi
+
 # --- 7. network checks ------------------------------------------------------
 # Deliberately here and not later: these lines are actionable (a stuck clone, a
 # secondmate that could not be relaunched, broken GitHub auth), and the section

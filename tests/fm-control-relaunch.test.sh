@@ -21,6 +21,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$ROOT/tests/fixtures.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-control-lib.sh"
 # shellcheck source=/dev/null
@@ -982,25 +984,10 @@ enable_routing_table() {
     > "$1/home/config/crew-dispatch.json"
 }
 
-# route_relaunch <case-dir> <id> <row> <harness> [model] [effort]: record the
-# routed choice through the real producer, one accounting entry per candidate.
+# Route the replacement through the public resolver with the shared socket peer.
 route_relaunch() {
   local dir=$1 id=$2 row=$3 harness=$4 model=${5:-} effort=${6:-}
-  local args=(choose "$dir/home/data/$id/brief.md" --task "$id" --row "$row" --harness "$harness")
-  [ -z "$model" ] || args+=(--model "$model")
-  [ -z "$effort" ] || args+=(--effort "$effort")
-  mkdir -p "$dir/home/state/quota-intake"
-  printf '{}\n' > "$dir/home/state/quota-intake/quota-fixture.json"
-  jq --arg row "$row" '
-    (if $row == "default" then .default else .rules[($row | ltrimstr("rule_") | tonumber) - 1].use end)
-    | (if type == "array" then . else [.] end)
-    | map({harness, model: (.model // ""), effort: (.effort // ""), account: (.account // ""),
-           catalog: "fixture catalog lists this model", plan: "fixture plan",
-           quotaIntakeRecord: "quota-fixture.json", spendPriority: 1, eligible: true, reason: "ok"})' \
-    "$dir/home/config/crew-dispatch.json" > "$dir/accounting.json" || return 1
-  printf 'relaunch routed from row %s\n' "$row" > "$dir/rationale.txt"
-  FM_HOME="$dir/home" "$ROOT/bin/fm-dispatch-resolve.sh" "${args[@]}" \
-    --accounting-file "$dir/accounting.json" --rationale-file "$dir/rationale.txt" >/dev/null
+  fm_test_dispatch_choose "$dir/home" "$id" "$dir/home/data/$id/brief.md" "$row" "$harness" "$model" "$effort"
 }
 
 test_relaunch_onto_a_new_profile_needs_a_dispatch_receipt() {

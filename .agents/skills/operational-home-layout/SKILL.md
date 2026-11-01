@@ -63,7 +63,7 @@ data/                personal fleet records; LOCAL, gitignored as a whole
   <id>/report.md     scout task deliverable, written by the crewmate; survives teardown
   <id>/milestones.status  task milestone lines archived at teardown and appended by later authorized stamps; survives teardown; bin/fm-task-milestones.sh owns it
   pipeline-spend.jsonl  optional per-task no-mistakes pipeline spend, written only when config/pipeline-spend is present; bin/fm-pipeline-spend.sh owns the schema
-  dispatch-overrides.jsonl  captain overrides of the dispatch table, one per launch that departed from it; bin/fm-dispatch-receipt-lib.sh owns the schema and the session-start digest lists the recent ones
+  dispatch-overrides.jsonl  historical captain overrides of the dispatch table; bin/fm-dispatch-receipt-lib.sh owns the schema and phase-1 restrictions, and the session-start digest lists recent history
 projects/            cloned repos; gitignored; read-only except under hard rule 1's concrete captain-approved project operation exception
 state/               runtime records and signals; gitignored
   <id>.status        append-only wake events, not current-state truth; bin/fm-classify-lib.sh owns their syntax

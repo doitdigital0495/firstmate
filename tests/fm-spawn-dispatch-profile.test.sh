@@ -476,27 +476,20 @@ test_active_dispatch_profile_allows_positional_harness() {
 }
 
 test_active_dispatch_profile_allows_raw_launch_command() {
-  local rec id out status launch
+  local rec id out status
   id=profile-raw-z15
   rec=$(make_spawn_case profile-raw claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
-  # A raw command cannot be matched to a table profile, so only a recorded
-  # captain override admits it while routing rows exist.
-  fm_test_dispatch_override "$HOME_DIR" "$id" "$HOME_DIR/data/$id/brief.md" custom-agent
+  # Raw command overrides remain disabled until bound-to-words verification.
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id" "$PROJ_DIR" "custom-agent --flag")
   status=$?
-  expect_code 0 "$status" "raw launch command should satisfy active dispatch-profile requirement"
-  assert_contains "$out" "spawned $id harness=custom-agent" "spawn did not report raw command harness"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent default default
-  launch=$(cat "$LAUNCH_LOG")
-  # The unverified-adapter escape hatch is still an agent this fleet launched,
-  # so it carries the compact-adviser floor and the AI-trailer strip; nothing
-  # else may rewrite the captain's own command.
-  [ "$launch" = "export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$HOME_DIR" "$id")$(ai_trailer_hooks_prefix "$HOME_DIR" "$id")custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
-  pass "active crew-dispatch profile allows the raw launch-command escape hatch"
+  expect_code 1 "$status" "raw launch command without a routed profile must refuse"
+  assert_contains "$out" 'dispatch receipt gate: refusing' 'raw command gate refusal'
+  assert_absent "$HOME_DIR/state/$id.meta" 'refused raw launch creates no worker'
+  pass "active crew-dispatch profile refuses the raw launch-command escape hatch"
 }
 
 test_chained_raw_launch_strips_ai_trailer_in_every_step() {
@@ -1950,7 +1943,7 @@ test_dispatch_receipt_refuses_a_hand_picked_spawn() {
     "the refusal must name the missing receipt"
   assert_contains "$out" "A hand-picked --harness claude --model opus --effort high is not a routing decision" \
     "the refusal must name the hand-picked profile"
-  assert_contains "$out" "bin/fm-dispatch-resolve.sh choose <brief> --row <id>" \
+  assert_contains "$out" "bin/fm-dispatch-resolve.sh <brief> --project <name>" \
     "the refusal must name the command that produces a receipt"
   assert_contains "$out" "error: $id was not launched; the dispatch receipt gate refused it and nothing was created" \
     "the refusal must state nothing was created"
@@ -1981,7 +1974,7 @@ test_dispatch_receipt_refuses_a_hand_picked_spawn() {
     "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort medium)
   status=$?
   expect_code 0 "$status" "the receipt's own profile must launch"$'\n'"$out"
-  assert_contains "$out" "(choose, row default) admits --harness codex --model gpt-5 --effort medium for $id; receipt consumed" \
+  assert_contains "$out" "(jev, row default) admits --harness codex --model gpt-5 --effort medium for $id; receipt consumed" \
     "the launch must report the receipt it consumed"
   assert_contains "$out" "spawned $id harness=codex" "the routed ship did not launch"
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 medium
@@ -2040,7 +2033,7 @@ test_dispatch_receipt_binds_one_brief_and_one_launch() {
 }
 
 test_dispatch_receipt_admits_scout_and_secondmate_from_the_table() {
-  local rec id sm sm2 out status
+  local rec id sm out status
   id=receipt-scout-z26
   rec=$(make_spawn_case receipt-kinds codex "$id")
   read_case_record "$rec"
@@ -2053,7 +2046,7 @@ test_dispatch_receipt_admits_scout_and_secondmate_from_the_table() {
     "$id" "$PROJ_DIR" --scout --harness grok --model grok-4 --effort high)
   status=$?
   expect_code 0 "$status" "a scout routed from the table must launch"$'\n'"$out"
-  assert_contains "$out" "(choose, row rule_1) admits --harness grok --model grok-4 --effort high for $id; receipt consumed" \
+  assert_contains "$out" "(jev, row rule_1) admits --harness grok --model grok-4 --effort high for $id; receipt consumed" \
     "the scout launch must report its receipt"
   assert_grep "kind=scout" "$HOME_DIR/state/$id.meta" "scout meta missing kind=scout"
   assert_meta_profile "$HOME_DIR/state/$id.meta" grok grok-4 high
@@ -2073,7 +2066,7 @@ test_dispatch_receipt_admits_scout_and_secondmate_from_the_table() {
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" receipt-mate-z27 "$sm" --secondmate)
   status=$?
   expect_code 0 "$status" "a secondmate routed from the table must launch"$'\n'"$out"
-  assert_contains "$out" "(choose, row rule_2) admits --harness codex for receipt-mate-z27; receipt consumed" \
+  assert_contains "$out" "(jev, row rule_2) admits --harness codex for receipt-mate-z27; receipt consumed" \
     "the secondmate launch must report its receipt"
   assert_contains "$out" "spawned receipt-mate-z27 harness=codex kind=secondmate" "the routed secondmate did not launch"
 
@@ -2101,10 +2094,10 @@ test_dispatch_receipt_raw_command_needs_a_captain_override() {
     "$id" "$PROJ_DIR" "codex --model gpt-9-secret")
   status=$?
   expect_code 1 "$status" "a raw launch command must not ride a table receipt"
-  assert_contains "$out" "a raw launch command cannot be matched to a profile of the dispatch table; only a captain override admits it" \
-    "the raw refusal must name the override as the only way"
+  assert_contains "$out" "a raw launch command cannot be matched to a profile of the dispatch table; overrides are disabled in phase 1" \
+    "the raw refusal must explain that commands cannot match table profiles"
   assert_absent "$HOME_DIR/state/$id.meta" "a refused raw launch must record no meta"
-  pass "dispatch receipt gate admits a raw launch command only on a captain override"
+  pass "dispatch receipt gate refuses raw launch commands while routing rows exist"
 }
 
 # Execute the actual emitted command in a synthetic pane environment: the
@@ -2579,7 +2572,7 @@ test_non_claude_harness_ignores_claude_permission_mode() {
 
 test_account_registry_and_relaunch_pin() {
   local rec out status meta launch id
-  id=account-geris
+  id='account-geris'
   rec=$(make_spawn_case account-geris codex "$id")
   read_case_record "$rec"
   meta="$HOME_DIR/state/$id.meta"

@@ -309,49 +309,51 @@ fm_test_dispatch_env() {
     FM_CONFIG_OVERRIDE="$home/config" "$@"
 }
 
-# fm_test_dispatch_override <home> <task-id> <brief> <harness> [model] [effort] [account]
-# Records a captain override through the real producer
-# (bin/fm-dispatch-resolve.sh override), the only way a launch departs from a
-# home's dispatch table. A spawn test whose fixture table does not name the
-# profile under test uses it to pass the dispatch receipt gate the way a home does.
+# Provision a fixture-only table row instead of using the disabled override.
+# Existing launch tests keep this helper name; production has no override path.
 fm_test_dispatch_override() {
-  local home=$1 id=$2 brief=$3 harness=$4 model=${5:-} effort=${6:-} account=${7:-} words rc=0
-  local args=(override "$brief" --task "$id" --harness "$harness")
-  [ -z "$model" ] || args+=(--model "$model")
-  [ -z "$effort" ] || args+=(--effort "$effort")
-  [ -z "$account" ] || args+=(--account "$account")
-  words=$(mktemp "${TMPDIR:-/tmp}/fm-test-override-words.XXXXXX") || return 1
-  printf 'test fixture: launch %s on %s exactly as this test passes it\n' "$id" "$harness" > "$words"
-  fm_test_dispatch_env "$home" "$ROOT/bin/fm-dispatch-resolve.sh" "${args[@]}" --words-file "$words" >/dev/null || rc=$?
-  rm -f "$words"
-  return "$rc"
+  local home=$1 id=$2 brief=$3 harness=$4 model=${5:-} effort=${6:-} account=${7:-} table row
+  table="$home/config/crew-dispatch.json"
+  jq --arg h "$harness" --arg m "$model" --arg e "$effort" --arg a "$account" '
+    .rules = ((.rules // []) + [{when:"Fixture launch",use:({harness:$h} +
+      (if $m == "" then {} else {model:$m} end) + (if $e == "" then {} else {effort:$e} end) +
+      (if $a == "" then {} else {account:$a} end) +
+      (if $h == "pi" or $h == "pi-signed" or $h == "omp" then
+        {provider:(if $m | startswith("zai/") then "zai" elif $m | startswith("claude-bridge/") then "claude" else "codex" end)} else {} end))}])' "$table" > "$table.tmp" || return 1
+  mv "$table.tmp" "$table"
+  row="rule_$(jq '.rules | length' "$table")"
+  fm_test_dispatch_choose "$home" "$id" "$brief" "$row" "$harness" "$model" "$effort" "$account"
 }
 
-# fm_test_dispatch_choose <home> <task-id> <brief> <row-id> <harness> [model] [effort] [account]
-# Records a routed choice through the real producer (bin/fm-dispatch-resolve.sh
-# choose): one accounting entry per candidate of the named row of the home's
-# config/crew-dispatch.json, each pointing at a fixture quota-intake record.
-# An empty task id leaves the receipt bound to the brief alone.
+# Route through the real resolver using a private stub jevd socket and quota.
+# The row/profile arguments configure the peer, never a production choose path.
 fm_test_dispatch_choose() {
-  local home=$1 id=$2 brief=$3 row=$4 harness=$5 model=${6:-} effort=${7:-} account=${8:-} work rc=0
-  local args=(choose "$brief" --row "$row" --harness "$harness")
-  [ -z "$id" ] || args+=(--task "$id")
-  [ -z "$model" ] || args+=(--model "$model")
-  [ -z "$effort" ] || args+=(--effort "$effort")
-  [ -z "$account" ] || args+=(--account "$account")
-  work=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-choose.XXXXXX") || return 1
-  mkdir -p "$home/state/quota-intake"
-  [ -f "$home/state/quota-intake/quota-fixture.json" ] || printf '{}\n' > "$home/state/quota-intake/quota-fixture.json"
-  jq --arg row "$row" '
-    (if $row == "default" then .default else .rules[($row | ltrimstr("rule_") | tonumber) - 1].use end)
-    | (if type == "array" then . else [.] end)
-    | map({harness, model: (.model // ""), effort: (.effort // ""), account: (.account // ""),
-           catalog: "fixture catalog lists this model", plan: "fixture plan",
-           quotaIntakeRecord: "quota-fixture.json", spendPriority: 1, eligible: true, reason: "ok"})' \
-    "$home/config/crew-dispatch.json" > "$work/accounting.json" || rc=$?
-  printf 'test fixture: routed from row %s\n' "$row" > "$work/rationale.txt"
-  [ "$rc" -ne 0 ] || fm_test_dispatch_env "$home" "$ROOT/bin/fm-dispatch-resolve.sh" "${args[@]}" \
-    --accounting-file "$work/accounting.json" --rationale-file "$work/rationale.txt" >/dev/null || rc=$?
+  local home=$1 id=$2 brief=$3 row=$4 harness=$5 model=${6:-} effort=${7:-} account=${8:-} work rc=0 server i
+  work=$(mktemp -d /tmp/fm-route.XXXXXX) || return 1
+  mkdir -p "$work/bin"
+  jq --arg row "$row" --arg h "$harness" --arg m "$model" --arg e "$effort" --arg a "$account" '
+    def profiles: if type == "array" then . else [.] end;
+    (.rules | to_entries | map("rule_\(.key + 1)") + ["default"]) as $rows |
+    (([.rules | to_entries[] | .key as $n | .value.use | profiles | to_entries[] |
+      {id:"rule_\($n + 1)_\(.key + 1)", p:.value}]) + [(.default // [] | profiles) | to_entries[] | {id:"default_\(.key + 1)", p:.value}]) as $profiles |
+    ([$profiles[] | select(.p.harness == $h and (.p.model // "") == $m and (.p.effort // "") == $e and (.p.account // "") == $a) | .id] | first // $profiles[0].id) as $preferred |
+    {model:"stub-jev",answers:{rule:{choice:$row,confidence:1,probabilities:($rows | map({key:.,value:(if . == $row then 1 else 0 end)}) | from_entries)},
+    profile:{choice:$preferred,confidence:1,probabilities:($profiles | map({key:.id,value:(if .id == $preferred then 1 else 0 end)}) | from_entries)}}}' \
+    "$home/config/crew-dispatch.json" > "$work/response" || rc=$?
+  jq -n '{schemaVersion:5,providers:(["claude","codex","cursor","grok","zai","google","agy","kimi","meta"] | map({provider:.,plan:"fixture plan",state:{status:"fresh"},windows:[{id:"weekly",kind:"weekly",percentRemaining:80,resetsAt:"2030-01-01T00:00:00Z"}],quotaSemantics:{status:"known",effectiveAvailability:[{scope:"all_models",status:"known",effectivePercentRemaining:80,boundedBy:["weekly"],runway:{status:"through_reset"},selection:{spendPriority:1}}]}}))}' > "$work/quota"
+  printf '#!/usr/bin/env bash\ncat %q\n' "$work/quota" > "$work/bin/quota-axi"
+  chmod +x "$work/bin/quota-axi"
+  python3 "$ROOT/tests/jevd-dispatch-stub.py" "$work/socket" "$work/response" "$work/requests" &
+  server=$!
+  for ((i=0;i<100;i++)); do [ ! -S "$work/socket" ] || break; sleep 0.02; done
+  [ "$rc" -ne 0 ] || fm_test_dispatch_env "$home" env PATH="$work/bin:$PATH" FM_JEVD_SOCKET="$work/socket" \
+    "$ROOT/bin/fm-dispatch-resolve.sh" "$brief" --task "$id" > "$work/output" 2>&1 || rc=$?
+  if ! grep -q 'source: jev' "$work/output"; then
+    printf 'fixture routing failed: %s\n' "$(<"$work/output")" >&2
+    rc=1
+  fi
+  kill "$server" 2>/dev/null || true
+  wait "$server" 2>/dev/null || true
   rm -rf "$work"
   return "$rc"
 }
