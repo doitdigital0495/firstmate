@@ -85,7 +85,10 @@ The operator launch and clean-exit contract remains in [configuration](../config
 | A remote second mate's recorded account beats a caller that exports another one, store-bound or default | `tests/fm-remote-secondmate-identity.test.sh` |
 | Explicit rebind requires confirmation, credentials and no live lock; preserves the session, archives history, re-seeds local mates and leaves workers unchanged | `tests/fm-home-identity.test.sh` |
 | Rebind skips and reports a live second mate and its subtree, keeps a worker-pinned second mate on its pin, and reaches nested second mates | `tests/fm-home-identity.test.sh` |
+| With no detectable harness, rebind pins a worker-pinned second mate by its recorded harness and skips it when none is recorded | `tests/fm-home-identity.test.sh` |
+| `fm-open.sh` starts the same home on either store from `personal`, is reversible, and refuses a live lock, another session, or a home pinned elsewhere | `tests/fm-home-identity.test.sh` |
 | A second mate moved by rebind relaunches on the new store and stays accepted by its own home | `tests/fm-control-relaunch.test.sh` |
+| A relaunch of a second mate still pinned to another identity refuses before the agent is stopped | `tests/fm-control-relaunch.test.sh` |
 | A home refuses the other session in both directions, and survives a restart | `tests/fm-home-identity.test.sh` |
 | A spawn from a foreign session is refused and creates nothing | `tests/fm-home-identity.test.sh` |
 | A foreign-session spawn refusal is reported as the session mismatch even when the backlog preflight also refuses | `tests/fm-home-identity.test.sh` |

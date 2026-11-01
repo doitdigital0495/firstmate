@@ -273,13 +273,22 @@ archive_pin() {
 # The store a home's next second-mate launch selects: fm-spawn.sh binds a Claude
 # second mate to the launching home's Claude worker pin when one is configured,
 # and to that home's own store otherwise. A second mate's pin must equal it.
-secondmate_launch_store() {  # <config-dir> <home-store>
-  local config=$1 store=$2 selection root
-  selection=$(fm_worker_account_resolve claude "$config") || return 1
-  if [ -n "$selection" ] && [ "$(FM_CONFIG_OVERRIDE=$config "$SCRIPT_DIR/fm-harness.sh" secondmate 2>/dev/null)" = claude ]; then
-    root=${selection#*$'\t'}
-    root=${root%%$'\t'*}
-    store=${root:-default}
+# A plain shell cannot detect a harness, so the mate's recorded one decides then;
+# with a worker pin and neither, returns 1 rather than guess the store.
+secondmate_launch_store() {  # <state-dir> <config-dir> <id> <worker-selection> <home-store>
+  local state=$1 config=$2 id=$3 selection=$4 store=$5 harness root
+  if [ -n "$selection" ]; then
+    harness=$(FM_CONFIG_OVERRIDE=$config "$SCRIPT_DIR/fm-harness.sh" secondmate 2>/dev/null)
+    case "$harness" in
+      ''|unknown) harness=$(sed -n 's/^harness=//p' "$state/$id.meta" 2>/dev/null | tail -n 1) ;;
+    esac
+    case "$harness" in
+      ''|unknown) return 1 ;;
+      claude)
+        root=${selection#*$'\t'}
+        root=${root%%$'\t'*}
+        store=${root:-default} ;;
+    esac
   fi
   printf '%s\n' "$store"
 }
@@ -287,14 +296,14 @@ secondmate_launch_store() {  # <config-dir> <home-store>
 # Re-pin every registered local second mate under one home, then under each of
 # them. A live mate keeps its identity, and so does everything beneath it, so
 # each mate's pin still matches the home that launches it until a re-run.
-rebind_secondmates() {  # <data-dir> <config-dir> <session> <home-store>
-  local data=$1 config=$2 session=$3 store line home id canon repinned
+rebind_secondmates() {  # <data-dir> <state-dir> <config-dir> <session> <home-store>
+  local data=$1 state=$2 config=$3 session=$4 home_store=$5 selection store line home id canon repinned
   if [ -e "$data/secondmates.md" ] && [ ! -r "$data/secondmates.md" ]; then
     printf 'secondmates: skipped (registry unreadable: %s)\n' "$data/secondmates.md" >&2
     return 0
   fi
   [ -f "$data/secondmates.md" ] || return 0
-  if ! store=$(secondmate_launch_store "$config" "$4"); then
+  if ! selection=$(fm_worker_account_resolve claude "$config"); then
     printf 'secondmates: skipped (unusable worker pin in %s); fix it and re-run rebind\n' "$config" >&2
     return 0
   fi
@@ -316,6 +325,8 @@ rebind_secondmates() {  # <data-dir> <config-dir> <session> <home-store>
     if [ ! -d "$home" ] || [ ! -w "$home" ] || { [ -e "$home/data" ] && [ ! -w "$home/data" ]; }; then
       printf 'secondmate %s: skipped (unreachable: %s)\n' "$id" "$home"
       continue
+    elif ! store=$(secondmate_launch_store "$state" "$config" "$id" "$selection" "$home_store"); then
+      printf 'secondmate %s: skipped (harness undecidable under a Claude worker pin); name it in %s/secondmate-harness and re-run rebind\n' "$id" "$config"
     elif (REBIND_SEED=0; seed_compare "$home" "$session" "$store") >/dev/null 2>&1; then
       printf 'secondmate %s: already on the new identity\n' "$id"
       repinned=1
@@ -336,7 +347,7 @@ rebind_secondmates() {  # <data-dir> <config-dir> <session> <home-store>
       esac
       fm_lock_release "$home/state/.lock.acquire"
     fi
-    [ "$repinned" = 0 ] || rebind_secondmates "$home/data" "$home/config" "$session" "$store"
+    [ "$repinned" = 0 ] || rebind_secondmates "$home/data" "$home/state" "$home/config" "$session" "$store"
   done < "$data/secondmates.md"
 }
 
@@ -388,7 +399,7 @@ action_rebind() {
   # shellcheck source=bin/fm-worker-account-lib.sh
   . "$SCRIPT_DIR/fm-worker-account-lib.sh"
   REBIND_VISITED=$'\n'"$(canonical_store "$FM_HOME")"$'\n'
-  rebind_secondmates "$DATA" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" "$session" "$store"
+  rebind_secondmates "$DATA" "$STATE" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" "$session" "$store"
   printf 'Running workers unchanged; relaunch retains each task recorded account.\n'
   fm_lock_release "$claim"
   trap - EXIT

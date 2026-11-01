@@ -459,9 +459,153 @@ test_rebind_keeps_a_worker_pinned_secondmate_acceptable_to_spawn_verify() {
   pass 'rebind pins a second mate to the store its launch selects'
 }
 
+test_rebind_decides_an_undetectable_harness_from_the_recorded_launch() {
+  local base home mate other orphan new worker out harness h
+  base="$TMP_ROOT/rebind-unknown-harness"
+  home=$(new_home "$base/home"); mate=$(new_home "$base/mate")
+  other=$(new_home "$base/other"); orphan=$(new_home "$base/orphan")
+  new="$base/new-store"; worker="$base/worker-store"
+  mkdir -p "$new" "$worker" "$base/blind"; touch "$new/.credentials.json"
+  printf '#!/bin/sh\nexit 0\n' > "$base/blind/ps"; chmod +x "$base/blind/ps"
+  for h in "$home" "$mate" "$other" "$orphan"; do
+    identity "$h" personal "$GERIS_STORE" ensure >/dev/null || fail "pin $h"
+  done
+  {
+    printf -- '- mate - Claude mate. (home: %s; scope: test; projects: none; added 2026-11-01)\n' "$mate"
+    printf -- '- other - Codex mate. (home: %s; scope: test; projects: none; added 2026-11-01)\n' "$other"
+    printf -- '- orphan - No record. (home: %s; scope: test; projects: none; added 2026-11-01)\n' "$orphan"
+  } > "$home/data/secondmates.md"
+  printf '%s\n' "$worker" > "$home/config/claude-account"
+  printf 'harness=claude\n' > "$home/state/mate.meta"
+  printf 'harness=codex\n' > "$home/state/other.meta"
+
+  plain_shell() {
+    env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT -u CURSOR_AGENT \
+      -u CURSOR_INVOKED_AS -u FM_SUPERVISION_ACTOR -u FM_SUPERVISION_PRIMARY_HARNESS \
+      PATH="$base/blind:$PATH" FM_HOME="$home" FM_DATA_OVERRIDE="$home/data" \
+      HERDR_SESSION=personal CLAUDE_CONFIG_DIR="$GERIS_STORE" "$@"
+  }
+  harness=$(plain_shell "$ROOT/bin/fm-harness.sh" secondmate)
+  [ "$harness" = unknown ] || fail "the fixture must be undetectable, got '$harness'"
+  out=$(plain_shell "$IDENTITY" rebind --store "$new" --confirm 2>&1) || fail "rebind: $out"
+
+  identity "$home" personal "$new" verify "$mate" personal "$worker" >/dev/null \
+    || fail 'a recorded Claude mate must stay on the store spawn binds it to'
+  identity "$home" personal "$new" verify "$other" personal "$new" >/dev/null \
+    || fail 'a recorded non-Claude mate must follow the home'
+  assert_contains "$out" 'secondmate orphan: skipped (harness undecidable' 'an undecidable mate is reported'
+  identity "$home" personal "$new" verify "$orphan" personal "$GERIS_STORE" >/dev/null \
+    || fail 'an undecidable mate keeps its identity'
+  pass 'rebind in a plain shell pins by recorded harness and skips an undecidable mate'
+}
+
+# Throwaway HOME with both stub logins, a home pinned to personal, and a stub
+# claude that records what it was started with. Sets OPEN_* for open_home.
+open_case() {  # <name>
+  OPEN_BASE="$TMP_ROOT/$1"
+  OPEN_USER="$OPEN_BASE/user"
+  OPEN_HOME=$(new_home "$OPEN_BASE/home")
+  OPEN_LOG="$OPEN_BASE/launch"
+  mkdir -p "$OPEN_USER/.claude" "$OPEN_USER/.claude-geris" "$OPEN_BASE/bin"
+  touch "$OPEN_USER/.claude/.credentials.json" "$OPEN_USER/.claude-geris/.credentials.json"
+  OPEN_USER=$(cd "$OPEN_USER" && pwd -P)
+  OPEN_HOME=$(cd "$OPEN_HOME" && pwd -P)
+  cat > "$OPEN_BASE/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+{
+  printf 'cwd=%s\n' "$PWD"
+  printf 'store=%s\n' "${CLAUDE_CONFIG_DIR-unset}"
+  printf 'session=%s\n' "${HERDR_SESSION-unset}"
+  printf 'api_key=%s\n' "${ANTHROPIC_API_KEY-unset}"
+  printf 'args=%s\n' "$*"
+} > "$FM_OPEN_TEST_LOG"
+STUB
+  cat > "$OPEN_BASE/bin/herdr" <<'STUB'
+#!/bin/sh
+touch "$FM_OPEN_TEST_LOG.herdr"
+STUB
+  chmod +x "$OPEN_BASE/bin/claude" "$OPEN_BASE/bin/herdr"
+  identity "$OPEN_HOME" personal "$OPEN_USER/.claude" ensure >/dev/null || fail 'open home pin'
+}
+
+open_home() {  # <session> <fm-open args...>
+  local session=$1
+  shift
+  HOME="$OPEN_USER" FM_HOME="$OPEN_HOME" HERDR_SESSION="$session" \
+    CLAUDE_CONFIG_DIR="$OPEN_USER/.claude" ANTHROPIC_API_KEY=ambient \
+    PATH="$OPEN_BASE/bin:$PATH" FM_OPEN_TEST_LOG="$OPEN_LOG" \
+    "$ROOT/bin/fm-open.sh" "$@" 2>&1
+}
+
+test_fm_open_starts_the_same_home_on_either_subscription() {
+  local out log
+  open_case open-both
+  out=$(open_home personal geris --model opus --continue) || fail "geris launch: $out"
+  log=$(cat "$OPEN_LOG")
+  assert_contains "$log" "cwd=$OPEN_HOME" 'Claude starts from the home'
+  assert_contains "$log" "store=$OPEN_USER/.claude-geris" 'Claude gets the chosen store'
+  assert_contains "$log" 'session=personal' 'the Herdr session stays personal'
+  assert_contains "$log" 'api_key=unset' 'an ambient credential cannot outrank the chosen store'
+  assert_contains "$log" 'args=--dangerously-skip-permissions --model opus --continue' 'the cc posture and caller args reach Claude'
+  identity "$OPEN_HOME" personal "$OPEN_USER/.claude-geris" check >/dev/null || fail 'the pin follows the launch'
+  assert_absent "$OPEN_LOG.herdr" 'the launcher never runs Herdr'
+
+  out=$(open_home personal personal) || fail "personal launch: $out"
+  assert_contains "$(cat "$OPEN_LOG")" "store=$OPEN_USER/.claude" 'the same home starts back on personal'
+  identity "$OPEN_HOME" personal "$OPEN_USER/.claude" check >/dev/null || fail 'the pin moved back'
+  identity "$OPEN_HOME" personal "$OPEN_USER/.claude-geris" check >/dev/null && fail 'the previous store is refused'
+  [ "$(grep -c '^# rebound at' "$OPEN_HOME/data/home-identity.history")" = 2 ] || fail 'each move is kept in history'
+
+  out=$(open_home personal personal) || fail "repeat launch: $out"
+  [ "$(grep -c '^# rebound at' "$OPEN_HOME/data/home-identity.history")" = 2 ] || fail 'the same account adds no history'
+
+  out=$(HOME="$OPEN_USER" FM_HOME="$OPEN_HOME" HERDR_SESSION=personal "$IDENTITY" rebind --store default --confirm 2>&1) \
+    || fail "default restore: $out"
+  identity "$OPEN_HOME" personal '' check >/dev/null || fail 'a default pin accepts an unset CLAUDE_CONFIG_DIR'
+  identity "$OPEN_HOME" personal "$OPEN_USER/.claude" check >/dev/null && fail 'a default pin refuses the explicit path'
+  [ "$(grep -c '^# rebound at' "$OPEN_HOME/data/home-identity.history")" = 3 ] || fail 'the restore keeps history'
+  pass 'fm-open starts one home on either subscription, reversibly'
+}
+
+test_fm_open_refuses_without_starting_claude() {
+  local out rc pid before
+  open_case open-refuse
+  before=$(cat "$OPEN_HOME/data/home-identity")
+
+  out=$(open_home personal); expect_code 2 $? "no account: $out"
+  out=$(open_home personal work); expect_code 2 $? "unknown account: $out"
+  out=$(open_home geris geris); rc=$?
+  expect_code 3 "$rc" "another session: $out"
+
+  mkdir -p "$OPEN_BASE/sleeper"
+  cp "$(command -v sleep)" "$OPEN_BASE/sleeper/claude"
+  "$OPEN_BASE/sleeper/claude" 120 & pid=$!
+  printf '%s\n' "$pid" > "$OPEN_HOME/state/.lock"
+  out=$(open_home personal geris); rc=$?
+  expect_code 3 "$rc" "live lock: $out"
+  assert_contains "$out" 'its session lock is held' 'the live lock is named'
+  assert_grep "$pid" "$OPEN_HOME/state/.lock" 'the live lock is untouched'
+  kill "$pid"; wait "$pid" 2>/dev/null || true
+  rm -f "$OPEN_HOME/state/.lock"
+
+  rm "$OPEN_USER/.claude-geris/.credentials.json"
+  out=$(open_home personal geris); rc=$?
+  expect_code 3 "$rc" "missing login: $out"
+  [ "$before" = "$(cat "$OPEN_HOME/data/home-identity")" ] || fail 'a refused launch keeps the pin'
+
+  printf 'fm-home-identity-v1\nherdr_session=work\nclaude_config_dir=%s\n' "$OPEN_USER/.claude" > "$OPEN_HOME/data/home-identity"
+  out=$(open_home personal personal); rc=$?
+  expect_code 3 "$rc" "home of another session: $out"
+  assert_absent "$OPEN_LOG" 'no refusal starts Claude'
+  pass 'fm-open refuses a live lock, another session, or a missing login without starting Claude'
+}
+
 test_rebind
 test_rebind_skips_a_live_secondmate_and_its_subtree_until_rerun
 test_rebind_keeps_a_worker_pinned_secondmate_acceptable_to_spawn_verify
+test_rebind_decides_an_undetectable_harness_from_the_recorded_launch
+test_fm_open_starts_the_same_home_on_either_subscription
+test_fm_open_refuses_without_starting_claude
 test_a_home_refuses_the_other_session_in_both_directions
 test_the_pin_survives_a_restart
 test_an_unreadable_pin_is_never_replaced

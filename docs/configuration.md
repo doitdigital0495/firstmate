@@ -1281,37 +1281,41 @@ There is no unlock command: the lock owner process dies on exit, and the next se
 Its optional `--session` defaults to the current pin's session, not the ambient environment.
 It explicitly re-seeds registered local secondmate pins, nested ones included, and archives their prior identities.
 A secondmate whose Claude launch is bound to a `config/claude-account` worker pin stays pinned to that store.
+A plain shell cannot detect a harness, so without `config/secondmate-harness` or `config/crew-harness` that decision uses the secondmate's recorded harness in `state/<id>.meta`; with neither, rebind reports it as skipped until one is named.
 It reports live, remote, unreachable, or failed routes as skipped and still exits 0; a live secondmate keeps its old identity, and so does everything beneath it.
 To move a skipped live secondmate, exit its session with `/exit`, exit this firstmate, re-run the same `rebind` command, then start firstmate and run `bin/fm-control.sh <id> relaunch`.
 A local secondmate's relaunch launches on its home's pinned store unless a Claude worker pin applies, so a secondmate moved by rebind relaunches on the new subscription.
+A relaunch of a secondmate still pinned to another identity refuses before stopping it, and names this same procedure.
 Running workers and their `state/<id>.meta` records are untouched, and a worker's relaunch retains its recorded account.
 Worker account pins, cross-account routing, quota intake, and release shaping remain independent configuration; rebinding does not rewrite them.
 
-From an `hp` shell (`HERDR_SESSION=personal`), after exiting the current firstmate, switch this home's Claude subscription without logging out anywhere:
+Choose the subscription per launch: from an `hp` shell (`HERDR_SESSION=personal`), after exiting the current firstmate with `/exit`, start this same home on either Claude subscription without logging out anywhere:
+
+```bash
+~/.firstmate/bin/fm-open.sh geris      # $HOME/.claude-geris
+~/.firstmate/bin/fm-open.sh personal   # $HOME/.claude
+```
+
+Arguments after the account name go to Claude, for example `fm-open.sh geris --model opus --effort medium --continue`.
+The account argument is the deliberate operator act, so the launcher runs the `rebind --confirm` above before it starts Claude.
+It therefore refuses a live session lock without touching it, and refuses a target store with no `.credentials.json`.
+It keeps every previous identity in `data/home-identity.history`, moves only secondmates it can, and reports the rest as skipped.
+It starts the real `claude` executable directly from the home with `--dangerously-skip-permissions`, the permission posture of `cc`, and without `cc`'s model and effort pickers, because `cc` is an interactive shell function and a fresh interactive shell would re-derive the account from the session name.
+Environment credentials that would outrank the store's login, such as `ANTHROPIC_API_KEY`, are removed from that launch.
+Both subscriptions use the `personal` Herdr session; no `hg`, Herdr restart, or login/logout is required, and the launcher refuses any other session.
+Set `FM_HOME` to an absolute path when operating another home.
+
+Every switch is reversible and no history is lost.
+Besides `fm-open.sh personal`, this restores the personal subscription:
 
 ```bash
 cd ~/.firstmate
-bin/fm-home-identity.sh rebind --store "$HOME/.claude-geris" --confirm
+bin/fm-home-identity.sh rebind --store default --confirm
 ```
 
-Start the rebound home from the same `hp` session, explicitly overriding only the Claude store after shell startup:
-
-```bash
-(cd ~/.firstmate && export CLAUDE_CONFIG_DIR="$HOME/.claude-geris" && bin/fm-home-identity.sh check && cc)
-```
-
-To switch back, exit Claude with `/exit`, then run:
-
-```bash
-cd ~/.firstmate
-bin/fm-home-identity.sh rebind --store "$HOME/.claude" --confirm
-(cd ~/.firstmate && export CLAUDE_CONFIG_DIR="$HOME/.claude" && bin/fm-home-identity.sh check && cc)
-```
-
-The launcher is deliberately a shell one-liner: `cc` is an interactive shell function with model/effort pickers, not an executable a portable script can invoke, and starting a fresh interactive shell would re-derive the account from the session name.
-These commands preserve the operator's existing `cc` launch behavior while exporting the selected account to Claude and its hooks.
-Both subscriptions use the `personal` Herdr session; no `hg`, Herdr restart, or login/logout is required.
-Use an absolute custom home path instead of `~/.firstmate`, and set `FM_HOME` to that same path, when operating another home.
+The literal `default` pin means `CLAUDE_CONFIG_DIR` is unset, which Claude resolves to `$HOME/.claude`.
+Start that home with the variable unset, as in `env -u CLAUDE_CONFIG_DIR claude`; the explicit path `CLAUDE_CONFIG_DIR="$HOME/.claude"` is a different identity and is refused against a `default` pin.
+A later `fm-open.sh personal` re-pins the home to the explicit `$HOME/.claude` path.
 
 ## Claude release shaping (config/claude-shaped-store)
 
