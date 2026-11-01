@@ -1,0 +1,39 @@
+ ▐▛███▛█   Claude Code v2.1.316
+▝▜██████▀  Opus 5.5 with high effort · Claude Ultra
+ ▝▝   ▝▝   ~/.no-mistakes/worktrees/a451da6e3db7/01M6BVX1EF9AJ53CN5T40TADE0
+
+  Updated to latest. Got 53 features, 386 bugfixes, and 158 other changes.
+  code.claude.com/docs/en/changelog for details
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 · high
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
