@@ -128,6 +128,11 @@
 #   onto a different seat under the same gates, rewriting those recorded
 #   fields and the account= line, so a usage-limit move can cross accounts,
 #   while an omitted --account keeps the recorded account.
+#   A seat that does not own the harness's store (claude, pi or codex are each
+#   optional in config/accounts.json) refuses that harness by name. The worker's
+#   seat id is recorded as seat= in the task record and on the spawned line, and
+#   its seat, plan and login email lead the Claude status line, the Pi footer
+#   status and the Codex launch banner (docs/configuration.md "Worker seat label").
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
@@ -2834,6 +2839,20 @@ if [ "$ACCOUNT_SET" -eq 1 ]; then
   SPAWN_PI_STORE=${SPAWN_ACCOUNT_STORES[1]}
   SPAWN_CODEX_STORE=${SPAWN_ACCOUNT_STORES[2]}
   SPAWN_ACCOUNT_ORIGIN="explicit --account '$ACCOUNT_ARG'"
+  # A store the seat does not own is absent, never another account's store.
+  [ "$SPAWN_CLAUDE_STORE" != "$FM_ACCOUNT_NO_STORE" ] || SPAWN_CLAUDE_STORE=
+  [ "$SPAWN_PI_STORE" != "$FM_ACCOUNT_NO_STORE" ] || SPAWN_PI_STORE=
+  [ "$SPAWN_CODEX_STORE" != "$FM_ACCOUNT_NO_STORE" ] || SPAWN_CODEX_STORE=
+fi
+# A registered seat that does not own this harness's store refuses here, named,
+# rather than falling through to the home's own or the ambient store. This covers
+# an explicit --account and a recorded seat carried onto a different harness.
+if [ -n "$ACCOUNT_ARG" ] && [ "$KIND" != secondmate ]; then
+  case "$HARNESS" in
+    claude) fm_account_require_store "$CONFIG/accounts.json" "$ACCOUNT_ARG" claude || exit 1 ;;
+    pi|pi-signed) fm_account_require_store "$CONFIG/accounts.json" "$ACCOUNT_ARG" pi || exit 1 ;;
+    codex) fm_account_require_store "$CONFIG/accounts.json" "$ACCOUNT_ARG" codex || exit 1 ;;
+  esac
 fi
 
 case "$HARNESS" in
@@ -2857,6 +2876,43 @@ case "$HARNESS" in
       SPAWN_CODEX_STORE=${CODEX_HOME:-}
     fi ;;
 esac
+
+# The seat this worker runs on, for the window label and the recorded seat=: the
+# registry account id from an explicit or recorded --account, otherwise the one
+# registry account that owns the store the harness will actually use. Only ids
+# and declared plans from config/accounts.json plus a Claude store's login email
+# are read (bin/fm-account-lib.sh); nothing is read for a secondmate, which keeps
+# its own home identity, or for a raw launch command, which is the operator's.
+SPAWN_SEAT=
+SPAWN_SEAT_LABEL=
+if [ "$KIND" != secondmate ]; then
+  SPAWN_SEAT_KIND=
+  SPAWN_SEAT_PROVIDER=
+  SPAWN_SEAT_STORE=
+  case "$HARNESS" in
+    claude) SPAWN_SEAT_KIND=claude; SPAWN_SEAT_PROVIDER=claude
+      SPAWN_SEAT_STORE=$SPAWN_CLAUDE_STORE
+      case "$SPAWN_SEAT_STORE" in ''|default) SPAWN_SEAT_STORE="$HOME/.claude" ;; esac ;;
+    pi|pi-signed) SPAWN_SEAT_KIND=pi
+      case "${PI_PROVIDER:-}" in zai) SPAWN_SEAT_PROVIDER=zai ;; *) SPAWN_SEAT_PROVIDER=codex ;; esac
+      SPAWN_SEAT_STORE=${SPAWN_PI_STORE:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}} ;;
+    codex) SPAWN_SEAT_KIND=codex; SPAWN_SEAT_PROVIDER=codex
+      SPAWN_SEAT_STORE=${SPAWN_CODEX_STORE:-${CODEX_HOME:-$HOME/.codex}} ;;
+  esac
+  if [ -n "$SPAWN_SEAT_KIND" ]; then
+    if [ -n "$ACCOUNT_ARG" ] && fm_account_registry_valid "$CONFIG/accounts.json" &&
+      jq -e --arg a "$ACCOUNT_ARG" '.accounts[$a] != null' "$CONFIG/accounts.json" >/dev/null 2>&1; then
+      SPAWN_SEAT=$ACCOUNT_ARG
+    else
+      SPAWN_SEAT=$(fm_account_seat_for_store "$CONFIG/accounts.json" "$SPAWN_SEAT_KIND" "$SPAWN_SEAT_STORE")
+    fi
+    if [ -n "$SPAWN_SEAT" ] && [ "$RAW_LAUNCH" -eq 0 ]; then
+      SPAWN_SEAT_CLAUDE_STORE=
+      [ "$SPAWN_SEAT_KIND" != claude ] || SPAWN_SEAT_CLAUDE_STORE=$SPAWN_SEAT_STORE
+      SPAWN_SEAT_LABEL=$(fm_account_seat_label "$CONFIG/accounts.json" "$SPAWN_SEAT" "$SPAWN_SEAT_PROVIDER" "$SPAWN_SEAT_CLAUDE_STORE")
+    fi
+  fi
+fi
 
 secondmate_registry_value() {
   secondmate_registry_field "$DATA/secondmates.md" "$1" "$2"
@@ -5484,8 +5540,17 @@ const herdrReport = (state: string) =>
       "--agent", "pi", "--state", state,
     ], () => resolve());
   });
+// The worker's seat, plan and login email (bin/fm-account-lib.sh), shown on Pi's
+// footer status line for as long as the footer is on screen; empty when no seat
+// is known, in which case nothing is published.
+const seatLabel = $(perl -MJSON::PP -MEncode=decode_utf8 -e 'print encode_json(decode_utf8($ARGV[0]))' -- "$SPAWN_SEAT_LABEL");
 export default function (pi: any) {
   let checkedExclusions = false;
+  if (seatLabel) {
+    pi.on("session_start", (_event: any, ctx: any) => {
+      if (ctx.hasUI) ctx.ui.setStatus("firstmate-seat", seatLabel);
+    });
+  }
   pi.on("agent_start", async () => {
     await Promise.all([busyEvent("busy", "agent-start"), herdrReport("working")]);
     // Verify only this worker's registry, never connect servers from Firstmate.
@@ -5720,7 +5785,15 @@ case "$HARNESS" in
       # primary-session status line and gets no key.
       claude_status_json=
       if [ "$CLAUDE_TASK_WORKER" -eq 1 ]; then
-        claude_status_json=$(jq -cn --arg cmd "jq -r '[.model.display_name, .effort.level] | map(select(. != null and . != \"\")) | join(\" · \")'" \
+        # The seat label (seat · plan · login email) leads the line when the
+        # worker's seat is known. It is sanitized to a quote-free charset by
+        # fm_account_seat_label, so single-quoting it into the command is safe.
+        claude_seat_arg=
+        [ -z "$SPAWN_SEAT_LABEL" ] || claude_seat_arg="--arg seat '$SPAWN_SEAT_LABEL' "
+        claude_seat_item=
+        # shellcheck disable=SC2016 # a jq variable reference, not a shell expansion
+        [ -z "$SPAWN_SEAT_LABEL" ] || claude_seat_item='$seat, '
+        claude_status_json=$(jq -cn --arg cmd "jq -r ${claude_seat_arg}'[${claude_seat_item}.model.display_name, .effort.level] | map(select(. != null and . != \"\")) | join(\" · \")'" \
           '{type: "command", command: $cmd}')
         claude_status_json=",\"statusLine\":$claude_status_json"
       fi
@@ -5833,7 +5906,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo lane branch base_branch account_provider worker_account tasktmp model effort busy_gen spawn_gen traceparent account claude_config_dir pi_agent_dir codex_home backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo lane branch base_branch account_provider worker_account seat tasktmp model effort busy_gen spawn_gen traceparent account claude_config_dir pi_agent_dir codex_home backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5863,6 +5936,9 @@ preserve_relaunch_meta() {
   [ -z "$SPAWN_CODEX_STORE" ] || echo "codex_home=$SPAWN_CODEX_STORE"
   [ -z "$WORKER_ACCOUNT" ] || echo "worker_account=$WORKER_ACCOUNT_DECLARED"
   [ -z "$WORKER_ACCOUNT_PROVIDER" ] || echo "account_provider=$WORKER_ACCOUNT_PROVIDER"
+  # The registry seat id this worker runs on: non-secret, rewritten by every
+  # relaunch, and the one field agentic-setup's seat-info and cockpit read.
+  [ -z "$SPAWN_SEAT" ] || echo "seat=$SPAWN_SEAT"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
@@ -6038,6 +6114,12 @@ LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
 LAUNCH=${LAUNCH//__PIHERDREXT__/$sq_piherdrext}
 LAUNCH=${LAUNCH//__PIRTKEXT__/$sq_pirtkext}
 LAUNCH=${LAUNCH//__PIWORKERCONTRACT__/$sq_piworkercontract}
+# Codex has no status-line surface that takes custom text, so its seat label is
+# printed once above the TUI at launch. It stays in the window's scrollback only;
+# Claude and Pi workers keep the label on screen for the whole session.
+if [ "$HARNESS" = codex ] && [ -n "$SPAWN_SEAT_LABEL" ]; then
+  LAUNCH="printf '%s\\n' $(shell_quote "seat: $SPAWN_SEAT_LABEL"); $LAUNCH"
+fi
 if [ "$KIND" = scout ]; then PI_TOOLS=read,bash; else PI_TOOLS=read,bash,edit,write; fi
 LAUNCH=${LAUNCH//__PITOOLS__/$PI_TOOLS}
 if [ "$KIND" = scout ]; then CLAUDE_TOOLS=Read,Bash; else CLAUDE_TOOLS=Read,Bash,Edit,Write; fi
@@ -6543,6 +6625,7 @@ SPAWN_DELIVERY=
 SPAWN_ACCOUNT=
 [ -z "$WORKER_ACCOUNT" ] || SPAWN_ACCOUNT=" account=$WORKER_ACCOUNT_DECLARED"
 [ -z "$WORKER_ACCOUNT_PROVIDER" ] || SPAWN_ACCOUNT="$SPAWN_ACCOUNT account_provider=$WORKER_ACCOUNT_PROVIDER"
+[ -z "$SPAWN_SEAT" ] || SPAWN_ACCOUNT="$SPAWN_ACCOUNT seat=$SPAWN_SEAT"
 # Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
 [ ! -e "$CONFIG/fleet-ledger" ] || [ "$RELAUNCH" -eq 1 ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" dispatched "$ID" "$KIND" "${PROJ_ABS##*/}" "$HARNESS" "$MODEL" || true
 echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT$SPAWN_ACCOUNT"

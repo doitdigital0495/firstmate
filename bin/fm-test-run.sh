@@ -390,7 +390,7 @@ family_for_basename() {
     fm-herdr-session-cleanup.test.sh|fm-send-resolve-key.test.sh|fm-send-strict.test.sh|\
     fm-send-inbox.test.sh|fm-spawn-batch.test.sh|\
     fm-spawn-dispatch-profile.test.sh|fm-spawn-pi-skill.test.sh|fm-spawn-pi-trust.test.sh|fm-claude-trust.test.sh|\
-    fm-worker-account.test.sh|fm-worker-account-precedence.test.sh|fm-git-strip-ai-trailers.test.sh|\
+    fm-worker-account.test.sh|fm-worker-account-precedence.test.sh|fm-account-seat.test.sh|fm-git-strip-ai-trailers.test.sh|\
     fm-trace-context-spawn.test.sh|fm-spawn-worktree-settle.test.sh|\
     fm-spawn-claude-settings.test.sh|fm-spawn-claude-lean.test.sh|\
     fm-spawn-compact-adviser-disable.test.sh|\
@@ -906,6 +906,7 @@ tests/fm-watcher-lock.test.sh 109318
 tests/fm-worker-account-live-e2e.test.sh 3179
 tests/fm-worker-account.test.sh 37445
 tests/fm-worker-account-precedence.test.sh 8379
+tests/fm-account-seat.test.sh 30000
 EOF
 }
 

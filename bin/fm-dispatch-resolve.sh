@@ -410,7 +410,7 @@ gather_account_snapshot() {  # <account>: refresh ACCOUNT_QUOTAS[account] from i
   [ "${#stores[@]}" -eq 3 ] || return 0
   store_key=$(printf '%s\n' "${stores[@]}" | jq -Rsc .)
   account_quota=$(mktemp) || emit_error "mktemp failed"
-  if ! CODEX_HOME=${stores[2]} PI_CODING_AGENT_DIR=${stores[1]} CLAUDE_CONFIG_DIR=${stores[0]} quota-axi --json > "$account_quota" 2>/dev/null || ! fm_quota_json_valid < "$account_quota"; then
+  if ! CODEX_HOME=$(fm_account_read_store codex "${stores[2]}") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "${stores[1]}") CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "${stores[0]}") quota-axi --json > "$account_quota" 2>/dev/null || ! fm_quota_json_valid < "$account_quota"; then
     ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" '. + {($a): {key: $key, failed: true}}' <<<"$ACCOUNT_QUOTAS")
   else
     ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" --slurpfile snapshot "$account_quota" '. + {($a): {key: $key, snapshot: $snapshot[0]}}' <<<"$ACCOUNT_QUOTAS")

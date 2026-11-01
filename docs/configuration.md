@@ -1239,6 +1239,10 @@ A typical personal-home file is:
 {"crossAccount":{"enabled":true},"plans":{"claude":"Max 5x","codex":"ChatGPT Plus"},"accounts":{"personal":{"claude":"~/.claude","pi":"~/.pi/agent","codex":"~/.codex","plans":{"claude":"Max 5x"}},"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris","plans":{"claude":"Pro","zai":"Z.ai Pro"}}}}
 ```
 
+Each account names the stores it owns: `claude`, `pi` and `codex` are each optional, but at least one must be present, so a Claude-only seat such as `{"claude2":{"claude":"~/.claude-2","plans":{"claude":"Ultra"}}}` registers without borrowing another account's Pi or Codex store.
+A store that is present must still be a valid path.
+`fm-spawn.sh --account <id>` and `fm-control.sh <task> relaunch --account <id>` refuse a harness whose store the seat does not own, naming the account and the store, and quota snapshots read a store the seat lacks as an empty location, never the personal one.
+
 The optional top-level `plans` object declares subscription names for the default home store, and each account's optional `plans` object declares them for that named store; keys are provider ids (not harness names) and values are nonempty printable plan labels of at most 80 characters.
 Plans are evidence only: an invalid entry shows as unknown for that candidate and never invalidates the registry or blocks routing.
 For each candidate, a declared plan wins because quota-axi publishes only coarse labels (for example `max` for every Claude Max tier), and the quota-axi label is shown beside it: `plan=Max 20x (config; quota-axi: max)`.
@@ -1253,6 +1257,24 @@ Without `--account`, a first Pi or Codex launch records an ambient `PI_CODING_AG
 With no pin present, all of this registered cross-account behaviour is unchanged; a task record that carries no store is unbound, so a pin added later may redirect it (see [Failures, reporting, and inheritance](#failures-reporting-and-inheritance)).
 Quota ranking uses one `quota-axi` snapshot for the default store and one environment-pinned snapshot per distinct named store triple, then compares applicable `spendPriority` across the union without a reserve or quota floor.
 Unmeasurable Team-seat five-hour quota remains disclosed uncertainty, not healthy headroom.
+
+### Worker seat label and recorded seat
+
+Every worker whose seat is known shows `seat · plan · email` in its window, and its task record carries the seat id.
+The seat is the registry account id of an explicit or recorded `--account`, otherwise the one registry account that owns the store the worker will actually use (a store shared by several seats, such as the Pi agent directory, names none).
+The plan is the account's declared `plans` entry for the worker's provider (`claude`, `codex` or `zai`).
+The email is the single `oauthAccount.emailAddress` field of a Claude store's `.claude.json`, validated the way agentic-setup's `seat-info` validates it; no credential file is opened and no process environment is read, so Pi and Codex workers, whose stores hold no such non-secret field, show seat and plan only, as does a Claude worker with no readable email.
+A worker whose seat is not known (no registry, or a store no account owns) shows exactly what it showed before.
+
+| Worker | Where the label shows |
+| --- | --- |
+| Claude task worker | leads the lean status line (PR 79): `claude2 · Ultra · cap@example.com · Opus · high`; a secondmate keeps its own full status line |
+| Pi worker | Pi's footer status line, key `firstmate-seat`, for as long as the footer is on screen |
+| Codex worker | printed once above the TUI at launch (`seat: claude… · plan`), because Codex has no status line that takes custom text; it stays in the window's scrollback only |
+
+`bin/fm-spawn.sh` records the seat id as `seat=<id>` in `state/<id>.meta` and on the `spawned` line (`seat=claude2`), rewritten by every relaunch, including `relaunch --account`.
+That `seat=` line is the one sanctioned non-secret source for a worker's seat: agentic-setup's `seat-info` and cockpit read it rather than inferring the seat from a store path.
+`account=` keeps its meaning, the explicit `--account` id or a worker pin declaration, and a worker started without one gets `seat=` only when a registry account owns its store.
 
 ## Home session and account pin (data/home-identity)
 
