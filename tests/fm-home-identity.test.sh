@@ -337,6 +337,65 @@ test_a_home_pins_itself_on_first_use() {
   pass "an unpinned home takes the identity of the session that first uses it"
 }
 
+test_rebind() {
+  local home child out status pid mode
+  home=$(new_home "$TMP_ROOT/rebind/home")
+  child=$(new_home "$TMP_ROOT/rebind/child")
+  mkdir -p "$TMP_ROOT/rebind/empty" "$TMP_ROOT/rebind/new-store"
+  touch "$TMP_ROOT/rebind/new-store/.credentials.json"
+  identity "$home" personal "$GERIS_STORE" ensure >/dev/null || fail 'initial pin'
+  identity "$child" personal "$GERIS_STORE" ensure >/dev/null || fail 'child pin'
+  printf 'claude_config_dir=%s\n' "$GERIS_STORE" > "$home/state/running.meta"
+  printf -- '- child - Local mate. (home: %s; scope: test; projects: none; added 2026-11-01)\n' "$child" > "$home/data/secondmates.md"
+  printf -- '- remote - Remote mate. (host: example; root: /code; home: /remote; scope: test; projects: none; added 2026-11-01)\n' >> "$home/data/secondmates.md"
+  printf -- '- missing - Missing mate. (home: /nonexistent-fm-rebind-test; scope: test; projects: none; added 2026-11-01)\n' >> "$home/data/secondmates.md"
+  out=$(identity "$home" personal "$GERIS_STORE" rebind --store "$TMP_ROOT/rebind/new-store"); status=$?
+  expect_code 2 "$status" 'rebind requires confirmation'
+  assert_absent "$home/data/home-identity.history" 'no history on refusal'
+  out=$(identity "$home" personal "$GERIS_STORE" rebind --store "$TMP_ROOT/rebind/empty" --confirm); status=$?
+  expect_code 3 "$status" 'credential-free store refuses'
+  cp "$(command -v sleep)" "$TMP_ROOT/rebind/claude"
+  "$TMP_ROOT/rebind/claude" 120 & pid=$!
+  printf '%s\n' "$pid" > "$home/state/.lock"
+  out=$(identity "$home" personal "$GERIS_STORE" rebind --store "$TMP_ROOT/rebind/new-store" --confirm); status=$?
+  kill "$pid"; wait "$pid" 2>/dev/null || true
+  expect_code 3 "$status" 'live harness lock refuses'
+  assert_contains "$out" 'exit the live harness session first' 'actionable refusal'
+  assert_grep "$pid" "$home/state/.lock" 'live lock was not deleted'
+  assert_absent "$home/data/home-identity.history" 'no history on live-lock refusal'
+  out=$(identity "$home" personal "$GERIS_STORE" rebind --store "$TMP_ROOT/rebind/new-store" --confirm) || fail "rebind: $out"
+  assert_contains "$out" 'old identity: session=personal' 'old identity printed'
+  assert_contains "$out" "new identity: session=personal store=$TMP_ROOT/rebind/new-store" 'session preserved'
+  assert_contains "$out" 'secondmate child: re-pinned' 'local child propagated'
+  assert_contains "$out" 'secondmate remote: skipped (remote)' 'remote reported'
+  assert_contains "$out" 'secondmate missing: skipped (unreachable:' 'missing reported'
+  grep -Eq '^# rebound at [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$home/data/home-identity.history" || fail 'UTC timestamp recorded'
+  assert_grep "claude_config_dir=$GERIS_STORE" "$home/data/home-identity.history" 'old pin archived'
+  assert_grep "claude_config_dir=$GERIS_STORE" "$child/data/home-identity.history" 'child old pin archived'
+  assert_grep "claude_config_dir=$GERIS_STORE" "$home/state/running.meta" 'running task unchanged'
+  assert_grep "$pid" "$home/state/.lock" 'stale lock left for next session'
+  mode=$(stat -c %a "$home/data/home-identity" 2>/dev/null || stat -f %Lp "$home/data/home-identity")
+  [ "$mode" = 600 ] || fail 'pin must be 0600'
+  identity "$child" personal "$TMP_ROOT/rebind/new-store" check >/dev/null || fail 'child new identity'
+  out=$(identity "$home" geris "$TMP_ROOT/rebind/new-store" check); status=$?
+  expect_code 3 "$status" 'mismatched session still refuses after rebind'
+  out=$(identity "$home" personal "$GERIS_STORE" check); status=$?
+  expect_code 3 "$status" 'old account still refuses after rebind'
+  identity "$home" personal "$GERIS_STORE" rebind --store "$TMP_ROOT/rebind/new-store" --session personal --confirm >/dev/null || fail 'explicit session'
+  # Back to the first subscription without changing the terminal session.
+  touch "$GERIS_STORE/.credentials.json"
+  identity "$home" personal "$TMP_ROOT/rebind/new-store" rebind --store "$GERIS_STORE" --confirm >/dev/null || fail 'switch back'
+  identity "$home" personal "$GERIS_STORE" check >/dev/null || fail 'original account restored'
+  out=$(REBIND_SEED=1 identity "$home" personal "$GERIS_STORE" seed "$child" personal "$TMP_ROOT/rebind/new-store"); status=$?
+  expect_code 3 "$status" 'seed cannot gain replacement authority from the environment'
+  mkdir -p "$TMP_ROOT/rebind/user/.claude"
+  touch "$TMP_ROOT/rebind/user/.claude/.credentials.json"
+  HOME="$TMP_ROOT/rebind/user" identity "$home" personal "$GERIS_STORE" rebind --store default --confirm >/dev/null || fail 'default store rebind'
+  HOME="$TMP_ROOT/rebind/user" identity "$home" personal '' check >/dev/null || fail 'default binding unsets account variable'
+  pass 'rebind confirmation, credentials, live lock, history, local propagation, and session isolation'
+}
+
+test_rebind
 test_a_home_refuses_the_other_session_in_both_directions
 test_the_pin_survives_a_restart
 test_an_unreadable_pin_is_never_replaced

@@ -1261,17 +1261,53 @@ The operator's shell derives `CLAUDE_CONFIG_DIR` from the session a terminal was
 
 The pin holds two structural facts and no credential value: `herdr_session` (`$HERDR_SESSION`, or the literal `default` when unset) and `claude_config_dir` (`$CLAUDE_CONFIG_DIR` canonicalized, or the literal `default` when unset).
 Both must match for a home to be used, because a session can be repointed at another store and two sessions can share one.
-The record is local, gitignored, written 0600, and never propagated between homes except by the deliberate seeding below.
+The record is local, gitignored, written 0600, and propagated between homes only by deliberate seeding or operator rebind.
 
 A home with no pin yet takes the identity of the first session that uses it, which is its originating one.
-After that the pin is only ever compared, never rewritten.
+After that the pin is only compared, never implicitly rewritten; only the explicit operator `rebind --confirm` verb replaces it.
 A session that does not match is refused by `fm-spawn.sh`, `fm-send.sh`, and `fm-control.sh` alike, so no spawn, steer, relaunch, or recovery can run from the wrong session, and session start reports the same refusal as a `HOME_IDENTITY:` diagnostic so it is visible before the first blocked command.
-There is no migration and no merge: homes and their work are left exactly as they are, and the operator opens each home from the session it belongs to.
+There is no implicit migration or merge: homes and their work are left exactly as they are, and the operator opens each home from the session and account it belongs to.
 An unreadable or malformed pin refuses everything, including re-pinning - a home whose recorded account cannot be read is never re-derived from whatever session happens to be running, because that is precisely how a home would drift onto the wrong subscription.
 
 Without a configured worker pin or explicit cross-account selection, a worker inherits its home's account rather than the caller's environment.
 `fm-spawn.sh` records the resolved store in the task's own `state/<id>.meta` as `claude_config_dir=`, and every later relaunch launches on that recorded value unless `fm-control.sh relaunch --account <id>` deliberately re-routes the task under the cross-account gates: a task started on a work account stays there, and a task started on the personal default store keeps that binding, with any inherited `CLAUDE_CONFIG_DIR` actively unset rather than merely omitted.
 A second mate is a firstmate home of its own and is seeded with its parent's identity when it is launched, so a second mate and its own workers stay on the account the firstmate that created them belongs to.
+
+### Deliberate Claude subscription switch and clean exit
+
+Exit Claude normally with `/exit` before switching accounts.
+There is no unlock command: the lock owner process dies on exit, and the next session reclaims the stale `state/.lock`; do not delete that lock manually.
+`rebind` refuses a live session lock (or unclassifiable liveness), requires an existing target store with a `.credentials.json` file (existence only, never credential contents), atomically writes the new pin at mode 0600, and appends the old identity with a UTC timestamp to `data/home-identity.history`.
+Its optional `--session` defaults to the current pin's session, not the ambient environment.
+It explicitly re-seeds registered local secondmate pins, archives their prior identities, and reports remote, unreachable, or failed routes as skipped; restart any still-running secondmate session on the new identity before asking it to mutate its home.
+Running workers and their `state/<id>.meta` records are untouched, and relaunch retains each task's recorded account.
+Worker account pins, cross-account routing, quota intake, and release shaping remain independent configuration; rebinding does not rewrite them.
+
+From an `hp` shell (`HERDR_SESSION=personal`), after exiting the current firstmate, switch this home's Claude subscription without logging out anywhere:
+
+```bash
+cd ~/.firstmate
+bin/fm-home-identity.sh rebind --store "$HOME/.claude-geris" --confirm
+```
+
+Start the rebound home from the same `hp` session, explicitly overriding only the Claude store after shell startup:
+
+```bash
+(cd ~/.firstmate && export CLAUDE_CONFIG_DIR="$HOME/.claude-geris" && bin/fm-home-identity.sh check && cc)
+```
+
+To switch back, exit Claude with `/exit`, then run:
+
+```bash
+cd ~/.firstmate
+bin/fm-home-identity.sh rebind --store "$HOME/.claude" --confirm
+(cd ~/.firstmate && export CLAUDE_CONFIG_DIR="$HOME/.claude" && bin/fm-home-identity.sh check && cc)
+```
+
+The launcher is deliberately a shell one-liner: `cc` is an interactive shell function with model/effort pickers, not an executable a portable script can invoke, and starting a fresh interactive shell would re-derive the account from the session name.
+These commands preserve the operator's existing `cc` launch behavior while exporting the selected account to Claude and its hooks.
+Both subscriptions use the `personal` Herdr session; no `hg`, Herdr restart, or login/logout is required.
+Use an absolute custom home path instead of `~/.firstmate`, and set `FM_HOME` to that same path, when operating another home.
 
 ## Claude release shaping (config/claude-shaped-store)
 
