@@ -1085,6 +1085,56 @@ test_secondmate_relaunch_picks_up_the_configured_harness_pin() {
   pass "fm-control relaunch: a secondmate relaunch re-resolves its durable configured harness pin"
 }
 
+test_secondmate_relaunch_after_rebind_launches_on_the_new_store() {
+  local dir home old new out rc
+  dir=$(new_case smrebind sm9)
+  home="$dir/home"
+  mkdir -p "$home/data/sm9" "$dir/old-store" "$dir/new-store"
+  old=$(cd "$dir/old-store" && pwd -P)
+  new=$(cd "$dir/new-store" && pwd -P)
+  touch "$new/.credentials.json"
+  printf '# secondmate brief\n' > "$home/data/sm9/brief.md"
+  fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
+  mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
+  printf 'sm9\n' > "$dir/smhome/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/smhome/AGENTS.md"
+  {
+    echo "window=fmses:fm-sm9"
+    echo "endpoint_task_id=sm9"
+    echo "worktree=$dir/smhome"
+    echo "project=$dir/smhome"
+    echo "harness=claude"
+    echo "kind=secondmate"
+    echo "mode=secondmate"
+    echo "yolo=off"
+    echo "model=default"
+    echo "effort=default"
+    echo "home=$dir/smhome"
+    echo "claude_config_dir=$old"
+  } > "$home/state/sm9.meta"
+  printf 'fm-home-identity-v1\nherdr_session=default\nclaude_config_dir=%s\n' "$old" | tee "$home/data/home-identity" > "$dir/smhome/data/home-identity"
+  printf -- '- sm9 - Local mate. (home: %s; scope: test; projects: none; added 2026-11-01)\n' "$dir/smhome" > "$home/data/secondmates.md"
+  printf '%s\n' "fm-sm9" > "$dir/fake/windows"
+  printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+
+  out=$(FM_HOME="$home" HERDR_SESSION=default CLAUDE_CONFIG_DIR="$old" \
+    "$ROOT/bin/fm-home-identity.sh" rebind --store "$new" --confirm 2>&1) || fail "rebind: $out"
+  assert_contains "$out" 'secondmate sm9: re-pinned' 'rebind must move the local second mate'
+
+  out=$(FM_TEST_CLAUDE_CONFIG_DIR="$new" run_control "$dir" sm9 relaunch); rc=$?
+  expect_code 0 "$rc" "a re-pinned second mate must relaunch"$'\n'"$out"
+  assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$new'" \
+    'the relaunch must launch on the rebound store'
+  assert_not_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$old'" \
+    'the relaunch must not launch on the store recorded before the rebind'
+  [ "$(meta_field "$dir" sm9 claude_config_dir)" = "$new" ] \
+    || fail 'the relaunched record must bind the rebound store'
+  out=$(FM_HOME="$dir/smhome" HERDR_SESSION=default CLAUDE_CONFIG_DIR="$new" \
+    "$ROOT/bin/fm-home-identity.sh" check 2>&1) \
+    || fail "the relaunched second mate must be accepted by its own home: $out"
+  pass "fm-control relaunch: a second mate moved by rebind relaunches on the new store"
+}
+
 test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop() {
   local dir home out rc
   dir=$(new_case invalid-effort sm6)
@@ -2855,6 +2905,7 @@ test_prior_harness_turnend_registry_entry_is_cleared
 test_wiring_removal_failure_refuses_before_replacement_arm
 test_turnend_auth_paths_are_owned_by_the_control_adapter
 test_secondmate_relaunch_picks_up_the_configured_harness_pin
+test_secondmate_relaunch_after_rebind_launches_on_the_new_store
 test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop
 test_secondmate_relaunch_onto_a_crewmate_only_adapter_refuses_before_stop
 test_explicit_secondmate_harness_ignores_configured_profile_axes

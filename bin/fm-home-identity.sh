@@ -52,8 +52,9 @@
 # does not change running tasks' recorded accounts; and it does not read,
 # print, or copy a credential value. Rebind checks only .credentials.json file
 # existence, archives the old identity in data/home-identity.history, and seeds
-# registered local secondmate pins explicitly; remote/unreachable routes are
-# reported as skipped. --session defaults to the existing pin's session.
+# registered local secondmate pins explicitly, nested ones included; live,
+# remote, and unreachable routes are reported as skipped, and re-running rebind
+# picks them up. --session defaults to the existing pin's session.
 #
 # EXIT CODES
 #   0  pinned now, or the environment matches the pin
@@ -269,8 +270,78 @@ archive_pin() {
   fi
 }
 
+# The store a home's next second-mate launch selects: fm-spawn.sh binds a Claude
+# second mate to the launching home's Claude worker pin when one is configured,
+# and to that home's own store otherwise. A second mate's pin must equal it.
+secondmate_launch_store() {  # <config-dir> <home-store>
+  local config=$1 store=$2 selection root
+  selection=$(fm_worker_account_resolve claude "$config") || return 1
+  if [ -n "$selection" ] && [ "$(FM_CONFIG_OVERRIDE=$config "$SCRIPT_DIR/fm-harness.sh" secondmate 2>/dev/null)" = claude ]; then
+    root=${selection#*$'\t'}
+    root=${root%%$'\t'*}
+    store=${root:-default}
+  fi
+  printf '%s\n' "$store"
+}
+
+# Re-pin every registered local second mate under one home, then under each of
+# them. A live mate keeps its identity, and so does everything beneath it, so
+# each mate's pin still matches the home that launches it until a re-run.
+rebind_secondmates() {  # <data-dir> <config-dir> <session> <home-store>
+  local data=$1 config=$2 session=$3 store line home id canon repinned
+  if [ -e "$data/secondmates.md" ] && [ ! -r "$data/secondmates.md" ]; then
+    printf 'secondmates: skipped (registry unreadable: %s)\n' "$data/secondmates.md" >&2
+    return 0
+  fi
+  [ -f "$data/secondmates.md" ] || return 0
+  if ! store=$(secondmate_launch_store "$config" "$4"); then
+    printf 'secondmates: skipped (unusable worker pin in %s); fix it and re-run rebind\n' "$config" >&2
+    return 0
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in '- '*) ;; *) continue ;; esac
+    if ! secondmate_registry_parse_line "$line"; then
+      printf 'secondmate route skipped (unparseable): %s\n' "$line" >&2
+      continue
+    fi
+    home=$SECONDMATE_REGISTRY_HOME; id=$SECONDMATE_REGISTRY_ID
+    if [ "$SECONDMATE_REGISTRY_REMOTE" = 1 ]; then
+      printf 'secondmate %s: skipped (remote)\n' "$id"
+      continue
+    fi
+    canon=$(canonical_store "$home")
+    case "$REBIND_VISITED" in *$'\n'"$canon"$'\n'*) continue ;; esac
+    REBIND_VISITED+="$canon"$'\n'
+    repinned=0
+    if [ ! -d "$home" ] || [ ! -w "$home" ] || { [ -e "$home/data" ] && [ ! -w "$home/data" ]; }; then
+      printf 'secondmate %s: skipped (unreachable: %s)\n' "$id" "$home"
+      continue
+    elif (REBIND_SEED=0; seed_compare "$home" "$session" "$store") >/dev/null 2>&1; then
+      printf 'secondmate %s: already on the new identity\n' "$id"
+      repinned=1
+    elif ! mkdir -p "$home/state" 2>/dev/null || ! fm_lock_try_acquire "$home/state/.lock.acquire"; then
+      printf 'secondmate %s: skipped (session lock busy); re-run rebind\n' "$id"
+    else
+      fm_session_lock_inspect "$home/state"
+      case "$FM_LOCK_INSPECT_STATE" in
+        free|stale)
+          if (action_seed "$home" "$session" "$store") >/dev/null; then
+            printf 'secondmate %s: re-pinned\n' "$id"
+            repinned=1
+          else
+            printf 'secondmate %s: skipped (seed failed: %s)\n' "$id" "$home" >&2
+          fi ;;
+        held) printf 'secondmate %s: skipped (live session); /exit it, re-run rebind, then relaunch it\n' "$id" ;;
+        *) printf 'secondmate %s: skipped (session lock liveness unknown); resolve it and re-run rebind\n' "$id" ;;
+      esac
+      fm_lock_release "$home/state/.lock.acquire"
+    fi
+    [ "$repinned" = 0 ] || rebind_secondmates "$home/data" "$home/config" "$session" "$store"
+  done < "$data/secondmates.md"
+}
+
 action_rebind() {
-  local store='' session='' confirm=0 line home id REBIND_SEED=1
+  local store='' session='' confirm=0 home REBIND_SEED=1 REBIND_VISITED
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --store) [ "$#" -ge 2 ] || die_usage '--store needs a value'; store=$2; shift 2 ;;
@@ -309,32 +380,15 @@ action_rebind() {
   read_pin || die_refuse 'rebind requires an existing readable pin; use ensure for a new home'
   [ -n "$session" ] || session=$PIN_SESSION
   printf 'old identity: session=%s store=%s\n' "$PIN_SESSION" "$PIN_STORE"
-  archive_pin
+  { [ "$PIN_SESSION" = "$session" ] && [ "$PIN_STORE" = "$store" ]; } || archive_pin
   write_pin "$PIN" "$session" "$store"
   printf 'new identity: session=%s store=%s\n' "$session" "$store"
   # shellcheck source=bin/fm-secondmate-registry-lib.sh
   . "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
-  if [ -e "$DATA/secondmates.md" ] && [ ! -r "$DATA/secondmates.md" ]; then
-    printf 'secondmates: skipped (registry unreadable)\n' >&2
-  elif [ -f "$DATA/secondmates.md" ]; then
-    while IFS= read -r line || [ -n "$line" ]; do
-      case "$line" in '- '*) ;; *) continue ;; esac
-      if ! secondmate_registry_parse_line "$line"; then
-        printf 'secondmate route skipped (unparseable): %s\n' "$line" >&2
-        continue
-      fi
-      home=$SECONDMATE_REGISTRY_HOME; id=$SECONDMATE_REGISTRY_ID
-      if [ "$SECONDMATE_REGISTRY_REMOTE" = 1 ]; then
-        printf 'secondmate %s: skipped (remote)\n' "$id"
-      elif [ ! -d "$home" ] || [ ! -w "$home" ] || { [ -e "$home/data" ] && [ ! -w "$home/data" ]; }; then
-        printf 'secondmate %s: skipped (unreachable: %s)\n' "$id" "$home"
-      elif (action_seed "$home" "$session" "$store"); then
-        printf 'secondmate %s: re-pinned\n' "$id"
-      else
-        printf 'secondmate %s: skipped (seed failed: %s)\n' "$id" "$home" >&2
-      fi
-    done < "$DATA/secondmates.md"
-  fi
+  # shellcheck source=bin/fm-worker-account-lib.sh
+  . "$SCRIPT_DIR/fm-worker-account-lib.sh"
+  REBIND_VISITED=$'\n'"$(canonical_store "$FM_HOME")"$'\n'
+  rebind_secondmates "$DATA" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" "$session" "$store"
   printf 'Running workers unchanged; relaunch retains each task recorded account.\n'
   fm_lock_release "$claim"
   trap - EXIT

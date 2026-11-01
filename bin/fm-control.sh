@@ -1188,7 +1188,10 @@ do_relaunch() {
   fi
   case "$TARGET_HARNESS" in
     claude)
-      relaunch_claude_store=$(fm_worker_account_effective_store "$TARGET_HARNESS" "$RELAUNCH_WORKER_ACCOUNT" "$relaunch_claude_store" "$account_origin") || return 1 ;;
+      relaunch_claude_store=$(fm_worker_account_effective_store "$TARGET_HARNESS" "$RELAUNCH_WORKER_ACCOUNT" "$relaunch_claude_store" "$account_origin") || return 1
+      if [ "$KIND" = secondmate ] && [ -z "$RELAUNCH_WORKER_ACCOUNT" ]; then
+        relaunch_claude_store=$("$SCRIPT_DIR/fm-home-identity.sh" store) || return 1
+      fi ;;
     pi|pi-signed)
       relaunch_pi_store=$(fm_worker_account_effective_store "$TARGET_HARNESS" "$RELAUNCH_WORKER_ACCOUNT" "$relaunch_pi_store" "$account_origin") || return 1 ;;
   esac

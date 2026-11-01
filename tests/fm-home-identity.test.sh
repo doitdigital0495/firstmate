@@ -395,7 +395,73 @@ test_rebind() {
   pass 'rebind confirmation, credentials, live lock, history, local propagation, and session isolation'
 }
 
+test_rebind_skips_a_live_secondmate_and_its_subtree_until_rerun() {
+  local base home child nested new pid out history_lines
+  base="$TMP_ROOT/rebind-live"
+  home=$(new_home "$base/home"); child=$(new_home "$base/child"); nested=$(new_home "$base/nested")
+  new="$base/new-store"
+  mkdir -p "$new"; touch "$new/.credentials.json"
+  identity "$home" personal "$GERIS_STORE" ensure >/dev/null || fail 'home pin'
+  identity "$child" personal "$GERIS_STORE" ensure >/dev/null || fail 'child pin'
+  identity "$nested" personal "$GERIS_STORE" ensure >/dev/null || fail 'nested pin'
+  printf -- '- child - Local mate. (home: %s; scope: test; projects: none; added 2026-11-01)\n' "$child" > "$home/data/secondmates.md"
+  printf -- '- nested - Nested mate. (home: %s; scope: test; projects: none; added 2026-11-01)\n' "$nested" > "$child/data/secondmates.md"
+  # A registry cycle must terminate instead of recursing forever.
+  printf -- '- back - Cycle. (home: %s; scope: test; projects: none; added 2026-11-01)\n' "$home" > "$nested/data/secondmates.md"
+
+  cp "$(command -v sleep)" "$base/claude"
+  "$base/claude" 120 & pid=$!
+  printf '%s\n' "$pid" > "$child/state/.lock"
+  out=$(identity "$home" personal "$GERIS_STORE" rebind --store "$new" --confirm) \
+    || { kill "$pid"; fail "a live second mate must not fail the rebind: $out"; }
+  assert_contains "$out" 'secondmate child: skipped (live session)' 'the live mate is reported as skipped'
+  assert_not_contains "$out" 'secondmate child: re-pinned' 'the live mate is not reported as moved'
+  identity "$child" personal "$GERIS_STORE" check >/dev/null || fail 'the live mate keeps its identity'
+  identity "$nested" personal "$GERIS_STORE" check >/dev/null || fail 'a live mate keeps its subtree on the matching identity'
+  identity "$home" personal "$new" check >/dev/null || fail 'the home itself still moved'
+  assert_absent "$child/state/.lock.acquire" 'the startup claim on the mate is released'
+  assert_grep "$pid" "$child/state/.lock" 'the live lock is untouched'
+  kill "$pid"; wait "$pid" 2>/dev/null || true
+
+  history_lines=$(grep -c '^# rebound at' "$home/data/home-identity.history")
+  out=$(identity "$home" personal "$new" rebind --store "$new" --confirm) || fail "re-run: $out"
+  assert_contains "$out" 'secondmate child: re-pinned' 'a re-run moves the exited mate'
+  assert_contains "$out" 'secondmate nested: re-pinned' 'a re-run reaches the nested mate'
+  identity "$child" personal "$new" check >/dev/null || fail 'child on the new identity'
+  identity "$nested" personal "$new" check >/dev/null || fail 'nested mate on the new identity'
+  [ "$history_lines" = "$(grep -c '^# rebound at' "$home/data/home-identity.history")" ] \
+    || fail 'a re-run to the same identity must not archive a move that did not happen'
+
+  out=$(identity "$home" personal "$new" rebind --store "$new" --confirm) || fail "second re-run: $out"
+  assert_contains "$out" 'secondmate child: already on the new identity' 'a settled mate is not reported as moved'
+  pass 'rebind skips a live second mate with its subtree and a re-run moves them'
+}
+
+test_rebind_keeps_a_worker_pinned_secondmate_acceptable_to_spawn_verify() {
+  local base home child new worker out
+  base="$TMP_ROOT/rebind-worker-pin"
+  home=$(new_home "$base/home"); child=$(new_home "$base/child")
+  new="$base/new-store"; worker="$base/worker-store"
+  mkdir -p "$new" "$worker"; touch "$new/.credentials.json"
+  identity "$home" personal "$GERIS_STORE" ensure >/dev/null || fail 'home pin'
+  identity "$child" personal "$worker" ensure >/dev/null || fail 'child pin'
+  printf -- '- child - Local mate. (home: %s; scope: test; projects: none; added 2026-11-01)\n' "$child" > "$home/data/secondmates.md"
+  printf '%s\n' "$worker" > "$home/config/claude-account"
+  printf 'claude\n' > "$home/config/secondmate-harness"
+  out=$(identity "$home" personal "$GERIS_STORE" rebind --store "$new" --confirm) || fail "rebind: $out"
+  identity "$home" personal "$new" verify "$child" personal "$worker" >/dev/null \
+    || fail 'the store spawn binds a worker-pinned mate to must stay accepted'
+
+  printf 'codex\n' > "$home/config/secondmate-harness"
+  out=$(identity "$home" personal "$new" rebind --store "$GERIS_STORE" --confirm) || fail "rebind back: $out"
+  identity "$home" personal "$GERIS_STORE" verify "$child" personal "$GERIS_STORE" >/dev/null \
+    || fail 'a Claude worker pin does not bind a second mate on another harness'
+  pass 'rebind pins a second mate to the store its launch selects'
+}
+
 test_rebind
+test_rebind_skips_a_live_secondmate_and_its_subtree_until_rerun
+test_rebind_keeps_a_worker_pinned_secondmate_acceptable_to_spawn_verify
 test_a_home_refuses_the_other_session_in_both_directions
 test_the_pin_survives_a_restart
 test_an_unreadable_pin_is_never_replaced

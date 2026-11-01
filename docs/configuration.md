@@ -1270,7 +1270,7 @@ There is no implicit migration or merge: homes and their work are left exactly a
 An unreadable or malformed pin refuses everything, including re-pinning - a home whose recorded account cannot be read is never re-derived from whatever session happens to be running, because that is precisely how a home would drift onto the wrong subscription.
 
 Without a configured worker pin or explicit cross-account selection, a worker inherits its home's account rather than the caller's environment.
-`fm-spawn.sh` records the resolved store in the task's own `state/<id>.meta` as `claude_config_dir=`, and every later relaunch launches on that recorded value unless `fm-control.sh relaunch --account <id>` deliberately re-routes the task under the cross-account gates: a task started on a work account stays there, and a task started on the personal default store keeps that binding, with any inherited `CLAUDE_CONFIG_DIR` actively unset rather than merely omitted.
+`fm-spawn.sh` records the resolved store in the task's own `state/<id>.meta` as `claude_config_dir=`, and every later worker relaunch launches on that recorded value unless `fm-control.sh relaunch --account <id>` deliberately re-routes the task under the cross-account gates: a task started on a work account stays there, and a task started on the personal default store keeps that binding, with any inherited `CLAUDE_CONFIG_DIR` actively unset rather than merely omitted.
 A second mate is a firstmate home of its own and is seeded with its parent's identity when it is launched, so a second mate and its own workers stay on the account the firstmate that created them belongs to.
 
 ### Deliberate Claude subscription switch and clean exit
@@ -1279,8 +1279,12 @@ Exit Claude normally with `/exit` before switching accounts.
 There is no unlock command: the lock owner process dies on exit, and the next session reclaims the stale `state/.lock`; do not delete that lock manually.
 `rebind` refuses a live session lock (or unclassifiable liveness), requires an existing target store with a `.credentials.json` file (existence only, never credential contents), atomically writes the new pin at mode 0600, and appends the old identity with a UTC timestamp to `data/home-identity.history`.
 Its optional `--session` defaults to the current pin's session, not the ambient environment.
-It explicitly re-seeds registered local secondmate pins, archives their prior identities, and reports remote, unreachable, or failed routes as skipped; restart any still-running secondmate session on the new identity before asking it to mutate its home.
-Running workers and their `state/<id>.meta` records are untouched, and relaunch retains each task's recorded account.
+It explicitly re-seeds registered local secondmate pins, nested ones included, and archives their prior identities.
+A secondmate whose Claude launch is bound to a `config/claude-account` worker pin stays pinned to that store.
+It reports live, remote, unreachable, or failed routes as skipped and still exits 0; a live secondmate keeps its old identity, and so does everything beneath it.
+To move a skipped live secondmate, exit its session with `/exit`, exit this firstmate, re-run the same `rebind` command, then start firstmate and run `bin/fm-control.sh <id> relaunch`.
+A local secondmate's relaunch launches on its home's pinned store unless a Claude worker pin applies, so a secondmate moved by rebind relaunches on the new subscription.
+Running workers and their `state/<id>.meta` records are untouched, and a worker's relaunch retains its recorded account.
 Worker account pins, cross-account routing, quota intake, and release shaping remain independent configuration; rebinding does not rewrite them.
 
 From an `hp` shell (`HERDR_SESSION=personal`), after exiting the current firstmate, switch this home's Claude subscription without logging out anywhere:
