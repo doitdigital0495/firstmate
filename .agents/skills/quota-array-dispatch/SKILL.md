@@ -22,6 +22,14 @@ This skill is the single owner of the completion-aware profile-array selection p
 Do not add a daemon, opaque composite score, routing wrapper, hard-coded model-specific policy, or producer-side route recommendation.
 The [worker helper](../../../bin/fm-quota-choose.sh) and [typed resolver](../../../docs/configuration.md#typed-dispatch-resolution-env-openrouter_api_key) own their deterministic mapping boundaries.
 
+## Shared-quota opt-out
+
+When the home's `config/crew-dispatch.json` declares a top-level `"shared_quota": true`, this home draws every provider's usage from one single shared budget, so per-provider quota rows do not describe what is left, and this skill's quota snapshot, the window-completeness gate, the quota parts of the eligibility and runway gates, and `spendPriority` ranking are off by home declaration.
+Make no `quota-axi` call, apply no quota row, quota floor, completeness, runway gate, or `spendPriority` rank, and choose the matched rule's first declared profile that its authoritative catalog supports and that meets the required reasoning class; catalog eligibility, reasoning-class fit, and cross-account registration still apply.
+`preferred_provider` is not a quota signal, so it still applies: `preferred_provider` still narrows the pool; declared order then picks within it.
+Account for every candidate as always, stating in place of quota evidence that quota ranking is off by home declaration.
+The declared value must be a boolean; anything else is an actionable configuration error.
+
 ## Worker-side quota helper
 
 The canonical shell helper for a worker that has already performed its model-selection reasoning and now needs to pick the first viable candidate is `bin/fm-quota-choose.sh`.
@@ -42,6 +50,7 @@ It never removes this skill's authority, and its `incomplete`, `ambiguous`, `esc
 
 ## Read the default TOON
 
+When the home declares the [shared-quota opt-out](#shared-quota-opt-out), skip this section's dispatch quota reading and every quota-derived check built on it (quota rows, completeness, floors, runway, and `spendPriority`); catalog eligibility and reasoning-class fit still apply, and the launch gate below still requires its fresh intake record.
 Every spawn and every relaunch or model-or-account move runs through `bin/fm-quota-intake.sh`: its gate refuses the launch unless a fresh record re-read every usage limit, reset time, plan size, and Notes entry, with each window (5h, 7d, model-specific) shown as a used percent, so on a refusal run `bin/fm-quota-intake.sh` and use that record's table as this intake's evidence instead of re-querying quota-axi ad hoc.
 Start each intake by running `quota-axi` with no `--json` for the home's default account.
 For each distinct named-account store triple referenced by a candidate, read that home's `config/accounts.json` and require `crossAccount.enabled == true` plus an allowlisted account; otherwise mark that candidate `not eligible: cross-account routing disabled` without probing its store.
@@ -59,7 +68,7 @@ Do not read `--json` on the normal path, and do not reach for `--full` to rebuil
 After reading each store's TOON, fall back to one env-pinned `quota-axi --json` call for that store only when its TOON is genuinely ambiguous for the decision, or when the installed quota-axi is somehow below the floor so its TOON lacks `spendPriority`.
 Ambiguous means a candidate's `spendPriority` is the literal `unknown` or unmeasurable, a real tie still needs extra evidence, or a candidate's eligibility is unclear from `quota[]` plus `attention[]`.
 Reuse its JSON result to identify the unknown pools before the bounded warm-up and retry below; do not let the fallback's still-unknown reading settle a choice.
-Below-floor is rare: bootstrap enforces `FM_QUOTA_AXI_MIN` and normally reports `MISSING` before dispatch; if an intake somehow reaches an older build whose TOON lacks `spendPriority`, use the defensive `--json` fallback rather than treating the missing scalar as healthy.
+Below-floor is rare: bootstrap enforces `FM_QUOTA_AXI_MIN` and normally reports `OUTDATED` before dispatch; if an intake somehow reaches an older build whose TOON lacks `spendPriority`, use the defensive `--json` fallback rather than treating the missing scalar as healthy.
 `--json` is a defensive belt, not a habit; never reach for it because it feels more complete.
 Read `quota-axi auth --json` only when a candidate's credential surface is in question.
 
@@ -101,6 +110,7 @@ A model the catalog does not list is concrete contradictory evidence: block that
 Apply quota at the granularity the vendor actually supplies.
 A provider-level or `all_models`/`all_products` scope bounds every model you established in that family within the candidate's matched account, including one with no window of its own.
 A named-model or named-product scope is an additional bound for that model alone.
+A scope the vendor reports outside those names, such as an Antigravity tier, bounds a candidate only when its profile declares that exact scope as `quota_scope`; never infer the tier from the model name.
 Match the candidate to its `quota[]` row by that established provider, its `accountKey` when the snapshot is schema 6 (a Pi lane's auth provider id such as `openai-codex-work`, or `codex-home` for native Codex including Pi's `codex-native/` adapter, then the `default` row, else unmeasured; never a row picked by position, never rows summed across accounts), and scope; a stale, auth-required, or unmeasurable scope is named in `attention[]` instead of a fabricated number.
 
 A candidate authenticates through its own tuple's surface; another harness's CLI can never gate it, and `harness=pi` with `model=xai/grok-*` is Pi using xAI rather than the standalone Grok CLI.
@@ -145,7 +155,18 @@ An absent auth source remains disclosed uncertainty rather than proof of failed 
 
 ### 4. Rank by spendPriority
 
-Among catalog-eligible candidates in the required reasoning class with resolved quota evidence, compare the known `spendPriority` values first, then assess their runway feasibility in descending rank order.
+Among catalog-eligible candidates in the required reasoning class with resolved quota evidence, first apply the optional top-level `preferred_provider` from `config/crew-dispatch.json`.
+Its schema is owned by [Crew dispatch profiles](../../../docs/configuration.md#crew-dispatch-profiles-configcrew-dispatchjson).
+Within the already matched rule or default, restrict ranking to eligible candidates of that family when any remain.
+Do not introduce other profiles, change a Claude-only rule, or override an explicit captain choice or approval requirement.
+Only concrete evidence that every matched preferred candidate is ineligible authorizes fallback to other families.
+Unknown quota, missing account evidence, and unrankable scalars do not establish ineligibility.
+If preferred candidates remain eligible but none can be ranked, escalate with that uncertainty instead of switching families.
+When no matched profile belongs to the preferred family, preserve the rule's candidate set.
+With the field absent, keep the existing candidate set unchanged.
+Print the preferred-family decision, including the reason for any fallback.
+
+Within the resulting candidate set, compare the known `spendPriority` values first, then assess their runway feasibility in descending rank order.
 A higher known scalar is better: positive means paid allowance is on track to reach reset unused, `0` is exact utilization, and negative means overdrawn against the reset clock.
 Rank only from comparable known scalars.
 Never treat absent, `unknown`, or unmeasurable `spendPriority` as zero or as healthy; `0` means exact utilization, a different claim from unknown.

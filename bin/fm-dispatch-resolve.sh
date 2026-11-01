@@ -4,14 +4,36 @@
 #
 # Usage:
 #   fm-dispatch-resolve.sh <brief-file> [--project <name>]
+#   fm-dispatch-resolve.sh --supports-credential-source <source>
 #
 # Opt-in gate: OPENROUTER_API_KEY non-empty in this process environment, else an
 #   OPENROUTER_API_KEY= line in $FM_HOME/.env read with fmx_env_get, the same
 #   accessor as FMX_PAIRING_TOKEN (bin/fm-env-lib.sh). The environment wins.
 #   Absent in both: one "dispatch-resolve: off" line on stderr, nothing on
 #   stdout, exit 0, no network call, so firstmate dispatches exactly as today.
-#   The key lives in one shell variable and reaches curl as a header read from
-#   a file descriptor, never on argv; nothing logs or writes it.
+#   With neither, the key may come from the credential source declared for the
+#   route's provider (below). The key lives in one shell variable and reaches
+#   curl as a header read from a file descriptor, never on argv; nothing logs or
+#   writes it.
+#
+# Credential source declaration: the optional $CONFIG/dispatch-credential-sources.json
+#   ($CONFIG is FM_CONFIG_OVERRIDE, else $FM_HOME/config) is a JSON object keyed
+#   by provider (openrouter for the default route, typesafe for the direct
+#   route). Each value says where that provider's key lives and holds no key:
+#   {"source": "macos-keychain", "service": "<name>", "account": "<name>"},
+#   where account is optional and no other field is accepted.
+#   bin/fm-credential-source-lib.sh owns the schema and its adapters. The file is
+#   read only when neither the environment nor .env supplied the route's key,
+#   and only that provider's entry is used. With no entry and no key the tool is
+#   off as above. An unreadable or invalid file exits 2 naming the problem,
+#   never a value. A declared source this host cannot run, or that yields no key
+#   within 5 seconds, is an error outcome ending "nothing sent", with no network
+#   or quota call, so it is not mistaken for an unconfigured resolver.
+#
+# Capability probe: --supports-credential-source <source> prints "supported"
+#   and exits 0, or prints "unsupported" and exits 1, for a source name such as
+#   macos-keychain on this host. It reads no declaration, retrieves no
+#   credential, and runs no credential tool.
 #
 # What it does when on with at least one rule: one POST to
 #   https://openrouter.ai/api/v1/systemone with the project name and brief's Task subsections (whole brief for legacy input) as
@@ -19,9 +41,12 @@
 #   plus a neutral none option) and candidate/effort preference. Jev returns the matched rule, a probability per
 #   option, and a confidence. Everything after that is jq: the confidence
 #   floor, the rule's declared `approval` and `floor`, each profile's declared
-#   `provider` and `floor`, the quota rows from per-store quota-axi --json snapshots,
-#   and the spendPriority argmax over the eligible candidates. The model never
-#   sees quota, catalogs, approvals, `why`, or credential paths. With no rules, it returns
+#   `provider`, `quota_scope`, and `floor`, the quota rows from per-store quota-axi
+#   --json snapshots, the optional preferred_provider family restriction, and the
+#   spendPriority argmax over the eligible candidates. An eligible but wholly
+#   unrankable preferred family escalates rather than authorizing another
+#   family. The model never sees quota, catalogs, approvals, preferred_provider,
+#   `why`, or credential paths. With no rules, it returns
 #   a non-clear result so firstmate keeps using the existing intake.
 #   Before any selection, a completeness gate requires every candidate in the
 #   choice set to have every applicable quota window - session, weekly, and
@@ -32,12 +57,22 @@
 #   plus the named pool warm-up (zai-window-warm for Z.ai); anything still unknown
 #   yields status incomplete, which is non-dispatchable: wait and re-run, never
 #   pick by hand or drop the unknown candidate.
+#
+# Shared-quota opt-out: an optional top-level "shared_quota": true in the
+#   rules file declares this home draws every provider's usage from one single
+#   shared budget, so per-provider quota rows do not describe what is left.
+#   With it set, this tool makes no quota-axi call, applies no quota floor,
+#   runway, or completeness gate, ranks nothing by spendPriority, and resolves
+#   the matched rule's `use` profiles in declared order; preferred_provider still
+#   narrows the pool and account registration still applies. Every candidate
+#   line still prints, stating quota ranking is off by home declaration. The
+#   declared value must be a boolean; anything else is a configuration error.
 #   docs/configuration.md "Crew dispatch profiles" owns the declared fields and
 #   "Typed dispatch resolution" owns this tool's operator contract.
 #
 # Never-send check: when the optional $FM_HOME/config/dispatch-never-send list
-#   exists, every string value of the built request is checked against it
-#   before the POST. Each non-blank, non-# line is a literal matched
+#   exists, the endpoint URL and every string value of the built request are
+#   checked against it before the POST. Each non-blank, non-# line is a literal matched
 #   case-insensitively, with surrounding whitespace trimmed and every run of
 #   whitespace, on both sides, treated as one space. A match, or a list that
 #   is not a readable regular file, prints one
@@ -51,6 +86,7 @@
 #     model/latency_ms/tokens, rule (when excerpt) and confidence, probabilities
 #     fallback: <runner-up rule taken when the picked rule missed its own floor>
 #     reason: <why the status is not clear>
+#     preferred_provider: <family and preference or fallback decision, when applied>
 #     candidate: <harness>:<model> provider=.. windows=<id>:<pct>%@<reset>,.. [account=..] scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | not eligible: <reason> | incomplete: <reason>
 #     profile: --harness <h> [--model <m>] [--effort <e>]     (status clear only)
 #   clear      -> pass the profile line to fm-spawn.sh unless you state a reason to override
@@ -60,11 +96,13 @@
 #                 the block names the missing windows per candidate: wait for the
 #                 measurement and re-run; never pick by hand or drop the unknown candidate
 #   escalate   -> the rule requires captain approval, no candidate is rankable, or a genuine tie
-#   error      -> API, network, response, or quota-axi failure; decide as today
+#   error      -> API, network, response, quota-axi, or declared credential source failure; decide as today
 #   Every outcome exits 0 so an intake is never blocked by this tool.
 #   Exit 2 only for a usage or configuration error (unreadable brief, an
-#   existing unreadable rules file, malformed rules, or missing jq), which is
-#   actionable, never selected around.
+#   existing unreadable rules file, malformed rules, an unreadable or invalid
+#   credential source declaration, or missing jq), which is actionable, never
+#   selected around.
+#   The capability probe is the one other exit: 1 for an unsupported source.
 #
 # Environment:
 #   OPENROUTER_API_KEY opts in; FM_DISPATCH_ROUTE=direct with TYPESAFE_API_KEY
@@ -100,6 +138,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-account-lib.sh"
 # shellcheck source=bin/fm-brief-heading-lib.sh
 . "$SCRIPT_DIR/fm-brief-heading-lib.sh"
+# shellcheck source=bin/fm-credential-source-lib.sh
+. "$SCRIPT_DIR/fm-credential-source-lib.sh"
 
 CONFIDENCE_FLOOR=0.6
 # Bounded gather for an incomplete choice: attempts and the doubling backoff base.
@@ -118,6 +158,12 @@ TS_TIMEOUT=5
 DEFAULT_WHEN="No listed rule applies to this task."
 
 die() { printf 'error: %s\n' "$1" >&2; exit 2; }
+emit_error() {
+  local reason=$1
+  echo "dispatch-resolve: error ($reason)" >&2
+  printf 'dispatch-resolve:\n  status: error\n  reason: %s\n' "$reason"
+  exit 0
+}
 no_rules() {
   printf 'dispatch-resolve:\n  status: escalate\n  reason: no rules to match\n'
   exit 0
@@ -132,8 +178,13 @@ usage() {
 
 BRIEF='' PROJECT='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES=''
 NEVER_SEND_PATH="$CONFIG/dispatch-never-send"
+CRED_PATH="$CONFIG/dispatch-credential-sources.json"
 while [ $# -gt 0 ]; do
   case "$1" in
+    --supports-credential-source)
+      [ $# -ge 2 ] || die "--supports-credential-source needs a value"
+      if fm_credsrc_supported "$2"; then echo supported; exit 0; fi
+      echo unsupported; exit 1 ;;
     --project) [ $# -ge 2 ] || die "--project needs a value"; PROJECT=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown flag $1" ;;
@@ -142,6 +193,38 @@ while [ $# -gt 0 ]; do
 done
 
 # ---- opt-in gate ---------------------------------------------------------------
+# declared_key <provider>: set TS_KEY from the source $CRED_PATH declares for
+# <provider>. Returns 1 when none is declared, which leaves the off gate in
+# charge. Past that point nothing is mistaken for an unconfigured resolver: an
+# unreadable or invalid declaration is a configuration error, and a declared
+# source this host cannot run or that yields no key is an error outcome.
+# Nothing is sent in either case.
+declared_key() {
+  local provider=$1 src problem value rc
+  [ -e "$CRED_PATH" ] || [ -L "$CRED_PATH" ] || return 1
+  [ -r "$CRED_PATH" ] || die "credential source declaration not readable: $CRED_PATH"
+  command -v jq >/dev/null 2>&1 || die "jq required"
+  problem=$(fm_credsrc_check "$CRED_PATH" typesafe openrouter) \
+    || die "malformed credential source declaration: $CRED_PATH - $problem"
+  fm_credsrc_declares "$CRED_PATH" "$provider" || return 1
+  src=$(fm_credsrc_field "$CRED_PATH" "$provider" source)
+  fm_credsrc_supported "$src" \
+    || emit_error "credential source $src declared for $provider is not supported on this host; nothing sent"
+  value=$(fm_credsrc_read "$CRED_PATH" "$provider"); rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$value" ]; then
+    if fm_timed_out "$rc"; then
+      emit_error "credential source $src declared for $provider did not answer in time; nothing sent"
+    fi
+    emit_error "credential source $src declared for $provider is unavailable; nothing sent"
+  fi
+  TS_KEY=$value
+}
+if [ -z "$TS_KEY" ]; then
+  case "$TS_KEY_NAME" in
+    TYPESAFE_API_KEY) declared_key typesafe || true ;;
+    *) declared_key openrouter || true ;;
+  esac
+fi
 if [ -z "$TS_KEY" ]; then
   echo "dispatch-resolve: off ($TS_KEY_NAME absent from the environment and $FM_HOME/.env)" >&2
   exit 0
@@ -196,6 +279,8 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
     ($items | map([.account // null, .harness, (.model // null), (.effort // null)] | @json)) as $keys
     | ($keys | length) != ($keys | unique | length);
   if type != "object" then "top-level value must be an object"
+  elif has("preferred_provider") and (provider_id(.preferred_provider) | not) then "preferred_provider must be a lowercase provider ID (for example codex)"
+  elif has("shared_quota") and (.shared_quota | type) != "boolean" then "shared_quota must be true or false when present"
   elif has("rules") and (.rules | type) != "array" then "rules must be an array"
   elif any((.rules // [])[]; type != "object") then "each rule must be an object"
   elif any((.rules // [])[]; (.when | type) != "string" or (.when | length) == 0) then "each rule needs non-empty when"
@@ -206,11 +291,13 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   elif any((.rules // [])[]; has("select") and .select != "quota-balanced") then
     "unknown select: " + ([.rules[] | select(has("select") and .select != "quota-balanced") | .select] | unique | join(", "))
   elif any((.rules // [])[]; has("floor") and floor_bad(.floor; true)) then "rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\\z"
+  elif any((.rules // [])[] | profiles(.use)[]; type == "object" and has("quota_scope") and ((.quota_scope | type) != "string" or (.quota_scope | length) == 0)) then "each use profile quota_scope must be a non-empty string when present"
   elif any((.rules // [])[] | profiles(.use)[]; profile_bad(.)) then "each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
   elif any((.rules // [])[]; duplicate_profiles(profiles(.use))) then "each rule use must not contain duplicate harness, model, and effort profiles"
   elif any((.rules // [])[] | profiles(.use)[]; (verified(.harness) | not)) then "each use profile must name a verified harness"
   elif any((.rules // [])[] | profiles(.use)[]; (effort_ok(.harness; .model; .effort) | not)) then "each use profile effort must be supported by its harness and model"
   elif has("default") and (profiles(.default) | length) == 0 then "default must be a profile object or non-empty profile array"
+  elif has("default") and any(profiles(.default)[]; type == "object" and has("quota_scope") and ((.quota_scope | type) != "string" or (.quota_scope | length) == 0)) then "each default profile quota_scope must be a non-empty string when present"
   elif has("default") and any(profiles(.default)[]; profile_bad(.)) then "each default profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
   elif has("default") and duplicate_profiles(profiles(.default)) then "default must not contain duplicate harness, model, and effort profiles"
   elif has("default") and any(profiles(.default)[]; (verified(.harness) | not)) then "each default profile must name a verified harness"
@@ -249,13 +336,6 @@ done < <(jq -r '
 
 RULE_COUNT=$(jq -r '(.rules // []) | length' "$RULES")
 
-emit_error() {
-  local reason=$1
-  echo "dispatch-resolve: error ($reason)" >&2
-  printf 'dispatch-resolve:\n  status: error\n  reason: %s\n' "$reason"
-  exit 0
-}
-
 if [ "$RULE_COUNT" -eq 0 ]; then
   no_rules
 fi
@@ -271,8 +351,8 @@ never_send_off() {
   exit 0
 }
 
-# Checks every string the request carries, so no text reaches the network
-# unchecked. grep's own stderr is discarded because it can echo the pattern.
+# Checks the endpoint and every string the request carries, so no text reaches
+# the network unchecked. grep's own stderr is discarded because it can echo the pattern.
 never_send_check() {
   local list value n=0 rc
   [ -e "$NEVER_SEND_PATH" ] || [ -L "$NEVER_SEND_PATH" ] || return 0
@@ -280,7 +360,7 @@ never_send_check() {
     || never_send_off "$NEVER_SEND_PATH is not a readable regular file"
   # Collapse whitespace runs on both sides so a value the brief wraps across
   # lines or spaces differently still matches
-  jq -r '.. | strings | gsub("\\s+"; " ")' <<<"$REQUEST" > "$SEND_TEXT" 2>/dev/null \
+  jq -r --arg endpoint "$TS_BASE/v1/systemone" '$endpoint, (.. | strings) | gsub("\\s+"; " ")' <<<"$REQUEST" > "$SEND_TEXT" 2>/dev/null \
     || never_send_off "could not extract the request text to check"
   list=$(jq -Rr 'gsub("\\s+"; " ")' "$NEVER_SEND_PATH" 2>/dev/null) \
     || never_send_off "could not read $NEVER_SEND_PATH"
@@ -385,7 +465,16 @@ if fm_account_registry_valid "$CONFIG/accounts.json"; then
   PLAN_CONFIG=$(jq -c 'def plans: if type == "object" then . else {} end; {default: (.plans | plans), accounts: (.accounts | with_entries(.value = (.value.plans | plans)))}' "$CONFIG/accounts.json")
 fi
 # ---- quota evidence: one snapshot per authorized credential store -------------
-command -v quota-axi >/dev/null 2>&1 || emit_error "quota-axi not installed"
+# Under the shared-quota opt-out no quota-axi call is made: a stub snapshot keeps
+# the slurpfile contract, and registered accounts are recorded without one.
+SQ=false
+SHARED_QUOTA=$(jq -r '.shared_quota // false' "$RULES" 2>/dev/null) || SHARED_QUOTA=false
+[ "$SHARED_QUOTA" != true ] || SQ=true
+if [ "$SQ" = true ]; then
+  printf '{"providers":[]}\n' > "$QUOTA"
+else
+  command -v quota-axi >/dev/null 2>&1 || emit_error "quota-axi not installed"
+fi
 gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapshot
   local fresh
   fresh=$(mktemp) || { printf 'mktemp failed'; return 1; }
@@ -401,7 +490,9 @@ gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapsh
   fi
   mv "$fresh" "$QUOTA"
 }
-home_quota_error=$(gather_home_quota) || emit_error "$home_quota_error"
+if [ "$SQ" = false ]; then
+  home_quota_error=$(gather_home_quota) || emit_error "$home_quota_error"
+fi
 gather_account_snapshot() {  # <account>: refresh ACCOUNT_QUOTAS[account] from its pinned store
   local account=$1 stores account_quota store_key
   [ -n "$account" ] || return 0
@@ -430,12 +521,16 @@ while IFS= read -r account; do
     ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg prev "$previous" '. + {($a): .[$prev]}' <<<"$ACCOUNT_QUOTAS")
     continue
   fi
+  if [ "$SQ" = true ]; then
+    ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" '. + {($a): {key: $key, shared: true}}' <<<"$ACCOUNT_QUOTAS")
+    continue
+  fi
   gather_account_snapshot "$account"
 done < <(jq -r '[((.rules // [])[] | .use | if type == "array" then .[] else . end), (.default // empty | if type == "array" then .[] else . end) | .account // empty] | unique[]' "$RULES")
 
 # ---- resolution: declared gates + quota evidence + argmax, all in jq ----------
 fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
-  jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" \
+  jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" \
     --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
@@ -447,7 +542,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   def provider_of($c): ($c.provider // $pmap[$c.harness] // null);
   def plan_label($v): if ($v | type) == "string" and ($v | length) > 0 and ($v | length) <= 80 and ($v | test("^[[:print:]]+$")) then $v else null end;
   def plan_for($c; $p):
-    (if $c.account then $account_quotas[$c.account].snapshot else $q end) as $snapshot |
+    ((if $c.account then $account_quotas[$c.account].snapshot else $q end) // {providers: []}) as $snapshot |
     (plan_label(if $c.account then $plan_config.accounts[$c.account][$p] else $plan_config.default[$p] end)) as $declared |
     ($snapshot | quota_row(.; $p; lane_of($c)) | .plan | plan_label(.)) as $quota_plan |
     if $declared != null and $quota_plan != null then {plan: $declared, plan_source: "config; quota-axi: \($quota_plan)"}
@@ -457,11 +552,12 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   def measured($p; $lane):
     (prov($p; $lane)) as $provider |
     ($provider != null and (["known", "partial"] | index($provider.quotaSemantics.status)) != null);
-  def applicable($p; $lane; $m):
+  def applicable($p; $lane; $m; $qs):
     (bare($m)) as $bare |
     [rows($p; $lane)[] | select(
       .scope == "all_models" or .scope == "all_products" or
-      ($m != "" and (.scope == ("model:" + $bare) or .scope == ("product:" + $bare)))
+      ($m != "" and (.scope == ("model:" + $bare) or .scope == ("product:" + $bare))) or
+      ($qs != null and .scope == $qs)
     )];
   def floor_state($f; $p; $lane):
     if $f == null then "none"
@@ -479,10 +575,10 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   def unmeasured_ids($p; $lane):
     ([rows($p; $lane)[] | (.selection.unmeasurableWindowIds // .runway.unmeasurableWindowIds // [])[]] | unique) as $ids |
     (if ($ids | length) == 0 then [provider_windows($p; $lane)[] | .id] | unique else $ids end);
-  def applicable_window_ids($p; $lane; $m):
+  def applicable_window_ids($p; $lane; $m; $qs):
     # first-occurrence order keeps session and weekly windows ahead of model windows
     def dedupe: reduce .[] as $x ([]; if (. | index($x)) then . else . + [$x] end);
-    (applicable($p; $lane; $m)) as $rows |
+    (applicable($p; $lane; $m; $qs)) as $rows |
     ([ $rows[] | (.boundedBy // [])[] ] | dedupe) as $ids |
     (if ($ids | length) == 0
      then [provider_windows($p; $lane)[] | select((.kind // "") != "model") | .id] | dedupe
@@ -498,14 +594,14 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
        reason: "provider \($p) unmeasured (\(prov($p; $lane).quotaSemantics.status))",
        state_error: $state_error, retry_after: $retry_after}
     else
-      (applicable($p; $lane; ($c.model // ""))) as $rows |
+      (applicable($p; $lane; ($c.model // ""); ($c.quota_scope // null))) as $rows |
       if ($rows | length) == 0 then {complete: false, missing: ["*"], reason: "no applicable quota row for provider \($p)", state_error: $state_error, retry_after: $retry_after}
       elif any($rows[]; .status != "known") then
         ([ $rows[] | select(.status != "known") | (.selection.unmeasurableWindowIds // .runway.unmeasurableWindowIds // [.scope])[] ] | unique) as $miss |
         {complete: false, missing: $miss, reason: "unmeasured windows: \($miss | join(", "))",
          state_error: $state_error, retry_after: $retry_after}
       else
-        (applicable_window_ids($p; $lane; ($c.model // ""))) as $ids |
+        (applicable_window_ids($p; $lane; ($c.model // ""); ($c.quota_scope // null))) as $ids |
         if ($ids | length) == 0 then {complete: false, missing: ["*"], reason: "no window reset evidence for provider \($p)"}
         else
           (provider_windows($p; $lane)) as $pws |
@@ -527,11 +623,13 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     (provider_of($c)) as $p | (lane_of($c)) as $lane |
     if $c.account and $account_quotas[$c.account] == null then
       {profile: $c, provider: $p, eligible: false, reason: "cross-account routing disabled or account not registered"}
+    elif $sq then
+      {profile: $c, provider: $p, eligible: true, sq: true, reason: "ok"}
     elif $c.account and $account_quotas[$c.account].failed then
       {profile: $c, provider: $p, eligible: false, incomplete: true, windows_missing: ["*"], reason: "quota-axi --json failed for account \($c.account)"}
     elif $p == null then {profile: $c, eligible: false, reason: "no provider family for harness \($c.harness); declare provider on the profile"}
     else account_quota($c) |
-      (applicable($p; $lane; ($c.model // ""))) as $rows |
+      (applicable($p; $lane; ($c.model // ""); ($c.quota_scope // null))) as $rows |
       (evidence($rows)) as $bounds |
       (floor_state($c.floor; $p; $lane)) as $profile_floor_state |
       (completeness($p; $lane; $c)) as $gate |
@@ -557,6 +655,8 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
          windows_missing: [$c.floor.scope],
          reason: "profile floor \($c.floor.scope) is unmeasured",
          state_error: (prov($p; $lane).state.error // null), retry_after: (prov($p; $lane).state.retryAfter // null)}
+      elif ($c.quota_scope != null and (any($rows[]; .scope == $c.quota_scope) | not)) then
+        {profile: $c, provider: $p, bounds: $bounds, windows: ($gate.windows // null), scope: $c.quota_scope, eligible: true, unranked: true, reason: "declared quota_scope \($c.quota_scope) has no quota row for provider \($p): not rankable"}
       elif $profile_floor_state == "absent" then
         ([rows($p; $lane)[] | select(.scope == $c.floor.scope)] | first) as $floor_row |
         {profile: $c, provider: $p, bounds: $bounds, windows: ($gate.windows // null), scope: $c.floor.scope, pct: ($floor_row.effectivePercentRemaining // null), runway: ($floor_row.runway.status // null), eligible: true, unranked: true, reason: "profile floor \($c.floor.scope) is unverifiable: not rankable"}
@@ -595,7 +695,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
    end) as $fb |
   (if $fb.to then $fb.to else $picked end) as $choice |
   (rule_at($choice)) as $rule |
-  (if $rule == null then "none" else ($q | floor_state($rule.floor; $rule.floor.provider; "")) end) as $rule_floor_state |
+  (if $sq or $rule == null then "none" else ($q | floor_state($rule.floor; $rule.floor.provider; "")) end) as $rule_floor_state |
   (if $choice != "default" and $rule == null then []
    elif $rule == null then profiles($cfg.default // null)
    else profiles($rule.use)
@@ -645,9 +745,22 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     $ev + {status: "escalate", reason: $sel.escalate, candidates: $cands}
   elif ($sel.use | length) == 0 then $ev + {status: "escalate", reason: "no profiles configured for \($sel.source)", note: $sel.note, candidates: []}
   else
-    ([$cands[] | select(.eligible and ((.unranked // false) | not))]) as $elig |
+    ([$cands[] | select(.provider == $cfg.preferred_provider)]) as $family |
+    ([$family[] | select(.eligible)]) as $preferred_family |
+    (if ($preferred_family | length) > 0 then $preferred_family else $cands end) as $pool |
+    ($ev + (if $cfg.preferred_provider == null then {}
+      else {preferred_provider: ($cfg.preferred_provider + ": " +
+        (if ($family | length) == 0 then "not in matched profiles; preserve the selected rule"
+         elif ($preferred_family | length) > 0 then "prefer eligible family candidates"
+         else "fall back; every matched family candidate is ineligible" end))} end)) as $ev |
+    ([$pool[] | select(.eligible and ((.unranked // false) | not))]) as $elig |
     ([$cands[] | select(.unranked)]) as $unranked |
-    if ($elig | length) == 0 then $ev + {status: "escalate", reason: "no rankable eligible candidate", note: $sel.note, candidates: $cands}
+    if ($elig | length) == 0 then $ev + {status: "escalate",
+      reason: ("no rankable eligible candidate" +
+        (if ($preferred_family | length) > 0 then " in preferred provider \($cfg.preferred_provider); uncertainty does not authorize fallback" else "" end)),
+      note: $sel.note, candidates: $cands}
+    elif $sq then
+      $ev + {status: "clear", note: ($sel.note + "; quota ranking off: home declares a single shared quota, declared order picks"), candidates: $cands, chosen: ($elig | first)}
     else
       ($elig | max_by(.spendPriority)) as $best |
       ([$elig[] | select(.spendPriority == $best.spendPriority)]) as $ties |
@@ -721,6 +834,7 @@ TEXT=$(jq -r '
   (if .fallback then "  fallback: \(.fallback | flat)" else empty end),
   (if .reason then "  reason: \(.reason | flat)" else empty end),
   (if .note then "  note: \(.note | flat)" else empty end),
+  (if .preferred_provider then "  preferred_provider: \(.preferred_provider | flat)" else empty end),
   (if .unranked_note then "  note: \(.unranked_note | flat)" else empty end),
   (.candidates[]? | "  candidate: \(.profile.harness | flat):\(show(.profile.model))"
       + (if .profile.account then "  account=\(.profile.account | flat)" else "" end)
@@ -732,7 +846,7 @@ TEXT=$(jq -r '
         elif .windows then "  windows=\(winstr(.windows))" else "" end)
       + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))  runway=\(show(.runway))" else "" end)
       + (if (.bounds // [] | length) > 1 then "  bounds=" + ([.bounds[] | "\(.scope | flat):\(show(.pct))%/\((.runway // .status) | flat)"] | join(",")) else "" end)
-      + "  -> " + (if .incomplete then "incomplete: \(.reason | flat): gather first, wait and re-run" elif .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)
+      + "  -> " + (if .incomplete then "incomplete: \(.reason | flat): gather first, wait and re-run" elif .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .sq then "eligible (quota ranking off: home declares a single shared quota)" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)
       + "  plan=\(.plan | flat) (\(.plan_source | flat))"),
   (if .chosen then "  profile: --harness \(.chosen.profile.harness | shell_arg)"
       + (if .chosen.profile.model then " --model \(.chosen.profile.model | shell_arg)" else "" end)
