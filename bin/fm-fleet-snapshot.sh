@@ -330,7 +330,7 @@ case "${1:---json}" in
   --json) ;;
   --secondmate-home-summary) OUTPUT_MODE=secondmate-home-summary ;;
   --contribution-input) OUTPUT_MODE=contribution-input ;;
-  --live-board-input) OUTPUT_MODE=live-board-input ;;
+  --live-board-input) OUTPUT_MODE='live-board-input' ;;
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac
