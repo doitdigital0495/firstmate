@@ -1132,7 +1132,9 @@ test_secondmate_relaunch_after_rebind_launches_on_the_new_store() {
   local dir home old new out rc
   dir=$(new_case smrebind sm9)
   home="$dir/home"
-  mkdir -p "$home/data/sm9" "$dir/old-store" "$dir/new-store"
+  # This case exercises Claude billing, independently of the invoking harness.
+  mkdir -p "$home/config" "$home/data/sm9" "$dir/old-store" "$dir/new-store"
+  printf 'claude\n' > "$home/config/secondmate-harness"
   old=$(cd "$dir/old-store" && pwd -P)
   new=$(cd "$dir/new-store" && pwd -P)
   touch "$new/.credentials.json"
@@ -1167,7 +1169,7 @@ test_secondmate_relaunch_after_rebind_launches_on_the_new_store() {
   out=$(FM_TEST_CLAUDE_CONFIG_DIR="$new" run_control "$dir" sm9 relaunch); rc=$?
   expect_code 0 "$rc" "a re-pinned second mate must relaunch"$'\n'"$out"
   assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$new'" \
-    'the relaunch must launch on the rebound store'
+    "the relaunch must launch on the rebound store: $(cat "$dir/fake/literal")"
   assert_not_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$old'" \
     'the relaunch must not launch on the store recorded before the rebind'
   [ "$(meta_field "$dir" sm9 claude_config_dir)" = "$new" ] \
