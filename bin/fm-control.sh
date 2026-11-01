@@ -1186,6 +1186,23 @@ do_relaunch() {
     relaunch_pi_store=${relaunch_account_stores[1]}
     relaunch_codex_store=${relaunch_account_stores[2]}
     account_origin="explicit --account '$NEW_ACCOUNT'"
+    # A store the seat does not own is absent, never another account's store.
+    [ "$relaunch_claude_store" != "$FM_ACCOUNT_NO_STORE" ] || relaunch_claude_store=
+    [ "$relaunch_pi_store" != "$FM_ACCOUNT_NO_STORE" ] || relaunch_pi_store=
+    [ "$relaunch_codex_store" != "$FM_ACCOUNT_NO_STORE" ] || relaunch_codex_store=
+  fi
+  # A registered seat that does not own the target harness's store refuses now,
+  # while the running agent is still untouched (bin/fm-spawn.sh re-checks).
+  if [ "$KIND" != secondmate ]; then
+    relaunch_seat=$NEW_ACCOUNT
+    [ "$ACCOUNT_SET" = 1 ] || relaunch_seat=$(fm_meta_get "$META" account 2>/dev/null) || relaunch_seat=
+    if [ -n "$relaunch_seat" ]; then
+      case "$TARGET_HARNESS" in
+        claude) fm_account_require_store "$CONFIG/accounts.json" "$relaunch_seat" claude || return 1 ;;
+        pi|pi-signed) fm_account_require_store "$CONFIG/accounts.json" "$relaunch_seat" pi || return 1 ;;
+        codex) fm_account_require_store "$CONFIG/accounts.json" "$relaunch_seat" codex || return 1 ;;
+      esac
+    fi
   fi
   case "$TARGET_HARNESS" in
     claude)
