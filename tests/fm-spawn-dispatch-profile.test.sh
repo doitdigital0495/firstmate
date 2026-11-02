@@ -2982,8 +2982,8 @@ test_non_claude_harness_ignores_claude_permission_mode() {
 
 test_account_registry_and_relaunch_pin() {
   local rec out status meta launch id
-  id='account-geris'
-  rec=$(make_spawn_case account-geris codex "$id")
+  id='account-second'
+  rec=$(make_spawn_case account-second codex "$id")
   read_case_record "$rec"
   meta="$HOME_DIR/state/$id.meta"
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account personal)
@@ -2992,40 +2992,40 @@ test_account_registry_and_relaunch_pin() {
   assert_not_contains "$out" 'spawned' "missing registry creates no worker"
   assert_absent "$meta" "missing registry writes no task"
   printf '%s\n' '{invalid' > "$HOME_DIR/config/accounts.json"
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account geris)
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account second)
   expect_code 1 "$?" "malformed registry rejects account"
   assert_absent "$meta" "malformed registry writes no task"
   cat > "$HOME_DIR/config/accounts.json" <<'JSON'
-{"accounts":{"geris":{"claude":"~/.claude-3","pi":"~/.pi-geris/agent","codex":"~/.codex-geris"}}}
+{"accounts":{"second":{"claude":"~/.claude-3","pi":"~/.pi-second/agent","codex":"~/.codex-second"}}}
 JSON
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account personal)
-  expect_code 1 "$?" "Geris-only registry refuses personal seat"
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account geris)
-  expect_code 1 "$?" "Geris home with no switch refuses cross-account flag"
-  FM_HOME="$HOME_DIR" "$ROOT/bin/fm-account-routing.sh" on >/dev/null 2>&1 && fail 'Geris-only home unexpectedly acquired a switch'
+  expect_code 1 "$?" "Second-only registry refuses personal seat"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account second)
+  expect_code 1 "$?" "Second home with no switch refuses cross-account flag"
+  FM_HOME="$HOME_DIR" "$ROOT/bin/fm-account-routing.sh" on >/dev/null 2>&1 && fail 'Second-only home unexpectedly acquired a switch'
   jq '.crossAccount.enabled = false' "$HOME_DIR/config/accounts.json" > "$HOME_DIR/config/accounts.next"
   mv "$HOME_DIR/config/accounts.next" "$HOME_DIR/config/accounts.json"
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account geris)
-  expect_code 1 "$?" "disabled switch rejects Geris seat"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account second)
+  expect_code 1 "$?" "disabled switch rejects Second seat"
   FM_HOME="$HOME_DIR" "$ROOT/bin/fm-account-routing.sh" on >/dev/null
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account geris)
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account second)
   expect_code 0 "$?" "enabled account dispatch succeeds: $out"
-  assert_grep 'account=geris' "$meta" 'account id is durable'
-  assert_grep "codex_home=$HOME_DIR/user-home/.codex-geris" "$meta" 'Codex store pinned'
-  assert_grep "pi_agent_dir=$HOME_DIR/user-home/.pi-geris/agent" "$meta" 'Pi store pinned'
+  assert_grep 'account=second' "$meta" 'account id is durable'
+  assert_grep "codex_home=$HOME_DIR/user-home/.codex-second" "$meta" 'Codex store pinned'
+  assert_grep "pi_agent_dir=$HOME_DIR/user-home/.pi-second/agent" "$meta" 'Pi store pinned'
   assert_grep "claude_config_dir=$HOME_DIR/user-home/.claude-3" "$meta" 'Claude store pinned'
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "export CODEX_HOME='$HOME_DIR/user-home/.codex-geris'" 'Codex launch uses selected seat'
-  fm_test_spawn_brief "$HOME_DIR" account-geris-pi
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" account-geris-pi "$PROJ_DIR" --scout --harness pi --account geris)
-  expect_code 0 "$?" "Pi routes through Geris: $out"
+  assert_contains "$launch" "export CODEX_HOME='$HOME_DIR/user-home/.codex-second'" 'Codex launch uses selected seat'
+  fm_test_spawn_brief "$HOME_DIR" account-second-pi
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" account-second-pi "$PROJ_DIR" --scout --harness pi --account second)
+  expect_code 0 "$?" "Pi routes through Second: $out"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "export PI_CODING_AGENT_DIR='$HOME_DIR/user-home/.pi-geris/agent';" 'Pi process inherits the Geris store'
+  assert_contains "$launch" "export PI_CODING_AGENT_DIR='$HOME_DIR/user-home/.pi-second/agent';" 'Pi process inherits the Second store'
   bash -n <<< "$launch" || fail 'account-pinned Pi launch is not valid shell syntax'
   # A relaunch passes the same cross-account gates before it reads the task's
   # endpoint at all, so an unlisted seat refuses the move identically; the
   # control-plane relaunch path covers the successful switch end to end.
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" account-geris --relaunch --account personal)
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" account-second --relaunch --account personal)
   expect_code 1 "$?" "an unlisted seat refuses a relaunch account switch: $out"
   assert_contains "$out" "account 'personal' is not enabled in this home's config/accounts.json" \
     'the relaunch refusal must use the registry wording'

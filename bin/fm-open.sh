@@ -3,11 +3,13 @@
 # for this launch, from the `personal` Herdr session.
 #
 # Usage:
-#   fm-open.sh <personal|geris> [claude args...]
+#   fm-open.sh <account> [claude args...]
 #   fm-open.sh --help
 #
-#   personal  $HOME/.claude
-#   geris     $HOME/.claude-3
+#   <account>  a registered account in config/accounts.json that owns a Claude
+#              store, for example claude1 ($HOME/.claude), claude2
+#              ($HOME/.claude-2) or claude3 ($HOME/.claude-3). The routing
+#              switch does not matter here: this picks the home's own login.
 #
 # Run it from an `hp` shell after /exit. The account argument is the deliberate
 # operator act: it goes through `fm-home-identity.sh rebind --confirm`, which
@@ -38,10 +40,21 @@ refuse() {
 
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
-  personal) store="${HOME:?}/.claude" ;;
-  geris) store="${HOME:?}/.claude-3" ;;
-  *) usage >&2; exit 2 ;;
+  '') usage >&2; exit 2 ;;
 esac
+# shellcheck source=bin/fm-account-lib.sh
+. "$SCRIPT_DIR/fm-account-lib.sh"
+registry="${FM_CONFIG_OVERRIDE:-$(cd "${FM_HOME:-$SCRIPT_DIR/..}" 2>/dev/null && pwd -P)/config}/accounts.json"
+store=
+if fm_account_registry_valid "$registry"; then
+  store=$(jq -r --arg a "$1" '.accounts[$a].claude // empty | strings' "$registry" 2>/dev/null) || store=
+fi
+if [ -z "$store" ]; then
+  printf 'fm-open: %s is not a registered account with a Claude store in %s\n' "$1" "$registry" >&2
+  usage >&2
+  exit 2
+fi
+store=$(fm_account_expand_store "$store")
 shift
 
 [ "${HERDR_SESSION:-}" = personal ] \

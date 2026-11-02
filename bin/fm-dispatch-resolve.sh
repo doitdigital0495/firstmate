@@ -246,6 +246,7 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
     or ($p | has("effort") and ((.effort | type) != "string" or (.effort | length) == 0))
     or ($p | has("provider") and (provider_id(.provider) | not))
     or ($p | has("floor") and floor_bad(.floor; false));
+  def family_of($p): $p.provider // ({"claude":"claude","codex":"codex","opencode":"codex"}[$p.harness] // null);
   def duplicate_profiles($items):
     ($items | map([.account // null, .harness, (.model // null), (.effort // null)] | @json)) as $keys
     | ($keys | length) != ($keys | unique | length);
@@ -261,6 +262,9 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   elif any((.rules // [])[]; has("select") and ((.select | type) != "string" or (.select | length) == 0)) then "select must be a non-empty string"
   elif any((.rules // [])[]; has("select") and .select != "quota-balanced") then
     "unknown select: " + ([.rules[] | select(has("select") and .select != "quota-balanced") | .select] | unique | join(", "))
+  elif any((.rules // [])[]; has("never_providers") and ((.never_providers | type) != "array" or (.never_providers | length) == 0 or any(.never_providers[]; provider_id(.) | not))) then "never_providers must be a non-empty array of provider IDs when present"
+  elif any((.rules // [])[]; . as $r | has("never_providers") and any(profiles($r.use)[]; (family_of(.) as $f | $f != null and ($r.never_providers | index($f)) != null))) then
+    "a rule lists a profile of a provider its own never_providers bans: " + ([(.rules // []) | to_entries[] | .key as $i | .value as $r | select($r | has("never_providers")) | profiles($r.use)[] | select(family_of(.) as $f | $f != null and ($r.never_providers | index($f)) != null) | "rule \($i + 1) \(.harness):\(.model // "default")"] | join(", "))
   elif any((.rules // [])[]; has("floor") and floor_bad(.floor; true)) then "rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\\z"
   elif any((.rules // [])[] | profiles(.use)[]; type == "object" and has("quota_scope") and ((.quota_scope | type) != "string" or (.quota_scope | length) == 0)) then "each use profile quota_scope must be a non-empty string when present"
   elif any((.rules // [])[] | profiles(.use)[]; type == "object" and has("fallback_only") and ((.fallback_only | type) != "boolean")) then "each use profile fallback_only must be true or false when present"
@@ -278,6 +282,11 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   else empty end
 ' "$RULES" 2>/dev/null) || die "malformed rules file: $RULES_PATH (not JSON)"
 [ -z "$rules_err" ] || die "malformed rules file: $RULES_PATH - $rules_err"
+# S1: with an account registry present every profile names a registered account
+# that owns its harness store and serves its provider, so nothing falls onto the
+# home pin store (the supervisor's own login) without saying so.
+account_problems=$(fm_account_dispatch_problems "$CONFIG/accounts.json" "$RULES")
+[ -z "$account_problems" ] || die "malformed rules file: $RULES_PATH - $(printf '%s' "$account_problems" | paste -sd ';' - | sed 's/;/; /g')"
 
 missing_provider=$(jq -r '
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
@@ -481,17 +490,52 @@ if [ "$SQ" = true ]; then
 else
   command -v quota-axi >/dev/null 2>&1 || emit_error "quota-axi not installed"
 fi
-gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapshot
-  local fresh
-  fresh=$(mktemp) || { printf 'mktemp failed'; return 1; }
-  if ! CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "$DEFAULT_CLAUDE_STORE") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "$DEFAULT_PI_STORE") fm_dispatch_bounded quota-axi --json > "$fresh" 2>/dev/null; then
-    rm -f "$fresh"
-    printf 'quota-axi --json failed'
-    return 1
+# fm_dispatch_recent_read <cache-file> <fresh-file> <read-ok 0|1> <claude> <pi> <codex>: R11. Turns a
+# fresh read into the snapshot to rank on: rows a rate limit or other transient
+# failure left unmeasured reuse that store's last good reading while it is at
+# most FM_QUOTA_RECENT_MAX_AGE (1800) seconds old, and a read that failed
+# outright is answered from recent readings alone. rc 1 when nothing usable.
+fm_dispatch_recent_read() {
+  local cache=$1 fresh=$2 ok=$3 merged
+  shift 3
+  merged=$(mktemp) || return 1
+  if [ "$ok" -eq 1 ]; then
+    fm_quota_recent_save "$cache" "$fresh" "$@"
+    if fm_quota_recent_merge "$cache" "$fresh" "$@" > "$merged" 2>/dev/null && fm_quota_json_valid < "$merged"; then
+      mv -f "$merged" "$fresh"
+    else
+      rm -f "$merged"
+    fi
+    return 0
   fi
-  if ! fm_quota_json_valid < "$fresh"; then
+  if fm_quota_recent_merge "$cache" "" "$@" > "$merged" 2>/dev/null && fm_quota_json_valid < "$merged"; then
+    mv -f "$merged" "$fresh"
+    return 0
+  fi
+  rm -f "$merged"
+  return 1
+}
+fm_dispatch_store_key() {  # <claude> <pi> <codex>: canonical store triple
+  local one
+  for one in "$@"; do
+    if [ "$one" = "$FM_ACCOUNT_NO_STORE" ] || [ -z "$one" ]; then printf '%s\n' "${one:--}"
+    else fm_account_canonical_store "$one"; fi
+  done
+}
+gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapshot
+  local fresh ok=1 cache
+  local -a canon=()
+  fresh=$(mktemp) || { printf 'mktemp failed'; return 1; }
+  cache=$(fm_quota_recent_file "$STATE" resolve)
+  mapfile -t canon < <(fm_dispatch_store_key "$DEFAULT_CLAUDE_STORE" "$DEFAULT_PI_STORE" "${CODEX_HOME:-$HOME/.codex}")
+  if ! CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "$DEFAULT_CLAUDE_STORE") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "$DEFAULT_PI_STORE") fm_dispatch_bounded quota-axi --json > "$fresh" 2>/dev/null; then
+    ok=0
+  elif ! fm_quota_json_valid < "$fresh"; then
+    ok=0
+  fi
+  if ! fm_dispatch_recent_read "$cache" "$fresh" "$ok" "${canon[@]}"; then
     rm -f "$fresh"
-    printf 'quota-axi --json returned an invalid snapshot'
+    printf 'quota-axi --json failed or returned an invalid snapshot, and no reading of this store is under %ss old' "$FM_QUOTA_RECENT_MAX_AGE"
     return 1
   fi
   mv "$fresh" "$QUOTA"
@@ -505,9 +549,16 @@ gather_account_snapshot() {  # <account>: refresh ACCOUNT_QUOTAS[account] from i
   stores=()
   mapfile -t stores < <(fm_account_stores "$CONFIG/accounts.json" "$account")
   [ "${#stores[@]}" -eq 3 ] || return 0
-  store_key=$(printf '%s\n' "${stores[@]}" | jq -Rsc .)
+  store_key=$(fm_dispatch_store_key "${stores[@]}" | jq -Rsc .)
   account_quota=$(mktemp) || emit_error "mktemp failed"
+  local read_ok=1 recent_cache
+  local -a canon=()
+  recent_cache=$(fm_quota_recent_file "$STATE" resolve)
+  mapfile -t canon < <(fm_dispatch_store_key "${stores[0]}" "${stores[1]}" "${stores[2]}")
   if ! CODEX_HOME=$(fm_account_read_store codex "${stores[2]}") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "${stores[1]}") CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "${stores[0]}") fm_dispatch_bounded quota-axi --json > "$account_quota" 2>/dev/null || ! fm_quota_json_valid < "$account_quota"; then
+    read_ok=0
+  fi
+  if ! fm_dispatch_recent_read "$recent_cache" "$account_quota" "$read_ok" "${canon[@]}"; then
     ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" '. + {($a): {key: $key, failed: true}}' <<<"$ACCOUNT_QUOTAS")
   else
     ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" --slurpfile snapshot "$account_quota" '. + {($a): {key: $key, snapshot: $snapshot[0]}}' <<<"$ACCOUNT_QUOTAS")
@@ -521,7 +572,7 @@ while IFS= read -r account; do
   mapfile -t stores < <(fm_account_stores "$CONFIG/accounts.json" "$account")
   [ "${#stores[@]}" -eq 3 ] || continue
   # Memoize identical store triples; no candidate gets another account's quota.
-  store_key=$(printf '%s\n' "${stores[@]}" | jq -Rsc .)
+  store_key=$(fm_dispatch_store_key "${stores[@]}" | jq -Rsc .)
   previous=$(jq -r --arg key "$store_key" 'to_entries[] | select(.value.key == $key) | .key' <<<"$ACCOUNT_QUOTAS" | head -n 1)
   if [ -n "$previous" ]; then
     ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg prev "$previous" '. + {($a): .[$prev]}' <<<"$ACCOUNT_QUOTAS")
@@ -534,9 +585,14 @@ while IFS= read -r account; do
   gather_account_snapshot "$account"
 done < <(jq -r '[((.rules // [])[] | .use | if type == "array" then .[] else . end), (.default // empty | if type == "array" then .[] else . end) | .account // empty] | unique[]' "$RULES")
 
+# ---- C5 round-robin slot: a fixed rotation over exactly tied candidates --------
+TIE_RR_FILE=$STATE/dispatch-tie-round-robin
+TIE_RR=$(cat "$TIE_RR_FILE" 2>/dev/null) || TIE_RR=0
+case "$TIE_RR" in '' | *[!0-9]*) TIE_RR=0 ;; esac
+[ "${#TIE_RR}" -le 9 ] || TIE_RR=0
 # ---- resolution: declared gates + quota evidence + argmax, all in jq ----------
 fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
-  jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" \
+  jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
     --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
@@ -606,7 +662,18 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     (if ($ids | length) == 0
      then [provider_windows($p; $lane)[] | select((.kind // "") != "model") | .id] | dedupe
      else $ids end);
+  # Captain 2026-11-02 (C3): a readable five-hour window counts; one that is
+  # missing or unreadable is ignored on every account and never makes the
+  # choice incomplete.
+  # Run on the snapshot: the ids of five-hour windows (by id or kind).
+  def five_hour_ids($p; $lane):
+    (["five_hour"] + [provider_windows($p; $lane)[] | select((.kind // "") == "five_hour" or (.kind // "") == "session") | .id]) | unique;
+  def only_five_hour_unknown($r; $five):
+    (($r.selection.unmeasurableWindowIds // $r.runway.unmeasurableWindowIds // []) as $u |
+     ($r.effectivePercentRemaining | type) == "number" and ($u | length) > 0 and all($u[]; . as $id | $five | index($id) != null));
+  def credential_failed($p; $lane): ((prov($p; $lane).state.status // "") == "auth_required");
   def completeness($p; $lane; $c):
+    (five_hour_ids($p; $lane)) as $five |
     (prov($p; $lane).state.error // null) as $state_error |
     (prov($p; $lane).state.retryAfter // null) as $retry_after |
     if prov($p; $lane) == null then {complete: false, missing: ["*"], reason:
@@ -619,8 +686,8 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     else
       (applicable($p; $lane; ($c.model // ""); ($c.quota_scope // null))) as $rows |
       if ($rows | length) == 0 then {complete: false, missing: ["*"], reason: "no applicable quota row for provider \($p)", state_error: $state_error, retry_after: $retry_after}
-      elif any($rows[]; .status != "known") then
-        ([ $rows[] | select(.status != "known") | (.selection.unmeasurableWindowIds // .runway.unmeasurableWindowIds // [.scope])[] ] | unique) as $miss |
+      elif any($rows[]; .status != "known" and (only_five_hour_unknown(.; $five) | not)) then
+        ([ $rows[] | select(.status != "known" and (only_five_hour_unknown(.; $five) | not)) | (.selection.unmeasurableWindowIds // .runway.unmeasurableWindowIds // [.scope])[] ] | unique) as $miss |
         {complete: false, missing: $miss, reason: "unmeasured windows: \($miss | join(", "))",
          state_error: $state_error, retry_after: $retry_after}
       else
@@ -630,11 +697,12 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
           (provider_windows($p; $lane)) as $pws |
           ([$ids[] | . as $id | ([$pws[] | select(.id == $id)] | first) as $w |
             if $w == null or ($w.percentRemaining | type) != "number" or ($w.resetsAt | type) != "string"
-            then {id: $id, missing: true}
+            then (if ($five | index($id)) != null then empty else {id: $id, missing: true} end)
             else {id: $id, pct: $w.percentRemaining, resetsAt: clean_reset($w.resetsAt)}
             end]) as $wev |
           ([$wev[] | select(.missing)] | map(.id)) as $miss |
           if ($miss | length) > 0 then {complete: false, missing: $miss, reason: "windows without known percent or reset: \($miss | join(", "))"}
+          elif ($wev | length) == 0 then {complete: false, missing: $ids, reason: "no readable window besides an ignored five-hour window for provider \($p)"}
           else {complete: true, windows: $wev}
           end
         end
@@ -651,7 +719,11 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     elif $c.account and $account_quotas[$c.account].failed then
       {profile: $c, provider: $p, eligible: false, incomplete: true, windows_missing: ["*"], reason: "quota-axi --json failed for account \($c.account)"}
     elif $p == null then {profile: $c, eligible: false, reason: "no provider family for harness \($c.harness); declare provider on the profile"}
+    elif (account_quota($c) | credential_failed($p; $lane)) then
+      {profile: $c, provider: $p, eligible: false, credential: true,
+       reason: "credential unusable for provider \($p)\(if $c.account then " on account \($c.account)" else "" end) (\((account_quota($c) | prov($p; $lane).state.error) // "auth_required")): sign in again; not an unknown quota"}
     else account_quota($c) |
+      (prov($p; $lane).reusedReading.ageSeconds // null) as $reading_age |
       (applicable($p; $lane; ($c.model // ""); ($c.quota_scope // null))) as $rows |
       (evidence($rows)) as $bounds |
       (floor_state($c.floor; $p; $lane)) as $profile_floor_state |
@@ -688,8 +760,15 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
         {profile: $c, provider: $p, bounds: $bounds, windows: ($gate.windows // null), scope: $bad.scope, pct: $bad.effectivePercentRemaining, runway: $bad.runway.status, eligible: true, unranked: true, reason: "spendPriority missing or non-numeric at \($bad.scope): not rankable"}
       else
         ($rows | min_by(.selection.spendPriority)) as $limiting |
+        # The binding window: the soonest reset among the windows bounding the
+        # limiting row (every row tied for limiting), used only to break an
+        # exact spendPriority tie (C5).
+        ([$rows[] | select(.selection.spendPriority == $limiting.selection.spendPriority) | (.boundedBy // [])[]] | unique) as $binding_ids |
+        ([($gate.windows // [])[] | select(. as $w | $binding_ids | index($w.id)) | .resetsAt]
+          | if length == 0 then [($gate.windows // [])[] | .resetsAt] else . end | min) as $binding_reset |
         {profile: $c, provider: $p, bounds: $bounds, windows: $gate.windows, scope: $limiting.scope, pct: $limiting.effectivePercentRemaining,
-         spendPriority: $limiting.selection.spendPriority, runway: $limiting.runway.status, eligible: true, reason: "ok"}
+         spendPriority: $limiting.selection.spendPriority, runway: $limiting.runway.status, binding_reset: $binding_reset,
+         reading_age: $reading_age, eligible: true, reason: "ok"}
       end
     end;
   def rule_at($c):
@@ -743,17 +822,26 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   ($decision_use | map(. as $c | (provider_of($c)) as $p |
     (if $ambiguous and any($union_floors[]; .state == "below" and (rule_at(.id).use | profiles(.) | index($c)) != null)
      then {profile:$c, provider:$p, eligible:false, reason:"ambiguous row floor below minimum"}
-     else evaluate($c) end) + plan_for($c; $p))) as $cands |
+     else evaluate($c) end) + plan_for($c; $p))) as $evaluated |
+  # S3: a provider a matched rule bans (never_providers) is never chosen, also
+  # when an ambiguous union pulls in profiles of another rule of that provider.
+  ((if $ambiguous then [$union_ids[] | rule_at(.) | select(. != null) | (.never_providers // [])[]]
+    elif $rule != null then ($rule.never_providers // []) else [] end) | unique) as $banned |
+  ([$evaluated[] | .provider as $pv | if ($pv != null and ($banned | index($pv)) != null)
+      then del(.incomplete, .windows_missing, .unranked) + {eligible: false, banned: true, reason: "provider \(.provider) is banned for this work (never_providers)"}
+      else . end]) as $unbanned |
   # Fallback-only reserve tier: a fallback candidate is eligible only once
   # every non-fallback candidate of the same provider family is at its limit
   # under the weekly-window seat test above; it then ranks below every
   # non-fallback candidate at selection.
-  ($cands | map(. as $cand |
+  ($unbanned | map(. as $cand |
     if (($cand.profile.fallback_only // false) | not) or $cand.provider == null then $cand
     else
-      ([$cands[] | select((.profile.fallback_only // false) | not) | select(.provider == $cand.provider)]) as $kin |
+      ([$unbanned[] | select((.profile.fallback_only // false) | not) | select(.provider == $cand.provider) | select((.banned // false) | not)]) as $kin |
       if any($kin[]; seat_at_limit(.profile) | not) then
-        $cand + {eligible: false, reserve: true,
+        # A held reserve is out of this choice, so its own quota, known or
+        # not, never makes the choice incomplete.
+        ($cand | del(.incomplete, .windows_missing, .unranked)) + {eligible: false, reserve: true,
           reason: ("fallback_only reserve held: non-fallback " + $cand.provider + " seats not at their limit (" +
             ([$kin[] | select(seat_at_limit(.profile) | not) |
               "\(.profile.harness):\(.profile.model // "default")" +
@@ -830,17 +918,29 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       (if $all_classed then [$pickable[] | select(.profile.reasoning_class == $strongest)] else $pickable end) as $ranked |
       ($ranked | max_by(.spendPriority)) as $best |
       ([$ranked[] | select(.spendPriority == $best.spendPriority)]) as $ties |
-      ([ $ties[] | . as $candidate |
-        (if $ambiguous then $union_ids[] else $sel.source end) as $id |
-        (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | to_entries[] |
-        select(.value == $candidate.profile) | select($ev.profile_preference == "\($id)_\(.key + 1)") | $candidate] | first) as $preferred |
-      if ($ties | length) > 1 and $preferred == null then $ev + {status: "escalate", reason: "genuine spendPriority tie", note: $sel.note, candidates: $cands}
-      else ($preferred // $best) as $winner |
+      # C5: an exact tie goes to the sooner reset of the binding window, then
+      # to a fixed round-robin over a stable order; both are logged.
+      def reset_epoch($c): ($c.binding_reset // null) as $r | if ($r | type) == "string" then ($r | try fromdateiso8601 catch null) else null end;
+      (if ($ties | length) < 2 then {winner: $best}
+       else
+         ([$ties[] | reset_epoch(.)] | map(select(. != null)) | min) as $soonest |
+         (if $soonest == null then $ties else [$ties[] | select(reset_epoch(.) == $soonest)] end
+           | sort_by([(.profile.account // ""), .profile.harness, (.profile.model // ""), (.profile.effort // "")])) as $ordered |
+         ($rr % ($ordered | length)) as $slot |
+         {winner: $ordered[$slot], round_robin: (($ordered | length) > 1),
+          tie_break: ("\($ties | length) candidates tied at spendPriority \($best.spendPriority); " +
+            (if $soonest == null then "no binding reset known" else "sooner binding reset \($soonest | todate) kept \($ordered | length)" end) +
+            (if ($ordered | length) > 1 then "; round-robin slot \($slot + 1) of \($ordered | length)" else "" end) +
+            " -> \($ordered[$slot].profile.harness):\($ordered[$slot].profile.model // "default")\(if $ordered[$slot].profile.account then " @" + $ordered[$slot].profile.account else "" end)")}
+       end) as $tb |
+      if false then empty
+      else ($tb.winner) as $winner |
         (if $ambiguous then ([$union_ids[] | . as $id | (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | select(index($winner.profile)) | $id] | first) else $sel.source end) as $winner_row |
         $ev + {status: "clear", note: ((if $ambiguous then "ambiguous union >= 0.25; strongest reasoning class"
           elif ($ranked | length) < ($pickable | length) then "\($sel.note); strongest reasoning class \($strongest), \(($pickable | length) - ($ranked | length)) weaker eligible candidate(s) outranked"
           else $sel.note end)
                + (if ($winner.reserve_active // false) then "; \($winner.reason)" else "" end)), candidates: $cands, chosen: $winner, row: $winner_row}
+        + (if $tb.tie_break then {tie_break: $tb.tie_break, tie_round_robin: ($tb.round_robin // false)} else {} end)
         + (if ($unranked | length) > 0 then
              {unranked_note: "\($unranked | length) eligible candidate(s) unranked (\([$unranked[].provider] | unique | join(", ")))"}
            else {} end)
@@ -913,6 +1013,7 @@ TEXT=$(jq -r '
   (if .note then "  note: \(.note | flat)" else empty end),
   (if .preferred_provider then "  preferred_provider: \(.preferred_provider | flat)" else empty end),
   (if .unranked_note then "  note: \(.unranked_note | flat)" else empty end),
+  (if .tie_break then "  tie_break: \(.tie_break | flat)" else empty end),
   (.candidates[]? | "  candidate: \(.profile.harness | flat):\(show(.profile.model))"
       + (if .profile.account then "  account=\(.profile.account | flat)" else "" end)
       + (if .provider then "  provider=\(.provider | flat)" else "" end)
@@ -923,6 +1024,7 @@ TEXT=$(jq -r '
         elif .windows then "  windows=\(winstr(.windows))" else "" end)
       + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))  runway=\(show(.runway))" else "" end)
       + (if (.bounds // [] | length) > 1 then "  bounds=" + ([.bounds[] | "\(.scope | flat):\(show(.pct))%/\((.runway // .status) | flat)"] | join(",")) else "" end)
+      + (if .reading_age != null then "  reading_age=\(.reading_age | flat)s (recent reading reused)" else "" end)
       + "  -> " + (if .incomplete then "incomplete: \(.reason | flat): gather first, wait and re-run" elif .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .sq then "eligible (quota ranking off: home declares a single shared quota)" elif .eligible and (.reserve_active // false) then "eligible, \(.reason | flat)" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)
       + "  plan=\(.plan | flat) (\(.plan_source | flat))"),
   (if .chosen then "  profile: --harness \(.chosen.profile.harness | shell_arg)"
@@ -930,6 +1032,14 @@ TEXT=$(jq -r '
       + (if .chosen.profile.effort then " --effort \(.chosen.profile.effort | shell_arg)" else "" end)
       + (if .chosen.profile.account then " --account \(.chosen.profile.account | shell_arg)" else "" end) else empty end)' <<<"$RESULT") || emit_error "output rendering failed"
 printf '%s\n' "$TEXT"
+if [ "$(jq -r '(.status == "clear") and (.tie_round_robin // false)' <<<"$RESULT")" = true ]; then
+  mkdir -p "$STATE" 2>/dev/null || true
+  if tie_rr_tmp=$(mktemp "$TIE_RR_FILE.XXXXXX" 2>/dev/null); then
+    if ! { printf '%s\n' "$(( (TIE_RR + 1) % 1000000 ))" > "$tie_rr_tmp" && mv -f "$tie_rr_tmp" "$TIE_RR_FILE"; }; then
+      rm -f "$tie_rr_tmp"
+    fi
+  fi
+fi
 # A clear answer is the routing decision, so it leaves the receipt the launch
 # gate will ask for. The per-launch intake is recorded here so even a long
 # incomplete wait produces fresh intake evidence, not a fifteen-minute-old one.

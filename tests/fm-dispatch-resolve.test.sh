@@ -134,6 +134,8 @@ cp "$TMP_ROOT/rules-backup" "$RULES"
 # Unknown quota waits within the configured, shorten-only deadline, never guesses.
 cp "$QUOTA" "$TMP_ROOT/quota-backup"
 jq '.providers[0].quotaSemantics = {status:"unknown", effectiveAvailability:[]}' "$TMP_ROOT/quota-backup" > "$QUOTA"
+# No recent good reading exists, so the R11 reuse cannot answer for it.
+rm -rf "$HOME_DIR/state/quota-last-good"
 run "$BRIEF" --task pager
 assert_contains "$out" 'status: incomplete' "unknown quota stays incomplete: $out"
 hang_started=$SECONDS
@@ -149,11 +151,26 @@ jq '.rules[0].use=[.rules[0].use,.rules[1].use] | .rules[0].use[0].floor={scope:
 write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'
 run "$BRIEF" --task pager
 assert_equals opus "$(jq -r .profile.model "$(latest)")" 'profile floor excludes below-minimum preferred candidate'
-# An equal-class tie still needs a preference for one of the tied candidates, not default.
+# C5: an exact equal-class tie no longer stops dispatch. Equal binding resets
+# fall to a fixed round-robin over a stable order, logged, and the next tie rotates.
 jq 'del(.rules[0].use[0].floor) | .rules[0].use[0].reasoning_class = .rules[0].use[1].reasoning_class' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
 write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}' default_1
+rm -f "$HOME_DIR/state/dispatch-tie-round-robin"
 run "$BRIEF" --task pager
-assert_contains "$out" 'genuine spendPriority tie' 'unrelated preference cannot break tie'
+assert_contains "$out" 'status: clear' "an exact tie still dispatches: $out"
+assert_contains "$out" 'tie_break: 2 candidates tied at spendPriority 1; sooner binding reset 2030-01-02T00:00:00Z kept 2; round-robin slot 1 of 2' 'tie break is logged'
+first_tie=$(jq -r .profile.model "$(latest)")
+run "$BRIEF" --task pager
+assert_contains "$out" 'round-robin slot 2 of 2' 'the next tie takes the next slot'
+[ "$first_tie" != "$(jq -r .profile.model "$(latest)")" ] || fail 'round-robin must rotate between tied candidates'
+# The sooner binding reset wins before any rotation.
+jq '.rules[0].use[1].model = "haiku"' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+jq '.providers[0].windows += [{id:"model:haiku",kind:"model",percentRemaining:80,resetsAt:"2030-01-01T06:00:00Z"}] | .providers[0].quotaSemantics.effectiveAvailability += [{scope:"model:haiku",status:"known",effectivePercentRemaining:80,boundedBy:["model:haiku"],runway:{status:"through_reset"},selection:{spendPriority:1}}]' "$TMP_ROOT/original-quota" > "$QUOTA"
+run "$BRIEF" --task pager
+assert_contains "$out" 'sooner binding reset 2030-01-01T06:00:00Z kept 1' "sooner reset breaks the tie: $out"
+assert_equals haiku "$(jq -r .profile.model "$(latest)")" 'the candidate whose binding window resets sooner wins'
+cp "$TMP_ROOT/original-quota" "$QUOTA"
+jq '.rules[0].use=[.rules[0].use,.rules[1].use]' "$TMP_ROOT/original-rules" > "$RULES"
 # A model-specific bound must constrain its candidate, not its neighbor.
 jq '.providers[0].quotaSemantics.effectiveAvailability += [{scope:"model:sonnet",status:"known",effectivePercentRemaining:50,boundedBy:["seven_day"],runway:{status:"through_reset"},selection:{spendPriority:-1}}]' "$TMP_ROOT/original-quota" > "$QUOTA"
 write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'

@@ -450,7 +450,7 @@ family_for_basename() {
     fm-branch-supervision.test.sh|fm-busy-adapter-wiring.test.sh|\
     fm-busy-state.test.sh|fm-capacity.test.sh|fm-classify-corr-token.test.sh|\
     fm-claude-stop-autoarm.test.sh|fm-cursor-harness.test.sh|\
-    fm-dispatch-resolve.test.sh|\
+    fm-dispatch-resolve.test.sh|fm-dispatch-six-accounts.test.sh|\
     fm-extension-binding.test.sh|fm-gitignore-config.test.sh|\
     fm-no-mistakes-required.test.sh|fm-peek-remote.test.sh|\
     fm-pending-reply.test.sh|fm-pi-branch-extension.test.sh|\
@@ -810,6 +810,7 @@ tests/fm-daemon.test.sh 33606
 tests/fm-devin-harness.test.sh 3725
 tests/fm-devin-signals-live-e2e.test.sh 49
 tests/fm-dispatch-resolve.test.sh 10051
+tests/fm-dispatch-six-accounts.test.sh 32000
 tests/fm-documentation-audiences.test.sh 1301
 tests/fm-dod-lib.test.sh 2035
 tests/fm-extension-binding.test.sh 11105
@@ -1697,6 +1698,8 @@ families_for_changed_path() {
       printf '%s\n' "__script__:fm-procevent-quota.test.sh"
       printf '%s\n' "__script__:fm-quota-choose.test.sh"
       printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
+      printf '%s\n' "__script__:fm-dispatch-six-accounts.test.sh"
+      printf '%s\n' "__script__:fm-quota-intake.test.sh"
       ;;
     bin/fm-procevent-quota.sh)
       printf '%s\n' "__script__:fm-procevent-quota.test.sh"
@@ -1706,6 +1709,12 @@ families_for_changed_path() {
       ;;
     bin/fm-dispatch-resolve.sh|bin/fm-jevd-dispatch.py|bin/fm-dispatch-bounded.py)
       printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
+      printf '%s\n' "__script__:fm-dispatch-six-accounts.test.sh"
+      ;;
+    bin/fm-account-lib.sh|bin/fm-account-migrate.sh|bin/fm-account-routing.sh)
+      printf '%s\n' "__script__:fm-dispatch-six-accounts.test.sh"
+      printf '%s\n' "__script__:fm-account-seat.test.sh"
+      printf '%s\n' "__script__:fm-quota-intake.test.sh"
       ;;
     bin/fm-capacity.sh)
       printf '%s\n' "__script__:fm-capacity.test.sh"

@@ -63,16 +63,16 @@ $0.000 (sub) 0.0%/272k (auto)                          (openai-codex) gpt-5.6-so
 codex@.pi
 ```
 
-Second store, against a scratch home holding a synthetic API-key credential, so the real Geris home was neither read nor written:
+Second store, against a scratch home holding a synthetic API-key credential, so the real second Pi home was neither read nor written (store names updated 2026-11-02 for the codex 2 rename; the label rule is unchanged):
 
 ```sh
-HOME=<scratch> PI_CODING_AGENT_DIR=<scratch>/.pi-geris/agent pi --offline --no-session -e .pi/extensions/fm-codex-account.ts
+HOME=<scratch> PI_CODING_AGENT_DIR=<scratch>/.pi-2/agent pi --offline --no-session -e .pi/extensions/fm-codex-account.ts
 ```
 
 ```text
 /tmp/claude-1000
 0.0%/0 (auto)                                                                    unknown
-codex@.pi-geris
+codex@.pi-2
 ```
 
 The two homes render as distinct labels, and the second run also shows that the label follows the credential store rather than the model: Pi reported no model at all under `--offline` with an empty catalog cache, and the store was still named correctly.

@@ -1420,7 +1420,7 @@ one-element array use is accepted^{"rules":[{"when":"focused feature","use":[{"h
 default array is accepted^{"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5"},{"harness":"grok"}]}^empty^
 provider-less multi-provider profile remains accepted without opt-in^{"rules":[{"when":"cross-provider work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5"}}],"default":{"harness":"pi","model":"anthropic/claude-sonnet-5"}}^empty^
 one-element default array is accepted^{"default":[{"harness":"codex"}]}^empty^
-valid named account field is accepted^{"rules":[{"when":"small job","use":[{"harness":"codex","account":"geris"},{"harness":"codex"}]}]}^empty^
+valid named account field is accepted^{"rules":[{"when":"small job","use":[{"harness":"codex","account":"second"},{"harness":"codex"}]}]}^empty^
 malformed named account is flagged^{"rules":[{"when":"small job","use":{"harness":"codex","account":"../../other"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model, effort, and account must be valid strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
 empty array use is flagged^{"rules":[{"when":"big feature","use":[]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each rule needs at least one use profile
 array profile without harness is flagged^{"rules":[{"when":"big feature","use":[{"model":"gpt-5.5"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each use profile needs harness
