@@ -1911,7 +1911,7 @@ For the schema and path validation, `bin/fm-account-lib.sh` is authoritative.
 A typical personal-home file is:
 
 ```json
-{"crossAccount":{"enabled":true},"plans":{"claude":"Max 5x","codex":"ChatGPT Plus"},"accounts":{"personal":{"claude":"~/.claude","pi":"~/.pi/agent","codex":"~/.codex","plans":{"claude":"Max 5x"}},"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris","plans":{"claude":"Pro","zai":"Z.ai Pro"}}}}
+{"crossAccount":{"enabled":true},"plans":{"claude":"Max 5x","codex":"ChatGPT Plus"},"accounts":{"personal":{"claude":"~/.claude","pi":"~/.pi/agent","codex":"~/.codex","plans":{"claude":"Max 5x"}},"geris":{"claude":"~/.claude-3","pi":"~/.pi-geris/agent","codex":"~/.codex-geris","plans":{"claude":"Pro","zai":"Z.ai Pro"}}}}
 ```
 
 Each account names the stores it owns: `claude`, `pi` and `codex` are each optional, but at least one must be present, so a Claude-only seat such as `{"claude2":{"claude":"~/.claude-2","plans":{"claude":"Ultra"}}}` registers without borrowing another account's Pi or Codex store.
@@ -1990,7 +1990,7 @@ Worker account pins, cross-account routing, quota intake, and release shaping re
 Choose the subscription per launch: from an `hp` shell (`HERDR_SESSION=personal`), after exiting the current firstmate with `/exit`, start this same home on either Claude subscription without logging out anywhere:
 
 ```bash
-~/.firstmate/bin/fm-open.sh geris      # $HOME/.claude-geris
+~/.firstmate/bin/fm-open.sh geris      # $HOME/.claude-3
 ~/.firstmate/bin/fm-open.sh personal   # $HOME/.claude
 ```
 

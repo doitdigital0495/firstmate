@@ -18,7 +18,9 @@
 #   2. the record is private (0600) and retention keeps the newest 50.
 #   3. a failed store read is recorded as failed and still fails the run.
 #   4. gate refusals: no record, stale record, uncovered account, uncovered
-#      store, an exhausted account (window and reset time named), a 100%-used
+#      store (a symlink onto the recorded store counts as covered; only a
+#      store resolving elsewhere refuses), an exhausted account (window and
+#      reset time named), a 100%-used
 #      (0% remaining) window, a model-scoped window without evidence, an
 #      unmappable harness/model provider family, a missing 7d window (a 5h
 #      window is required only when the provider publishes one, and an idle
@@ -831,6 +833,36 @@ test_worker_pin_record_covers_the_pinned_store() {
   pass "a pinned home's intake record covers the pinned Claude and Pi roots, so pinned spawns and relaunches pass the real gate"
 }
 
+test_gate_symlinked_store_matches_its_target() {
+  local home target link elsewhere fakebin out rc
+  home=$(make_home symlinked)
+  target=$home/claude-3
+  link=$home/claude-retired-name
+  elsewhere=$home/claude-elsewhere
+  mkdir -p "$target"
+  ln -s -- "$target" "$link"
+  printf '%s\n' '{"crossAccount":{"enabled":true},"accounts":{"geris":{"claude":"'"$target"'"}}}' \
+    > "$home/config/accounts.json"
+  fakebin=$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-base.json")
+  out=$(run_record "$home" "$fakebin" CLAUDE_CONFIG_DIR="$target") || fail "the record run failed: $out"
+
+  # An explicitly chosen symlink onto the recorded store is that store.
+  out=$(run_gate "$home" --harness claude --claude-store "$link" --account geris); rc=$?
+  expect_code 0 "$rc" "a symlinked chosen store must match the record's real store"$'\n'"$out"
+
+  # The ambient default store resolves through the same symlink.
+  out=$(env -u FM_QUOTA_INTAKE_TEST_BYPASS HOME="$home/user-home" CLAUDE_CONFIG_DIR="$link" PI_CODING_AGENT_DIR= CODEX_HOME= \
+    FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_STATE_OVERRIDE="$home/state" FM_CONFIG_OVERRIDE="$home/config" \
+    "$INTAKE" gate --harness claude 2>&1); rc=$?
+  expect_code 0 "$rc" "a symlinked ambient store must match the record's real store"$'\n'"$out"
+
+  # A store that resolves somewhere else still refuses with the literal names.
+  out=$(run_gate "$home" --harness claude --claude-store "$elsewhere" --account geris); rc=$?
+  expect_code 4 "$rc" "a different store must still refuse with the refresh status"$'\n'"$out"
+  assert_contains "$out" "does not cover the chosen store $elsewhere" "the refusal must name the uncovered store"
+  pass "gate: a store pinned through a symlink equals the recorded store it resolves onto, and only that"
+}
+
 # The same lifecycle-modelling tmux stub as tests/fm-control-relaunch.test.sh:
 # the harness's exit command stops the agent, and a launch-brief literal
 # starts the harness named in `becomes`.
@@ -1042,4 +1074,5 @@ test_cached_fallback_fresh
 test_cached_fallback_stale
 test_real_spawn_gate
 test_worker_pin_record_covers_the_pinned_store
+test_gate_symlinked_store_matches_its_target
 test_relaunch_pre_stop_gate

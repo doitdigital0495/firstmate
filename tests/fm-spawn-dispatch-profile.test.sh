@@ -2996,7 +2996,7 @@ test_account_registry_and_relaunch_pin() {
   expect_code 1 "$?" "malformed registry rejects account"
   assert_absent "$meta" "malformed registry writes no task"
   cat > "$HOME_DIR/config/accounts.json" <<'JSON'
-{"accounts":{"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris"}}}
+{"accounts":{"geris":{"claude":"~/.claude-3","pi":"~/.pi-geris/agent","codex":"~/.codex-geris"}}}
 JSON
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex --account personal)
   expect_code 1 "$?" "Geris-only registry refuses personal seat"
@@ -3013,7 +3013,7 @@ JSON
   assert_grep 'account=geris' "$meta" 'account id is durable'
   assert_grep "codex_home=$HOME_DIR/user-home/.codex-geris" "$meta" 'Codex store pinned'
   assert_grep "pi_agent_dir=$HOME_DIR/user-home/.pi-geris/agent" "$meta" 'Pi store pinned'
-  assert_grep "claude_config_dir=$HOME_DIR/user-home/.claude-geris" "$meta" 'Claude store pinned'
+  assert_grep "claude_config_dir=$HOME_DIR/user-home/.claude-3" "$meta" 'Claude store pinned'
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "export CODEX_HOME='$HOME_DIR/user-home/.codex-geris'" 'Codex launch uses selected seat'
   fm_test_spawn_brief "$HOME_DIR" account-geris-pi
