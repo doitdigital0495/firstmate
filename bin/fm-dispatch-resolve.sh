@@ -4,17 +4,22 @@
 #
 # Usage:
 #   fm-dispatch-resolve.sh <brief-file> [--project <name>] [--task <id>]
-#   fm-dispatch-resolve.sh rows
-#   choose, degraded, and override are disabled (exit 2).
+#   fm-dispatch-resolve.sh pick <CODE>            (captain's answer -> receipt)
+#   fm-dispatch-resolve.sh pick-card [<CODE>...]  (render the captain's card)
+#   fm-dispatch-resolve.sh picks [--recent]       (pending and answered picks)
+#   fm-dispatch-resolve.sh rows [--json]          (--json: criteria export)
+#   fm-dispatch-resolve.sh audit [--days <n>] [--problems]
 #   fm-dispatch-resolve.sh overrides [--recent]   (historical log)
-#   fm-dispatch-resolve.sh degraded-recent        (read-only, last 24h)
 #   fm-dispatch-resolve.sh gate ...     (called by fm-spawn.sh and fm-control.sh)
+#   choose, degraded, degraded-recent, and override are retired (exit 2).
 #
 # Dispatch receipts: every launch in a home whose config/crew-dispatch.json has
 #   routing rows is admitted only against a receipt this script wrote, and
 #   bin/fm-dispatch-receipt-lib.sh's header owns the receipt format and the
-#   gate's rules. Only the resolution below writes a receipt, on clear,
-#   sourced jev or degraded. Self-service profiles and overrides are refused.
+#   gate's rules. A clear resolution writes a jev receipt; `pick` writes a
+#   captain receipt from the captain's verified answer to a captain-pick
+#   request (bin/fm-dispatch-pick-lib.sh owns that request, the card, and
+#   the verification). No route is ever guessed and no profile is passed in.
 #   The resolver never reads a key or .env; jevd owns key custody.
 #   docs/configuration.md owns the socket protocol and failure policy.
 #
@@ -76,13 +81,14 @@
 #
 # Output (stdout, TOON-style block):
 #   dispatch-resolve:
-#     status: clear | incomplete | escalate | error
+#     status: clear | captain-pick
 #     model/latency_ms/tokens, rule (when excerpt) and confidence, probabilities
 #     fallback: <runner-up rule taken when the picked rule missed its own floor>
 #     reason: <why the status is not clear>
 #     preferred_provider: <family and preference or fallback decision, when applied>
 #     candidate: <harness>:<model> provider=.. windows=<id>:<pct>%@<reset>,.. [account=..] scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | eligible, reserve pick: <why the tier fired> | not eligible: <reason> | incomplete: <reason>
 #     profile: --harness <h> [--model <m>] [--effort <e>]     (status clear only)
+#     pick: <CODE> ...; row <id> ...; option <n>: <profile> ... (captain-pick only)
 #     receipt: <name> (one launch, valid <n>s) | none - ... | not written (...)
 #   clear      -> pass the profile line to fm-spawn.sh exactly; the receipt it wrote
 #                 admits that profile and no other. When every eligible candidate
@@ -90,15 +96,22 @@
 #                 class competes on spendPriority (single matched rule and default
 #                 row alike); any missing class keeps plain spendPriority ranking
 #   ambiguous  -> code unions qualifying rows and keeps strongest reasoning_class;
-#                 missing ranks stop for captain review, never hand-pick
-#   incomplete -> quota window evidence for at least one candidate is not fully known;
-#                 the block names the missing windows per candidate: wait for the
-#                 measurement and re-run; never pick by hand or drop the unknown candidate
-#   escalate   -> the rule requires captain approval, no candidate is rankable, or a genuine tie
-#   error      -> stop and report; Jev failures retry once then use capped degraded
-#   Only clear writes a receipt; every other outcome leaves launch refused.
+#                 a union with a missing class goes to the captain, never hand-picked
+#   incomplete -> quota window evidence is not fully known: the bounded gather
+#                 waits and re-reads; still incomplete at its deadline, the
+#                 captain picks with every unmeasured candidate marked
+#   captain-pick -> Jev is down or answered unusably after one retry (a missing
+#                 socket first gets FM_JEVD_SOCKET_WAIT_SECONDS, default 15, to
+#                 come back), or code cannot dispatch Jev's answer (captain
+#                 approval, nothing rankable, a genuine tie, an invalid row, or
+#                 incomplete at the deadline). It writes a pick request offering
+#                 every row and candidate with its evidence and launches nothing;
+#                 the captain answers "route <CODE> <n>" and `pick <CODE>` turns
+#                 the verified answer into a receipt.
+#   Only clear and pick write receipts; every other outcome leaves launch refused.
 #   Outcomes exit 0 for inspection; callers must require a printed receipt.
-#   Failure to issue a clear receipt (including degraded cap) exits 3.
+#   Failure to write a receipt or a pick request exits 3, as does `pick` when
+#   it refuses or the captain answered wait.
 #   Exit 2 only for a usage or configuration error (unreadable brief, an
 #   existing unreadable rules file, malformed rules, or missing jq), which is
 #   actionable, never selected around.
@@ -140,14 +153,19 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-worker-account-lib.sh"
 # shellcheck source=bin/fm-dispatch-receipt-lib.sh
 . "$SCRIPT_DIR/fm-dispatch-receipt-lib.sh"
+# shellcheck source=bin/fm-dispatch-pick-lib.sh
+. "$SCRIPT_DIR/fm-dispatch-pick-lib.sh"
 
 # Inspection and launch admission never contact Jev.
 case "${1:-}" in
   gate) shift; fm_dr_cmd_gate "$@"; exit $? ;;
-  choose|degraded|override) fm_dr_die "self-service receipts are disabled; run the resolver with the brief (Jev or capped degraded only)" ;;
+  choose|degraded|override|degraded-recent) fm_dr_die "self-service and degraded receipts are retired; run the resolver with the brief (Jev, or the captain's pick when Jev cannot route)" ;;
   rows) shift; fm_dr_cmd_rows "$@"; exit $? ;;
   overrides) shift; fm_dr_cmd_overrides "$@"; exit $? ;;
-  degraded-recent) fm_dr_cmd_degraded_recent; exit $? ;;
+  audit) shift; fm_dr_cmd_audit "$@"; exit $? ;;
+  pick) shift; fm_dp_cmd_pick "$@"; exit $? ;;
+  pick-card) shift; fm_dp_cmd_card "$@"; exit $? ;;
+  picks) shift; fm_dp_cmd_picks "$@"; exit $? ;;
 esac
 
 CONFIDENCE_FLOOR=0.6
@@ -168,9 +186,10 @@ fm_dispatch_bounded() {
   python3 "$SCRIPT_DIR/fm-dispatch-bounded.py" "$QUOTA_DEADLINE" "$@"
 }
 QUOTA_BACKOFF_MS=$(fm_dispatch_clamp_int "${FM_DISPATCH_QUOTA_BACKOFF_MS:-}" 1500 250 30000)
+JEV_SOCKET_WAIT_SECONDS=$(fm_dispatch_clamp_int "${FM_JEVD_SOCKET_WAIT_SECONDS:-}" 15 0 60)
 TS_MODEL=typesafe/jev-1.13
 JEV_SOCKET=${FM_JEVD_SOCKET:-${XDG_STATE_HOME:-$HOME/.local/state}/jev-gate/jevd.sock}
-DEGRADED_REASON=''
+JEV_FAILED_REASON=''
 DEFAULT_WHEN="No listed rule applies to this task."
 
 die() { printf 'error: %s\n' "$1" >&2; exit 2; }
@@ -411,6 +430,12 @@ REQUEST=$(jq -n --rawfile brief "$TASK_TEXT" --arg project "$PROJECT" --arg mode
     }')
   never_send_check
   T0=$(fm_timing_now_ms)
+  # A restarting jevd (its service manager owns the restart) gets a bounded
+  # moment to bring the socket back before the first attempt; never started here.
+  jev_wait_deadline=$(( $(date +%s) + JEV_SOCKET_WAIT_SECONDS ))
+  while [ ! -S "$JEV_SOCKET" ] && [ "$(date +%s)" -lt "$jev_wait_deadline" ]; do
+    sleep 0.5
+  done
   jev_ok=0
   for jev_attempt in 1 2; do
     if ! printf '%s' "$REQUEST" | python3 "$SCRIPT_DIR/fm-jevd-dispatch.py" "$JEV_SOCKET" > "$RESP_FILE"; then
@@ -448,8 +473,13 @@ REQUEST=$(jq -n --rawfile brief "$TASK_TEXT" --arg project "$PROJECT" --arg mode
   T1=$(fm_timing_now_ms)
   LAT_MS=$(( T1 - T0 ))
   if [ "$jev_ok" -ne 1 ]; then
-    DEGRADED_REASON="jevd down, error, or invalid Choice after $jev_attempt attempts (one retry)"
-    jq -n '{model: null, requestId: null, answers: {rule: {choice: "default", confidence: 1, probabilities: {default: 1}}, profile: {choice: "", confidence: 0, probabilities: {}}}}' > "$RESP_FILE"
+    if [ -S "$JEV_SOCKET" ]; then
+      JEV_FAILED_REASON="jevd error or invalid Choice after $jev_attempt attempts (one retry)"
+    else
+      JEV_FAILED_REASON="jevd socket $JEV_SOCKET absent after ${JEV_SOCKET_WAIT_SECONDS}s and $jev_attempt attempts (one retry)"
+    fi
+    # No row is assumed: the captain picks from every row (status captain-pick).
+    jq -n '{model: null, requestId: null, answers: {rule: {choice: "default", confidence: 0, probabilities: {}}, profile: {choice: "", confidence: 0, probabilities: {}}}}' > "$RESP_FILE"
   fi
 
 # ---- plan evidence: declared plans in config/accounts.json ---------------------
@@ -537,6 +567,7 @@ done < <(jq -r '[((.rules // [])[] | .use | if type == "array" then .[] else . e
 # ---- resolution: declared gates + quota evidence + argmax, all in jq ----------
 fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" \
+    --argjson final "${3:-false}" --arg jev_failed "$JEV_FAILED_REASON" \
     --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
@@ -699,6 +730,28 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     else null end;
   def declared_confidence($c): rule_at($c) as $x | $x != null and ($x | has("min_confidence"));
   def confidence_floor($c): if declared_confidence($c) then rule_at($c).min_confidence else ($floor | tonumber) end;
+  # Captain-pick evidence: every row of the table, most probable first when Jev
+  # answered, each candidate evaluated exactly as a clear resolution would be.
+  def row_ids: [(($cfg.rules // []) | to_entries[] | "rule_\(.key + 1)"), (if $cfg | has("default") then "default" else empty end)];
+  def row_use($id): if $id == "default" then profiles($cfg.default // null) else profiles(rule_at($id).use) end;
+  def row_floor($id): (rule_at($id).floor // null) as $f | if $sq or $f == null then "none" else ($q | floor_state($f; $f.provider; "")) end;
+  def pick_rows($probs):
+    [row_ids | to_entries[] | .key as $order | .value as $id |
+      (row_floor($id)) as $rf |
+      [row_use($id)[] | . as $c | (provider_of($c)) as $p |
+        (if $rf == "below" then {profile: $c, provider: $p, eligible: false, reason: "row floor \(rule_at($id).floor.scope) below \(rule_at($id).floor.min_percent)%"}
+         else evaluate($c) end) + plan_for($c; $p)] as $cs |
+      ([$cs[] | select(.eligible and ((.unranked // false) | not) and ((.incomplete // false) | not)) | .profile.reasoning_class | select(type == "number")] | max // null) as $strongest |
+      {id: $id, order: $order, when: (if $id == "default" then $none_criterion else rule_at($id).when end),
+       approval: (rule_at($id).approval // null), row_floor: $rf,
+       probability: (($probs // {})[$id] // null),
+       candidates: [$cs[] | . + {strongest: ($strongest != null and .eligible and ((.unranked // false) | not) and .profile.reasoning_class == $strongest)}]}]
+    | sort_by([-(.probability // -1), .order]);
+  if $jev_failed != "" then
+    {model: null, latency_ms: $lat, tokens: null, rule: null, rule_when: null, profile_preference: null,
+     confidence: null, probabilities: {}, status: "captain-pick", jev_status: "down",
+     reason: $jev_failed, pick: pick_rows({})}
+  else
   ($a.choice) as $picked |
   (confidence_floor($picked)) as $picked_floor |
   # A declared floor is checked against the probability of that option whether
@@ -773,7 +826,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   }
   + (if $fb.to then {fallback: "\($choice) (\(when_of($choice))) probability \($fb.p) clears its floor \($fb.to_floor); \($picked) probability \($a.probabilities[$picked]) is below its floor \($picked_floor)"} else {} end))
   as $ev |
-  if $missing_class then $ev + {status: "escalate", reason: "ambiguous union needs numeric reasoning_class on every candidate"}
+  (if $missing_class then $ev + {status: "escalate", reason: "ambiguous union needs numeric reasoning_class on every candidate"}
   elif $union_approval then $ev + {status: "escalate", reason: "ambiguous union requires captain approval"}
   elif $ambiguous and any($union_floors[]; .state == "absent") then $ev + {status:"escalate",reason:"ambiguous union rule floor is unverifiable"}
   elif $ambiguous and any($union_floors[]; .state == "unmeasured") then
@@ -846,6 +899,11 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
            else {} end)
       end
     end
+  end) as $out |
+  # Jev answered but code cannot dispatch it: the captain picks from the table.
+  if $out.status == "escalate" or $out.status == "error" or ($out.status == "incomplete" and $final) then
+    $out + {status: "captain-pick", jev_status: $out.status, pick: pick_rows($a.probabilities)}
+  else $out end
   end'
 }
 RESULT=$(fm_dispatch_resolve_json 1 0) || emit_error "resolution failed"
@@ -896,6 +954,11 @@ while [ "$(jq -r '.status // ""' <<<"$RESULT" 2>/dev/null)" = "incomplete" ] && 
   quota_attempts=$(( quota_attempts + 1 ))
   RESULT=$(fm_dispatch_resolve_json "$quota_attempts" "$warmups_run") || emit_error "resolution failed"
 done
+# Evidence still incomplete when the bounded gather ends: the captain picks,
+# with every unmeasured candidate marked rather than dropped.
+if [ "$(jq -r '.status // ""' <<<"$RESULT")" = incomplete ]; then
+  RESULT=$(fm_dispatch_resolve_json "$quota_attempts" "$warmups_run" true) || emit_error "resolution failed"
+fi
 
 TEXT=$(jq -r '
   def flat: tostring | gsub("[\t\r\n]"; " ");
@@ -905,9 +968,9 @@ TEXT=$(jq -r '
   "dispatch-resolve:",
   "  status: \(.status | flat)",
   "  model: \(show(.model))   latency_ms: \(show(.latency_ms))   tokens: \(show(.tokens.input_tokens))/\(show(.tokens.output_tokens))",
-  "  rule: \(.rule | flat) (\(.rule_when | flat))   confidence: \(.confidence | flat)",
+  "  rule: \(show(.rule)) (\(show(.rule_when)))   confidence: \(show(.confidence))",
   "  probabilities: \([.probabilities | to_entries[] | "\(.key | flat)=\(.value | flat)"] | join(" "))",
-  "  candidate_preference: \(.profile_preference | flat) (quota gates and spendPriority take precedence)",
+  (if .profile_preference then "  candidate_preference: \(.profile_preference | flat) (quota gates and spendPriority take precedence)" else empty end),
   (if .fallback then "  fallback: \(.fallback | flat)" else empty end),
   (if .reason then "  reason: \(.reason | flat)" else empty end),
   (if .note then "  note: \(.note | flat)" else empty end),
@@ -933,26 +996,32 @@ printf '%s\n' "$TEXT"
 # A clear answer is the routing decision, so it leaves the receipt the launch
 # gate will ask for. The per-launch intake is recorded here so even a long
 # incomplete wait produces fresh intake evidence, not a fifteen-minute-old one.
-if [ "$(jq -r '.status // ""' <<<"$RESULT")" = clear ]; then
-  if INTAKE_OUTPUT=$("$SCRIPT_DIR/fm-quota-intake.sh" record); then
-    printf '%s\n' "$INTAKE_OUTPUT"
-  else
-    printf '%s\n' "$INTAKE_OUTPUT"
-    emit_error "quota intake failed; stop and report"
-  fi
-  FM_DR_INTAKE_RECORD=$(awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i ~ /^record=/) { sub(/^record=/, "", $i); print $i } }' <<<"$INTAKE_OUTPUT")
-  [ -n "$FM_DR_INTAKE_RECORD" ] && [ -f "$STATE/quota-intake/$FM_DR_INTAKE_RECORD" ] || emit_error "quota intake produced no record"
-  FM_DR_JEV=$(jq -c --argjson latency "$LAT_MS" '{model, requestId, ruleProbabilities: .answers.rule.probabilities, confidence: .answers.rule.confidence, candidatePreference: .answers.profile.choice, latencyMs: $latency, inputTokens: (.usage.input_tokens // null)}' "$RESP_FILE")
-  FM_DR_DEGRADED_REASON=$DEGRADED_REASON
-  [ -z "$DEGRADED_REASON" ] || FM_DR_JEV=null
-  if RECEIPT_NAME=$(fm_dr_write_clear "$BRIEF" "$TASK_ID" "$RESULT"); then
-    printf '  source: %s\n' "$(if [ -n "$DEGRADED_REASON" ]; then printf degraded; else printf jev; fi)"
-    printf '  receipt: %s (one launch, valid %ss)\n' "$RECEIPT_NAME" "$(fm_dr_max_age)"
-  else
-    printf '  receipt: not written (%s); stop and report\n' "${FM_DR_ERR:-see diagnostic above}"
-    exit 3
-  fi
-else
-  printf '  receipt: none - stop and report; escalate asks the captain, incomplete must wait and re-run (15 minute limit)\n'
-fi
+FM_DR_JEV=$(jq -c --argjson latency "$LAT_MS" 'if .requestId then {model, requestId, ruleChoice: .answers.rule.choice, ruleProbabilities: .answers.rule.probabilities, confidence: .answers.rule.confidence, candidatePreference: .answers.profile.choice, latencyMs: $latency, inputTokens: (.usage.input_tokens // null)} else null end' "$RESP_FILE")
+case "$(jq -r '.status // ""' <<<"$RESULT")" in
+  clear)
+    # A clear answer is the routing decision, so it leaves the receipt the
+    # launch gate will ask for. The per-launch intake is recorded here so even
+    # a long incomplete wait produces fresh intake evidence.
+    fm_dr_record_intake || emit_error "quota intake failed; stop and report"
+    if RECEIPT_NAME=$(fm_dr_write_clear "$BRIEF" "$TASK_ID" "$RESULT"); then
+      printf '  source: jev\n'
+      printf '  receipt: %s (one launch, valid %ss)\n' "$RECEIPT_NAME" "$(fm_dr_max_age)"
+    else
+      printf '  receipt: not written (%s); stop and report\n' "${FM_DR_ERR:-see diagnostic above}"
+      exit 3
+    fi
+    ;;
+  captain-pick)
+    if PICK_CODE=$(fm_dp_write_request "$BRIEF" "$TASK_ID" "$PROJECT" "$RESULT"); then
+      fm_dp_render_options "$PICK_CODE"
+      printf '  receipt: none - nothing launches until the captain picks (pick %s); no route is guessed\n' "$PICK_CODE"
+    else
+      printf '  receipt: none - pick request not written (%s); stop and report\n' "$PICK_CODE"
+      exit 3
+    fi
+    ;;
+  *)
+    printf '  receipt: none - stop and report\n'
+    ;;
+esac
 exit 0

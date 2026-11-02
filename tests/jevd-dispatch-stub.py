@@ -11,6 +11,7 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
     os.chmod(path, 0o600)
     server.listen()
     calls = 0
+    served = 0
     last_sequence = None
     while True:
         client, _ = server.accept()
@@ -34,13 +35,14 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
                     last_sequence = sequence
                 response = sequence[min(calls, len(sequence) - 1)]
             calls += 1
+            served += 1
             if "_stubMutate" in response:
                 mutation = response.pop("_stubMutate")
                 with open(mutation["path"], "w", encoding="utf-8") as target:
                     target.write(mutation["text"])
             try:
                 client.sendall(json.dumps({"type": "dispatch_choices", "version": 1,
-                                           "requestId": "stub-dispatch-1",
+                                           "requestId": f"stub-dispatch-{served}",
                                            "response": response}).encode() + b"\n")
             except BrokenPipeError:
                 pass

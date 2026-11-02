@@ -17,12 +17,16 @@
 #
 # Receipt fields:
 #   schemaVersion, receipt (file name), issuedAt, issuedAtEpoch
-#   source      jev | degraded (override reserved, disabled in phase 1)
+#   source      jev | captain
 #   status      clear
-#   jev         {model, requestId, ruleProbabilities, confidence,
-#                candidatePreference, latencyMs, inputTokens}; null for degraded
-#   quotaIntakeRecord  intake record issued by this resolver invocation
-#   degraded    null, or {reason} when code selected after Jev failed twice
+#   jev         {model, requestId, ruleChoice, ruleProbabilities, confidence,
+#                candidatePreference, latencyMs, inputTokens}; on a captain
+#                receipt Jev's answer when Jev answered, else null
+#   quotaIntakeRecord  intake record issued by the producing invocation
+#   captainPick null, or for source captain {code, option, override, words,
+#                wordsSha256, channel, evidenceRef, evidenceEpoch}: the pick
+#                request and the captured captain words that chose the profile
+#                (format and verification: bin/fm-dispatch-pick-lib.sh)
 #   task        optional task id; a
 #               receipt that names one admits only that task
 #   brief       {path, sha256} - the hash covers the brief up to the first
@@ -50,8 +54,10 @@
 #   - the newest receipt whose brief hash matches this task's brief is unspent,
 #     at most FM_DISPATCH_RECEIPT_MAX_AGE seconds old, names a row that is
 #     unchanged in the current table with the receipt's profile among that
-#     row's candidates, its source is jev (with request id) or degraded (with
-#     reason), and its profile equals the launch field by field.
+#     row's candidates, its source is jev (with request id) or captain (with a
+#     captainPick naming an answered pick request whose option is this profile
+#     and row, and override set whenever that option was not eligible), and
+#     its profile equals the launch field by field.
 #   Raw launch commands cannot match table profiles and are refused.
 #   Every refusal names the missing or mismatching receipt field and the
 #   command that produces a receipt. Exit 0 pass, 3 refusal, 2 usage.
@@ -75,14 +81,21 @@
 # What the gate does and does not prevent: it physically stops a launch whose
 #   profile no receipt names, which catches hand-picked profiles. Receipts and
 #   state/<id>.meta remain same-user writable; parent admission remains an
-#   audit-only pass-through. The seatbelt and audit reconcile ship separately.
+#   audit-only pass-through. `audit` (session start) makes a forged receipt
+#   visible: a Jev receipt's request id must appear in jevd's own log
+#   (journalctl --user -u jevd, whose unit field the journal sets, or the
+#   FM_JEVD_AUDIT_LOG file, default ~/.local/state/jev-gate/jevd.log, which is
+#   same-user writable), and a captain receipt's words must still match the
+#   captured record that produced it.
 #
 # FM_DISPATCH_RECEIPT_MAX_AGE can only shorten the freshness window (clamped
 # 1..900 seconds, default 900); the test suite reaches the gate the way a home
 # does, by producing real receipts.
 #
 # Historical data/dispatch-overrides.jsonl remains readable by session start.
-# No producer or gate accepts overrides until bound-to-words verification ships.
+# Self-service overrides stay refused: a captain's choice outside Jev's answer
+# is a captain pick, verified against the captain's captured words.
+# Degraded receipts are retired; a legacy one is refused.
 #
 # Requires the sourcing script to set CONFIG, STATE, and DATA.
 
@@ -251,7 +264,7 @@ fm_dr_newest_for_brief() {  # <brief-sha256> -> path of the newest receipt bindi
 fm_dr_write() {
   local source=$1 status=$2 task=$3 brief=$4 row=$5 profile=$6 candidates=$7 rationale=$8 override=$9
   local dir now ns name file brief_sha table table_sha='' total old
-  case "$source" in jev|degraded) ;; *) printf 'dispatch receipt: source %s disabled\n' "$source" >&2; return 1 ;; esac
+  case "$source" in jev|captain) ;; *) printf 'dispatch receipt: source %s disabled\n' "$source" >&2; return 1 ;; esac
   dir=$(fm_dr_dir)
   mkdir -p -- "$dir" || { FM_DR_ERR="could not create $dir"; return 1; }
   brief_sha=$(fm_dr_brief_hash "$brief") || { FM_DR_ERR="could not hash the brief $brief"; return 1; }
@@ -272,7 +285,7 @@ fm_dr_write() {
       --arg table "$table" --arg table_sha "$table_sha" \
       --argjson row "$row" --argjson profile "$profile" --argjson candidates "$candidates" \
       --arg rationale "$rationale" --argjson override "$override" \
-      --argjson jev "${FM_DR_JEV:-null}" --arg degraded_reason "${FM_DR_DEGRADED_REASON:-}" \
+      --argjson jev "${FM_DR_JEV:-null}" --argjson pick "${FM_DR_CAPTAIN_PICK:-null}" \
       --arg intake "${FM_DR_INTAKE_RECORD:-}" \
       '{schemaVersion: $schema, receipt: $name, issuedAt: $at, issuedAtEpoch: $epoch,
         source: $source, status: $status, task: $task,
@@ -281,7 +294,7 @@ fm_dr_write() {
         row: $row, profile: $profile, candidates: $candidates,
         rationale: $rationale, override: $override, jev: $jev,
         quotaIntakeRecord: $intake,
-        degraded: (if $source == "degraded" then {reason: $degraded_reason} else null end)}' > "$file"
+        captainPick: (if $source == "captain" then $pick else null end)}' > "$file"
   ) || { rm -f -- "$file"; FM_DR_ERR="could not write the receipt under $dir"; return 1; }
   chmod 600 "$file" 2>/dev/null || true
   total=$(fm_dr_list | wc -l)
@@ -308,23 +321,6 @@ fm_dr_write_clear() {
   [ "$row" != null ] || { FM_DR_ERR="the resolved row '$row_id' is not in $(fm_dr_table)"; return 1; }
   intake=${FM_DR_INTAKE_RECORD:-}
   [ -n "$intake" ] || { printf 'dispatch receipt: quota intake record required\n' >&2; return 1; }
-  local source=jev lock counter count day
-  if [ -n "${FM_DR_DEGRADED_REASON:-}" ]; then
-    source=degraded
-    mkdir -p "$(fm_dr_dir)" || return 1
-    lock="$(fm_dr_dir)/degraded.lock"
-    mkdir "$lock" 2>/dev/null || { printf 'dispatch receipt: degraded counter busy; stop and report\n' >&2; return 1; }
-    # Capture the local path now: EXIT runs after this function's locals expire.
-    # shellcheck disable=SC2064
-    trap "rmdir -- $(printf '%q' "$lock")" EXIT
-    day=$(date -u +%Y-%m-%d)
-    counter="$(fm_dr_dir)/degraded-$day.count"
-    count=0
-    [ ! -f "$counter" ] || read -r count < "$counter"
-    case "$count" in ''|*[!0-9]*) printf 'dispatch receipt: invalid degraded counter\n' >&2; return 1 ;; esac
-    [ "$count" -lt 3 ] || { printf 'dispatch receipt: degraded daily cap 3 reached; stop and report\n' >&2; return 1; }
-    (umask 077; printf '%s\n' "$((count + 1))" > "$counter") || return 1
-  fi
   profile=$(jq -c '.chosen | {harness: .profile.harness, model: ((.profile.model // "") | if . == "default" then "" else . end),
     effort: ((.profile.effort // "") | if . == "default" then "" else . end), account: (.profile.account // ""), provider: (.provider // "")}' <<<"$result") || return 1
   candidates=$(jq -c --arg intake "${intake:-none}" '[.candidates[] | {
@@ -338,17 +334,51 @@ fm_dr_write_clear() {
       spendPriority: (if (.spendPriority | type) == "number" then .spendPriority else "unknown" end),
       eligible: ((.eligible // false) and ((.unranked // false) | not)),
       reason: (.reason // "")}]' <<<"$result") || return 1
-  fm_dr_write "$source" clear "$task" "$brief" "$row" "$profile" "$candidates" \
+  fm_dr_write jev clear "$task" "$brief" "$row" "$profile" "$candidates" \
     "$(jq -r '.note // "rule matched"' <<<"$result")" null
 }
 
 fm_dr_producer_hint() {
-  printf '%s' 'produce one with bin/fm-dispatch-resolve.sh <brief> --project <name>; Jev chooses, or code issues a flagged default-row degraded receipt (3/day); self-service choose and override are disabled'
+  printf '%s' 'produce one with bin/fm-dispatch-resolve.sh <brief> --project <name> --task <id>; Jev chooses, or the captain picks from the table when Jev cannot (bin/fm-dispatch-resolve.sh pick <code>); self-service choose and override are disabled'
+}
+
+# Record the per-launch quota intake a receipt binds; sets FM_DR_INTAKE_RECORD.
+fm_dr_record_intake() {
+  local output
+  if ! output=$("$SCRIPT_DIR/fm-quota-intake.sh" record); then
+    printf '%s\n' "$output"
+    return 1
+  fi
+  printf '%s\n' "$output"
+  FM_DR_INTAKE_RECORD=$(awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i ~ /^record=/) { sub(/^record=/, "", $i); print $i } }' <<<"$output")
+  [ -n "$FM_DR_INTAKE_RECORD" ] && [ -f "$STATE/quota-intake/$FM_DR_INTAKE_RECORD" ] \
+    || { printf 'dispatch receipt: quota intake produced no record\n' >&2; return 1; }
 }
 
 fm_dr_cmd_rows() {
-  local rows
+  local rows json=0 table
+  case "${1:-}" in --json) json=1 ;; '') ;; *) fm_dr_die "unknown rows argument: $1" ;; esac
   rows=$(fm_dr_table_rows) || fm_dr_die "$FM_DR_ERR"
+  if [ "$json" -eq 1 ]; then
+    # The routing criteria as one document (the cockpit's source of truth):
+    # every row's matching text, gates, and candidates with reasoning_class.
+    table=$(fm_dr_table)
+    jq -n --argjson rows "$rows" --arg path "$table" --arg sha "$( [ -f "$table" ] && fm_dr_sha256 < "$table")" \
+      --slurpfile t "$( [ -f "$table" ] && printf '%s' "$table" || printf '/dev/null')" '
+      def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
+      ($t[0] // {}) as $cfg |
+      {schemaVersion: 1, table: {path: $path, sha256: $sha}, preferredProvider: ($cfg.preferred_provider // null),
+       sharedQuota: ($cfg.shared_quota // false),
+       rows: [$rows[] | .id as $id |
+         (if $id == "default" then ($cfg.default // null) else ($cfg.rules[($id | ltrimstr("rule_") | tonumber) - 1]) end) as $raw |
+         {id, sha256, when, approval, minConfidence: (if $id == "default" then null else ($raw.min_confidence // null) end),
+          floor: (if $id == "default" then null else ($raw.floor // null) end),
+          candidates: [(if $id == "default" then profiles($raw) else profiles($raw.use) end)[] |
+            {harness, model: (.model // ""), effort: (.effort // ""), account: (.account // ""), provider: (.provider // ""),
+             reasoning_class: (.reasoning_class // null), floor: (.floor // null), quota_scope: (.quota_scope // null)}]}],
+       unclassed: ([$rows[] | .id as $id | (if $id == "default" then profiles($cfg.default // null) else profiles($cfg.rules[($id | ltrimstr("rule_") | tonumber) - 1].use) end)[] | select((.reasoning_class | type) != "number")] | length)}'
+    return 0
+  fi
   if [ "$(jq 'length' <<<"$rows")" -eq 0 ]; then
     printf 'dispatch rows: none (%s has no rules and no default)\n' "$(fm_dr_table)"
     return 0
@@ -360,15 +390,51 @@ fm_dr_cmd_rows() {
       + (if .account != "" then " --account \(.account)" else "" end))' <<<"$rows"
 }
 
-# Recent degraded receipts are visible even if the launch never happened;
-# receipt issuance, not process startup, reserves the daily degraded allowance.
-fm_dr_cmd_degraded_recent() {
-  local files=()
+# audit [--days <n>] [--problems]: re-checks every receipt issued in the last
+# <n> days (default 7) against the record that should have produced it. A Jev
+# receipt's request id must appear in jevd's log; a captain receipt's words
+# must still match its captured evidence. --problems prints only findings.
+fm_dr_jevd_log() {  # all jevd log text this host can read, on stdout
+  local file=${FM_JEVD_AUDIT_LOG:-$HOME/.local/state/jev-gate/jevd.log}
+  if [ "${FM_JEVD_AUDIT_JOURNAL:-1}" = 1 ] && command -v journalctl >/dev/null 2>&1; then
+    journalctl --user -u jevd --since "-$1 days" -o cat --no-pager 2>/dev/null || true
+  fi
+  [ ! -r "$file" ] || cat -- "$file"
+}
+fm_dr_cmd_audit() {
+  local days=7 problems=0 files=() log f cutoff source rid line verdict n=0 bad=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --days) [ $# -ge 2 ] || fm_dr_die "--days needs a value"; days=$2; shift 2 ;;
+      --problems) problems=1; shift ;;
+      *) fm_dr_die "unknown audit argument: $1" ;;
+    esac
+  done
+  case "$days" in '' | *[!0-9]*) fm_dr_die "--days must be a whole number" ;; esac
+  cutoff=$(( $(date -u +%s) - days * 86400 ))
   mapfile -t files < <(fm_dr_list)
-  [ "${#files[@]}" -gt 0 ] || return 0
-  jq -rs --argjson cutoff "$(( $(date -u +%s) - 86400 ))" '
-    map(select(.source == "degraded" and .issuedAtEpoch >= $cutoff)) | .[-10:][] |
-    "task=\(.task) source=degraded receipt=\(.receipt) reason=\(.degraded.reason | gsub("[\\t\\r\\n]"; " "))"' "${files[@]}"
+  log=$(fm_dr_jevd_log "$days")
+  for f in "${files[@]}"; do
+    [ "$(jq -r '.issuedAtEpoch // 0' "$f" 2>/dev/null)" -ge "$cutoff" ] 2>/dev/null || continue
+    n=$((n + 1))
+    source=$(jq -r '.source // ""' "$f")
+    case "$source" in
+      jev)
+        rid=$(jq -r '.jev.requestId // ""' "$f")
+        line=$(grep -F "dispatch $rid:" <<<"$log" | head -n 1)
+        if [ -z "$log" ]; then verdict="unverifiable: no jevd log readable (journalctl --user -u jevd, FM_JEVD_AUDIT_LOG)"
+        elif [ -z "$rid" ] || [ -z "$line" ]; then verdict="NOT IN JEVD LOG: request id ${rid:-missing} has no jevd dispatch line"
+        elif [ -n "$(jq -r '.jev.ruleChoice // ""' "$f")" ] && ! grep -qF "rule=$(jq -r '.jev.ruleChoice' "$f") " <<<"$line"; then
+          verdict="MISMATCH: jevd logged '${line#*: }' but the receipt says rule $(jq -r '.jev.ruleChoice' "$f")"
+        else verdict=ok; fi ;;
+      captain) verdict=$(fm_dp_verify_receipt "$f"); [ "$verdict" = ok ] || verdict="CAPTAIN WORDS: $verdict" ;;
+      *) verdict="UNKNOWN SOURCE '$source'" ;;
+    esac
+    case "$verdict" in ok) ;; *) bad=$((bad + 1)) ;; esac
+    [ "$problems" -eq 1 ] && [ "$verdict" = ok ] && continue
+    printf 'receipt %s task=%s source=%s: %s\n' "$(basename -- "$f")" "$(jq -r '.task // "-"' "$f")" "$source" "$verdict"
+  done
+  [ "$problems" -eq 1 ] || printf 'dispatch audit: %s receipt(s) in the last %s day(s), %s finding(s)\n' "$n" "$days" "$bad"
 }
 
 # overrides: the durable log, newest last. --recent prints only what a session
@@ -399,6 +465,24 @@ fm_dr_cmd_overrides() {
     elif length == 0 then "dispatch overrides: none recorded"
     else .[] | line end' "$log" 2>/dev/null \
     || printf 'dispatch overrides: %s is unreadable; read it by hand\n' "$log"
+}
+
+# A captain receipt must point at an answered pick request whose answered
+# option is exactly this receipt's row and profile.
+fm_dr_gate_captain() {  # <receipt> <name>
+  local receipt=$1 name=$2 code req
+  code=$(jq -r '.captainPick.code // ""' "$receipt")
+  [[ $code =~ ^[A-HJ-NP-Z2-9]{4}$ ]] || fm_dr_refuse "captain receipt $name has no pick code"
+  req="$STATE/dispatch-pick/$code.json"
+  [ -s "$req" ] && [ -f "$req.answered" ] || fm_dr_refuse "captain receipt $name names pick $code, which has no answered request in $STATE/dispatch-pick"
+  jq -e --slurpfile q "$req" --slurpfile a "$req.answered" "$FM_DR_KEY_JQ"'
+    ($q[0]) as $q | ($a[0]) as $a | .captainPick as $p |
+    ($q.options[] | select(.n == $p.option)) as $o |
+    $a.receipt == .receipt and $a.answer == $p.option and $q.brief.sha256 == .brief.sha256
+    and $o.row.id == .row.id and $o.row.sha256 == .row.sha256 and ($o.profile | key) == (.profile | key)
+    and ($o.eligible or $p.override == true)
+    and ($p.evidenceRef | type) == "string" and ($p.wordsSha256 | type) == "string"' "$receipt" >/dev/null 2>&1 \
+    || fm_dr_refuse "captain receipt $name does not match the answered option of pick $code (row, profile, brief, override, or evidence); route again"
 }
 
 fm_dr_cmd_gate() {
@@ -498,20 +582,20 @@ fm_dr_cmd_gate() {
   [ -z "$receipt_task" ] || [ -z "$task_id" ] || [ "$receipt_task" = "$task_id" ] \
     || fm_dr_refuse "receipt $name was issued for task '$receipt_task', not $task_id (the task field does not match); $hint"
   if [ "$source" = override ] || [ "$(jq -r '.override.by // ""' "$receipt")" = captain ]; then
-    fm_dr_refuse "captain override receipts are disabled until bound-to-words verification exists"
+    fm_dr_refuse "self-service override receipts are refused; the captain's own choice is a captain pick (bin/fm-dispatch-resolve.sh pick <code>)"
   else
     [ "$raw" -eq 0 ] \
       || fm_dr_refuse "a raw launch command cannot be matched to a profile of the dispatch table; overrides are disabled in phase 1"
     case "$source" in
-      jev | degraded) ;;
+      jev | captain) ;;
+      degraded) fm_dr_refuse "receipt $name is a retired degraded receipt; no route is ever guessed: $hint" ;;
       *) fm_dr_refuse "receipt $name has no recognised source (source is '${source}'); $hint" ;;
     esac
     if [ "$source" = jev ]; then
       jq -e '.jev.requestId | type == "string" and length > 0' "$receipt" >/dev/null \
         || fm_dr_refuse "Jev receipt has no request id"
     else
-      jq -e '.degraded.reason | type == "string" and length > 0' "$receipt" >/dev/null \
-        || fm_dr_refuse "degraded receipt has no reason"
+      fm_dr_gate_captain "$receipt" "$name"
     fi
     jq -e '.status == "clear" and (.quotaIntakeRecord | type == "string" and test("^quota-[0-9A-Za-z-]+\\.json$"))' "$receipt" >/dev/null \
       || fm_dr_refuse "receipt $name has no dispatchable status or quota intake binding"
@@ -550,6 +634,6 @@ fm_dr_cmd_gate() {
       || fm_dr_refuse "receipt $name for this brief was already consumed by a launch (marker $name.spent); every launch needs its own receipt: $hint"
   fi
   printf 'dispatch receipt gate: PASS - receipt %s (%s%s) admits %s for %s%s\n' "$name" "$source" \
-    "$(jq -r 'if .override then ", override=captain" elif .row then ", row \(.row.id)" else "" end' "$receipt")" \
+    "$(jq -r '(if .row then ", row \(.row.id)" else "" end) + (if .captainPick then ", captain pick \(.captainPick.code) option \(.captainPick.option)" + (if .captainPick.override then " override" else "" end) else "" end)' "$receipt")" \
     "$(fm_dr_profile_text "$launch")" "$task" "$([ "$consume" -eq 1 ] && printf '; receipt consumed' || printf ' (preview)')"
 }
