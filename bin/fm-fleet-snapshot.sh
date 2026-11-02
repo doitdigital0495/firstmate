@@ -244,15 +244,13 @@ esac
 # shellcheck source=bin/fm-backend.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-backend.sh"
+# The classifier also loads fm_run_timed; reuse that bounded-execution owner.
 # shellcheck source=bin/fm-classify-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-ff-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-ff-lib.sh"  # validate_secondmate_home: shared seeded-home boundary checks
-# shellcheck source=bin/fm-timeout-lib.sh
-# shellcheck disable=SC1091
-. "$SCRIPT_DIR/fm-timeout-lib.sh"  # fm_run_timed: the shared hard bound
 # shellcheck source=bin/fm-landed-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-landed-lib.sh"  # FM_LANDED_JQ_DEFS: the shared landed selector
@@ -332,7 +330,7 @@ case "${1:---json}" in
   --json) ;;
   --secondmate-home-summary) OUTPUT_MODE=secondmate-home-summary ;;
   --contribution-input) OUTPUT_MODE=contribution-input ;;
-  --live-board-input) OUTPUT_MODE=live-board-input ;;
+  --live-board-input) OUTPUT_MODE='live-board-input' ;;
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac
@@ -448,6 +446,7 @@ first_pr_url_in_file() {  # <file>
   grep -Eo 'https?://[^[:space:])"]+/pull/[0-9]+' "$1" 2>/dev/null | head -1
 }
 
+# Isolate this read-only projection from the fleet collector's shell state.
 backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
   local backlog=${1:-$BACKLOG}
   if [ ! -f "$backlog" ]; then
@@ -2201,6 +2200,8 @@ board_homes_json() {  # <output-file>
 
 if [ "$OUTPUT_MODE" = contribution-input ]; then
   # Reuse the canonical backlog parser, without observing workers or other homes.
+  # The backlog JSON can exceed Linux MAX_ARG_STRLEN (128 KiB) as one --argjson
+  # argument, so both documents ride temp files via --slurpfile instead of argv.
   contribution_tasks=$(contribution_tasks_json) || { echo "fm-fleet-snapshot: contribution task read failed" >&2; exit 1; }
   # Backlog-sized JSON must reach jq through files: one argv entry is capped near 128 KiB.
   JSON_TRANSPORT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/fm-fleet-snapshot.XXXXXX") \
@@ -2210,8 +2211,9 @@ if [ "$OUTPUT_MODE" = contribution-input ]; then
   printf '%s\n' "$contribution_tasks" > "$JSON_TRANSPORT_DIR/tasks.json" \
     || { echo "fm-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
   jq -n --slurpfile backlog "$JSON_TRANSPORT_DIR/backlog.json" --slurpfile tasks "$JSON_TRANSPORT_DIR/tasks.json" \
-    '{backlog:$backlog[0],tasks:$tasks[0]}'
-  exit $?
+    '{backlog:$backlog[0],tasks:$tasks[0]}' \
+    || { echo "fm-fleet-snapshot: contribution input assembly failed" >&2; exit 1; }
+  exit 0
 fi
 if [ "$OUTPUT_MODE" = live-board-input ]; then
   board_homes_start || { echo "fm-fleet-snapshot: registered-home board read failed to start" >&2; exit 1; }

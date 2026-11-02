@@ -114,6 +114,8 @@ The fake `quota-axi` counts its calls, so the suite also proves the bounded gath
 A weekly-only plan is proven complete from its single measured weekly window.
 `tests/fm-bootstrap.test.sh` proves bootstrap ignores resolver-only fields without the typed key, validates each malformed shape when the environment or home `.env` activates typed resolution, and prevents an environment-provided key from reaching child processes.
 
+Re-verified 2026-11-02 after the upstream merge that ported `preferred_provider`, `quota_scope`, and the `shared_quota` opt-out onto the socket resolver: the stub-socket suite proves invalid `preferred_provider` values exit 2, a matched family is preferred and an absent one keeps the rule with the decision printed, a declared `quota_scope` binds its named row and a missing one is disclosed as unranked, and `shared_quota: true` takes no `quota-axi --json` snapshot, bypasses an unmet rule floor, picks the first declared profile with a receipt, and rejects non-booleans; `env -u FM_HOME bash tests/fm-dispatch-resolve.test.sh` printed 13 `ok` lines and ended `# all fm-dispatch-resolve tests passed`.
+
 ```console
 $ bash tests/fm-dispatch-resolve.test.sh | tail -1
 # all fm-dispatch-resolve tests passed

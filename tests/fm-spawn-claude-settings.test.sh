@@ -2,9 +2,9 @@
 # tests/fm-spawn-claude-settings.test.sh - regression for the per-task claude
 # settings file bin/fm-spawn.sh writes to state/<id>.claude-settings.json.
 #
-# The file must be valid JSON in BOTH shapes: a secondmate launch arms no busy
-# contract and gets the policy keys with no "hooks", while a crewmate ship
-# launch additionally carries the busy-state/turn-end hooks. A stray brace made
+# The file must be valid JSON for both kinds: every launch carries the policy
+# keys and the busy-state hooks, and a secondmate's hooks update only its busy
+# record in this parent home, never the parent's turn-ended marker. A stray brace made
 # claude reject the file and skip firstmate's owned hooks entirely, so the whole
 # per-launch policy is asserted structurally, not by string match.
 # A bypass launch must also carry skipDangerousModePermissionPrompt, because a
@@ -117,7 +117,7 @@ CREW_SETTINGS="$CREW/home/state/$CREW_ID.claude-settings.json"
 RESULT=$(settings_check "$CREW_SETTINGS" yes)
 [ "$RESULT" = ok ] || fail "crewmate settings file rejected: $RESULT"
 
-# --- 2. secondmate launch: policy keys, no hooks -----------------------------
+# --- 2. secondmate launch: policy keys and parent-home busy hooks ------------
 SM="$TMP_ROOT/sm"
 new_home "$SM/home"
 SM_FAKE=$(make_fakebin "$SM/fake")
@@ -133,8 +133,10 @@ run_spawn "$SM/home" "$SM_FAKE" "$SM_HOME" "$SM_ID" "$SM_HOME" --secondmate
 
 SM_SETTINGS="$SM/home/state/$SM_ID.claude-settings.json"
 [ -f "$SM_SETTINGS" ] || fail "a secondmate claude launch wrote no settings file at $SM_SETTINGS"
-RESULT=$(settings_check "$SM_SETTINGS" no)
+RESULT=$(settings_check "$SM_SETTINGS" yes)
 [ "$RESULT" = ok ] || fail "secondmate settings file rejected: $RESULT"
+! grep -F 'turn-ended' "$SM_SETTINGS" >/dev/null \
+  || fail "a secondmate's hooks must not touch the parent's turn-ended marker: $(cat "$SM_SETTINGS")"
 
 # --- 3. config/claude-permission-mode=auto: no bypass acceptance -------------
 AUTO="$TMP_ROOT/auto"
@@ -152,5 +154,5 @@ AUTO_SETTINGS="$AUTO/home/state/$AUTO_ID.claude-settings.json"
 RESULT=$(settings_check "$AUTO_SETTINGS" yes no)
 [ "$RESULT" = ok ] || fail "auto-mode settings file rejected: $RESULT"
 
-pass "bin/fm-spawn.sh writes valid claude settings JSON with and without the owned hooks, accepting bypass only for bypass launches"
+pass "bin/fm-spawn.sh writes valid claude settings JSON with the owned hooks for crewmates and secondmates, accepting bypass only for bypass launches"
 echo "all fm-spawn-claude-settings tests passed"

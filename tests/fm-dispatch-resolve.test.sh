@@ -187,6 +187,52 @@ expect_code 2 "$code" 'nonnumeric reasoning rank is a configuration error'
 assert_equals "$requests_before" "$(wc -l < "$LOG")" 'invalid table is never sent'
 cp "$TMP_ROOT/original-rules" "$RULES"
 pass 'quota reads honor captain-owned pins; invalid ranks fail before transport'
+# Upstream's additive table declarations ride the same socket route:
+# preferred_provider narrows the pool, quota_scope binds a named row, and the
+# shared-quota opt-out resolves declared order without quota snapshots.
+for value in '"Codex"' 42 '""'; do
+  jq --argjson value "$value" '.preferred_provider = $value' "$TMP_ROOT/original-rules" > "$RULES"
+  run "$BRIEF" --task pager
+  expect_code 2 "$code" "invalid preferred_provider $value is a configuration error"
+  assert_contains "$out" 'preferred_provider must be a lowercase provider ID' 'preference error is actionable'
+done
+jq '.preferred_provider = "claude" | .rules[0].use = [.rules[0].use, .rules[1].use]' "$TMP_ROOT/original-rules" > "$RULES"
+write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'
+run "$BRIEF" --task pager
+assert_contains "$out" 'preferred_provider: claude: prefer eligible family candidates' "matched family is preferred: $out"
+jq '.preferred_provider = "codex"' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+run "$BRIEF" --task pager
+assert_contains "$out" 'preferred_provider: codex: not in matched profiles; preserve the selected rule' 'absent family keeps the rule'
+pass 'preferred_provider is validated, applied and explained'
+jq '.providers[0].quotaSemantics.effectiveAvailability += [{scope:"tier_a",status:"known",effectivePercentRemaining:40,boundedBy:["seven_day"],runway:{status:"through_reset"},selection:{spendPriority:0.1}}]' "$TMP_ROOT/original-quota" > "$QUOTA"
+jq '.rules[0].use.quota_scope = "tier_a"' "$TMP_ROOT/original-rules" > "$RULES"
+write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'
+run "$BRIEF" --task pager
+assert_contains "$out" 'scope=tier_a  remaining=40%' "a declared quota_scope binds its row: $out"
+cp "$TMP_ROOT/original-rules" "$RULES"
+run "$BRIEF" --task pager
+assert_not_contains "$out" 'scope=tier_a' 'without quota_scope the tier row stays unbound'
+jq '.rules[0].use.quota_scope = "tier_b"' "$TMP_ROOT/original-rules" > "$RULES"
+run "$BRIEF" --task pager
+assert_contains "$out" 'declared quota_scope tier_b has no quota row for provider claude: not rankable' 'a missing declared row is disclosed uncertainty'
+jq '.rules[0].use.quota_scope = ""' "$TMP_ROOT/original-rules" > "$RULES"
+run "$BRIEF" --task pager
+expect_code 2 "$code" 'an empty quota_scope is a configuration error'
+cp "$TMP_ROOT/original-quota" "$QUOTA"
+pass 'quota_scope binds, discloses, and validates a named quota row'
+jq '.shared_quota = "yes"' "$TMP_ROOT/original-rules" > "$RULES"
+run "$BRIEF" --task pager
+expect_code 2 "$code" 'a non-boolean shared_quota is a configuration error'
+jq '.shared_quota = true | .rules[0].use = [.rules[1].use, .rules[0].use] | .rules[0].floor = {scope:"all_models",provider:"claude",min_percent:99}' "$TMP_ROOT/original-rules" > "$RULES"
+write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'
+json_reads_before=$(grep -c '^--json$' "$QUOTA_CALL_LOG" 2>/dev/null || true)
+run "$BRIEF" --task pager
+assert_contains "$out" 'status: clear' "shared quota resolves: $out"
+assert_contains "$out" 'eligible (quota ranking off: home declares a single shared quota)' 'every candidate states the opt-out'
+assert_equals opus "$(jq -r .profile.model "$(latest)")" 'declared order picks, and the unmet rule floor is bypassed'
+assert_equals "$json_reads_before" "$(grep -c '^--json$' "$QUOTA_CALL_LOG" 2>/dev/null || true)" 'shared quota takes no quota-axi --json snapshot'
+cp "$TMP_ROOT/original-rules" "$RULES"
+pass 'shared_quota resolves declared order with no quota snapshot, and rejects non-booleans'
 # Default-only tables still receive a valid Jev Choice, without degrading.
 jq '{default:.default}' "$TMP_ROOT/original-rules" > "$RULES"
 write_response default 1 '{"default":1}' default_1

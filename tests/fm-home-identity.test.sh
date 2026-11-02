@@ -105,8 +105,19 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
+  # The tmux backend proves its target window exists before sending Enter,
+  # so remember the window new-window created and list it back.
+  list-windows) cat "$(dirname "$0")/.fake-tmux-windows" 2>/dev/null; exit 0 ;;
+  new-window)
+    previous=
+    for arg in "$@"; do
+      [ "$previous" != -n ] || printf '%s\n' "$arg" >> "$(dirname "$0")/.fake-tmux-windows"
+      previous=$arg
+    done
+    exit 0
+    ;;
+  kill-window) : > "$(dirname "$0")/.fake-tmux-windows"; exit 0 ;;
+  has-session|new-session) exit 0 ;;
   send-keys)
     if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
       prev=
@@ -124,6 +135,10 @@ SH
   fm_fake_exit0 "$fakebin" treehouse
   cat > "$fakebin/timeout" <<'SH'
 #!/usr/bin/env bash
+# Match fm_run_timed's `timeout -k <grace> <secs> cmd...` as well as `timeout <secs> cmd...`.
+if [ "${1:-}" = -k ]; then
+  shift 2
+fi
 shift
 exec "$@"
 SH
