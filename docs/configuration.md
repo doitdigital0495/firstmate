@@ -3027,7 +3027,9 @@ A long-polling external process is registered as a *source* through its adapter,
 
 **Open the Lavish artifact first**
 
-Before arming any Lavish source, open its artifact with `lavish-axi` so the saved session identifies the board's server; reply and poll attempts derive their host and port from that session and refuse missing or invalid session evidence before posting or consuming a staged worker reply.
+Before arming any Lavish source, open its artifact with `bin/fm-lavish-open.sh <artifact.html>` so the saved session identifies the board's server; reply and poll attempts derive their host and port from that session and refuse missing or invalid session evidence before posting or consuming a staged worker reply.
+That command is the one opener for every captain-facing Lavish page, whichever home or harness opens it: a bare `lavish-axi <file>` reports `status: opened` even when the browser launch behind it failed, so the opener ends with a `browser-launch:` line, and a `failed <url>` verdict means the page did not open and whoever opened it hands the captain that URL in its next status line or chat.
+Its header owns the verdicts and the WSL interop retry.
 
 **Retry interrupted Lavish polls**
 

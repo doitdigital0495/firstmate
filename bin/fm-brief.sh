@@ -575,6 +575,13 @@ if [ -e "$CONFIG/wait-no-turns" ]; then
   WAIT_BLOCK="$WAIT_SECTION"$'\n\n'
 fi
 
+# Every brief that can use Lavish names the one opener, so a page the captain
+# should see never depends on a worker remembering how a launch fails silently.
+LAVISH_OPEN_RULE=''
+if "$SCRIPT_DIR/fm-bootstrap.sh" lavish-compatible >/dev/null 2>&1; then
+  LAVISH_OPEN_RULE="Open every Lavish page you show the captain with \`$FM_ROOT/bin/fm-lavish-open.sh <artifact.html>\`, never with bare or piped \`lavish-axi <file>\`: it opens the page in the captain's browser, and when its last line reads \`browser-launch: failed <url>\` the page did not open, so put that URL in your next status line."
+fi
+
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
 idx=1
@@ -633,7 +640,8 @@ Optional helper: \`bin/fm-secondmate-report.sh <verb> <corr_id> <note>\` appends
 A plain \`echo\` that includes the same \`corr=<id>\` on this parent channel is equally valid; do not depend on the helper being present.
 For a terse result, a status line is the whole answer.
 For a detailed answer (an investigation, a plan, an audit), write it to a doc under your home's \`data/\` and append a status line that points to that doc - the scout-report pattern - so the main firstmate is woken and can read it.
-Before treating an investigation or visual review as complete, load \`captain-hold-lifecycle\` from this home's \`.agents/skills/\` and pass its shared completion gate.
+Before treating an investigation or visual review as complete, load \`captain-hold-lifecycle\` from this home's \`.agents/skills/\` and pass its shared completion gate.${LAVISH_OPEN_RULE:+
+$LAVISH_OPEN_RULE}
 A message with NO marker is the captain typing directly into your pane: treat it as authoritative captain intervention and stay conversational exactly as you would for any captain message; do not force it onto the status path.
 A request arriving through the instruction inbox below follows the same marker and reply rules.
 
@@ -791,8 +799,8 @@ else
 fi
 
 if [ "$KIND" = scout ]; then
-if "$SCRIPT_DIR/fm-bootstrap.sh" lavish-compatible >/dev/null 2>&1; then
-  LAVISH_LINE='If your deliverable is a visual artifact the captain will review and iterate on, use the lavish-axi rule: arm your board with bin/fm-procevent-lavish.sh arm <artifact.html> --for <task-id>; never run lavish-axi poll yourself. Re-arm with the reply after each nonterminal round to acknowledge it, route the board feedback through your steering inbox, write needs-decision [key=board-review] with the live board URL when the captain owes a decision, and stop at session_ended or an empty End without re-arming - acknowledge that final round with bin/fm-procevent.sh handled <source-id> <sequence> to conclude and retire your board.'
+if [ -n "$LAVISH_OPEN_RULE" ]; then
+  LAVISH_LINE="$LAVISH_OPEN_RULE"$'\n''If your deliverable is a visual artifact the captain will review and iterate on, use the lavish-axi rule: arm your board with bin/fm-procevent-lavish.sh arm <artifact.html> --for <task-id>; never run lavish-axi poll yourself. Re-arm with the reply after each nonterminal round to acknowledge it, route the board feedback through your steering inbox, write needs-decision [key=board-review] with the live board URL when the captain owes a decision, and stop at session_ended or an empty End without re-arming - acknowledge that final round with bin/fm-procevent.sh handled <source-id> <sequence> to conclude and retire your board.'
 else
   LAVISH_LINE='Lavish is unavailable (lavish-axi is missing or below its supported version floor), so deliver your findings as a text report without Lavish, even for a visual deliverable.'
 fi
@@ -909,7 +917,8 @@ $RULE1
 2. Keep project edits inside this worktree; keep proof and scratch output outside it, under \`$DATA/$ID/\` or a temporary directory.
    Outside the worktree, write only that task material and the status and steering-inbox records authorized below.
    Leave the worktree clean before reporting done.
-3. $FORGE_RULE_LINE
+3. $FORGE_RULE_LINE${LAVISH_OPEN_RULE:+
+   $LAVISH_OPEN_RULE}
 4. Report status by appending one line:
    \`$STATUS_APPEND\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.

@@ -13,7 +13,9 @@
 #       Binding to the keyed-answer intake (bin/fm-captain-hold.sh) ALWAYS
 #       precedes arm, so the board can never produce an answer that has nowhere
 #       to go (captain-hold-lifecycle's ordering rule, enforced here rather than
-#       left to agent memory). Prints lavish-axi's session output followed by:
+#       left to agent memory). Opens the board through bin/fm-lavish-open.sh,
+#       so it prints lavish-axi's session output and that command's
+#       browser-launch line, followed by:
 #         session: live | reopened
 #         served: <path>
 #         bound: <source-id>
@@ -65,13 +67,13 @@ fm_lavish_board_establish() {  # <board>
   local board=$1 real out status version
   FM_LAVISH_BOARD_REOPENED=0
   real=$(fm_lavish_board_realpath "$board") || fail "cannot resolve the board path: $board"
-  out=$(lavish-axi "$board") || fail "cannot establish the board Lavish session"
+  out=$("$FM_LAVISH_BOARD_LIB_DIR/fm-lavish-open.sh" "$board") || fail "cannot establish the board Lavish session"
   printf '%s\n' "$out"
   if fm_lavish_board_listed_open "$real"; then
     printf 'session: live\n'
     return 0
   fi
-  out=$(lavish-axi "$board" --reopen) || fail "cannot reopen the ended board Lavish session"
+  out=$("$FM_LAVISH_BOARD_LIB_DIR/fm-lavish-open.sh" "$board" --reopen) || fail "cannot reopen the ended board Lavish session"
   printf '%s\n' "$out"
   if fm_lavish_board_listed_open "$real"; then
     FM_LAVISH_BOARD_REOPENED=1

@@ -22,6 +22,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-live-board-snapshot.sh` | Project this home's opt-in live-board input to the separate browser board JSON (schema `fm-live-board.v1`), never a Bearings mode |
 | `fm-live-board.sh`       | Build, refresh, and open this home's opt-in live project board page with guarded Captain's Call decisions |
 | `fm-live-board-prs.sh`   | Read each project's recent pull requests and the runs their merges started, and which listed environments each merge has reached, read-only, for the live board's timelines and environment strips |
+| `fm-lavish-open.sh`      | Open a Lavish page in the captain's browser and report whether the launch failed      |
 | `fm-lavish-board-lib.sh` | Shared serve, prove-live, bind, and arm sequence for captain-facing Lavish boards     |
 | `fm-bearings-board.sh`   | Build and arm the stable interactive `/bearings lavish` fleet board                  |
 | `fm-secondmate-reconcile.sh` | Queue Bearings reconcile requests for later supervision delivery and ask each mismatched home through its durable inbox with a per-home cooldown |
