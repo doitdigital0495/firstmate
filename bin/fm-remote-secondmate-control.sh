@@ -245,7 +245,9 @@ cmd_launch() {
   # The parent owns both convergence legs before it asks for this launch: it
   # already fast-forwarded this home to ITS primary commit and pushed inherited
   # local material, so this spawn must not redo either against this host's own
-  # Firstmate copy, which would target the wrong checkout.
+  # Firstmate copy, which would target the wrong checkout. It also passed the
+  # dispatch receipt gate in its own home and consumed the receipt there, which
+  # FM_DISPATCH_PARENT_ADMITTED hands on (bin/fm-dispatch-receipt-lib.sh).
   ARGS=("$id" "$TARGET_HOME" --secondmate --harness "$harness" --backend "$selected_backend")
   [ "$model" = - ] || ARGS+=(--model "$model")
   [ "$effort" = - ] || ARGS+=(--effort "$effort")
@@ -253,7 +255,7 @@ cmd_launch() {
   if ! out=$(HERDR_SESSION="$REMOTE_HERDR_SESSION" FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
     FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
     FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_SKIP_SECONDMATE_INHERIT=1 \
-    FM_SKIP_SECONDMATE_SYNC=1 \
+    FM_SKIP_SECONDMATE_SYNC=1 FM_DISPATCH_PARENT_ADMITTED="$id" \
     "$SCRIPT_DIR/fm-spawn.sh" "${ARGS[@]}" 2>&1); then
     [ -z "$out" ] || printf '%s\n' "$out" >&2
     die "remote host-local secondmate launch failed"

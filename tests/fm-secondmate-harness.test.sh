@@ -46,6 +46,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$ROOT/tests/fixtures.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-ff-lib.sh"
 # shellcheck source=/dev/null
@@ -526,13 +528,16 @@ test_spawn_split_and_inherit() {
   w="$TMP_ROOT/spawn-split"
   sm="$w/sm"
   mkdir -p "$w/home/config"
-  printf '{"default":{"harness":"claude","model":"haiku","effort":"low"}}\n' > "$w/home/config/crew-dispatch.json"
+  printf '{"rules":[{"when":"secondmate","use":{"harness":"codex"}}],"default":{"harness":"claude","model":"haiku","effort":"low"}}\n' > "$w/home/config/crew-dispatch.json"
   printf 'claude\n' > "$w/home/config/crew-harness"
   printf 'codex\n' > "$w/home/config/secondmate-harness"
   printf 'manual\n' > "$w/home/config/backlog-backend"
   printf 'zellij\n' > "$w/home/config/backend"
   : > "$w/home/config/supervision-host-off"
   make_seeded_home "$sm" sm
+  # Route the declared secondmate row without changing the inherited table.
+  fm_test_dispatch_choose "$w/home" sm "$sm/data/charter.md" rule_1 codex \
+    || fail "split: could not route the configured secondmate"
 
   spawn_secondmate "$w" sm "$sm"
 
@@ -542,7 +547,7 @@ test_spawn_split_and_inherit() {
     || fail "split: secondmate launched on '$(meta_harness "$meta")', expected codex"
   [ "$(cat "$sm/config/crew-harness" 2>/dev/null)" = claude ] \
     || fail "split: home crew-harness not inherited as claude (got '$(cat "$sm/config/crew-harness" 2>/dev/null)')"
-  [ "$(cat "$sm/config/crew-dispatch.json" 2>/dev/null)" = '{"default":{"harness":"claude","model":"haiku","effort":"low"}}' ] \
+  cmp -s "$w/home/config/crew-dispatch.json" "$sm/config/crew-dispatch.json" \
     || fail "split: home crew-dispatch.json not inherited"
   [ "$(cat "$sm/config/backlog-backend" 2>/dev/null)" = manual ] \
     || fail "split: home backlog-backend not inherited as manual"

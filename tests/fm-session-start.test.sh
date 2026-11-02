@@ -2655,6 +2655,41 @@ EOF
   pass "--reemit re-verifies lock ownership and keeps repair ownership with whoever holds it"
 }
 
+# --- fleet-state digest: captain overrides of the dispatch table --------------
+
+test_fleet_digest_lists_dispatch_table_overrides() {
+  local rec root home fakebin out
+  rec=$(new_world dispatch-overrides)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_not_contains "$out" "Dispatch table overrides" "a home with no override on record must print no override subsection"
+
+  # Historical override logs stay visible even though minting is disabled.
+  mkdir -p "$home/data/ov1"
+  printf '# Task\n## Captain'"'"'s intent\nA task launched off the table.\n' > "$home/data/ov1/brief.md"
+  printf 'put this one on fable at max\n' > "$home/data/ov1/words.txt"
+  jq -cn --argjson now "$(date +%s)" '{atEpoch:$now,task:"ov1",profile:{harness:"claude",model:"fable",effort:"max",account:""},words:"put this one on fable at max"}' \
+    > "$home/data/dispatch-overrides.jsonl"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "Dispatch table overrides (data/dispatch-overrides.jsonl, last 7 days)" \
+    "the digest must surface a recorded override"
+  assert_contains "$out" 'task=ov1  --harness claude --model fable --effort max  captain: "put this one on fable at max"' \
+    "the digest must list the task, the profile, and the captain's words"
+  mkdir -p "$home/state/dispatch-receipt"
+  jq -cn --argjson now "$(date +%s)" '{issuedAtEpoch:$now,source:"degraded",task:"dv1",receipt:"dispatch-fixture.json",degraded:{reason:"jevd down after one retry"}}' \
+    > "$home/state/dispatch-receipt/dispatch-fixture.json"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" 'Degraded dispatch receipts (last 24 hours)' 'degraded routes must remain visible'
+  assert_contains "$out" 'task=dv1 source=degraded' 'degraded task and source are named'
+  pass "historical overrides and recent degraded receipts are listed in the next session-start digest"
+}
+
 # --- fleet-state digest: no in-flight tasks ----------------------------------
 
 test_fleet_digest_empty_fleet() {
@@ -3052,6 +3087,7 @@ test_backlog_queued_bound_discloses_its_remainder
 test_backlog_compact_manual_backend_skips_indented_bodies
 test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback
 test_fleet_digest_empty_fleet
+test_fleet_digest_lists_dispatch_table_overrides
 test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon
 test_next_step_quiet_mode_delegates_to_daemon

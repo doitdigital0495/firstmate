@@ -300,6 +300,64 @@ Exercise the spawn behavior under test.
 EOF
 }
 
+# fm_test_dispatch_env <home> <command...>
+# Runs a command against <home> exactly as the launch scripts address it.
+fm_test_dispatch_env() {
+  local home=$1
+  shift
+  FM_ROOT_OVERRIDE='' FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_CONFIG_OVERRIDE="$home/config" "$@"
+}
+
+# Provision a fixture-only table row instead of using the disabled override.
+# Existing launch tests keep this helper name; production has no override path.
+fm_test_dispatch_override() {
+  local home=$1 id=$2 brief=$3 harness=$4 model=${5:-} effort=${6:-} account=${7:-} table row
+  table="$home/config/crew-dispatch.json"
+  jq --arg h "$harness" --arg m "$model" --arg e "$effort" --arg a "$account" '
+    .rules = ((.rules // []) + [{when:"Fixture launch",use:({harness:$h} +
+      (if $m == "" then {} else {model:$m} end) + (if $e == "" then {} else {effort:$e} end) +
+      (if $a == "" then {} else {account:$a} end) +
+      (if $h == "pi" or $h == "pi-signed" or $h == "omp" then
+        {provider:(if $m | startswith("zai/") then "zai" elif $m | startswith("claude-bridge/") then "claude" else "codex" end)} else {} end))}])' "$table" > "$table.tmp" || return 1
+  mv "$table.tmp" "$table"
+  row="rule_$(jq '.rules | length' "$table")"
+  fm_test_dispatch_choose "$home" "$id" "$brief" "$row" "$harness" "$model" "$effort" "$account"
+}
+
+# Route through the real resolver using a private stub jevd socket and quota.
+# The row/profile arguments configure the peer, never a production choose path.
+fm_test_dispatch_choose() {
+  local home=$1 id=$2 brief=$3 row=$4 harness=$5 model=${6:-} effort=${7:-} account=${8:-} work rc=0 server i
+  work=$(mktemp -d /tmp/fm-route.XXXXXX) || return 1
+  mkdir -p "$work/bin"
+  jq --arg row "$row" --arg h "$harness" --arg m "$model" --arg e "$effort" --arg a "$account" '
+    def profiles: if type == "array" then . else [.] end;
+    (.rules | to_entries | map("rule_\(.key + 1)") + ["default"]) as $rows |
+    (([.rules | to_entries[] | .key as $n | .value.use | profiles | to_entries[] |
+      {id:"rule_\($n + 1)_\(.key + 1)", p:.value}]) + [(.default // [] | profiles) | to_entries[] | {id:"default_\(.key + 1)", p:.value}]) as $profiles |
+    ([$profiles[] | select(.p.harness == $h and (.p.model // "") == $m and (.p.effort // "") == $e and (.p.account // "") == $a) | .id] | first // $profiles[0].id) as $preferred |
+    {model:"stub-jev",answers:{rule:{choice:$row,confidence:1,probabilities:($rows | map({key:.,value:(if . == $row then 1 else 0 end)}) | from_entries)},
+    profile:{choice:$preferred,confidence:1,probabilities:($profiles | map({key:.id,value:(if .id == $preferred then 1 else 0 end)}) | from_entries)}}}' \
+    "$home/config/crew-dispatch.json" > "$work/response" || rc=$?
+  jq -n '{schemaVersion:5,providers:(["claude","codex","cursor","grok","zai","google","agy","kimi","meta"] | map({provider:.,plan:"fixture plan",state:{status:"fresh"},windows:[{id:"weekly",kind:"weekly",percentRemaining:80,resetsAt:"2030-01-01T00:00:00Z"}],quotaSemantics:{status:"known",effectiveAvailability:[{scope:"all_models",status:"known",effectivePercentRemaining:80,boundedBy:["weekly"],runway:{status:"through_reset"},selection:{spendPriority:1}}]}}))}' > "$work/quota"
+  printf '#!/usr/bin/env bash\ncat %q\n' "$work/quota" > "$work/bin/quota-axi"
+  chmod +x "$work/bin/quota-axi"
+  python3 "$ROOT/tests/jevd-dispatch-stub.py" "$work/socket" "$work/response" "$work/requests" &
+  server=$!
+  for ((i=0;i<100;i++)); do [ ! -S "$work/socket" ] || break; sleep 0.02; done
+  [ "$rc" -ne 0 ] || fm_test_dispatch_env "$home" env PATH="$work/bin:$PATH" FM_JEVD_SOCKET="$work/socket" \
+    "$ROOT/bin/fm-dispatch-resolve.sh" "$brief" --task "$id" > "$work/output" 2>&1 || rc=$?
+  if ! grep -q 'source: jev' "$work/output"; then
+    printf 'fixture routing failed: %s\n' "$(<"$work/output")" >&2
+    rc=1
+  fi
+  kill "$server" 2>/dev/null || true
+  wait "$server" 2>/dev/null || true
+  rm -rf "$work"
+  return "$rc"
+}
+
 # fm_test_make_spawn_fakebin <dir> [extra-exit0-tool...]
 # Creates <dir>/fakebin with the spawn tmux stub, a no-op treehouse, and any
 # extra exit-0 tools. Echoes the fakebin path.

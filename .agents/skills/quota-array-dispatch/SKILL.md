@@ -37,8 +37,8 @@ Authoritative multi-provider routing - including provider discovery from the har
 Use it only when the brief already fixed the candidate order and every candidate's provider is the harness's primary family.
 It does not replace the reasoning-class, runway-feasibility, or authentication gates above.
 Firstmate can optionally arm `bin/fm-procevent-quota.sh` for a recurring mid-task check that wakes when the tracked provider drops below its configured threshold or its runway becomes `exhausted_now`.
-The opt-in [typed resolver](../../../docs/configuration.md#typed-dispatch-resolution-env-openrouter_api_key) applies the same eligibility gates and `spendPriority` argmax in code after a typed rule match.
-It never removes this skill's authority, and its `incomplete`, `ambiguous`, `escalate`, and `error` outcomes return here.
+The required [typed resolver](../../../docs/configuration.md#typed-dispatch-resolution-jevd-socket) owns dispatch selection in code; this skill remains the agent's eligibility and accounting review.
+A review can stop an unsafe route, not replace it with a hand-picked profile; follow the resolver's non-dispatchable outcome rather than minting a self-service receipt.
 
 ## Read the default TOON
 

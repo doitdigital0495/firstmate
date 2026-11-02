@@ -1119,14 +1119,15 @@ Firstmate cannot see which part of a worker's life uses the resource, so the num
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
-Firstmate chooses the best matching rule with judgment; shell scripts do not match the natural-language rules.
-Firstmate resolves the rule's profile object or array under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes concrete `--harness`, `--model`, and `--effort`, and optional registered `--account` flags to `fm-spawn.sh`.
+Jev chooses the best matching natural-language rule through [typed dispatch resolution](#typed-dispatch-resolution-jevd-socket); code applies deterministic quota and eligibility gates.
+The resolver selects the rule's eligible profile by spendPriority; firstmate reviews it under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only the receipted concrete profile flags to `fm-spawn.sh`.
 
 **Spawn requirements**
 
 - When the file exists, `fm-spawn.sh` enforces that contract by refusing crewmate and scout spawns that lack an explicit harness (`--harness`, a positional adapter, or a raw launch command).
 - Batch spawns satisfy the same requirement with a shared `--harness`.
-- Secondmate spawns are exempt and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
+- Secondmate spawns are exempt from that explicit-harness requirement and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
+- When the file has routing rows, every launch must also match a [dispatch receipt](#dispatch-receipts-statedispatch-receipt), secondmate launches included.
 
 **Contract owners**
 
@@ -1144,7 +1145,7 @@ This section is the single owner of the canonical schema and its per-field seman
       "use": [
         { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "account": "<optional registry account id>", "provider": "<optional quota-axi provider>", "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
       ],
-      "why": "<optional rationale that helps firstmate choose>"
+      "why": "<optional rationale for firstmate's routing review; never sent to Jev>"
     }
   ],
   "default": [
@@ -1167,7 +1168,7 @@ An absent `account` keeps the home seat; a named account must be allowlisted in 
 
 **Fields applied only by typed resolution**
 
-Rule `approval`, `min_confidence`, and `floor`, and profile `provider` and `floor` are optional declarations that only [typed dispatch resolution](#typed-dispatch-resolution-env-openrouter_api_key) applies in code; without that opt-in they are inert, and firstmate's own intake reads them as ordinary hints.
+Rule `approval`, `min_confidence`, and `floor`, and profile `provider`, `floor`, and numeric `reasoning_class` are optional declarations applied in code by [typed dispatch resolution](#typed-dispatch-resolution-jevd-socket).
 The resolver supplies the fixed neutral Choice option `No listed rule applies to this task.` for work that matches no listed rule.
 
 - `approval` accepts only `"captain"` and means a task the rule matches is never dispatched from the tool's answer alone.
@@ -1382,11 +1383,13 @@ Environment knobs, all read by `bin/fm-claude-admission.sh`:
 
 See [`docs/examples/claude-shaped-store`](examples/claude-shaped-store) for a starting point to copy into local `config/claude-shaped-store`.
 
-## Typed dispatch resolution (.env OPENROUTER_API_KEY)
+<a id="typed-dispatch-resolution-env-openrouter_api_key"></a>
 
-`bin/fm-dispatch-resolve.sh` resolves one concrete crewmate or scout profile from a written brief with Jev through OpenRouter's System One API, so the rule match that firstmate otherwise reasons out in its own context becomes one short tool turn.
-It is off unless `OPENROUTER_API_KEY` is non-empty in the calling environment or the home's gitignored `.env` holds an `OPENROUTER_API_KEY=` line; the environment wins, matching the Relay and mail-plane contracts, and the Relay accessor in `bin/fm-env-lib.sh` reads the line.
-Off means one `dispatch-resolve: off` line on stderr, nothing on stdout, exit 0, and no network call, so firstmate dispatches exactly as it does without the tool.
+## Typed dispatch resolution (jevd socket)
+
+`bin/fm-dispatch-resolve.sh` resolves a written brief through Jev's Choices via the private `jevd` unix socket.
+The resolver never reads a key or `.env` and has no direct HTTP fallback.
+It records quota intake, requests the rule and candidate preference, and writes a [dispatch receipt](#dispatch-receipts-statedispatch-receipt) only for a dispatchable result.
 This section is the single owner of the tool's operator contract; the script header owns its exact flags and output lines, and "Crew dispatch profiles" above owns the declared rule and profile fields it applies.
 
 Rules come only from the effective home's `config/crew-dispatch.json`; `FM_CONFIG_OVERRIDE` selects the config directory for tests and specialized setup like the other scripts.
@@ -1397,11 +1400,11 @@ bin/fm-dispatch-resolve.sh data/<id>/brief.md --project <name>        # TOON blo
 
 **When firstmate invokes the resolver**
 
-Firstmate invokes the resolve path directly after writing the brief, without a preflight; the absent-key off line is handled exactly like every other non-clear outcome.
+Firstmate invokes the resolver directly after writing the brief, without a preflight or profile selection.
 
 **What the model receives**
 
-When on and at least one rule exists, the tool sends the project name and the brief's task-specific text as state and asks two batched Choice questions for rule matching and profile preference; the rule options are every rule's `when` plus the fixed neutral option for no matching rule; the model never sees quota, catalogs, `why`, approvals, credential paths, or confidence floors.
+The tool sends the project name and the brief's task-specific text as state and asks two batched Choice questions for rule matching and profile preference; the rule options are every rule's `when` plus the fixed neutral option for no matching rule; the model never sees quota, catalogs, `why`, approvals, credential paths, or confidence floors.
 The task-specific text is the brief's `## Captain's intent` and `## Firstmate spec` sections under `# Task` that `bin/fm-brief.sh` scaffolds, read by the same parser that feeds `fm-spawn.sh` validation and the no-mistakes `--intent` contract; a brief with neither section is sent whole.
 
 When the sections are sent from a scout brief, the line `Brief kind: scout (report only)` comes first, taken from the scaffold's scout contract line; ship briefs and briefs sent whole get no kind line.
@@ -1424,24 +1427,30 @@ Example Client Ltd
 ```
 
 Before the request is sent, every string in it is checked: the project name, the task text, each rule's `when`, profile option descriptions, and the fixed question text.
-A match stops the request: the resolver behaves exactly as when it is off, printing one `dispatch-resolve: off (...; nothing sent)` line on stderr and nothing on stdout, making no network or quota call, and exiting 0, so firstmate dispatches through its existing intake.
+A match stops the request with `dispatch-resolve: off (...; nothing sent)` on stderr, no network or quota call, and no receipt; the launch gate still refuses hand-picking.
 A list that is present but not a readable regular file also stops the request the same way rather than sending unchecked text.
 That one diagnostic names the list line number at most and never prints the listed value or the matching text.
 
-An absent rules file, a default-only file, or `rules: []` returns the non-clear reason `no rules to match` without a model or quota request, leaving firstmate's existing routing in control; an existing but unreadable or malformed rules file, including a broken symlink, remains an actionable exit 2 configuration error.
+An absent or empty table returns `no rules to match`; a default-only table can route its default.
+An existing unreadable or malformed table, including a broken symlink, is an exit 2 configuration error.
 Everything after the answer runs in code: the confidence floor, the matched rule's `approval`, `min_confidence`, and `floor`, each candidate's `provider` and `floor`, every applicable account-wide and model/product row from the default and authorized named-store `quota-axi --json` snapshots, and the numeric `spendPriority` argmax over candidates using each candidate's limiting row.
 A candidate is rankable only with complete limit information: every window its applicable rows are bounded by - the weekly limit, a session limit where the plan has one, and named model windows - must carry a known remaining percent and reset time.
 A row whose own status is not known, an unmeasured provider, a profile floor whose scope row is unmeasured, a candidate with no applicable row, or a window without a percent or reset makes that candidate incomplete and the whole choice `incomplete` before any ranking or hand-picking; a candidate is never left merely unranked, dropped, or treated as healthy because its limits are unknown.
-An incomplete choice triggers a bounded gather in code: when Z.ai windows are among the missing evidence the named `zai-window-warm` pool warm-up runs once, then only the incomplete stores are re-read with doubling backoff, a failed re-read keeps the previous snapshot so the result stays `incomplete` rather than `error`, and the loop stops early when every missing measurement publishes a retry time beyond the bounded wait.
-`FM_DISPATCH_QUOTA_ATTEMPTS` (default 3, clamped 1..10) bounds the resolve attempts and `FM_DISPATCH_QUOTA_BACKOFF_MS` (default 1500, clamped 250..30000) sets the first backoff.
+An incomplete choice runs the named Z.ai warm-up once where applicable and re-reads only incomplete stores with doubling backoff capped at 30 seconds.
+A failed re-read preserves the previous snapshot.
+The wait stops after 15 minutes and reports without a receipt; `FM_DISPATCH_QUOTA_WAIT_SECONDS` can only shorten that deadline (1..900).
+Quota reads and warm-ups are bounded subprocess groups sharing that deadline; initial reads have a 180-second bound.
+The resolver records a fresh per-launch quota intake only after resolution becomes dispatchable, so a long wait never leaves the launch bound to an expired intake.
+`FM_DISPATCH_QUOTA_ATTEMPTS` (default 1000, clamped 1..1000) can further bound attempts and `FM_DISPATCH_QUOTA_BACKOFF_MS` (default 1500, clamped 250..30000) sets the initial backoff.
 The `incomplete` block names each candidate's missing windows and retry times, and its note is the standing instruction: gather first, wait for the named measurements, and re-run; never pick by hand or drop a candidate.
 Any applicable `exhausted_now` row or known zero bound makes that candidate ineligible, and a known profile-floor shortfall does the same before unrelated quota uncertainty is considered.
 Missing or nonnumeric `spendPriority` evidence is never ranked, and every candidate prints its plan and evidence source (or unknown uncertainty) beside its window evidence (`windows=` with each id, remaining percent, and reset) or the reason it was not rankable, including on ambiguous and approval-gated outcomes that emit no profile.
-On the opted-in path, duplicate concrete profiles with the same account, harness, model, and effort inside one rule or the default array are configuration errors rather than ties.
-The result is one of `clear` (a `profile:` line ready for `fm-spawn.sh`), `incomplete` (some candidate's limit windows are not fully measured), `ambiguous` (confidence below the floor, which also requires complete window evidence), `escalate` (an approval-gated rule, unverifiable rule floor, nothing rankable, or a genuine tie without a matching Jev preference), or `error` (API, network, malformed response metadata, rendering, or quota-axi failure), and every one of them exits 0.
+Duplicate concrete profiles with the same account, harness, model, and effort inside one rule or the default array are configuration errors rather than ties.
+The result is `clear`, `incomplete`, `escalate`, or `error`; ambiguity is resolved by code under the union policy below, not handed back for firstmate to choose.
+Outcomes exit 0 for inspection, but failure to issue a clear receipt (including the degraded cap) exits 3; require an actual receipt before launching.
 Response probabilities must contain exactly every offered choice, use numeric values from 0 through 1, and sum to approximately 1 within 0.01.
 Only a usage or configuration error exits 2: an unreadable brief, an existing but unreadable or malformed canonical rules file, or missing `jq`, each reported and never selected around.
-Missing `curl` is a normal structured `error` outcome with exit 0 so firstmate uses today's routing.
+The socket transport requires Python 3; a missing transport dependency stops resolution without authorizing a hand-picked launch.
 
 **Confidence and fallback rules**
 
@@ -1453,21 +1462,105 @@ When the picked rule declares its own floor but its probability falls below it, 
 1. Find the most probable other option that clears its own floor: the rule's `min_confidence`, or 0.6 otherwise.
 2. Print a `fallback:` line naming both floors and resolve that rule as though it had been picked.
 
-No qualifying option, or two equally probable qualifying options, produces `ambiguous`.
+No qualifying option, or two equally probable qualifying options, triggers an ambiguous union.
+Code unions rows whose probability is at least 0.25, retains only the highest numeric candidate `reasoning_class`, then applies eligibility and spendPriority.
+`reasoning_class` is an optional finite JSON number on each candidate, higher meaning stronger; every candidate in an ambiguous union must declare it or routing stops for captain review rather than guessing from names.
+An approval-gated union stops for the captain, and rule floors are never silently waived.
 
-**Firstmate retains the dispatch decision**
+**Failure and authority boundary**
 
-The tool never replaces firstmate's judgment, `quota-array-dispatch`, the captain-approval gate, or `fm-spawn.sh` validation; `AGENTS.md` section 4 owns what firstmate does with each outcome.
-By accepted design, a `clear` result does not enforce catalog/authentication, reasoning-class, or completion-runway gates.
+Jev error, outage, or invalid answer gets exactly one retry, then code resolves the default row by spendPriority and emits a visibly `degraded` receipt with the reason.
+At most three degraded receipts may be issued per UTC day per home; an atomic reservation counts even if writing subsequently fails, and a busy or stale counter lock fails closed for operator review.
+Session startup lists degraded receipts issued in the last 24 hours, including reservations that were not launched.
+After the cap, routing stops and reports; there is no self-service degraded producer and no profile parameter on the resolve path.
+An approval row or genuine spendPriority tie stops and asks the captain.
+Only a matching Jev preference may break a real spendPriority tie.
+The resolver does not replace launch-time catalog, authentication, account, quota-intake, or harness validation.
+Firstmate can stop a route it judges unsafe, but cannot select another profile or mint an override in phase 1.
+The historical direct-HTTP canary is not evidence for this socket route.
 
-Firstmate passes its profile line unless it states a task-specific reason to override, such as the brief's reasoning class; every non-clear result returns to the full existing intake. Missing candidate limit evidence remains `incomplete` and never authorizes a hand-picked alternative.
+**jevd dispatch Choices wire protocol (version 1)**
 
-The resolver and bootstrap copy an environment-provided key into a non-exported private variable and unset `OPENROUTER_API_KEY` before launching child processes, so the secret is absent from child environments.
-The resolver sends the key to `curl` only as a header read from a file descriptor, never on argv, and nothing prints, logs, or writes it.
-The resolver uses `https://openrouter.ai/api/v1/systemone`, model `typesafe/jev-1.13`, confidence floor 0.6, and a five-second timeout.
-If a direct typesafe.ai key is already provisioned as `TYPESAFE_API_KEY`, set `FM_DISPATCH_ROUTE=direct` for the one-line route fallback (`https://api.typesafe.ai`, `jev-latest`).
-With `FM_DISPATCH_CANARY=1`, session startup makes one trivial typed Choice request on the resolver's own route (base, model, and key, including `FM_DISPATCH_ROUTE=direct`) when that route's key is present; a route failure prints `DISPATCH_CANARY: FAIL` and never silently counts as a good route.
-The live rule-match evidence is recorded in [`verification/dispatch-resolve.md`](verification/dispatch-resolve.md).
+The default endpoint is `${XDG_STATE_HOME:-$HOME/.local/state}/jev-gate/jevd.sock`; `FM_JEVD_SOCKET` selects a lab endpoint.
+It must be a non-symlink AF_UNIX stream socket owned by the caller with exactly mode 0600.
+The transport and bounded quota helpers require Python 3; no additional HTTP client or credential reader is used.
+Each connection carries one UTF-8 JSON request followed by a newline, and one newline-terminated reply, bounded to 1 MiB and a five-second socket timeout.
+The request envelope is `{"type":"dispatch_choices","version":1,"request":{"model":"typesafe/jev-1.13","state":{"task":{"project":"...","brief":"..."}},"questions":{"rule":{},"profile":{}}}}`, where both questions are typed Choices with `type`, `instructions`, and a string-valued `criteria` map.
+The reply envelope is `{"type":"dispatch_choices","version":1,"requestId":"<jevd-log-id>","response":{"model":"...","answers":{"rule":{"choice":"rule_1","confidence":0.9,"probabilities":{}},"profile":{"choice":"rule_1_1","confidence":0.9,"probabilities":{}}},"usage":{"input_tokens":1,"output_tokens":1}}}`.
+Probability maps must contain all offered choices; the example's empty maps are placeholders, not valid answers.
+`requestId` is a nonempty daemon-generated audit identifier, not supplied by firstmate; failure replies, unsupported types, missing ids, and invalid Choices count as errors for retry/degraded handling.
+The dispatch request type explicitly allows every project's intent/spec text, including Geris; the command-gate request type keeps its separate scope.
+No account labels, quota, credentials, approval, `why`, or reasoning ranks are sent.
+The daemon owns the key, pinned model, upstream request, and request-id log; the resolver owns eligibility, ranking, and receipts.
+`tests/jevd-dispatch-stub.py` implements this contract for deterministic verification; the daemon implementation ships separately.
+
+## Dispatch receipts (state/dispatch-receipt/)
+
+A home whose `config/crew-dispatch.json` has routing rows (at least one rule or a `default`) launches a worker only on a profile that came out of that table.
+`bin/fm-spawn.sh` refuses a ship, scout, or secondmate launch, and `bin/fm-control.sh relaunch` refuses a move onto a different harness, model, effort, or account, unless a fresh, unspent dispatch receipt binds that task's brief and names exactly the profile being launched.
+This section is the operator contract; `bin/fm-dispatch-receipt-lib.sh`'s header is the single owner of the receipt fields and the gate's rules, and `bin/fm-dispatch-resolve.sh`'s header owns the commands.
+
+The normal sequence needs no extra step, because a `clear` resolution writes the receipt itself:
+
+```sh
+bin/fm-dispatch-resolve.sh data/<id>/brief.md --project <name> --task <id>
+# Only after a receipt is printed, launch with exactly its profile flags:
+bin/fm-spawn.sh <id> <project> <the printed profile flags> --mode <mode>
+```
+
+**Producers**
+
+Only the resolver's dispatchable result writes a receipt, sourced `jev` or `degraded` under the failure policy above.
+`choose`, `degraded`, and `override` subcommands cannot mint receipts.
+Legacy `resolve`, `choose`, and `override` source receipts are refused, including previously logged overrides.
+Override support remains disabled until phase-5 bound-to-words verification exists.
+
+**What the gate checks**
+
+- The newest receipt whose brief hash matches the task's brief must be unspent and at most 900 seconds old; `FM_DISPATCH_RECEIPT_MAX_AGE` can shorten that window and cannot lengthen it.
+- The receipt's row must be unchanged in the current table and still hold the receipt's profile, so editing a row makes its outstanding receipts stale.
+- The harness, model, effort, and account being launched must equal the receipt's profile field by field.
+- A receipt that names a task admits only that task, and each launch consumes its receipt.
+- A raw launch command cannot be matched to a table profile and is refused while routing rows exist.
+- A relaunch or a secondmate respawn that keeps the task's recorded profile makes no new routing decision and needs no receipt.
+
+Every refusal names the missing or mismatching receipt field and the command that produces a receipt, and leaves nothing created.
+
+**No off switch**
+
+The gate has no flag or config file that disables it.
+A home with no routing rows has no table to route from, so its launches are not gated; that holds whether the table is absent or carries notes only, and a table that is present but malformed refuses every launch.
+
+**What the gate prevents, and what it only records**
+
+The gate physically stops a launch whose profile no receipt names, which is what catches a hand-picked profile.
+Same-user receipt forgery and hand-editing `state/<id>.meta` remain audit risks, not physically prevented by this gate.
+The parent-admission pass-through for a remote second mate, described under "Second mates" below, can also be reached from a local session and leaves no local receipt.
+The broker, harness seatbelt, and daemon-log reconciliation remain separate rollout phases.
+
+**Second mates**
+
+Second-mate launches are under the dispatch table like every other launch.
+Changing `config/secondmate-harness` (or its model or effort) needs a dispatch receipt for its charter before the next respawn, including automatic liveness respawn.
+
+A remote second mate is gated in its parent home.
+`bin/fm-spawn.sh --secondmate` runs the gate against a receipt in the parent home for the charter at `data/<id>/brief.md` before it asks the remote host to launch, refuses with the same text as any other launch, and consumes that receipt.
+The remote host has no receipt producer, so its host-local launch needs no receipt of its own: `bin/fm-remote-secondmate-control.sh launch` hands the parent's admission on, and the gate honours it only for a second-mate launch whose state directory is the home's private `state/parent-route`, whose brief is that home's `data/charter.md`, and whose `.fm-secondmate-home` marker names the same id, never for a ship, a scout, or a relaunch.
+That admission is audit and deterrence, not physical prevention: every one of those conditions is established on the launching side, so a local session can reach it for a seeded second-mate home, by running `bin/fm-remote-secondmate-control.sh launch` against that home or by setting `FM_DISPATCH_PARENT_ADMITTED` and the state directory by hand, and such a launch leaves no receipt and no override record.
+
+One remote path is not covered by the parent's table.
+`bin/fm-remote-secondmate-relaunch.sh`, which moves a running remote second mate onto another harness, model, or effort, is gated only on the remote host, against that host's own table and its private `state/parent-route` records: a host whose table has routing rows refuses the move, because nothing can produce a receipt there, and a host whose table has none does not gate it.
+Nothing admits that move on a host with routing rows today.
+
+**Overrides are never silent**
+
+The session-start digest continues to list historical `data/dispatch-overrides.jsonl` entries from the last seven days; no new overrides are produced in phase 1.
+`bin/fm-dispatch-resolve.sh overrides` prints the whole log.
+
+**Homes**
+
+The scripts are shared and the records are not: every home, including each secondmate home, runs the same gate against its own `config/crew-dispatch.json`, its own `state/dispatch-receipt/`, and its own override log.
+A remote secondmate's own launch is the one exception described under "Second mates" above: its receipt lives in, and is consumed in, its parent home.
 
 ## Toolchain
 
@@ -2649,7 +2742,7 @@ FMX_RELAY_URL=https://myfirstmate.io   # optional Relay endpoint override, mainl
 FMX_ENV_FILE=           # optional alternate .env file for direct Relay client invocations; bootstrap still checks $FM_HOME/.env
 FMX_DRY_RUN=            # truthy previews Relay replies and dismissals to state/x-outbox/ without posting or requiring a token
 FMX_X_REPLY_MAX_CHARS=280   # X reply per-message split budget; values below 50 clamp to 50
-OPENROUTER_API_KEY=     # typed dispatch resolution opt-in, from the environment or .env; absent means bin/fm-dispatch-resolve.sh is off (docs/configuration.md "Typed dispatch resolution")
+# Dispatch resolution uses the private jevd socket, never a key in this file.
 FM_DISPATCH_QUOTA_ATTEMPTS=3   # resolve attempts for the resolver's incomplete-quota gather loop; clamped 1..10
 FM_DISPATCH_QUOTA_BACKOFF_MS=1500   # first backoff in milliseconds for that loop's doubling waits; clamped 250..30000
 FMX_DISCORD_REPLY_MAX_CHARS=1900   # Discord reply per-message split budget; values below 50 clamp to 50, values above 2000 reset to 1900
