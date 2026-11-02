@@ -7,7 +7,7 @@
 #   fm-open.sh --help
 #
 #   personal  $HOME/.claude
-#   geris     $HOME/.claude-geris
+#   geris     $HOME/.claude-3
 #
 # Run it from an `hp` shell after /exit. The account argument is the deliberate
 # operator act: it goes through `fm-home-identity.sh rebind --confirm`, which
@@ -39,7 +39,7 @@ refuse() {
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
   personal) store="${HOME:?}/.claude" ;;
-  geris) store="${HOME:?}/.claude-geris" ;;
+  geris) store="${HOME:?}/.claude-3" ;;
   *) usage >&2; exit 2 ;;
 esac
 shift
