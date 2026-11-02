@@ -1047,11 +1047,22 @@ if [ -f "$DATA/dispatch-overrides.jsonl" ]; then
   fi
 fi
 
+# Captain route picks (bin/fm-dispatch-pick-lib.sh): a pending pick is a
+# launch waiting on the captain; an answered one is a captain-chosen route.
+if [ -d "$STATE/dispatch-pick" ]; then
+  DISPATCH_PICKS=$("$SCRIPT_DIR/fm-dispatch-resolve.sh" picks --recent 2>/dev/null) || DISPATCH_PICKS=
+  if [ -n "$DISPATCH_PICKS" ]; then
+    subsection "Captain route picks (state/dispatch-pick, last 7 days)"
+    printf '%s\n' "$DISPATCH_PICKS"
+    printf '\nA PENDING pick launches nothing until the captain answers "route <code> <n>"; relay it as a captain decision.\n'
+  fi
+fi
+# Receipt audit: a receipt no jevd log line or captain record backs is shown.
 if [ -d "$STATE/dispatch-receipt" ]; then
-  DISPATCH_DEGRADED=$("$SCRIPT_DIR/fm-dispatch-resolve.sh" degraded-recent 2>/dev/null) || DISPATCH_DEGRADED=
-  if [ -n "$DISPATCH_DEGRADED" ]; then
-    subsection "Degraded dispatch receipts (last 24 hours)"
-    printf '%s\n' "$DISPATCH_DEGRADED"
+  DISPATCH_AUDIT=$("$SCRIPT_DIR/fm-dispatch-resolve.sh" audit --problems 2>/dev/null) || DISPATCH_AUDIT=
+  if [ -n "$DISPATCH_AUDIT" ]; then
+    subsection "Dispatch receipt audit findings (last 7 days)"
+    printf '%s\n' "$DISPATCH_AUDIT"
   fi
 fi
 
