@@ -1440,6 +1440,61 @@ SH
   chmod +x "$dir/bin/fm-watch-arm.sh"
 }
 
+# An arm fixture that parks: the generation claim lands and stays open
+# (outcome=arming, live owner) the way a real arm following its watcher does,
+# so a guard waiting for that claim observes a genuine open claim.
+write_integrated_parking_arm() {
+  local dir=$1
+  cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'watcher: started pid=%s\n' "$$"
+sleep 30
+SH
+  chmod +x "$dir/bin/fm-watch-arm.sh"
+}
+
+# Fire the real auto-arm hook in the background exactly as Claude's asyncRewake
+# does on the same Stop the synchronous guard handles: a harness-named process
+# owning state/.lock (mode "lock") or not (mode "unowned"), with the Stop
+# payload delivered only after <delay>s through a fifo whose writer opens
+# immediately, writes after the delay, and closes on exit. The hook therefore
+# sits live and PRE-CLAIM for the delay, which is the deterministic stand-in
+# for the incident's loaded pre-claim gate chain. Pids land in
+# state/.fired-hook.pid and state/.fired-writer.pid for the cleanup helper.
+fire_integrated_autoarm_delayed() {  # <dir> <delay-seconds> [lock|unowned]
+  local dir=$1 delay=$2 mode=${3:-lock} home pipe
+  home=$(cd "$dir" && pwd)
+  pipe="$dir/state/.payload.pipe"
+  mkfifo "$pipe"
+  if [ "$mode" = unowned ]; then
+    # shellcheck disable=SC2016 # the fake harness expands FM_HOME inside its child shell.
+    FM_HOME="$home" "$dir/fake-claude" -c '
+        exec "$FM_HOME/bin/fm-claude-stop-autoarm.sh"
+      ' < "$pipe" >/dev/null 2>&1 &
+  else
+    # shellcheck disable=SC2016 # the fake harness expands FM_HOME inside its child shell.
+    FM_HOME="$home" "$dir/fake-claude" -c '
+        printf "%s\n" "$$" > "$FM_HOME/state/.lock"
+        exec "$FM_HOME/bin/fm-claude-stop-autoarm.sh"
+      ' < "$pipe" >/dev/null 2>&1 &
+  fi
+  printf '%s\n' "$!" > "$dir/state/.fired-hook.pid"
+  ( exec 3>"$pipe"; sleep "$delay"; printf '{"session_id":"sess-claude-mode","stop_hook_active":false}\n' >&3 ) &
+  printf '%s\n' "$!" > "$dir/state/.fired-writer.pid"
+}
+
+stop_integrated_autoarm_firing() {  # <dir>
+  local dir=$1 f pid
+  for f in "$dir/state/.fired-hook.pid" "$dir/state/.fired-writer.pid"; do
+    [ -f "$f" ] || continue
+    pid=$(cat "$f" 2>/dev/null || true)
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+  done
+  pkill -f "$dir/bin/fm-claude-stop-autoarm.sh" 2>/dev/null || true
+  pkill -f "$dir/bin/fm-watch-arm.sh" 2>/dev/null || true
+  rm -f "$dir/state/.payload.pipe"
+}
+
 # The 2026-07-21 incident regression: after a spent forced continuation the old
 # one-shot loop guard ALLOWED a blind stop (stop_hook_active=true) while the
 # watcher was already dead. In --claude mode the guard must re-block instead.
@@ -2297,6 +2352,95 @@ test_hook_claude_mode_waits_for_late_claim() {
   pass "fm-turnend-guard --claude: bounded claim wait avoids a token-consuming forced continuation"
 }
 
+# The 2026-11-02 incident regression: the watcher cycle closed mid-turn, the
+# turn ended before the next cycle armed, and Claude fired the synchronous
+# guard and the async auto-arm on the same Stop in parallel. The auto-arm's
+# generation claim lands only at the END of its pre-claim gate chain, so under
+# load it legitimately outruns the guard's fixed base sync window and the guard
+# blocked turns whose recovery the auto-arm delivered moments later. The
+# live-firing record every firing publishes before any gate (and removes on
+# exit) must extend the same wait for the claim it announces, bounded by
+# FM_CLAUDE_AUTOARM_FIRING_WAIT_MS, instead of blocking.
+test_hook_claude_mode_waits_for_live_preclaim_firing() {
+  local dir out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-live-firing")
+  : > "$dir/state/task1.meta"
+  install_integrated_autoarm "$dir"
+  write_integrated_parking_arm "$dir"
+  # The firing is live and pre-claim while the guard's base window (200ms
+  # here) expires; its claim lands only after the 1s payload delay plus the
+  # real gate chain.
+  fire_integrated_autoarm_delayed "$dir" 1
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 FM_CLAUDE_AUTOARM_FIRING_WAIT_MS=15000 run_hook_claude "$dir" false); status=$?
+  if [ "$status" != 0 ]; then
+    stop_integrated_autoarm_firing "$dir"
+    fail "--claude must allow a stop whose parallel auto-arm firing is live pre-claim and claims within the firing window (got $status): $out"
+  fi
+  [ -z "$out" ] || fail "--claude live-firing allow produced output: $out"
+  sed -n '1p' "$dir/state/.claude-autoarm-epoch" 2>/dev/null | grep -q 'outcome=arming' \
+    || fail "the waited-for firing never recorded its open claim"
+  stop_integrated_autoarm_firing "$dir"
+  pass "fm-turnend-guard --claude: waits past the base window for a live pre-claim firing to claim instead of blocking the turn"
+}
+
+# Backstop: a firing record is a liveness proof only, never supervision. A
+# firing that stands down pre-claim (here: no session holds the lock, so the
+# identity gate exits it) leaves no claim, and the guard must still block the
+# truly blind turn once the record clears - with the home byte-for-byte inert
+# again, exactly the idle-home contract the pre-gate publication narrowed.
+test_hook_claude_mode_blocks_when_firing_stands_down_preclaim() {
+  local dir out status hook i
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-firing-stands-down")
+  : > "$dir/state/task1.meta"
+  install_integrated_autoarm "$dir"
+  write_integrated_parking_arm "$dir"
+  fire_integrated_autoarm_delayed "$dir" 0.2 unowned
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 FM_CLAUDE_AUTOARM_FIRING_WAIT_MS=5000 run_hook_claude "$dir" false); status=$?
+  hook=$(cat "$dir/state/.fired-hook.pid" 2>/dev/null || true)
+  if [ -n "$hook" ]; then
+    i=0
+    while kill -0 "$hook" 2>/dev/null && [ "$i" -lt 100 ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+  fi
+  stop_integrated_autoarm_firing "$dir"
+  expect_code 2 "$status" "a firing that stands down pre-claim must not allow a blind turn"
+  assert_contains "$out" "TURN WOULD END BLIND" "the stands-down block must carry the blind-turn banner"
+  [ ! -e "$dir/state/.claude-autoarm-firing.d" ] \
+    || fail "a stood-down firing left its record behind instead of restoring the idle home byte-for-byte"
+  [ ! -e "$dir/state/.claude-autoarm-epoch" ] \
+    || fail "a stood-down firing must never write the epoch ledger"
+  pass "fm-turnend-guard --claude: a firing that stands down pre-claim still blocks and cleans its record up"
+}
+
+# Backstop for the bound itself: a firing wedged pre-claim (payload never
+# arrives) stays live forever; the guard must extend only up to
+# FM_CLAUDE_AUTOARM_FIRING_WAIT_MS and then still block the blind turn rather
+# than waiting for the wedge.
+test_hook_claude_mode_bounded_wait_on_wedged_preclaim_firing() {
+  local dir out status started elapsed
+  dir=$(make_primary_dir "$TMP_ROOT/hook-claude-wedged-firing")
+  : > "$dir/state/task1.meta"
+  install_integrated_autoarm "$dir"
+  write_integrated_parking_arm "$dir"
+  # 120s payload delay: the firing is live pre-claim for the whole decision.
+  fire_integrated_autoarm_delayed "$dir" 120
+  started=$(date +%s)
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 FM_CLAUDE_AUTOARM_FIRING_WAIT_MS=1000 run_hook_claude "$dir" false); status=$?
+  elapsed=$(( $(date +%s) - started ))
+  if [ "$status" != 2 ] || ! printf '%s' "$out" | grep -q "TURN WOULD END BLIND"; then
+    stop_integrated_autoarm_firing "$dir"
+    fail "a wedged pre-claim firing must reach the ordinary blind block (exit $status): $out"
+  fi
+  [ "$elapsed" -lt 60 ] \
+    || fail "the guard waited ${elapsed}s for a wedged firing despite the 1s firing bound"
+  [ -d "$dir/state/.claude-autoarm-firing.d" ] \
+    || fail "test setup defect: the wedged firing was expected to still be live at the block"
+  stop_integrated_autoarm_firing "$dir"
+  pass "fm-turnend-guard --claude: a wedged pre-claim firing is bounded by the firing window and still blocks"
+}
+
 test_hook_claude_mode_secondmate_reblocks_like_primary() {
   local dir pid out status
   dir=$(make_secondmate_dir "$TMP_ROOT/hook-claude-sm-reblock")
@@ -2635,6 +2779,9 @@ test_hook_claude_mode_fail_open_requires_notice_and_failure_epoch
 test_hook_claude_mode_away_mode_never_uses_stop_autoarm_fail_open
 test_hook_claude_mode_allow_resets_budget
 test_hook_claude_mode_waits_for_late_claim
+test_hook_claude_mode_waits_for_live_preclaim_firing
+test_hook_claude_mode_blocks_when_firing_stands_down_preclaim
+test_hook_claude_mode_bounded_wait_on_wedged_preclaim_firing
 test_hook_claude_mode_secondmate_reblocks_like_primary
 test_hook_away_daemon_allows_between_watcher_cycles
 test_hook_away_daemon_allows_over_dead_watcher_lock

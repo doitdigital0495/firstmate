@@ -118,7 +118,7 @@ Firstmate reads these clones, but changes them only through the narrow guarded a
 The loader reads only the effective `FM_HOME/config/brief-addenda/` directory, matching the exact repo argument when it contains only letters, digits, dots, underscores or dashes and is neither `.` nor `..`; paths cannot select addenda, and a missing file silently leaves the generic contract intact.
 Keep these files out of shared tracked material and never put credentials or secrets in them.
 An addendum must explicitly name any bounded exception to generic ship rules while preserving the selected delivery mode and scout/local-only limits.
-Configure the file in each home that needs it; this mechanism adds no secondmate inheritance.
+The primary's addenda are inherited into secondmate homes as a per-file set under the primary-authoritative contract owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md): each valid `<repo>.md` is copied when it differs, and a secondmate addendum the primary lacks is removed at the next convergence, so install, edit and delete addenda in the primary.
 Untracked files and directories whose names begin with `scratchpad` are also gitignored, so temporary scratch does not make porcelain-based secondmate sync guards treat a home as dirty.
 
 ### Format and lifecycle references
@@ -1933,7 +1933,7 @@ For the schema and path validation, `bin/fm-account-lib.sh` is authoritative.
 A typical personal-home file is:
 
 ```json
-{"crossAccount":{"enabled":true},"plans":{"claude":"Max 5x","codex":"ChatGPT Plus"},"accounts":{"personal":{"claude":"~/.claude","pi":"~/.pi/agent","codex":"~/.codex","plans":{"claude":"Max 5x"}},"geris":{"claude":"~/.claude-geris","pi":"~/.pi-geris/agent","codex":"~/.codex-geris","plans":{"claude":"Pro","zai":"Z.ai Pro"}}}}
+{"crossAccount":{"enabled":true},"plans":{"claude":"Max 5x","codex":"ChatGPT Plus"},"accounts":{"personal":{"claude":"~/.claude","pi":"~/.pi/agent","codex":"~/.codex","plans":{"claude":"Max 5x"}},"geris":{"claude":"~/.claude-3","pi":"~/.pi-geris/agent","codex":"~/.codex-geris","plans":{"claude":"Pro","zai":"Z.ai Pro"}}}}
 ```
 
 Each account names the stores it owns: `claude`, `pi` and `codex` are each optional, but at least one must be present, so a Claude-only seat such as `{"claude2":{"claude":"~/.claude-2","plans":{"claude":"Ultra"}}}` registers without borrowing another account's Pi or Codex store.
@@ -2012,7 +2012,7 @@ Worker account pins, cross-account routing, quota intake, and release shaping re
 Choose the subscription per launch: from an `hp` shell (`HERDR_SESSION=personal`), after exiting the current firstmate with `/exit`, start this same home on either Claude subscription without logging out anywhere:
 
 ```bash
-~/.firstmate/bin/fm-open.sh geris      # $HOME/.claude-geris
+~/.firstmate/bin/fm-open.sh geris      # $HOME/.claude-3
 ~/.firstmate/bin/fm-open.sh personal   # $HOME/.claude
 ```
 
@@ -2129,7 +2129,7 @@ That one diagnostic names the list line number at most and never prints the list
 
 An absent or empty table returns `no rules to match`; a default-only table can route its default.
 An existing unreadable or malformed table, including a broken symlink, is an exit 2 configuration error.
-Everything after the answer runs in code: the confidence floor, the matched rule's `approval`, `min_confidence`, and `floor`, each candidate's `provider`, `quota_scope`, and `floor`, every applicable account-wide and model/product row from the default and authorized named-store `quota-axi --json` snapshots, the optional `preferred_provider` restriction under the [profile-array procedure](../.agents/skills/quota-array-dispatch/SKILL.md#4-rank-by-spendpriority), and the numeric `spendPriority` argmax within that candidate pool using each candidate's limiting row.
+Everything after the answer runs in code: the confidence floor, the matched rule's `approval`, `min_confidence`, and `floor`, each candidate's `provider`, `quota_scope`, and `floor`, every applicable account-wide and model/product row from the default and authorized named-store `quota-axi --json` snapshots, the optional `preferred_provider` restriction under the [profile-array procedure](../.agents/skills/quota-array-dispatch/SKILL.md#4-rank-by-spendpriority), and the numeric `spendPriority` argmax within that candidate pool using each candidate's limiting row, restricted to the highest declared `reasoning_class` first under the keep-strongest rule below.
 A candidate is rankable only with complete limit information: every window its applicable rows are bounded by - the weekly limit, a session limit where the plan has one, and named model windows - must carry a known remaining percent and reset time.
 A row whose own status is not known, an unmeasured provider, a profile floor whose scope row is unmeasured, a candidate with no applicable row, or a window without a percent or reset makes that candidate incomplete and the whole choice `incomplete` before any ranking or hand-picking; a candidate is never left merely unranked, dropped, or treated as healthy because its limits are unknown.
 A profile's `quota_scope` binds the candidate to that named quota-axi row in addition to its account-wide and model rows; a declared scope with no row beside otherwise complete evidence leaves the candidate eligible but unranked.
@@ -2165,6 +2165,9 @@ When the picked rule declares its own floor but its probability falls below it, 
 No qualifying option, or two equally probable qualifying options, triggers an ambiguous union.
 Code unions rows whose probability is at least 0.25, retains only the highest numeric candidate `reasoning_class`, then applies eligibility and spendPriority.
 `reasoning_class` is an optional finite JSON number on each candidate, higher meaning stronger; every candidate in an ambiguous union must declare it or routing stops for captain review rather than guessing from names.
+A single matched rule and the default row get the same keep-strongest semantics: when every eligible candidate declares a numeric `reasoning_class`, only the highest declared class reaches the `spendPriority` argmax, so an unused weaker pool cannot win on quota headroom alone, while candidates at an equal class still compete on `spendPriority`.
+When any eligible candidate lacks a class, ranking stays plain `spendPriority` with no silent guessing.
+The restriction applies after eligibility, so an ineligible strongest-class candidate never blocks a weaker eligible one.
 An approval-gated union stops for the captain, and rule floors are never silently waived.
 
 **Failure and authority boundary**
@@ -3571,6 +3574,7 @@ FM_GUARD_GRACE=300      # beacon freshness threshold for guard verdicts, arm hea
 # FM_CLAUDE_RELEASE_INTERVAL, FM_CLAUDE_DEMAND_HORIZON, FM_CLAUDE_DEMAND_MAX_AGE, FM_CLAUDE_DEMAND_TURNS, FM_CLAUDE_DEMAND_TAIL_BYTES, and FM_CLAUDE_HEAD_MAX_WAIT pace Claude launches onto a shaped credential store; see "Claude release shaping" for their defaults and ranges
 FM_CLAUDE_AUTOARM_ATTEMPTS=2   # bounded Stop-owned arm attempts per Claude auto-arm cycle; accepted values are 1, 2, or 3
 FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=800   # milliseconds the --claude turn-end guard waits for watcher health, an open Stop auto-arm generation claim, or a fresh epoch before deciding recovery ownership or failure progression
+FM_CLAUDE_AUTOARM_FIRING_WAIT_MS=5000   # extra bounded milliseconds the guard keeps that wait alive while a live auto-arm firing record (state/.claude-autoarm-firing.d) is still pre-claim; a record alone never allows a stop (docs/turnend-guard.md "Claude cooperative mode")
 FM_CLAUDE_AUTOARM_EPOCH_FRESH=15   # seconds a recorded auto-arm outcome remains eligible for the current event epoch's recovery or failure decision
 FM_CLAUDE_TURNEND_BLOCK_BUDGET=3   # consecutive --claude guard re-blocks before the verified one-time attended fail-open; safely below Claude Code's 8-block override
 FM_ARM_CONFIRM_TIMEOUT=300   # fresh-child confirmation backstop in seconds; default max(FM_GUARD_GRACE, 10), or max(FM_GUARD_GRACE, 30) on Git Bash/MSYS; positive overrides may be shorter; expiry still waits for safe interruption (docs/watcher-continuity.md "Startup interruption window")

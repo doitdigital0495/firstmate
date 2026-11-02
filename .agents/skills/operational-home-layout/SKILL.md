@@ -36,7 +36,7 @@ config/t3code-token  LOCAL, gitignored T3 Code mcp-client credential; docs/t3cod
 config/t3code-instances  LOCAL, gitignored, inherited T3 provider-instance map; docs/t3code-backend.md "Provider instances and models" owns schema and catalog validation
 config/accounts.json  optional enabled, allowlisted cross-account worker registry; LOCAL, gitignored; configured worker pins remain authoritative; see docs/configuration.md "Cross-account worker routing"
 config/claude-shaped-store  optional inherited Claude worker release-shaping store list; LOCAL, gitignored; bin/fm-claude-admission.sh owns its gates
-config/brief-addenda/  optional home-private project standing instructions; LOCAL, gitignored, not inherited; bin/fm-brief.sh owns selection and rendering outside captain intent
+config/brief-addenda/  optional home-private project standing instructions; LOCAL, gitignored, inherited from the primary into secondmate homes per file; bin/fm-brief.sh owns selection and rendering outside captain intent
 config/calm     Calm presentation preference shared by the Pi extension and the Claude Code mod; LOCAL, gitignored, and not inherited; see docs/configuration.md "Calm preference"
 config/keep-ai-trailers  optional presence flag to keep AI co-author trailers in this home's fleet commits; LOCAL, gitignored; inherited by secondmate homes; see docs/configuration.md "Commit attribution"
 config/supervision-branch-model config/supervision-branch-effort  Pi supervision-branch model and reasoning-effort pins written by /supervision-model; LOCAL, gitignored, independently settable, and not inherited; see docs/configuration.md "Pi supervision branch model and effort"

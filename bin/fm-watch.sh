@@ -127,6 +127,10 @@
 #                          opt-in config/open-decision-reminders record-age
 #                          backstop, independent of pane and branch state;
 #                          open_decision_reminder_tick owns its bounded repeats
+#   check: away long wait: <task> <class> <age>s (threshold <n>s)[; ...]
+#                          while away only, lanes CI-active, parked at a base
+#                          rebase, or idle on a green PR past their threshold;
+#                          away_long_wait_tick owns the scan and its repeats
 #   check: process-event result captured: <keys>
 #                          a durably captured process-to-event result is queued
 #                          and has not been surfaced yet; reported once per
@@ -2808,6 +2812,76 @@ EOF
   fi
 }
 
+# Away-mode long-wait escalation. While an away record exists (never quiet
+# mode's), scan each task with a meta record once per AWAY_LONG_WAIT_SCAN_SECS,
+# classify it with crew_away_long_wait_class, and escalate every lane that has
+# held one class for at least fm_away_long_wait_threshold's seconds as ONE
+# check wake. bin/fm-classify-lib.sh owns the classes, thresholds, and why.
+# STATE/.away-long-waits stores <task> TAB <class> TAB <first-seen> TAB
+# <last-escalated>; a lane that leaves its class, or changes class, drops its
+# row, so the next episode starts fresh. First-seen is the first scan that saw
+# the class, so an age can lag the true one by at most one scan interval.
+# An escalated lane repeats once per PAUSE_RESURFACE_SECS while it stays put.
+# Leaving the away posture removes the ledger, so a later away session never
+# inherits an earlier one's clocks.
+AWAY_LONG_WAIT_SCAN_SECS=${FM_AWAY_LONG_WAIT_SCAN_SECS:-}
+case "$AWAY_LONG_WAIT_SCAN_SECS" in ''|*[!0-9]*) AWAY_LONG_WAIT_SCAN_SECS=300 ;; esac
+away_long_wait_tick() {  # [now-epoch], for deterministic clock callers
+  local now=${1:-} ledger="$STATE/.away-long-waits" scan="$STATE/.away-long-waits-scan"
+  local old='' rows='' due='' f task class since last threshold exclude tmp
+  local old_task old_class old_since old_last
+  AWAY_LONG_WAIT=
+  if ! away_record_present; then
+    rm -f -- "$ledger" "$scan"
+    return 0
+  fi
+  [ -n "$now" ] || fm_epoch_seconds_to now
+  if [ -f "$scan" ]; then
+    last=$(cat "$scan" 2>/dev/null) || last=
+    case "$last" in ''|*[!0-9]*) last=0 ;; esac
+    [ "$now" -lt "$last" ] || [ "$((now - last))" -ge "$AWAY_LONG_WAIT_SCAN_SECS" ] || return 0
+  fi
+  printf '%s\n' "$now" > "$scan" || return 1
+  if [ -e "$ledger" ] || [ -L "$ledger" ]; then
+    [ -f "$ledger" ] && [ -r "$ledger" ] && [ ! -L "$ledger" ] || return 1
+    old=$(cat "$ledger") || return 1
+  fi
+  exclude=$(status_scan_parent_channel_exclude "$STATE")
+  for f in "$STATE"/*.status; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    [ "$f" != "$exclude" ] || continue
+    task=${f##*/}; task=${task%.status}
+    [ -f "$STATE/$task.meta" ] || continue
+    class=$(crew_away_long_wait_class "$task")
+    [ -n "$class" ] || continue
+    since=$now; last=0
+    while IFS=$'\t' read -r old_task old_class old_since old_last; do
+      [ "$old_task" = "$task" ] && [ "$old_class" = "$class" ] || continue
+      case "$old_since:$old_last" in *[!0-9:]*|:*) continue ;; esac
+      [ "${#old_since}" -le 12 ] && [ "${#old_last}" -le 12 ] || continue
+      since=$((10#$old_since)); last=$((10#${old_last:-0}))
+      break
+    done <<EOF
+$old
+EOF
+    threshold=$(fm_away_long_wait_threshold "$class") || continue
+    if [ "$now" -ge "$since" ] && [ "$((now - since))" -ge "$threshold" ] \
+      && { [ "$last" -eq 0 ] || [ "$((now - last))" -ge "$PAUSE_RESURFACE_SECS" ]; }; then
+      due="${due:+$due; }$task $class $((now - since))s (threshold ${threshold}s)"
+      last=$now
+    fi
+    rows="$rows$task"$'\t'"$class"$'\t'"$since"$'\t'"$last"$'\n'
+  done
+  tmp=$(mktemp "$STATE/.away-long-waits.XXXXXX") || return 1
+  if ! printf '%s' "$rows" > "$tmp" || ! mv -f "$tmp" "$ledger"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  [ -n "$due" ] || return 0
+  AWAY_LONG_WAIT="check: away long wait: $due"
+  fm_wake_append check away-long-wait "$AWAY_LONG_WAIT" || return 1
+}
+
 # The identity a re-surface throttle is bound to: the task's whole status-log
 # signature. Any new status event - a replacement wait, a fresh delivery, a
 # blocker - changes it and so starts its own window instead of inheriting the
@@ -3974,6 +4048,12 @@ while :; do
     exit 1
   }
   [ -z "$OPEN_DECISION_REMINDER" ] || wake "$OPEN_DECISION_REMINDER"
+
+  away_long_wait_tick || {
+    echo 'watcher: away long-wait check failed' >&2
+    exit 1
+  }
+  [ -z "$AWAY_LONG_WAIT" ] || wake "$AWAY_LONG_WAIT"
 
   # Endpoint liveness runs before queue observation: a positively dead or
   # missing secondmate endpoint is relaunched here on a bounded cadence, which

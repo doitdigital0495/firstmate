@@ -2354,6 +2354,83 @@ fm_autoarm_claim_next() {  # <state-dir> [grace]
   return 0
 }
 
+# --- Claude Stop auto-arm live-firing record ----------------------------------
+#
+# The synchronous turn-end guard and the async Stop auto-arm fire on the same
+# Claude Stop in parallel, and the auto-arm publishes its generation claim only
+# at the END of its pre-claim gate chain (payload read, host discrimination,
+# primary scope, session-lock identity - including stale-owner recovery through
+# fm-lock.sh - AFK, need, open-claim probe). Under load that chain legitimately
+# outruns the guard's short base sync window (FM_CLAUDE_AUTOARM_SYNC_WAIT_MS),
+# so on 2026-11-02 the guard blocked three turns with "the auto-arm did not
+# claim" while a live firing claimed and armed a fresh watcher moments after
+# each block. The firing record is the cheap pre-claim signal that fixes the
+# ordering: every firing publishes itself before any gate and removes its
+# record on exit, so "no live firing" is what proves the auto-arm genuinely
+# absent. It is a liveness proof ONLY - never supervision: the guard waits a
+# bounded extra window for the claim it announces and still blocks when the
+# firing dies, stands down, or wedges pre-claim (fm_autoarm_firing_live). One
+# file per firing under <state>/.claude-autoarm-firing.d, named by pid, holding
+# the same pid-identity discipline as ledger line 2 so a reused pid number
+# never reads as a live firing.
+
+fm_autoarm_firing_dir() {  # <state-dir>
+  printf '%s/.claude-autoarm-firing.d' "$1"
+}
+
+# Publish this firing before any gate, sweeping records whose pids are gone (a
+# SIGKILLed firing leaves its file behind; fm_autoarm_firing_live re-verifies
+# identity, so a swept-in file never reads as a live firing). Failure is
+# non-fatal: without a record the guard simply keeps its base window, never a
+# longer one.
+fm_autoarm_firing_publish() {  # <state-dir>
+  local state=$1 dir pid identity f now
+  dir=$(fm_autoarm_firing_dir "$state")
+  pid=${BASHPID:-$$}
+  mkdir -p "$dir" 2>/dev/null || return 1
+  for f in "$dir"/*; do
+    [ -f "$f" ] || continue
+    fm_pid_alive "${f##*/}" || rm -f "$f" 2>/dev/null || true
+  done
+  identity=$(fm_pid_identity "$pid" 2>/dev/null) || return 1
+  [ -n "$identity" ] || return 1
+  fm_epoch_seconds_to now
+  printf 'started_at=%s\n%s\n' "$now" "$identity" > "$dir/$pid" 2>/dev/null
+}
+
+fm_autoarm_firing_clear() {  # <state-dir>
+  local dir
+  dir=$(fm_autoarm_firing_dir "$1")
+  rm -f "$dir/${BASHPID:-$$}" 2>/dev/null || true
+  # With no other firing recorded the home is byte-for-byte inert again.
+  rmdir "$dir" 2>/dev/null || true
+}
+
+# True while at least one firing record names a live pid that is still the
+# firing it announces: a dead pid is gone, a pid whose identity was
+# successfully recomputed and no longer matches the record was reused and is
+# gone, and a pid that is alive but whose identity cannot currently be
+# recomputed (a transient ps failure under load) is kept waiting - the
+# caller's bound makes that safe, while reading a transient failure as dead
+# would reproduce exactly the premature block this record exists to prevent.
+fm_autoarm_firing_live() {  # <state-dir>
+  local state=$1 f pid current
+  state=$(fm_autoarm_firing_dir "$state")
+  [ -d "$state" ] || return 1
+  for f in "$state"/*; do
+    [ -f "$f" ] || continue
+    pid=${f##*/}
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    fm_pid_alive "$pid" || continue
+    current=$(fm_pid_identity "$pid" 2>/dev/null)
+    if [ -n "$current" ]; then
+      [ "$current" = "$(sed -n '2p' "$f" 2>/dev/null)" ] || continue
+    fi
+    return 0
+  done
+  return 1
+}
+
 # Write a new outcome for a generation this process still owns, re-verified
 # under the micro-mutex so a superseded owner can never clobber a newer claim.
 # With a fourth argument, create that marker after the ledger rename in the same

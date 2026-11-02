@@ -28,7 +28,9 @@
 #       [--codex-store <path>] [--consume]
 #     Refuses (exit 3, nothing else touched) unless the newest record is at
 #     most FM_QUOTA_INTAKE_MAX_AGE (default 600) seconds old, has not already
-#     been spent on a launch, covers the chosen account entry and store, maps
+#     been spent on a launch, covers the chosen account entry and store (store
+#     equality judged on resolved real paths, so a store pinned through a
+#     symlink onto the recorded store counts as covered), maps
 #     the harness to a provider family present in that entry, and carries the
 #     whole table content for that provider: plan size known, the 7d (or
 #     weekly) window, the 5h window when the provider publishes one, plus
@@ -161,6 +163,15 @@ intake_default_store() { # <claude|pi|codex>
     codex)  printf '%s\n' "${CODEX_HOME:-$HOME/.codex}" ;;
     *)      return 1 ;;
   esac
+}
+
+# A launch may pin its store through a symlink onto the store the record read
+# (a retired link name still resolving onto the registered store), so store
+# coverage compares the resolved real paths: a symlinked store equals its
+# target. A path realpath cannot resolve - a missing tool, or a store an
+# account does not own - compares as itself, which is the literal comparison.
+intake_store_real() { # <path> - stdout: resolved real path, or the input
+  realpath -- "$1" 2>/dev/null || printf '%s\n' "$1"
 }
 
 quota_axi_full_json() { # stdout: raw --full --json snapshot; rc nonzero on failure
@@ -559,7 +570,7 @@ cmd_gate() {
     exit 0
   fi
 
-  local provider record now age covered entry store_field chosen expected spent_msg
+  local provider record now age covered entry store_field chosen expected recorded spent_msg
   provider=$(gate_provider_for_harness "$harness" "$model") ||
     refuse "quota intake gate: refusing - no quota provider family can be established for harness '$harness' with model '$model'; declare the provider family in the dispatch profile or dispatch a measurable harness"
   record=$(intake_list_records | tail -n 1)
@@ -600,8 +611,9 @@ cmd_gate() {
     else
       expected=$chosen
     fi
-    [ "$(jq -r --arg f "$store_field" '.stores[$f]' <<< "$entry")" = "$expected" ] ||
-      refresh "quota intake gate: refusing - the record's $store_field store $(jq -r --arg f "$store_field" '.stores[$f]' <<< "$entry") does not cover the chosen store $expected; run bin/fm-quota-intake.sh against the store this launch will use"
+    recorded=$(jq -r --arg f "$store_field" '.stores[$f]' <<< "$entry")
+    [ "$(intake_store_real "$recorded")" = "$(intake_store_real "$expected")" ] ||
+      refresh "quota intake gate: refusing - the record's $store_field store $recorded does not cover the chosen store $expected; run bin/fm-quota-intake.sh against the store this launch will use"
   fi
 
   local verdict

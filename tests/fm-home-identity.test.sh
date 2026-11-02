@@ -521,8 +521,8 @@ open_case() {  # <name>
   OPEN_USER="$OPEN_BASE/user"
   OPEN_HOME=$(new_home "$OPEN_BASE/home")
   OPEN_LOG="$OPEN_BASE/launch"
-  mkdir -p "$OPEN_USER/.claude" "$OPEN_USER/.claude-geris" "$OPEN_BASE/bin"
-  touch "$OPEN_USER/.claude/.credentials.json" "$OPEN_USER/.claude-geris/.credentials.json"
+  mkdir -p "$OPEN_USER/.claude" "$OPEN_USER/.claude-3" "$OPEN_BASE/bin"
+  touch "$OPEN_USER/.claude/.credentials.json" "$OPEN_USER/.claude-3/.credentials.json"
   OPEN_USER=$(cd "$OPEN_USER" && pwd -P)
   OPEN_HOME=$(cd "$OPEN_HOME" && pwd -P)
   cat > "$OPEN_BASE/bin/claude" <<'STUB'
@@ -558,17 +558,17 @@ test_fm_open_starts_the_same_home_on_either_subscription() {
   out=$(open_home personal geris --model opus --continue) || fail "geris launch: $out"
   log=$(cat "$OPEN_LOG")
   assert_contains "$log" "cwd=$OPEN_HOME" 'Claude starts from the home'
-  assert_contains "$log" "store=$OPEN_USER/.claude-geris" 'Claude gets the chosen store'
+  assert_contains "$log" "store=$OPEN_USER/.claude-3" 'Claude gets the chosen store'
   assert_contains "$log" 'session=personal' 'the Herdr session stays personal'
   assert_contains "$log" 'api_key=unset' 'an ambient credential cannot outrank the chosen store'
   assert_contains "$log" 'args=--dangerously-skip-permissions --model opus --continue' 'the cc posture and caller args reach Claude'
-  identity "$OPEN_HOME" personal "$OPEN_USER/.claude-geris" check >/dev/null || fail 'the pin follows the launch'
+  identity "$OPEN_HOME" personal "$OPEN_USER/.claude-3" check >/dev/null || fail 'the pin follows the launch'
   assert_absent "$OPEN_LOG.herdr" 'the launcher never runs Herdr'
 
   out=$(open_home personal personal) || fail "personal launch: $out"
   assert_contains "$(cat "$OPEN_LOG")" "store=$OPEN_USER/.claude" 'the same home starts back on personal'
   identity "$OPEN_HOME" personal "$OPEN_USER/.claude" check >/dev/null || fail 'the pin moved back'
-  identity "$OPEN_HOME" personal "$OPEN_USER/.claude-geris" check >/dev/null && fail 'the previous store is refused'
+  identity "$OPEN_HOME" personal "$OPEN_USER/.claude-3" check >/dev/null && fail 'the previous store is refused'
   [ "$(grep -c '^# rebound at' "$OPEN_HOME/data/home-identity.history")" = 2 ] || fail 'each move is kept in history'
 
   out=$(open_home personal personal) || fail "repeat launch: $out"
@@ -603,7 +603,7 @@ test_fm_open_refuses_without_starting_claude() {
   kill "$pid"; wait "$pid" 2>/dev/null || true
   rm -f "$OPEN_HOME/state/.lock"
 
-  rm "$OPEN_USER/.claude-geris/.credentials.json"
+  rm "$OPEN_USER/.claude-3/.credentials.json"
   out=$(open_home personal geris); rc=$?
   expect_code 3 "$rc" "missing login: $out"
   [ "$before" = "$(cat "$OPEN_HOME/data/home-identity")" ] || fail 'a refused launch keeps the pin'

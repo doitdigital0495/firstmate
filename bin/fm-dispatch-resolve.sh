@@ -73,7 +73,10 @@
 #     profile: --harness <h> [--model <m>] [--effort <e>]     (status clear only)
 #     receipt: <name> (one launch, valid <n>s) | none - ... | not written (...)
 #   clear      -> pass the profile line to fm-spawn.sh exactly; the receipt it wrote
-#                 admits that profile and no other
+#                 admits that profile and no other. When every eligible candidate
+#                 declares a numeric reasoning_class, only the highest declared
+#                 class competes on spendPriority (single matched rule and default
+#                 row alike); any missing class keeps plain spendPriority ranking
 #   ambiguous  -> code unions qualifying rows and keeps strongest reasoning_class;
 #                 missing ranks stop for captain review, never hand-pick
 #   incomplete -> quota window evidence for at least one candidate is not fully known;
@@ -764,8 +767,14 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     elif $sq then
       $ev + {status: "clear", note: ($sel.note + "; quota ranking off: home declares a single shared quota, declared order picks"), candidates: $cands, chosen: ($elig | first), row: $sel.source}
     else
-      ($elig | max_by(.spendPriority)) as $best |
-      ([$elig[] | select(.spendPriority == $best.spendPriority)]) as $ties |
+      # Keep-strongest classes: when every eligible candidate declares a
+      # numeric reasoning_class, only the highest declared class competes on
+      # spendPriority, so an unused weaker pool cannot outbid it by quota alone.
+      ($elig | all((.profile.reasoning_class | type) == "number")) as $all_classed |
+      (if $all_classed then ($elig | map(.profile.reasoning_class) | max) else null end) as $strongest |
+      (if $all_classed then [$elig[] | select(.profile.reasoning_class == $strongest)] else $elig end) as $ranked |
+      ($ranked | max_by(.spendPriority)) as $best |
+      ([$ranked[] | select(.spendPriority == $best.spendPriority)]) as $ties |
       ([ $ties[] | . as $candidate |
         (if $ambiguous then $union_ids[] else $sel.source end) as $id |
         (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | to_entries[] |
@@ -773,7 +782,9 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       if ($ties | length) > 1 and $preferred == null then $ev + {status: "escalate", reason: "genuine spendPriority tie", note: $sel.note, candidates: $cands}
       else ($preferred // $best) as $winner |
         (if $ambiguous then ([$union_ids[] | . as $id | (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | select(index($winner.profile)) | $id] | first) else $sel.source end) as $winner_row |
-        $ev + {status: "clear", note: (if $ambiguous then "ambiguous union >= 0.25; strongest reasoning class" else $sel.note end), candidates: $cands, chosen: $winner, row: $winner_row}
+        $ev + {status: "clear", note: (if $ambiguous then "ambiguous union >= 0.25; strongest reasoning class"
+          elif ($ranked | length) < ($elig | length) then "\($sel.note); strongest reasoning class \($strongest), \(($elig | length) - ($ranked | length)) weaker eligible candidate(s) outranked"
+          else $sel.note end), candidates: $cands, chosen: $winner, row: $winner_row}
         + (if ($unranked | length) > 0 then
              {unranked_note: "\($unranked | length) eligible candidate(s) unranked (\([$unranked[].provider] | unique | join(", ")))"}
            else {} end)

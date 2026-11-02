@@ -4,7 +4,10 @@
 # Usage:
 #   fm-remote-inherit.sh put <allowlisted-relative-path> <bytes> <sha256> <generation> < stdin
 #   fm-remote-inherit.sh absent <allowlisted-relative-path> 0 <empty-sha256> <generation>
+#   fm-remote-inherit.sh members config/<declared-set> 0 <empty-sha256> <generation>
 #
+# members prints the valid per-file set members present here, one config-relative
+# path per line, so the sender can mirror primary absence for members it lacks.
 # Only the inherited-material allowlist is writable or removable. Writes are
 # atomic ordinary-file replacements. data/captain-shared.md is read-only and is
 # quarantined before removal or before replacing bytes not last published here.
@@ -20,7 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-config-inherit-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 file_link_count() {
   if [ "$(uname)" = Darwin ]; then /usr/bin/stat -f %l "$1" 2>/dev/null; else stat -c %h "$1" 2>/dev/null; fi
 }
@@ -32,15 +35,10 @@ sha256_file() {
 # receiver and sender cannot drift silently. This runs under the remote
 # entrypoint's fixed empty environment, so the declaration is this code root's
 # own, never something the caller can widen over SSH; a caller from a different
-# revision must match it or the transfer fails closed.
+# revision must match it or the transfer fails closed. Per-file set members are
+# judged by the same owner's fm_config_inherit_path_allowed.
 allowed() {
-  local candidate
-  while IFS= read -r candidate; do
-    [ "$candidate" = "$1" ] && return 0
-  done <<EOF
-$(fm_config_inherit_items)
-EOF
-  return 1
+  fm_config_inherit_path_allowed "$1"
 }
 
 [ "$#" -eq 5 ] || usage
@@ -49,6 +47,14 @@ REL=$2
 EXPECTED_BYTES=$3
 EXPECTED_HASH=$4
 GENERATION=$5
+if [ "$COMMAND" = members ]; then
+  case "$REL" in config/*) fm_config_inherit_set_declared "${REL#config/}" || die "path is not an inherited set: $REL" ;; *) die "path is not an inherited set: $REL" ;; esac
+  [ "$EXPECTED_BYTES" = 0 ] || die "members listing has a nonzero payload commitment"
+  HOME_REAL=$(CDPATH='' cd -- "$FM_HOME" 2>/dev/null && pwd -P) || die "FM_HOME is unavailable"
+  [ ! -L "$HOME_REAL/$REL" ] || die "inherited set directory is a symlink"
+  fm_config_inherit_set_members "$HOME_REAL/config" "${REL#config/}"
+  exit 0
+fi
 allowed "$REL" || die "path is not inherited material: $REL"
 case "$EXPECTED_BYTES" in ''|*[!0-9]*) die "expected bytes must be a nonnegative integer" ;; esac
 [ "${#EXPECTED_BYTES}" -le 10 ] || die "expected bytes exceed the byte bound"
@@ -64,7 +70,7 @@ PARENT="$HOME_REAL/$(dirname "$REL")"
 [ ! -L "$PARENT" ] || die "inherited destination parent is a symlink"
 mkdir -p "$PARENT" || die "cannot create inherited destination parent"
 PARENT_REAL=$(CDPATH='' cd -- "$PARENT" && pwd -P)
-case "$PARENT_REAL" in "$HOME_REAL/config"|"$HOME_REAL/data") ;; *) die "inherited destination escapes FM_HOME" ;; esac
+[ "$PARENT_REAL" = "$HOME_REAL/$(dirname "$REL")" ] || die "inherited destination escapes FM_HOME"
 DEST="$PARENT_REAL/$(basename "$REL")"
 [ ! -L "$DEST" ] || die "inherited destination is a symlink"
 if [ -e "$DEST" ]; then

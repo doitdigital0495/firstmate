@@ -330,6 +330,13 @@ It allows the stop when any of these holds:
 - The auto-arm's generation claim is open.
 - `state/.claude-autoarm-epoch` contains a fresh actionable rewake owned by this event epoch.
 
+Both hooks fire on the same Stop in parallel - the guard synchronously, the auto-arm asynchronously - and the auto-arm publishes its generation claim only at the end of its pre-claim gate chain (payload read, host discrimination, scope, session-lock identity including stale-owner recovery, AFK, need).
+That chain legitimately outruns the base window under load, which on 2026-11-02 made the guard block three turns whose recovery the auto-arm delivered moments after each block.
+So every firing first publishes a live-firing record under `state/.claude-autoarm-firing.d` (one file per firing pid, carrying the same mandatory pid-identity as ledger line 2) and removes it on exit.
+When the base window expires while such a firing is live, the guard keeps waiting for the claim it announces, bounded by `FM_CLAUDE_AUTOARM_FIRING_WAIT_MS` (default 5000 milliseconds).
+The record is a liveness proof only: it never allows a stop by itself, and a firing that stands down, dies, or wedges pre-claim still reaches the ordinary blind block once its record clears or the bound expires.
+`fm_autoarm_firing_publish`, `fm_autoarm_firing_clear`, and `fm_autoarm_firing_live` in `bin/fm-wake-lib.sh` own the format contract.
+
 #### Auto-arm generation claim
 
 The claim is the ledger entry itself.
