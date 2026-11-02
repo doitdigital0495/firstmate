@@ -279,6 +279,7 @@ Load `validation-supervision` when a ship starts or already has an active no-mis
 ### PR ready, landing, and teardown
 
 Load `ship-landing` when a ship reports a PR or ready branch, when deciding or monitoring landing, and before task cleanup.
+One task, one worker: new work for a finished worker is a new task, which `fm-send` enforces, and a `reap` check wake names finished workers due to close (`bin/fm-reap.sh`).
 
 ### Scout outcome and promotion
 

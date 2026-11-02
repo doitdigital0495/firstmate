@@ -1712,6 +1712,9 @@ families_for_changed_path() {
     bin/fm-capacity.sh)
       printf '%s\n' "__script__:fm-capacity.test.sh"
       ;;
+    bin/fm-reap.sh)
+      printf '%s\n' "__script__:fm-reap.test.sh"
+      ;;
     bin/fm-dispatch-receipt-lib.sh|bin/fm-dispatch-pick-lib.sh|tests/jevd-dispatch-stub.py)
       # The receipt gate and socket peer: producers and all launch consumers.
       printf '%s\n' "__script__:fm-secondmate-harness.test.sh"

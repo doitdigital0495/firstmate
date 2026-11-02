@@ -1748,6 +1748,11 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
     "$SCRIPT_DIR/fm-pr-health.sh" arm >/dev/null \
       || echo "MISSING: the PR health monitor could not be armed; owned PRs are not watched"
   fi
+  # The reaper check closes finished crewmates and scouts (shadow by default).
+  if local_phase && command -v jq >/dev/null 2>&1 && [ -x "$SCRIPT_DIR/fm-reap.sh" ]; then
+    "$SCRIPT_DIR/fm-reap.sh" arm >/dev/null 2>&1 \
+      || echo "MISSING: the reaper could not be armed; finished workers are not closed or reported"
+  fi
   if [ -n "$fleet_sync_pid" ]; then
     wait "$fleet_sync_pid" || true
     cat "$fleet_sync_out"
