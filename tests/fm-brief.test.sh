@@ -1422,6 +1422,40 @@ ROWS
   pass "fm-brief.sh: scout Lavish hosting follows the bootstrap lavish-axi floor"
 }
 
+# Every brief kind that can use Lavish names the one opener, by absolute path,
+# so a captain page never depends on a worker knowing how a launch fails
+# silently; a host without a compatible Lavish names no opener at all.
+test_every_brief_names_the_lavish_opener() {
+  local base version case_dir home fakebin brief kind n=0
+  local opener="\`$ROOT/bin/fm-lavish-open.sh <artifact.html>\`"
+  base=$(fm_test_base_path_sans "${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" lavish-axi)
+  for version in 0.1.96 absent; do
+    n=$((n + 1))
+    case_dir="$TMP_ROOT/lavish-opener-$n"
+    home="$case_dir/home"
+    write_registry "$home"
+    fakebin=$(fm_fakebin "$case_dir")
+    [ "$version" = absent ] || fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION "$version"
+    PATH="$fakebin:$base" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" opener-ship some-proj --mode direct-PR >/dev/null 2>&1 \
+      || fail "lavish $version: ship scaffold failed"
+    PATH="$fakebin:$base" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" opener-scout some-proj --scout >/dev/null 2>&1 \
+      || fail "lavish $version: scout scaffold failed"
+    PATH="$fakebin:$base" FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
+      "$ROOT/bin/fm-brief.sh" opener-mate --secondmate --no-projects >/dev/null 2>&1 \
+      || fail "lavish $version: secondmate scaffold failed"
+    for kind in ship scout mate; do
+      brief="$home/data/opener-$kind/brief.md"
+      if [ "$version" = absent ]; then
+        assert_no_grep "fm-lavish-open.sh" "$brief" "lavish absent: $kind brief named a Lavish opener"
+      else
+        assert_grep "$opener" "$brief" "lavish $version: $kind brief did not name the Lavish opener by absolute path"
+        assert_grep "browser-launch: failed <url>" "$brief" "lavish $version: $kind brief did not say what to do when the page did not open"
+      fi
+    done
+  done
+  pass "fm-brief.sh: ship, scout and secondmate briefs name the Lavish opener only when Lavish is compatible"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -2012,6 +2046,7 @@ test_scout_and_secondmate_load_decision_hold_policy
 test_scout_completion_write_exception_is_task_scoped
 test_scout_and_secondmate_scaffold
 test_scout_lavish_line_follows_presentation_floor
+test_every_brief_names_the_lavish_opener
 test_inbox_listing_command_is_safe_on_empty_inbox
 test_workers_wait_without_spending_turns
 test_wait_no_turns_absent_keeps_the_previous_brief

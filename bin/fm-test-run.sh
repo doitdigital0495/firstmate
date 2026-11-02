@@ -1879,6 +1879,12 @@ families_for_changed_path() {
       printf '%s\n' __script__:fm-live-board-snapshot.test.sh
       printf '%s\n' __script__:fm-live-board.test.sh
       ;;
+    bin/fm-lavish-open.sh)
+      # The one Lavish opener; both captain-facing boards open through it.
+      printf '%s\n' __script__:fm-lavish-open.test.sh
+      printf '%s\n' __script__:fm-bearings-board.test.sh
+      printf '%s\n' __script__:fm-live-board.test.sh
+      ;;
     bin/fm-lavish-board-lib.sh)
       # The shared serve/bind/arm sequence behind both captain-facing boards.
       printf '%s\n' __script__:fm-bearings-board.test.sh
