@@ -48,12 +48,7 @@ EMPTY="$TMP/empty"
 : > "$EMPTY"
 EMPTY_HASH=$(sha256_file "$EMPTY") || die "cannot hash empty inheritance payload"
 
-# Set members come from the primary's own present files. A set whose primary
-# state cannot be proven refuses the push, so a transient failure never mirrors
-# a false absence onto the remote home.
-for set in $FM_INHERITABLE_CONFIG_SETS; do
-  fm_config_inherit_set_source_state "$CONFIG/$set" >/dev/null || die "cannot inspect primary set: $set"
-done
+# Set members come from the primary's own present files.
 ITEMS=$(fm_config_inherit_items "$CONFIG")
 # Phase 1 is local: every item is classified, validated, and snapshotted in
 # allowlist order before anything is sent, so a refusal here leaves the remote
@@ -104,6 +99,13 @@ while IFS= read -r rel; do
 done <<EOF
 $ITEMS
 EOF
+
+# A set whose primary state cannot be proven refuses the push before anything is
+# sent, so a transient failure never mirrors a false absence onto the remote
+# home. Per-item refusals above come first so they name their own item.
+for set in $FM_INHERITABLE_CONFIG_SETS; do
+  fm_config_inherit_set_source_state "$CONFIG/$set" >/dev/null || die "cannot inspect primary set: $set"
+done
 
 # Mirror primary absence for set members: ask the remote home which members it
 # holds (a read-only query) and plan an absent removal for each one the primary
