@@ -123,6 +123,46 @@ FM_CLASSIFY_PAUSED_VERB_DEFAULT='paused'
 # shellcheck disable=SC2034 # Read by the watcher and daemon (fm-watch.sh, fm-supervise-daemon.sh), not this lib.
 FM_PAUSE_RESURFACE_SECS_DEFAULT=14400
 
+# Away-mode long-wait escalation thresholds, the one owner of these numbers.
+# While the captain is away, a lane can sit in a state that is not a wedge and
+# not a declared wait, so neither the wedge timer nor the pause cadence above
+# ever surfaces it: the 2026-09-26 to 10-01 backpass found 8 to 16 h overnight
+# gaps on 4 of 15 live tasks, one of them a no-mistakes run CI-active for 16.4 h.
+# bin/fm-watch.sh's away_long_wait_tick escalates a lane that has held one of the
+# classes crew_away_long_wait_class names for at least its threshold:
+#   ci-active  60 min. CI on these repositories settles well inside an hour, so
+#              a run still monitoring checks past that is stuck or flaky, not slow.
+#   base-drift 30 min. A run parked at its rebase gate needs a conflict
+#              resolution a worker or a steer clears in minutes (the backpass
+#              median response to an open event was 3 min), and every idle minute
+#              lets the base move further.
+#   idle-green 2 h. A green PR awaiting merge is a legitimate hold, but main's
+#              open-to-merge p90 was 109 min, so past 2 h nobody is merging it.
+# Each FM_AWAY_*_ESCALATE_SECS variable overrides its default with a positive
+# integer; any other value keeps the default. A lane already escalated repeats
+# once per FM_PAUSE_RESURFACE_SECS while it stays in the same class.
+# shellcheck disable=SC2034 # Read by fm_away_long_wait_threshold below and the watcher's tick.
+FM_AWAY_CI_ACTIVE_ESCALATE_SECS_DEFAULT=3600
+# shellcheck disable=SC2034
+FM_AWAY_BASE_DRIFT_ESCALATE_SECS_DEFAULT=1800
+# shellcheck disable=SC2034
+FM_AWAY_IDLE_GREEN_ESCALATE_SECS_DEFAULT=7200
+
+# fm_away_long_wait_threshold <class>: print the escalation threshold in seconds
+# for one crew_away_long_wait_class token; return 1 for any other token.
+fm_away_long_wait_threshold() {  # <class>
+  local value default
+  case "$1" in
+    ci-active) value=${FM_AWAY_CI_ACTIVE_ESCALATE_SECS:-}; default=$FM_AWAY_CI_ACTIVE_ESCALATE_SECS_DEFAULT ;;
+    base-drift) value=${FM_AWAY_BASE_DRIFT_ESCALATE_SECS:-}; default=$FM_AWAY_BASE_DRIFT_ESCALATE_SECS_DEFAULT ;;
+    idle-green) value=${FM_AWAY_IDLE_GREEN_ESCALATE_SECS:-}; default=$FM_AWAY_IDLE_GREEN_ESCALATE_SECS_DEFAULT ;;
+    *) return 1 ;;
+  esac
+  case "$value" in ''|0*|*[!0-9]*) value=$default ;; esac
+  [ "${#value}" -le 9 ] || value=$default
+  printf '%s\n' "$value"
+}
+
 # fm_utc_iso_to_epoch <YYYY-MM-DDTHH:MM[:SS]Z>: the one portable UTC ISO 8601
 # reader shared by the declared-wait vocabulary and the away-posture record
 # (bin/fm-afk-contract.sh). Prints epoch seconds; returns 1 on any other shape
@@ -2695,6 +2735,43 @@ crew_run_is_validating() {  # <id> -> "<run-id> <step>" on stdout
   [ -n "$step" ] && [ -n "$run" ] || return 1
   case "$run" in *[[:space:]]*) return 1 ;; esac
   printf '%s %s\n' "$run" "$step"
+}
+
+# Print the away-mode long-wait class of crew <id>, or nothing, from its one
+# bin/fm-crew-state.sh line (thresholds and rationale: FM_AWAY_*_ESCALATE_SECS
+# above). Only a run-step sourced verdict qualifies, and each class matches a
+# whole component that fm-crew-state.sh mints, never free text:
+#   ci-active  working, `ci running` or the `no CI checks reported ...` reading
+#              of a run still in its ci monitor;
+#   base-drift parked, `parked at rebase` with or without its findings count;
+#   idle-green done, `checks green: PR ready for review ...` or
+#              `checks green: PR held for merge ...` (merged PRs are not waits).
+# The forge fallback is skipped (FM_CREW_STATE_NO_FORGE=1) so a periodic scan
+# never pays a network read; a terminal passed run whose PR state needs that
+# read therefore stays unclassified rather than guessed.
+# Same caveat as crew_absorb_class: one fm-crew-state.sh read per call.
+crew_away_long_wait_class() {  # <id>
+  local id=$1 line state src rest part class=''
+  [ -n "$id" ] || return 0
+  line=$(FM_CREW_STATE_NO_FORGE=1 "$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+  case "$line" in state:*) ;; *) return 0 ;; esac
+  state=${line#state: }; state=${state%% *}
+  src=${line#*source: }; src=${src%% *}
+  [ "$src" = run-step ] || return 0
+  rest="$line · "
+  while [ -n "$rest" ]; do
+    part=${rest%% · *}
+    rest=${rest#* · }
+    case "$state" in
+      working)
+        case "$part" in 'ci running'|'no CI checks reported '*) class='ci-active' ;; esac ;;
+      parked)
+        case "$part" in 'parked at rebase'|"parked at rebase: "*) class='base-drift' ;; esac ;;
+      done)
+        case "$part" in 'checks green: PR ready for review'*|'checks green: PR held for merge'*) class='idle-green' ;; esac ;;
+    esac
+  done
+  [ -z "$class" ] || printf '%s\n' "$class"
 }
 
 # Directories excluded from the worktree write probe below, and the depth it walks.
