@@ -326,7 +326,7 @@ fm_dp_cmd_card() {
     || { rm -f -- "$out.tmp"; fm_dr_die "could not render the pick card"; }
   mv -f -- "$out.tmp" "$out" || fm_dr_die "could not write $out"
   printf 'dispatch pick card: %s (%s pick(s): %s)\n' "$out" "${#files[@]}" "$(for code in "${files[@]}"; do basename -- "$code" .json; done | paste -sd' ' -)"
-  printf 'open it for the captain: lavish-axi %s\n' "$out"
+  printf 'open it for the captain: bin/fm-lavish-open.sh %s\n' "$out"
 }
 
 # picks [--recent]: pending requests, then answered picks of the last week.

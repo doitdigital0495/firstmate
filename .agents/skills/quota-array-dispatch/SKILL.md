@@ -52,7 +52,7 @@ A review can stop an unsafe route, not replace it with a hand-picked profile; fo
 
 When the resolver prints `status: captain-pick`, Jev could not route the brief and code will not guess, so the launch waits for the captain.
 1. Do not re-run with different wording to get past it, and do not launch anything for that task.
-2. Render the card with `bin/fm-dispatch-resolve.sh pick-card` (one card covers every pending pick), open it with `lavish-axi <card>`, and arm it with `bin/fm-procevent-lavish.sh arm <card>`.
+2. Render the card with `bin/fm-dispatch-resolve.sh pick-card` (one card covers every pending pick), open it with `bin/fm-lavish-open.sh <card>`, and arm it with `bin/fm-procevent-lavish.sh arm <card>`.
 3. Hold the gated task for the captain under `captain-hold-lifecycle`, naming in plain words what is waiting and that the card shows each option's quota and strength; relay it as a captain decision.
 4. Your own read of the brief may go into that decision as a one-line suggestion of the fitting row, labelled as yours; the captain's answer decides.
 5. When he answers `route <code> <n>` (on the card or in chat), run `bin/fm-dispatch-resolve.sh pick <code>` and launch exactly the printed profile; a refusal names what is missing, so ask him again rather than working around it.
