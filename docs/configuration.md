@@ -1888,7 +1888,7 @@ Set it high when a wrong pick is costly and low when the rule is a safe runner-u
 
 - A rule `floor` names the quota-axi `provider` and `scope` whose `effectivePercentRemaining` must be at least `min_percent` for the rule's profiles to apply.
 - A provider-only rule floor on an expanded provider binds to its `default` account row.
-- An absent or unknown row or unmeasured provider makes the floor unverifiable and escalates without authorizing default routing.
+- An absent or unknown row or unmeasured provider makes the floor unverifiable and goes to a captain pick without authorizing default routing.
 - A known percentage below the floor makes the tool resolve among `default` profiles instead.
 
 **Provider identifiers and mappings**
@@ -2170,7 +2170,7 @@ If preferred candidates remain eligible but none is rankable, it escalates inste
 With the home's `shared_quota: true` declaration ("Crew dispatch profiles"), the quota snapshots, floors, completeness gate, runway gates, and `spendPriority` argmax are skipped entirely; resolution is the matched rule's declared profile order (`preferred_provider` still narrows the pool; declared order then picks within it), and cross-account registration still applies.
 An incomplete choice runs the named Z.ai warm-up once where applicable and re-reads only incomplete stores with doubling backoff capped at 30 seconds.
 A failed re-read preserves the previous snapshot.
-The wait stops after 15 minutes and reports without a receipt; `FM_DISPATCH_QUOTA_WAIT_SECONDS` can only shorten that deadline (1..900).
+The wait stops after 15 minutes and, still incomplete, becomes a captain pick with every unmeasured candidate marked; `FM_DISPATCH_QUOTA_WAIT_SECONDS` can only shorten that deadline (1..900).
 Quota reads and warm-ups are bounded subprocess groups sharing that deadline; initial reads have a 180-second bound.
 The resolver records a fresh per-launch quota intake only after resolution becomes dispatchable, so a long wait never leaves the launch bound to an expired intake.
 `FM_DISPATCH_QUOTA_ATTEMPTS` (default 1000, clamped 1..1000) can further bound attempts and `FM_DISPATCH_QUOTA_BACKOFF_MS` (default 1500, clamped 250..30000) sets the initial backoff.
@@ -2178,8 +2178,8 @@ The `incomplete` block names each candidate's missing windows and retry times, a
 Any applicable `exhausted_now` row or known zero bound makes that candidate ineligible, and a known profile-floor shortfall does the same before unrelated quota uncertainty is considered.
 Missing or nonnumeric `spendPriority` evidence is never ranked, and every candidate prints its plan and evidence source (or unknown uncertainty) beside its window evidence (`windows=` with each id, remaining percent, and reset) or the reason it was not rankable, including on ambiguous and approval-gated outcomes that emit no profile.
 Duplicate concrete profiles with the same account, harness, model, and effort inside one rule or the default array are configuration errors rather than ties.
-The result is `clear`, `incomplete`, `escalate`, or `error`; ambiguity is resolved by code under the union policy below, not handed back for firstmate to choose.
-Outcomes exit 0 for inspection, but failure to issue a clear receipt (including the degraded cap) exits 3; require an actual receipt before launching.
+The result is `clear` or `captain-pick`; ambiguity is resolved by code under the union policy below, and what code cannot resolve goes to the captain, never back to firstmate to choose.
+Outcomes exit 0 for inspection, but failure to write a receipt or a pick request exits 3; require an actual receipt before launching.
 Response probabilities must contain exactly every offered choice, use numeric values from 0 through 1, and sum to approximately 1 within 0.01.
 Only a usage or configuration error exits 2: an unreadable brief, an existing but unreadable or malformed canonical rules file, or missing `jq`, each reported and never selected around.
 The socket transport requires Python 3; a missing transport dependency stops resolution without authorizing a hand-picked launch.
@@ -2204,14 +2204,20 @@ An approval-gated union stops for the captain, and rule floors are never silentl
 
 **Failure and authority boundary**
 
-Jev error, outage, or invalid answer gets exactly one retry, then code resolves the default row by spendPriority and emits a visibly `degraded` receipt with the reason.
-At most three degraded receipts may be issued per UTC day per home; an atomic reservation counts even if writing subsequently fails, and a busy or stale counter lock fails closed for operator review.
-Session startup lists degraded receipts issued in the last 24 hours, including reservations that were not launched.
-After the cap, routing stops and reports; there is no self-service degraded producer and no profile parameter on the resolve path.
-An approval row stops and asks the captain.
+No route is ever guessed and no model is hardcoded as a fallback.
+A missing socket first gets `FM_JEVD_SOCKET_WAIT_SECONDS` (default 15, 0..60) to come back, because jevd's service manager owns its restart; the resolver never starts jevd.
+Jev error, outage, or invalid answer then gets exactly one retry, and a still-failing Jev makes the result a captain pick.
+So does an answer code cannot dispatch: an approval row, nothing rankable, an ambiguous union with a missing class, an unverifiable rule floor, a row that is not in the table, or quota evidence still incomplete at the deadline.
 An exact spendPriority tie keeps the candidates whose binding window (the windows bounding the limiting row) resets soonest, then takes the next slot of a fixed round-robin over a stable account, harness, model and effort order kept in `state/dispatch-tie-round-robin`; the result prints a `tie_break:` line naming the tie, the reset and the slot (captain 2026-11-02).
+
+A captain pick writes a private request under `state/dispatch-pick/` and launches nothing.
+The request offers every row of the table, Jev's most probable rows first when Jev answered, with each candidate's eligibility, reasons, remaining quota, `spendPriority`, `reasoning_class`, and strongest-class mark computed exactly as for a clear resolution.
+The resolver prints the numbered options, and `bin/fm-dispatch-resolve.sh pick-card [<code>...]` renders them into one self-contained card under `data/dispatch-pick/` for the captain's Lavish board.
+The captain answers `route <code> <n>` on the card or in chat, adding `override` to take an option that is not eligible, or `route <code> wait` to wait for Jev.
+`bin/fm-dispatch-resolve.sh pick <code>` turns that answer into a `captain` receipt only after verifying the captain's own captured words; `bin/fm-dispatch-pick-lib.sh`'s header owns the request format and that verification.
+`--captain-pick` on a resolution asks for the same request even when Jev's answer is dispatchable, which is how a per-task captain override is made: the request shows what Jev and code would take, and only the captain's words decide.
 The resolver does not replace launch-time catalog, authentication, account, quota-intake, or harness validation.
-Firstmate can stop a route it judges unsafe, but cannot select another profile or mint an override in phase 1.
+Firstmate can stop a route it judges unsafe, but cannot select another profile, mint a receipt, or answer a pick.
 The historical direct-HTTP canary is not evidence for this socket route.
 
 **jevd dispatch Choices wire protocol (version 1)**
@@ -2223,7 +2229,7 @@ Each connection carries one UTF-8 JSON request followed by a newline, and one ne
 The request envelope is `{"type":"dispatch_choices","version":1,"request":{"model":"typesafe/jev-1.13","state":{"task":{"project":"...","brief":"..."}},"questions":{"rule":{},"profile":{}}}}`, where both questions are typed Choices with `type`, `instructions`, and a string-valued `criteria` map.
 The reply envelope is `{"type":"dispatch_choices","version":1,"requestId":"<jevd-log-id>","response":{"model":"...","answers":{"rule":{"choice":"rule_1","confidence":0.9,"probabilities":{}},"profile":{"choice":"rule_1_1","confidence":0.9,"probabilities":{}}},"usage":{"input_tokens":1,"output_tokens":1}}}`.
 Probability maps must contain all offered choices; the example's empty maps are placeholders, not valid answers.
-`requestId` is a nonempty daemon-generated audit identifier, not supplied by firstmate; failure replies, unsupported types, missing ids, and invalid Choices count as errors for retry/degraded handling.
+`requestId` is a nonempty daemon-generated audit identifier, not supplied by firstmate; failure replies, unsupported types, missing ids, and invalid Choices count as errors for the retry and the captain pick.
 The dispatch request type explicitly allows every project's intent/spec text, including client projects; the command-gate request type keeps its separate scope.
 No account labels, quota, credentials, approval, `why`, or reasoning ranks are sent.
 The daemon owns the key, pinned model, upstream request, and request-id log; the resolver owns eligibility, ranking, and receipts.
@@ -2245,10 +2251,10 @@ bin/fm-spawn.sh <id> <project> <the printed profile flags> --mode <mode>
 
 **Producers**
 
-Only the resolver's dispatchable result writes a receipt, sourced `jev` or `degraded` under the failure policy above.
+A clear resolution writes a `jev` receipt, and `pick` writes a `captain` receipt from the captain's verified answer, under the failure policy above.
 `choose`, `degraded`, and `override` subcommands cannot mint receipts.
-Legacy `resolve`, `choose`, and `override` source receipts are refused, including previously logged overrides.
-Override support remains disabled until phase-5 bound-to-words verification exists.
+Legacy `resolve`, `choose`, `override`, and `degraded` source receipts are refused, including previously logged overrides.
+A captain receipt is admitted only when it names an answered pick request whose answered option is exactly its row and profile, with `override` recorded whenever that option was not eligible.
 
 **What the gate checks**
 
@@ -2289,13 +2295,41 @@ Nothing admits that move on a host with routing rows today.
 
 **Overrides are never silent**
 
-The session-start digest continues to list historical `data/dispatch-overrides.jsonl` entries from the last seven days; no new overrides are produced in phase 1.
+The session-start digest continues to list historical `data/dispatch-overrides.jsonl` entries from the last seven days; no new self-service overrides are produced.
 `bin/fm-dispatch-resolve.sh overrides` prints the whole log.
+The digest also lists pending and answered captain picks from the last week (`bin/fm-dispatch-resolve.sh picks --recent`), and every finding of `bin/fm-dispatch-resolve.sh audit --problems`.
+
+**Audit**
+
+`audit` re-checks each receipt of the last seven days against the record that should have produced it.
+A `jev` receipt's request id must appear as a dispatch line in jevd's own log, read from `journalctl --user -u jevd` and from `FM_JEVD_AUDIT_LOG` (default `~/.local/state/jev-gate/jevd.log`); the journal's unit field is set by the journal, while the log file is same-user writable and only deters.
+A `captain` receipt's words must still be the newest captain answer for its pick in the host mirror or the Lavish server state.
+No readable jevd log is reported as unverifiable, never as clean.
+
+**Criteria export**
+
+`bin/fm-dispatch-resolve.sh rows --json` prints the routing criteria as one JSON document: the table hash, every row's matching text, approval, confidence floor, and quota floor, and each candidate's profile, provider, account, floor, quota scope, and `reasoning_class`, plus the count of candidates that declare no class.
+It reads the table only, so a viewer such as the captain's cockpit can show the source of truth without a copy that drifts.
 
 **Homes**
 
 The scripts are shared and the records are not: every home, including each secondmate home, runs the same gate against its own `config/crew-dispatch.json`, its own `state/dispatch-receipt/`, and its own override log.
 A remote secondmate's own launch is the one exception described under "Second mates" above: its receipt lives in, and is consumed in, its parent home.
+
+## Finished-worker reaper (config/reaper)
+
+No crewmate or scout outlives its task.
+`bin/fm-send.sh` refuses new work for a worker whose newest lifecycle status is done or failed, so new work becomes a new task with its own route and worker; its header owns the `--after-done` reasons that still reach a finished worker.
+While `config/reaper` exists, session start arms the reaper as the watcher check `state/reaper.check.sh`, which looks at every recorded ship and scout task on the normal `FM_CHECK_INTERVAL` cadence.
+A task is due two hours after its done line (`FM_REAP_DONE_SECS`), or, while a Lavish board is registered for it, one day after the later of that line and the board's newest round (`FM_REAP_BOARD_SECS`); second mates are never due.
+
+| `config/reaper` | Behavior |
+| --- | --- |
+| absent | The reaper is off; `bin/fm-reap.sh list` still shows every verdict. |
+| `shadow` | One `check:` wake names the due workers when that set changes; nothing is closed. Run a shadow week before enforcing. |
+| `enforce` | Due workers are torn down in the background through `bin/fm-teardown.sh` without `--force`, and the next check wake names what closed and what was kept. |
+
+Teardown keeps a worker whose work has not landed and retains a backlog item the captain still holds, so enforcing never discards work or a captain call; `bin/fm-reap.sh list` shows every verdict.
 
 ## Toolchain
 

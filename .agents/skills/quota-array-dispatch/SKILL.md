@@ -48,6 +48,17 @@ Firstmate can optionally arm `bin/fm-procevent-quota.sh` for a recurring mid-tas
 The required [typed resolver](../../../docs/configuration.md#typed-dispatch-resolution-jevd-socket) owns dispatch selection in code; this skill remains the agent's eligibility and accounting review.
 A review can stop an unsafe route, not replace it with a hand-picked profile; follow the resolver's non-dispatchable outcome rather than minting a self-service receipt.
 
+## Captain pick
+
+When the resolver prints `status: captain-pick`, Jev could not route the brief and code will not guess, so the launch waits for the captain.
+1. Do not re-run with different wording to get past it, and do not launch anything for that task.
+2. Render the card with `bin/fm-dispatch-resolve.sh pick-card` (one card covers every pending pick), open it with `bin/fm-lavish-open.sh <card>`, and arm it with `bin/fm-procevent-lavish.sh arm <card>`.
+3. Hold the gated task for the captain under `captain-hold-lifecycle`, naming in plain words what is waiting and that the card shows each option's quota and strength; relay it as a captain decision.
+4. Your own read of the brief may go into that decision as a one-line suggestion of the fitting row, labelled as yours; the captain's answer decides.
+5. When he answers `route <code> <n>` (on the card or in chat), run `bin/fm-dispatch-resolve.sh pick <code>` and launch exactly the printed profile; a refusal names what is missing, so ask him again rather than working around it.
+6. `route <code> wait` means re-run the resolver once jevd answers; a new resolution issues a new code.
+When the captain asks for a specific route on one task, resolve with `--captain-pick` and follow the same steps.
+
 ## Read the default TOON
 
 When the home declares the [shared-quota opt-out](#shared-quota-opt-out), skip this section's dispatch quota reading and every quota-derived check built on it (quota rows, completeness, floors, runway, and `spendPriority`); catalog eligibility and reasoning-class fit still apply, and the launch gate below still requires its fresh intake record.

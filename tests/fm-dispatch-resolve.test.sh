@@ -48,7 +48,10 @@ export PATH="$FAKEBIN:$PATH" QUOTA_FIXTURE="$QUOTA" QUOTA_CALL_LOG="$TMP_ROOT/qu
 # The intake is real even though other suites default to a gate bypass.
 unset FM_QUOTA_INTAKE_TEST_BYPASS
 export FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE="$HOME_DIR/state" FM_CONFIG_OVERRIDE="$HOME_DIR/config" FM_DATA_OVERRIDE="$HOME_DIR/data" FM_JEVD_SOCKET="$SOCKET"
-export FM_DISPATCH_QUOTA_ATTEMPTS=2 FM_DISPATCH_QUOTA_BACKOFF_MS=250 FM_DISPATCH_QUOTA_WAIT_SECONDS=1
+export FM_DISPATCH_QUOTA_ATTEMPTS=2 FM_DISPATCH_QUOTA_BACKOFF_MS=250 FM_DISPATCH_QUOTA_WAIT_SECONDS=1 FM_JEVD_SOCKET_WAIT_SECONDS=0
+# Captain words come only from these two records; the tests own both.
+export FM_LAVISH_STATE="$TMP_ROOT/lavish-state.json" FM_JEVD_AUDIT_JOURNAL=0 FM_JEVD_AUDIT_LOG="$TMP_ROOT/jevd.log"
+MIRROR="$HOME_DIR/state/.host-mirror.jsonl"
 write_response() {
   jq -n --slurpfile rules "$RULES" --arg choice "$1" --argjson confidence "$2" --argjson probabilities "$3" --arg preferred "${4:-rule_1_1}" '
     def profiles: if type == "array" then . else [.] end;
@@ -121,6 +124,7 @@ cp "$RULES" "$TMP_ROOT/rules-backup"
 jq 'del(.default.reasoning_class)' "$TMP_ROOT/rules-backup" > "$RULES"
 run "$BRIEF" --task pager
 assert_contains "$out" 'ambiguous union needs numeric reasoning_class' 'missing class stops'
+assert_contains "$out" 'status: captain-pick' 'a union with a missing class goes to the captain'
 jq '.rules[1].approval="captain"' "$TMP_ROOT/rules-backup" > "$RULES"
 run "$BRIEF" --task pager
 assert_contains "$out" 'requires captain approval' 'approval union stops'
@@ -129,7 +133,8 @@ pass 'ambiguous unions keep strongest class; unknown class and approval stop'
 write_response rule_2 0.95 '{"rule_1":0.03,"rule_2":0.95,"default":0.02}'
 jq '.rules[1].approval="captain"' "$TMP_ROOT/rules-backup" > "$RULES"
 run "$BRIEF" --task pager
-assert_contains "$out" 'status: escalate' 'captain approval stops'
+assert_contains "$out" 'status: captain-pick' 'captain approval stops for the captain to pick'
+assert_contains "$out" 'row rule_2 p=0.95 approval=captain' 'the approval row leads the pick, Jev probability shown'
 cp "$TMP_ROOT/rules-backup" "$RULES"
 # Unknown quota waits within the configured, shorten-only deadline, never guesses.
 cp "$QUOTA" "$TMP_ROOT/quota-backup"
@@ -137,13 +142,15 @@ jq '.providers[0].quotaSemantics = {status:"unknown", effectiveAvailability:[]}'
 # No recent good reading exists, so the R11 reuse cannot answer for it.
 rm -rf "$HOME_DIR/state/quota-last-good"
 run "$BRIEF" --task pager
-assert_contains "$out" 'status: incomplete' "unknown quota stays incomplete: $out"
+assert_contains "$out" 'status: captain-pick' "unknown quota after the deadline goes to the captain: $out"
+assert_contains "$out" 'jev: incomplete' 'the pick names the incomplete evidence'
+assert_contains "$out" '-> incomplete: provider claude unmeasured' 'unmeasured candidates stay listed, marked'
 hang_started=$SECONDS
 QUOTA_HANG_READ=1 QUOTA_CALL_LOG="$TMP_ROOT/hang-calls" run "$BRIEF" --task pager
-assert_contains "$out" 'status: incomplete' 'slow retry remains incomplete'
+assert_contains "$out" 'jev: incomplete' 'slow retry remains incomplete'
 [ "$((SECONDS - hang_started))" -lt 12 ] || fail 'slow quota retry escaped the shortened incomplete deadline'
 cp "$TMP_ROOT/quota-backup" "$QUOTA"
-pass 'escalate asks captain; incomplete retries and stops without receipt, including slow reads'
+pass 'escalate and incomplete go to a captain pick without a receipt, including slow reads'
 # Exercise quota ranking and fail-closed policies via the socket interface.
 cp "$RULES" "$TMP_ROOT/original-rules"
 cp "$QUOTA" "$TMP_ROOT/original-quota"
@@ -179,7 +186,7 @@ assert_equals opus "$(jq -r .profile.model "$(latest)")" 'limiting model-specifi
 # All unknown candidates remain in the choice, rather than dropping to a known one.
 jq 'del(.providers[0].windows[1].resetsAt)' "$TMP_ROOT/original-quota" > "$QUOTA"
 run "$BRIEF" --task pager
-assert_contains "$out" 'status: incomplete' 'missing reset evidence blocks ranking'
+assert_contains "$out" 'jev: incomplete' 'missing reset evidence blocks ranking'
 cp "$TMP_ROOT/original-quota" "$QUOTA"
 cp "$TMP_ROOT/original-rules" "$RULES"
 jq '.rules[1].floor={scope:"all_models",provider:"claude",min_percent:10}' "$TMP_ROOT/original-rules" > "$RULES"
@@ -188,7 +195,8 @@ run "$BRIEF" --task pager
 assert_contains "$out" 'ambiguous union >= 0.25' 'measured ambiguous rule floor can route'
 jq '.rules[1].floor.min_percent=99' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
 run "$BRIEF" --task pager
-assert_contains "$out" 'status: escalate' 'strongest class below rule floor stops rather than downgrading'
+assert_contains "$out" 'status: captain-pick' 'strongest class below rule floor stops rather than downgrading'
+assert_contains "$out" 'not eligible: row floor all_models below 99%' 'the floor reason is on the card'
 cp "$TMP_ROOT/original-rules" "$RULES"
 jq '.rules[0].min_confidence=0.9 | .rules[1].min_confidence=0.4' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
 write_response rule_1 0.95 '{"rule_1":0.5,"rule_2":0.49,"default":0.01}'
@@ -339,8 +347,9 @@ run "$BRIEF" --task pager
 assert_equals haiku "$(jq -r .profile.model "$(latest)")" 'an exhausted_now runway releases the reserve'
 seat_quota 80 1 through_reset 0 > "$TMP_ROOT/claude2-quota.json"
 run "$BRIEF" --task pager
-assert_contains "$out" 'status: escalate' 'an exhausted session window alone never releases the reserve'
-assert_contains "$out" 'fallback_only reserve held' 'the held reserve is disclosed while escalating'
+assert_contains "$out" 'status: captain-pick' 'an exhausted session window alone never releases the reserve'
+assert_contains "$out" 'fallback_only reserve held' 'the held reserve is disclosed while asking the captain'
+assert_contains "$out" '--account claude3  class=1  remaining=70%  spendPriority=5  -> not eligible: fallback_only reserve held' 'the pick card marks the held reserve'
 # Another family's candidate still outranks an activated reserve.
 jq '.providers += [{provider:"codex",plan:"Plus",state:{status:"fresh"},windows:[{id:"five_hour",kind:"session",percentRemaining:85,resetsAt:"2030-01-02T00:00:00Z"}],quotaSemantics:{status:"known",effectiveAvailability:[{scope:"all_models",status:"known",effectivePercentRemaining:85,boundedBy:["five_hour"],runway:{status:"through_reset"},selection:{spendPriority:1}}]}}]' \
   "$TMP_ROOT/original-quota" > "$QUOTA"
@@ -391,34 +400,210 @@ expect_code 3 "$code" 'table changed while Jev answered is refused'
 assert_contains "$out" 'table changed during resolution' 'table race names binding mismatch'
 cp "$TMP_ROOT/original-rules" "$RULES"
 pass 'default-only tables, one-retry recovery and in-flight input binding'
-# Unusable permissions and invalid replies cannot be treated as Jev routes.
+# Unusable permissions and invalid replies never become a guessed route:
+# nothing is receipted and the captain picks from every row.
+pick_code() { sed -n 's/^  pick: \([A-HJ-NP-Z2-9]\{4\}\) .*/\1/p' <<<"$out"; }
+captain_mirror() {  # <text> [tag]
+  jq -cn --arg text "$1" --arg tag "${2:-captain}" --argjson epoch "$(date +%s)" --argjson seq "$((++MIRROR_SEQ))" \
+    '{seq:$seq,epoch:$epoch,key:"main-1",id:"p\($seq)",tag:$tag,text:$text}' >> "$MIRROR"
+}
+captain_lavish() {  # <text> [role] [epoch]
+  local at
+  at=$(date -u -d "@${3:-$(date +%s)}" +%Y-%m-%dT%H:%M:%S.123Z)
+  [ -f "$FM_LAVISH_STATE" ] || printf '{"sessions":{"s1":{"chat":[]}}}\n' > "$FM_LAVISH_STATE"
+  jq --arg text "$1" --arg role "${2:-user}" --arg at "$at" '.sessions.s1.chat += [{at:$at,role:$role,text:$text}]' "$FM_LAVISH_STATE" > "$FM_LAVISH_STATE.next"
+  mv "$FM_LAVISH_STATE.next" "$FM_LAVISH_STATE"
+}
+MIRROR_SEQ=0
 printf '{}\n' > "$RESPONSE"
 requests_before=$(wc -l < "$LOG")
-run "$BRIEF" --task pager
-assert_contains "$out" 'source: degraded' 'two invalid answers degrade'
+before=$(latest)
+run "$BRIEF" --project pager --task pager
+assert_contains "$out" 'status: captain-pick' "two invalid answers go to the captain: $out"
+assert_contains "$out" 'receipt: none - nothing launches until the captain picks' 'no receipt, no guessed route'
+assert_not_contains "$out" 'source: degraded' 'nothing is degraded'
+assert_equals "$before" "$(latest)" 'invalid answers write no receipt'
 assert_equals 2 "$(( $(wc -l < "$LOG") - requests_before ))" 'invalid answers get exactly two attempts'
 chmod 666 "$SOCKET"
 requests_before=$(wc -l < "$LOG")
 run "$BRIEF" --task pager
-assert_contains "$out" 'source: degraded' 'unsafe socket mode degrades without sending task text'
+assert_contains "$out" 'status: captain-pick' 'unsafe socket mode goes to the captain'
 assert_equals "$requests_before" "$(wc -l < "$LOG")" 'unsafe socket never receives task text'
 chmod 600 "$SOCKET"
 run degraded-recent
-assert_contains "$out" 'source=degraded' 'degraded receipt is visible to session startup'
-# New fixture day for the isolated daily-cap proof.
-rm -f "$HOME_DIR/state/dispatch-receipt"/degraded-*.count
-pass 'invalid replies and unsafe socket modes fail closed, with visible degraded records'
+expect_code 2 "$code" 'the degraded listing is retired'
+pass 'invalid replies and unsafe socket modes fail closed into a captain pick'
+# A restarting jevd gets a bounded wait for its socket before any attempt.
 kill "$SERVER"; wait "$SERVER" 2>/dev/null || true; SERVER=''
 rm -f "$SOCKET"
-for ((i=1;i<=3;i++)); do
-  run "$BRIEF" --task pager
-  assert_contains "$out" 'source: degraded' "down Jev produces degraded receipt $i: $out"
-  assert_equals degraded "$(jq -r .source "$(latest)")" 'flag retained'
-  assert_contains "$(jq -r .degraded.reason "$(latest)")" 'one retry' 'reason retained'
-done
+write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'
+( sleep 1; exec python3 "$ROOT/tests/jevd-dispatch-stub.py" "$SOCKET" "$RESPONSE" "$LOG" ) &
+SERVER=$!
+FM_JEVD_SOCKET_WAIT_SECONDS=8 run "$BRIEF" --task pager
+assert_contains "$out" 'source: jev' "a socket that returns within the wait routes through Jev: $out"
+kill "$SERVER"; wait "$SERVER" 2>/dev/null || true; SERVER=''
+rm -f "$SOCKET"
+pass 'a restarting jevd gets a bounded socket wait'
+# Jev down: every row is offered, with evidence, and nothing launches.
 before=$(latest)
+run "$BRIEF" --project pager --task pager
+assert_contains "$out" 'status: captain-pick' "Jev down goes to the captain: $out"
+assert_contains "$out" 'jev: down - jevd socket' 'the reason names the absent socket'
+assert_equals "$before" "$(latest)" 'Jev down writes no receipt'
+code_a=$(pick_code)
+req="$HOME_DIR/state/dispatch-pick/$code_a.json"
+assert_present "$req" 'pick request written'
+assert_equals 600 "$(stat -c %a "$req")" 'pick request private'
+assert_equals 3 "$(jq '.options | length' "$req")" 'every row and candidate offered'
+assert_equals 'rule_1 rule_2 default' "$(jq -r '[.options[].row.id] | join(" ")' "$req")" 'table order without Jev'
+assert_equals null "$(jq -c .jev "$req")" 'no Jev answer recorded when Jev is down'
+assert_contains "$out" 'option 2: --harness claude --model opus  class=2' 'options carry class'
+run gate --brief "$BRIEF" --task pager --harness claude --model opus
+expect_code 3 "$code" 'nothing launches before the captain picks'
+pass 'Jev down offers every row with evidence and writes no receipt'
+# The pick needs the captain's own words, newer than the request.
+run pick "$code_a"
+expect_code 3 "$code" 'no words, no receipt'
+assert_contains "$out" "no captain words answer route $code_a" 'missing answer named'
+captain_lavish "route $code_a 2" user "$(( $(jq -r .issuedAtEpoch "$req") - 30 ))"
+captain_lavish "route $code_a 2" agent
+captain_mirror "route $code_a 2" main
+run pick "$code_a"
+expect_code 3 "$code" 'older captain text and firstmate text never count'
+captain_mirror "please route ${code_a,,} 2"
+before=$(latest)
+run pick "$code_a"
+expect_code 0 "$code" "captain chat answer admits the option: $out"
+assert_contains "$out" 'source: captain' 'captain source shown'
+assert_contains "$out" 'profile: --harness claude --model opus' 'the picked profile is printed'
+receipt=$(latest)
+[ "$receipt" != "$before" ] || fail 'pick wrote no receipt'
+assert_equals captain "$(jq -r .source "$receipt")" 'receipt source'
+assert_equals "$code_a 2 mirror false" "$(jq -r '"\(.captainPick.code) \(.captainPick.option) \(.captainPick.channel) \(.captainPick.override)"' "$receipt")" 'pick binding recorded'
+assert_equals rule_2 "$(jq -r .row.id "$receipt")" 'row recorded'
+run gate --brief "$BRIEF" --task pager --harness claude --model sonnet
+expect_code 3 "$code" 'a different profile than the captain picked is refused'
+cp "$receipt" "$TMP_ROOT/captain-receipt"
+jq '.captainPick.option = 1' "$TMP_ROOT/captain-receipt" > "$receipt"
+run gate --brief "$BRIEF" --task pager --harness claude --model opus
+expect_code 3 "$code" 'a receipt that no longer matches its answered option is refused'
+cp "$TMP_ROOT/captain-receipt" "$receipt"
+run gate --brief "$BRIEF" --task pager --harness claude --model opus --consume
+expect_code 0 "$code" "captain receipt admits its launch: $out"
+assert_contains "$out" "captain pick $code_a option 2" 'gate names the pick'
+run pick "$code_a"
+expect_code 3 "$code" 'a pick is answered once'
+assert_contains "$out" 'already answered' 'second answer refused'
+pass 'captain words in chat become a receipt bound to the pick and its option'
+# An option that is not eligible needs the word override, and says so.
+jq '.rules[1].use.floor={scope:"all_models",min_percent:90}' "$TMP_ROOT/original-rules" > "$RULES"
 run "$BRIEF" --task pager
-assert_contains "$out" 'degraded daily cap 3 reached' 'fourth degraded stops and reports'
-assert_equals "$before" "$(latest)" 'cap produced no receipt'
-pass 'Jev down retries once then flagged degraded default route, capped at 3 UTC/day'
+code_b=$(pick_code)
+assert_contains "$out" 'option 2: --harness claude --model opus' 'ineligible option still offered'
+assert_contains "$out" 'not eligible: profile floor all_models below 90%' 'ineligibility reason shown'
+captain_lavish "route $code_b 2"
+run pick "$code_b"
+expect_code 3 "$code" 'not eligible without override is refused'
+assert_contains "$out" "route $code_b 2 override" 'the refusal names the override words'
+captain_lavish "Ok then: route $code_b 2 override"
+run pick "$code_b"
+expect_code 0 "$code" "override answer on the card admits the option: $out"
+assert_equals "lavish true" "$(jq -r '"\(.captainPick.channel) \(.captainPick.override)"' "$(latest)")" 'override recorded'
+run gate --brief "$BRIEF" --task pager --harness claude --model opus
+expect_code 0 "$code" 'override receipt admits its launch'
+cp "$TMP_ROOT/original-rules" "$RULES"
+pass 'not-eligible options need the captain override words and record them'
+# The captain can ask to choose even when Jev routes cleanly.
+write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'
+python3 "$ROOT/tests/jevd-dispatch-stub.py" "$SOCKET" "$RESPONSE" "$LOG" &
+SERVER=$!
+for ((i=0;i<100;i++)); do [ ! -S "$SOCKET" ] || break; sleep 0.02; done
+before=$(latest)
+run "$BRIEF" --task pager --captain-pick
+assert_contains "$out" 'status: captain-pick' "captain-requested pick: $out"
+assert_contains "$out" 'jev: captain-requested - the captain asked to choose this route; Jev and code would take claude sonnet from rule_1' 'the routed answer is shown beside the pick'
+assert_equals "$before" "$(latest)" 'a captain-requested pick writes no Jev receipt'
+assert_equals 'rule_1 rule_2 default' "$(jq -r '[.options[].row.id] | reduce .[] as $x ([]; if index($x) then . else . + [$x] end) | join(" ")' "$HOME_DIR/state/dispatch-pick/$(pick_code).json")" 'rows in Jev probability order'
+kill "$SERVER"; wait "$SERVER" 2>/dev/null || true; SERVER=''
+rm -f "$SOCKET"
+pass 'the captain can ask to choose a route Jev would have taken'
+# Ambiguous answers, reused evidence, changed briefs, and wait.
+run "$BRIEF" --task pager
+code_c=$(pick_code)
+captain_mirror "route $code_c 1, or maybe route $code_c 3"
+run pick "$code_c"
+expect_code 3 "$code" 'two answers in one entry are refused'
+assert_contains "$out" 'more than one answer' 'ambiguity named'
+captain_mirror "route $code_c 1"
+rm -rf "$HOME_DIR/state/dispatch-pick/used.keep"; cp -r "$HOME_DIR/state/dispatch-pick/used" "$HOME_DIR/state/dispatch-pick/used.keep"
+printf '%s' "mirror:main-1:$MIRROR_SEQ" | sha256sum | awk '{print $1}' | xargs -I{} touch "$HOME_DIR/state/dispatch-pick/used/{}"
+run pick "$code_c"
+expect_code 3 "$code" 'evidence that admitted another pick is refused'
+assert_contains "$out" 'already admitted another pick' 'single use named'
+printf '\nAnother deliverable\n' >> "$BRIEF"
+run pick "$code_c"
+expect_code 3 "$code" 'a brief changed since the card is refused'
+assert_contains "$out" 'changed since pick' 'brief change named'
+run "$BRIEF" --task pager
+code_d=$(pick_code)
+captain_mirror "route $code_d wait"
+before=$(latest)
+run pick "$code_d"
+expect_code 3 "$code" 'wait issues nothing'
+assert_contains "$out" 'status: wait' 'wait recorded'
+assert_equals "$before" "$(latest)" 'wait wrote no receipt'
+pass 'ambiguous, reused, stale-brief and wait answers issue nothing'
+# The card is self-contained and dark; picks lists pending and answered.
+run "$BRIEF" --task pager
+code_e=$(pick_code)
+run pick-card
+expect_code 0 "$code" "card renders: $out"
+card="$HOME_DIR/data/dispatch-pick/route-pick.html"
+assert_present "$card" 'card written'
+assert_contains "$(<"$card")" "data-prompt=\"route $code_e 1\"" 'each option queues its exact words'
+assert_contains "$(<"$card")" 'color-scheme:dark' 'card is dark'
+assert_contains "$(<"$card")" 'data-lavish-annotate="off"' 'card is a decision page, not an annotation surface'
+assert_not_contains "$(<"$card")" 'http' 'card makes no external request'
+assert_not_contains "$(<"$card")" "route $code_a" 'answered picks are not on the card'
+run picks --recent
+assert_contains "$out" "route pick $code_e PENDING" 'pending pick listed'
+assert_contains "$out" "route pick $code_a task=pager answered" 'answered pick listed'
+assert_contains "$out" 'wait for Jev' 'wait answer listed'
+pass 'the card offers exact answers; pending and answered picks are listed'
+# Legacy degraded receipts are refused at the gate.
+cp "$TMP_ROOT/captain-receipt" "$receipt"
+rm -f "$receipt.spent"
+jq '.source = "degraded" | .degraded = {reason: "legacy"}' "$TMP_ROOT/captain-receipt" > "$receipt"
+run gate --brief "$BRIEF" --task pager --harness claude --model opus
+expect_code 3 "$code" 'a legacy degraded receipt is refused'
+rm -f "$receipt"
+# The audit matches Jev receipts to jevd's own log and captain receipts to their words.
+rm -f "$FM_JEVD_AUDIT_LOG"
+run audit --problems
+assert_contains "$out" 'unverifiable: no jevd log readable' 'no log is reported as unverifiable, not as clean'
+printf 'jevd: listening (mode 0600)\n' > "$FM_JEVD_AUDIT_LOG"
+run audit --problems
+assert_contains "$out" 'NOT IN JEVD LOG' 'a Jev receipt jevd never logged is flagged'
+for f in "$HOME_DIR/state/dispatch-receipt"/dispatch-*.json; do
+  jq -r 'select(.source == "jev") | "jevd: dispatch \(.jev.requestId): rule=\(.jev.ruleChoice) profile=x in=1"' "$f" >> "$FM_JEVD_AUDIT_LOG"
+done
+run audit --problems
+assert_equals '' "$out" "every logged Jev receipt and every captain receipt audits clean: $out"
+jev_receipt=$(grep -l '"source":"jev"' "$HOME_DIR/state/dispatch-receipt"/dispatch-*.json | tail -1)
+jq '.jev.requestId = "forged-1"' "$jev_receipt" > "$jev_receipt.next"; mv "$jev_receipt.next" "$jev_receipt"
+captain_receipt=$(grep -l '"source":"captain"' "$HOME_DIR/state/dispatch-receipt"/dispatch-*.json | head -1)
+jq '.captainPick.wordsSha256 = ("0" * 64)' "$captain_receipt" > "$captain_receipt.next"; mv "$captain_receipt.next" "$captain_receipt"
+run audit
+assert_contains "$out" 'request id forged-1 has no jevd dispatch line' 'forged request id flagged'
+assert_contains "$out" 'CAPTAIN WORDS: captain words differ' 'forged captain words flagged'
+assert_contains "$out" '2 finding(s)' 'finding count'
+pass 'audit reconciles Jev receipts with jevd log and captain receipts with their words'
+# The criteria export carries every row's text, gates and classes.
+run rows --json
+expect_code 0 "$code" 'criteria export runs'
+assert_equals 'rule_1 rule_2 default' "$(jq -r '[.rows[].id] | join(" ")' <<<"$out")" 'every row exported'
+assert_equals '1 2 1' "$(jq -r '[.rows[].candidates[].reasoning_class] | join(" ")' <<<"$out")" 'classes exported'
+assert_equals 0 "$(jq -r .unclassed <<<"$out")" 'no unclassed candidates'
+assert_equals 64 "$(jq -r '.table.sha256 | length' <<<"$out")" 'table hash exported'
+pass 'rows --json exports the routing criteria'
 echo '# all fm-dispatch-resolve tests passed'

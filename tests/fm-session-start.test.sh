@@ -2723,13 +2723,19 @@ EOF
     "the digest must surface a recorded override"
   assert_contains "$out" 'task=ov1  --harness claude --model fable --effort max  captain: "put this one on fable at max"' \
     "the digest must list the task, the profile, and the captain's words"
-  mkdir -p "$home/state/dispatch-receipt"
-  jq -cn --argjson now "$(date +%s)" '{issuedAtEpoch:$now,source:"degraded",task:"dv1",receipt:"dispatch-fixture.json",degraded:{reason:"jevd down after one retry"}}' \
+  # A pending captain pick and an unbacked Jev receipt are both surfaced.
+  mkdir -p "$home/state/dispatch-receipt" "$home/state/dispatch-pick"
+  jq -cn --argjson now "$(date +%s)" '{code:"K7QM",issuedAtEpoch:$now,issuedAt:"now",task:"pk1",jevStatus:"down",reason:"jevd socket absent",options:[]}' \
+    > "$home/state/dispatch-pick/K7QM.json"
+  jq -cn --argjson now "$(date +%s)" '{issuedAtEpoch:$now,source:"jev",task:"jv1",receipt:"dispatch-fixture.json",jev:{requestId:"never-logged"}}' \
     > "$home/state/dispatch-receipt/dispatch-fixture.json"
-  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-  assert_contains "$out" 'Degraded dispatch receipts (last 24 hours)' 'degraded routes must remain visible'
-  assert_contains "$out" 'task=dv1 source=degraded' 'degraded task and source are named'
-  pass "historical overrides and recent degraded receipts are listed in the next session-start digest"
+  printf 'jevd: listening\n' > "$home/jevd.log"
+  out=$(FM_JEVD_AUDIT_JOURNAL=0 FM_JEVD_AUDIT_LOG="$home/jevd.log" run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" 'Captain route picks (state/dispatch-pick, last 7 days)' 'pending captain picks must be visible'
+  assert_contains "$out" 'route pick K7QM PENDING for task pk1' 'the pending pick and its task are named'
+  assert_contains "$out" 'Dispatch receipt audit findings (last 7 days)' 'audit findings must be visible'
+  assert_contains "$out" 'task=jv1 source=jev: NOT IN JEVD LOG' 'an unbacked Jev receipt is named'
+  pass "historical overrides, pending captain picks and receipt audit findings are listed in the next session-start digest"
 }
 
 # --- fleet-state digest: no in-flight tasks ----------------------------------
