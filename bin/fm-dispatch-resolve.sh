@@ -3,7 +3,7 @@
 # profile from a task brief with Jev through the private jevd socket.
 #
 # Usage:
-#   fm-dispatch-resolve.sh <brief-file> [--project <name>] [--task <id>]
+#   fm-dispatch-resolve.sh <brief-file> [--project <name>] [--task <id>] [--captain-pick]
 #   fm-dispatch-resolve.sh pick <CODE>            (captain's answer -> receipt)
 #   fm-dispatch-resolve.sh pick-card [<CODE>...]  (render the captain's card)
 #   fm-dispatch-resolve.sh picks [--recent]       (pending and answered picks)
@@ -107,7 +107,9 @@
 #                 incomplete at the deadline). It writes a pick request offering
 #                 every row and candidate with its evidence and launches nothing;
 #                 the captain answers "route <CODE> <n>" and `pick <CODE>` turns
-#                 the verified answer into a receipt.
+#                 the verified answer into a receipt. --captain-pick asks for
+#                 the same request even when Jev's answer is dispatchable: the
+#                 captain's per-task override, still decided only by his words.
 #   Only clear and pick write receipts; every other outcome leaves launch refused.
 #   Outcomes exit 0 for inspection; callers must require a printed receipt.
 #   Failure to write a receipt or a pick request exits 3, as does `pick` when
@@ -205,12 +207,13 @@ usage() {
   ' "$0"
 }
 
-BRIEF='' PROJECT='' TASK_ID='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES=''
+BRIEF='' PROJECT='' TASK_ID='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES='' FORCE_PICK=false
 NEVER_SEND_PATH="$CONFIG/dispatch-never-send"
 while [ $# -gt 0 ]; do
   case "$1" in
     --project) [ $# -ge 2 ] || die "--project needs a value"; PROJECT=$2; shift 2 ;;
     --task) [ $# -ge 2 ] || die "--task needs a value"; TASK_ID=$2; shift 2 ;;
+    --captain-pick) FORCE_PICK=true; shift ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown flag $1" ;;
     *) [ -z "$BRIEF" ] || die "one brief file only"; BRIEF=$1; shift ;;
@@ -567,7 +570,7 @@ done < <(jq -r '[((.rules // [])[] | .use | if type == "array" then .[] else . e
 # ---- resolution: declared gates + quota evidence + argmax, all in jq ----------
 fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" \
-    --argjson final "${3:-false}" --arg jev_failed "$JEV_FAILED_REASON" \
+    --argjson final "${3:-false}" --arg jev_failed "$JEV_FAILED_REASON" --argjson force_pick "$FORCE_PICK" \
     --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
@@ -903,6 +906,10 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   # Jev answered but code cannot dispatch it: the captain picks from the table.
   if $out.status == "escalate" or $out.status == "error" or ($out.status == "incomplete" and $final) then
     $out + {status: "captain-pick", jev_status: $out.status, pick: pick_rows($a.probabilities)}
+  elif $force_pick and $out.status == "clear" then
+    $out + {status: "captain-pick", jev_status: "captain-requested",
+      reason: "the captain asked to choose this route; Jev and code would take \($out.chosen.profile.harness) \($out.chosen.profile.model // "default") from \($out.row)",
+      pick: pick_rows($a.probabilities)} | del(.chosen)
   else $out end
   end'
 }

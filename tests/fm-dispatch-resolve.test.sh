@@ -492,6 +492,20 @@ run gate --brief "$BRIEF" --task pager --harness claude --model opus
 expect_code 0 "$code" 'override receipt admits its launch'
 cp "$TMP_ROOT/original-rules" "$RULES"
 pass 'not-eligible options need the captain override words and record them'
+# The captain can ask to choose even when Jev routes cleanly.
+write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'
+python3 "$ROOT/tests/jevd-dispatch-stub.py" "$SOCKET" "$RESPONSE" "$LOG" &
+SERVER=$!
+for ((i=0;i<100;i++)); do [ ! -S "$SOCKET" ] || break; sleep 0.02; done
+before=$(latest)
+run "$BRIEF" --task pager --captain-pick
+assert_contains "$out" 'status: captain-pick' "captain-requested pick: $out"
+assert_contains "$out" 'jev: captain-requested - the captain asked to choose this route; Jev and code would take claude sonnet from rule_1' 'the routed answer is shown beside the pick'
+assert_equals "$before" "$(latest)" 'a captain-requested pick writes no Jev receipt'
+assert_equals 'rule_1 rule_2 default' "$(jq -r '[.options[].row.id] | reduce .[] as $x ([]; if index($x) then . else . + [$x] end) | join(" ")' "$HOME_DIR/state/dispatch-pick/$(pick_code).json")" 'rows in Jev probability order'
+kill "$SERVER"; wait "$SERVER" 2>/dev/null || true; SERVER=''
+rm -f "$SOCKET"
+pass 'the captain can ask to choose a route Jev would have taken'
 # Ambiguous answers, reused evidence, changed briefs, and wait.
 run "$BRIEF" --task pager
 code_c=$(pick_code)
