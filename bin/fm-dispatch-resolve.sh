@@ -1,42 +1,25 @@
 #!/usr/bin/env bash
 # fm-dispatch-resolve.sh - resolve one concrete crewmate or scout dispatch
-# profile from a task brief with Jev via OpenRouter's System One API, opt-in.
+# profile from a task brief with Jev through the private jevd socket.
 #
 # Usage:
-#   fm-dispatch-resolve.sh <brief-file> [--project <name>]
-#   fm-dispatch-resolve.sh --supports-credential-source <source>
+#   fm-dispatch-resolve.sh <brief-file> [--project <name>] [--task <id>]
+#   fm-dispatch-resolve.sh rows
+#   choose, degraded, and override are disabled (exit 2).
+#   fm-dispatch-resolve.sh overrides [--recent]   (historical log)
+#   fm-dispatch-resolve.sh degraded-recent        (read-only, last 24h)
+#   fm-dispatch-resolve.sh gate ...     (called by fm-spawn.sh and fm-control.sh)
 #
-# Opt-in gate: OPENROUTER_API_KEY non-empty in this process environment, else an
-#   OPENROUTER_API_KEY= line in $FM_HOME/.env read with fmx_env_get, the same
-#   accessor as FMX_PAIRING_TOKEN (bin/fm-env-lib.sh). The environment wins.
-#   Absent in both: one "dispatch-resolve: off" line on stderr, nothing on
-#   stdout, exit 0, no network call, so firstmate dispatches exactly as today.
-#   With neither, the key may come from the credential source declared for the
-#   route's provider (below). The key lives in one shell variable and reaches
-#   curl as a header read from a file descriptor, never on argv; nothing logs or
-#   writes it.
+# Dispatch receipts: every launch in a home whose config/crew-dispatch.json has
+#   routing rows is admitted only against a receipt this script wrote, and
+#   bin/fm-dispatch-receipt-lib.sh's header owns the receipt format and the
+#   gate's rules. Only the resolution below writes a receipt, on clear,
+#   sourced jev or degraded. Self-service profiles and overrides are refused.
+#   The resolver never reads a key or .env; jevd owns key custody.
+#   docs/configuration.md owns the socket protocol and failure policy.
 #
-# Credential source declaration: the optional $CONFIG/dispatch-credential-sources.json
-#   ($CONFIG is FM_CONFIG_OVERRIDE, else $FM_HOME/config) is a JSON object keyed
-#   by provider (openrouter for the default route, typesafe for the direct
-#   route). Each value says where that provider's key lives and holds no key:
-#   {"source": "macos-keychain", "service": "<name>", "account": "<name>"},
-#   where account is optional and no other field is accepted.
-#   bin/fm-credential-source-lib.sh owns the schema and its adapters. The file is
-#   read only when neither the environment nor .env supplied the route's key,
-#   and only that provider's entry is used. With no entry and no key the tool is
-#   off as above. An unreadable or invalid file exits 2 naming the problem,
-#   never a value. A declared source this host cannot run, or that yields no key
-#   within 5 seconds, is an error outcome ending "nothing sent", with no network
-#   or quota call, so it is not mistaken for an unconfigured resolver.
-#
-# Capability probe: --supports-credential-source <source> prints "supported"
-#   and exits 0, or prints "unsupported" and exits 1, for a source name such as
-#   macos-keychain on this host. It reads no declaration, retrieves no
-#   credential, and runs no credential tool.
-#
-# What it does when on with at least one rule: one POST to
-#   https://openrouter.ai/api/v1/systemone with the project name and brief's Task subsections (whole brief for legacy input) as
+# What it does: a dispatch_choices socket request with the project name and
+#   brief's Task subsections (whole brief for legacy input) as
 #   state and TWO batched Choice questions: rule matching (every rule's `when`
 #   plus a neutral none option) and candidate/effort preference. Jev returns the matched rule, a probability per
 #   option, and a confidence. Everything after that is jq: the confidence
@@ -46,8 +29,7 @@
 #   spendPriority argmax over the eligible candidates. An eligible but wholly
 #   unrankable preferred family escalates rather than authorizing another
 #   family. The model never sees quota, catalogs, approvals, preferred_provider,
-#   `why`, or credential paths. With no rules, it returns
-#   a non-clear result so firstmate keeps using the existing intake.
+#   `why`, account labels, or credential paths.
 #   Before any selection, a completeness gate requires every candidate in the
 #   choice set to have every applicable quota window - session, weekly, and
 #   model-scoped - known with its remaining percent and reset time, or positively
@@ -71,75 +53,87 @@
 #   "Typed dispatch resolution" owns this tool's operator contract.
 #
 # Never-send check: when the optional $FM_HOME/config/dispatch-never-send list
-#   exists, the endpoint URL and every string value of the built request are
-#   checked against it before the POST. Each non-blank, non-# line is a literal matched
+#   exists, every string value of the built request is checked against it
+#   before the socket request. Each non-blank, non-# line is a literal matched
 #   case-insensitively, with surrounding whitespace trimmed and every run of
 #   whitespace, on both sides, treated as one space. A match, or a list that
 #   is not a readable regular file, prints one
 #   "dispatch-resolve: off (...; nothing sent)" line on stderr naming at most
 #   the list line number, never its value, prints nothing on stdout, and exits
-#   0 with no network or quota call, exactly like the absent-key off path.
+#   0 with no network or quota call and no receipt (the launch gate refuses).
 #
 # Output (stdout, TOON-style block):
 #   dispatch-resolve:
-#     status: clear | ambiguous | incomplete | escalate | error
+#     status: clear | incomplete | escalate | error
 #     model/latency_ms/tokens, rule (when excerpt) and confidence, probabilities
 #     fallback: <runner-up rule taken when the picked rule missed its own floor>
 #     reason: <why the status is not clear>
 #     preferred_provider: <family and preference or fallback decision, when applied>
 #     candidate: <harness>:<model> provider=.. windows=<id>:<pct>%@<reset>,.. [account=..] scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | not eligible: <reason> | incomplete: <reason>
 #     profile: --harness <h> [--model <m>] [--effort <e>]     (status clear only)
-#   clear      -> pass the profile line to fm-spawn.sh unless you state a reason to override
-#   ambiguous  -> confidence below the floor; decide as today from the probabilities
-#                 (window evidence is complete on this outcome, so hand-picking is informed)
+#     receipt: <name> (one launch, valid <n>s) | none - ... | not written (...)
+#   clear      -> pass the profile line to fm-spawn.sh exactly; the receipt it wrote
+#                 admits that profile and no other
+#   ambiguous  -> code unions qualifying rows and keeps strongest reasoning_class;
+#                 missing ranks stop for captain review, never hand-pick
 #   incomplete -> quota window evidence for at least one candidate is not fully known;
 #                 the block names the missing windows per candidate: wait for the
 #                 measurement and re-run; never pick by hand or drop the unknown candidate
 #   escalate   -> the rule requires captain approval, no candidate is rankable, or a genuine tie
-#   error      -> API, network, response, quota-axi, or declared credential source failure; decide as today
-#   Every outcome exits 0 so an intake is never blocked by this tool.
+#   error      -> stop and report; Jev failures retry once then use capped degraded
+#   Only clear writes a receipt; every other outcome leaves launch refused.
+#   Outcomes exit 0 for inspection; callers must require a printed receipt.
+#   Failure to issue a clear receipt (including degraded cap) exits 3.
 #   Exit 2 only for a usage or configuration error (unreadable brief, an
-#   existing unreadable rules file, malformed rules, an unreadable or invalid
-#   credential source declaration, or missing jq), which is actionable, never
-#   selected around.
-#   The capability probe is the one other exit: 1 for an unsupported source.
+#   existing unreadable rules file, malformed rules, or missing jq), which is
+#   actionable, never selected around.
 #
 # Environment:
-#   OPENROUTER_API_KEY opts in; FM_DISPATCH_ROUTE=direct with TYPESAFE_API_KEY
-#   selects the direct typesafe.ai fallback instead.
-#   FM_DISPATCH_QUOTA_ATTEMPTS bounds quota-axi gather attempts per incomplete
-#   store (default 3, clamped 1..10) and FM_DISPATCH_QUOTA_BACKOFF_MS is the
-#   doubling backoff base between attempts (default 1500 ms, clamped 250..30000).
+#   FM_JEVD_SOCKET selects the private socket (default XDG state jev-gate/jevd.sock).
+#   FM_DISPATCH_QUOTA_WAIT_SECONDS shortens the 900-second incomplete deadline.
+#   FM_DISPATCH_QUOTA_ATTEMPTS bounds quota gathers (default 1000, 1..1000).
+#   FM_DISPATCH_QUOTA_BACKOFF_MS sets initial backoff (1500, 250..30000 ms).
 #
-# Authority: this tool never replaces firstmate's judgment, quota-array-dispatch,
-#   the captain-approval gate, or fm-spawn.sh validation; it publishes one
-#   inspectable answer plus every candidate's evidence, in code.
+# Authority: Jev chooses the row; code applies deterministic quota and approval
+#   gates without replacing fm-spawn.sh validation. It publishes one
+#   inspectable answer plus every candidate's evidence, in code, and it is the
+#   only writer of the receipts the launch gate checks.
 set -u
 
-OPENROUTER_API_KEY_PRIVATE=${OPENROUTER_API_KEY:-}
-DIRECT_API_KEY_PRIVATE=${TYPESAFE_API_KEY:-}
-export -n OPENROUTER_API_KEY_PRIVATE DIRECT_API_KEY_PRIVATE 2>/dev/null || true
-unset OPENROUTER_API_KEY TYPESAFE_API_KEY
+# This process never reads a credential or .env; jevd owns key custody.
+unset OPENROUTER_API_KEY TYPESAFE_API_KEY OPENROUTER_JEV_API_KEY
+unset OPENROUTER_API_KEY_PRIVATE DIRECT_API_KEY_PRIVATE TS_KEY
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-$FM_ROOT}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 # shellcheck source=bin/fm-quota-axi-lib.sh
 . "$SCRIPT_DIR/fm-quota-axi-lib.sh"
 # shellcheck source=bin/fm-control-lib.sh
 . "$SCRIPT_DIR/fm-control-lib.sh"
-# shellcheck source=bin/fm-env-lib.sh
-. "$SCRIPT_DIR/fm-env-lib.sh"
 # shellcheck source=bin/fm-timing-lib.sh
 . "$SCRIPT_DIR/fm-timing-lib.sh"
 # shellcheck source=bin/fm-account-lib.sh
 . "$SCRIPT_DIR/fm-account-lib.sh"
 # shellcheck source=bin/fm-brief-heading-lib.sh
 . "$SCRIPT_DIR/fm-brief-heading-lib.sh"
-# shellcheck source=bin/fm-credential-source-lib.sh
-. "$SCRIPT_DIR/fm-credential-source-lib.sh"
+# shellcheck source=bin/fm-worker-account-lib.sh
+. "$SCRIPT_DIR/fm-worker-account-lib.sh"
+# shellcheck source=bin/fm-dispatch-receipt-lib.sh
+. "$SCRIPT_DIR/fm-dispatch-receipt-lib.sh"
+
+# Inspection and launch admission never contact Jev.
+case "${1:-}" in
+  gate) shift; fm_dr_cmd_gate "$@"; exit $? ;;
+  choose|degraded|override) fm_dr_die "self-service receipts are disabled; run the resolver with the brief (Jev or capped degraded only)" ;;
+  rows) shift; fm_dr_cmd_rows "$@"; exit $? ;;
+  overrides) shift; fm_dr_cmd_overrides "$@"; exit $? ;;
+  degraded-recent) fm_dr_cmd_degraded_recent; exit $? ;;
+esac
 
 CONFIDENCE_FLOOR=0.6
 # Bounded gather for an incomplete choice: attempts and the doubling backoff base.
@@ -150,20 +144,21 @@ fm_dispatch_clamp_int() {  # <value> <default> <min> <max>
   [ "$v" -le "$hi" ] || v=$hi
   printf '%s' "$v"
 }
-QUOTA_ATTEMPTS=$(fm_dispatch_clamp_int "${FM_DISPATCH_QUOTA_ATTEMPTS:-}" 3 1 10)
+QUOTA_ATTEMPTS=$(fm_dispatch_clamp_int "${FM_DISPATCH_QUOTA_ATTEMPTS:-}" 1000 1 1000)
+QUOTA_WAIT_SECONDS=$(fm_dispatch_clamp_int "${FM_DISPATCH_QUOTA_WAIT_SECONDS:-}" 900 1 900)
+# The incomplete wait starts only after the first result; each initial read
+# is independently bounded so a wedged quota process cannot hang dispatch.
+QUOTA_DEADLINE=0
+fm_dispatch_bounded() {
+  python3 "$SCRIPT_DIR/fm-dispatch-bounded.py" "$QUOTA_DEADLINE" "$@"
+}
 QUOTA_BACKOFF_MS=$(fm_dispatch_clamp_int "${FM_DISPATCH_QUOTA_BACKOFF_MS:-}" 1500 250 30000)
-fmx_dispatch_route "$OPENROUTER_API_KEY_PRIVATE" "$DIRECT_API_KEY_PRIVATE" "$FM_HOME/.env"
-unset OPENROUTER_API_KEY_PRIVATE DIRECT_API_KEY_PRIVATE
-TS_TIMEOUT=5
+TS_MODEL=typesafe/jev-1.13
+JEV_SOCKET=${FM_JEVD_SOCKET:-${XDG_STATE_HOME:-$HOME/.local/state}/jev-gate/jevd.sock}
+DEGRADED_REASON=''
 DEFAULT_WHEN="No listed rule applies to this task."
 
 die() { printf 'error: %s\n' "$1" >&2; exit 2; }
-emit_error() {
-  local reason=$1
-  echo "dispatch-resolve: error ($reason)" >&2
-  printf 'dispatch-resolve:\n  status: error\n  reason: %s\n' "$reason"
-  exit 0
-}
 no_rules() {
   printf 'dispatch-resolve:\n  status: escalate\n  reason: no rules to match\n'
   exit 0
@@ -176,59 +171,17 @@ usage() {
   ' "$0"
 }
 
-BRIEF='' PROJECT='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES=''
+BRIEF='' PROJECT='' TASK_ID='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES=''
 NEVER_SEND_PATH="$CONFIG/dispatch-never-send"
-CRED_PATH="$CONFIG/dispatch-credential-sources.json"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --supports-credential-source)
-      [ $# -ge 2 ] || die "--supports-credential-source needs a value"
-      if fm_credsrc_supported "$2"; then echo supported; exit 0; fi
-      echo unsupported; exit 1 ;;
     --project) [ $# -ge 2 ] || die "--project needs a value"; PROJECT=$2; shift 2 ;;
+    --task) [ $# -ge 2 ] || die "--task needs a value"; TASK_ID=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown flag $1" ;;
     *) [ -z "$BRIEF" ] || die "one brief file only"; BRIEF=$1; shift ;;
   esac
 done
-
-# ---- opt-in gate ---------------------------------------------------------------
-# declared_key <provider>: set TS_KEY from the source $CRED_PATH declares for
-# <provider>. Returns 1 when none is declared, which leaves the off gate in
-# charge. Past that point nothing is mistaken for an unconfigured resolver: an
-# unreadable or invalid declaration is a configuration error, and a declared
-# source this host cannot run or that yields no key is an error outcome.
-# Nothing is sent in either case.
-declared_key() {
-  local provider=$1 src problem value rc
-  [ -e "$CRED_PATH" ] || [ -L "$CRED_PATH" ] || return 1
-  [ -r "$CRED_PATH" ] || die "credential source declaration not readable: $CRED_PATH"
-  command -v jq >/dev/null 2>&1 || die "jq required"
-  problem=$(fm_credsrc_check "$CRED_PATH" typesafe openrouter) \
-    || die "malformed credential source declaration: $CRED_PATH - $problem"
-  fm_credsrc_declares "$CRED_PATH" "$provider" || return 1
-  src=$(fm_credsrc_field "$CRED_PATH" "$provider" source)
-  fm_credsrc_supported "$src" \
-    || emit_error "credential source $src declared for $provider is not supported on this host; nothing sent"
-  value=$(fm_credsrc_read "$CRED_PATH" "$provider"); rc=$?
-  if [ "$rc" -ne 0 ] || [ -z "$value" ]; then
-    if fm_timed_out "$rc"; then
-      emit_error "credential source $src declared for $provider did not answer in time; nothing sent"
-    fi
-    emit_error "credential source $src declared for $provider is unavailable; nothing sent"
-  fi
-  TS_KEY=$value
-}
-if [ -z "$TS_KEY" ]; then
-  case "$TS_KEY_NAME" in
-    TYPESAFE_API_KEY) declared_key typesafe || true ;;
-    *) declared_key openrouter || true ;;
-  esac
-fi
-if [ -z "$TS_KEY" ]; then
-  echo "dispatch-resolve: off ($TS_KEY_NAME absent from the environment and $FM_HOME/.env)" >&2
-  exit 0
-fi
 
 # ---- inputs --------------------------------------------------------------------
 [ -n "$BRIEF" ] || die "brief file required (see --help)"
@@ -240,6 +193,8 @@ RULES=$(mktemp) || die "mktemp failed"
 trap 'rm -f "$RULES"' EXIT
 cp "$RULES_PATH" "$RULES" || die "could not snapshot rules file: $RULES_PATH"
 chmod 400 "$RULES" || die "could not protect rules snapshot"
+FM_DR_TABLE_SHA=$(fm_dr_sha256 < "$RULES") || die "could not hash rules snapshot"
+FM_DR_BRIEF_SHA=$(fm_dr_brief_hash "$BRIEF") || die "could not hash brief"
 VERIFIED_HARNESSES=$(fm_control_harnesses | jq -Rsc 'split("\n") | map(select(length > 0))')
 
 # The fields this tool consumes must be well formed; bootstrap owns the wider
@@ -270,6 +225,7 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   def profile_bad($p):
     ($p | type) != "object"
     or ($p | has("account") and ((.account | type) != "string" or (.account | test("^[a-z][a-z0-9-]*$") | not)))
+    or ($p | has("reasoning_class") and ((.reasoning_class | type) != "number"))
     or (($p.harness | type) != "string") or (($p.harness | length) == 0)
     or ($p | has("model") and ((.model | type) != "string" or (.model | length) == 0))
     or ($p | has("effort") and ((.effort | type) != "string" or (.effort | length) == 0))
@@ -336,7 +292,14 @@ done < <(jq -r '
 
 RULE_COUNT=$(jq -r '(.rules // []) | length' "$RULES")
 
-if [ "$RULE_COUNT" -eq 0 ]; then
+emit_error() {
+  local reason=$1
+  echo "dispatch-resolve: error ($reason)" >&2
+  printf 'dispatch-resolve:\n  status: error\n  reason: %s\n' "$reason"
+  exit 0
+}
+
+if [ "$RULE_COUNT" -eq 0 ] && ! jq -e 'has("default")' "$RULES" >/dev/null; then
   no_rules
 fi
 
@@ -351,8 +314,8 @@ never_send_off() {
   exit 0
 }
 
-# Checks the endpoint and every string the request carries, so no text reaches
-# the network unchecked. grep's own stderr is discarded because it can echo the pattern.
+# Checks every string the request carries, so no text reaches the network
+# unchecked. grep's own stderr is discarded because it can echo the pattern.
 never_send_check() {
   local list value n=0 rc
   [ -e "$NEVER_SEND_PATH" ] || [ -L "$NEVER_SEND_PATH" ] || return 0
@@ -360,7 +323,7 @@ never_send_check() {
     || never_send_off "$NEVER_SEND_PATH is not a readable regular file"
   # Collapse whitespace runs on both sides so a value the brief wraps across
   # lines or spaces differently still matches
-  jq -r --arg endpoint "$TS_BASE/v1/systemone" '$endpoint, (.. | strings) | gsub("\\s+"; " ")' <<<"$REQUEST" > "$SEND_TEXT" 2>/dev/null \
+  jq -r '.. | strings | gsub("\\s+"; " ")' <<<"$REQUEST" > "$SEND_TEXT" 2>/dev/null \
     || never_send_off "could not extract the request text to check"
   list=$(jq -Rr 'gsub("\\s+"; " ")' "$NEVER_SEND_PATH" 2>/dev/null) \
     || never_send_off "could not read $NEVER_SEND_PATH"
@@ -404,10 +367,10 @@ else
   cp "$BRIEF" "$TASK_TEXT" || die "could not read brief: $BRIEF"
 fi
 LAT_MS=null
-command -v curl >/dev/null 2>&1 || emit_error "curl not installed"
-  REQUEST=$(jq -n --rawfile brief "$TASK_TEXT" --arg project "$PROJECT" --arg model "$TS_MODEL" \
+command -v python3 >/dev/null 2>&1 || emit_error "python3 not installed"
+REQUEST=$(jq -n --rawfile brief "$TASK_TEXT" --arg project "$PROJECT" --arg model "$TS_MODEL" \
     --arg none_criterion "$DEFAULT_WHEN" --slurpfile rules "$RULES" '
-    ($rules[0]) as $cfg |
+    ($rules[0] | .rules //= []) as $cfg |
     ($cfg.rules | to_entries | map({key: ("rule_" + ((.key + 1) | tostring)), value: .value.when}) | from_entries) as $criteria |
     {
       model: $model,
@@ -421,24 +384,25 @@ command -v curl >/dev/null 2>&1 || emit_error "curl not installed"
         profile: {
           type: "choice",
           instructions: "Choose the best candidate and effort for this task from the rule you matched above. These are preferences only; code checks eligibility and quota independently.",
-          criteria: ([$cfg.rules | to_entries[] | .key as $i | .value as $rule |
+          criteria: (([$cfg.rules | to_entries[] | .key as $i | .value as $rule |
             (if ($rule.use | type) == "array" then $rule.use else [$rule.use] end) | to_entries[] |
-            {key: "rule_\($i + 1)_\(.key + 1)", value: "\($rule.when) | \(.value.harness) \(.value.model // "default") effort=\(.value.effort // "default") account=\(.value.account // "home")"}] | from_entries)
+            {key: "rule_\($i + 1)_\(.key + 1)", value: "\($rule.when) | \(.value.harness) \(.value.model // "default") effort=\(.value.effort // "default")"}] +
+            [($cfg.default // [] | if type == "array" then . else [.] end) | to_entries[] |
+             {key:"default_\(.key + 1)",value:"Default | \(.value.harness) \(.value.model // "default") effort=\(.value.effort // "default")"}]) | from_entries)
         }
       }
     }')
   never_send_check
   T0=$(fm_timing_now_ms)
-  HTTP=$(printf '%s' "$REQUEST" | curl -sS --max-time "$TS_TIMEOUT" -o "$RESP_FILE" -w '%{http_code}' \
-    -X POST "$TS_BASE/v1/systemone" -H 'Content-Type: application/json' \
-    -H @/dev/fd/3 3< <(printf 'Authorization: Bearer %s\n' "$TS_KEY") \
-    --data-binary @- 2>/dev/null) || HTTP=000
-  T1=$(fm_timing_now_ms)
-  LAT_MS=$(( T1 - T0 ))
-  [ "$HTTP" = 200 ] || emit_error "http $HTTP after ${LAT_MS} ms: $(head -c 200 "$RESP_FILE" 2>/dev/null | tr '\n' ' ')"
-jq -e --slurpfile rules "$RULES" '
-    (($rules[0].rules | to_entries | map("rule_" + ((.key + 1) | tostring))) + ["default"] | sort) as $choices |
-    ([$rules[0].rules | to_entries[] | .key as $i | .value.use | (if type == "array" then . else [.] end) | to_entries[] | "rule_\($i + 1)_\(.key + 1)"] | sort) as $profiles |
+  jev_ok=0
+  for jev_attempt in 1 2; do
+    if ! printf '%s' "$REQUEST" | python3 "$SCRIPT_DIR/fm-jevd-dispatch.py" "$JEV_SOCKET" > "$RESP_FILE"; then
+      continue
+    fi
+    if jq -e --slurpfile rules "$RULES" '
+    (($rules[0].rules // [] | to_entries | map("rule_" + ((.key + 1) | tostring))) + ["default"] | sort) as $choices |
+    (([$rules[0].rules // [] | to_entries[] | .key as $i | .value.use | (if type == "array" then . else [.] end) | to_entries[] | "rule_\($i + 1)_\(.key + 1)"] +
+      [($rules[0].default // [] | if type == "array" then . else [.] end) | to_entries[] | "default_\(.key + 1)"]) | sort) as $profiles |
     (.answers.profile.choice | type) == "string" and
     (.answers.profile.choice as $preferred | ($profiles | index($preferred)) != null) and
     (.answers.profile.confidence | type) == "number" and
@@ -446,7 +410,9 @@ jq -e --slurpfile rules "$RULES" '
     (.answers.profile.probabilities | type) == "object" and
     ((.answers.profile.probabilities | keys | sort) == $profiles) and
     all(.answers.profile.probabilities[]; type == "number" and . >= 0 and . <= 1) and
+    ((.answers.profile.probabilities | [.[]] | add) as $total | $total >= 0.99 and $total <= 1.01) and
     (.answers.rule.choice | type) == "string" and
+    (.answers.rule.choice as $chosen | ($choices | index($chosen)) != null) and
     (.answers.rule.confidence | type) == "number" and
     .answers.rule.confidence >= 0 and .answers.rule.confidence <= 1 and
     (.answers.rule.probabilities | type) == "object" and
@@ -457,7 +423,17 @@ jq -e --slurpfile rules "$RULES" '
       ((.usage | type) == "object" and
        (.usage.input_tokens | type) == "number" and
        (.usage.output_tokens | type) == "number"))' \
-  "$RESP_FILE" >/dev/null 2>&1 || emit_error "response is not a rule Choice answer"
+  "$RESP_FILE" >/dev/null 2>&1; then
+      jev_ok=1
+      break
+    fi
+  done
+  T1=$(fm_timing_now_ms)
+  LAT_MS=$(( T1 - T0 ))
+  if [ "$jev_ok" -ne 1 ]; then
+    DEGRADED_REASON="jevd down, error, or invalid Choice after $jev_attempt attempts (one retry)"
+    jq -n '{model: null, requestId: null, answers: {rule: {choice: "default", confidence: 1, probabilities: {default: 1}}, profile: {choice: "", confidence: 0, probabilities: {}}}}' > "$RESP_FILE"
+  fi
 
 # ---- plan evidence: declared plans in config/accounts.json ---------------------
 PLAN_CONFIG='{}'
@@ -465,6 +441,19 @@ if fm_account_registry_valid "$CONFIG/accounts.json"; then
   PLAN_CONFIG=$(jq -c 'def plans: if type == "object" then . else {} end; {default: (.plans | plans), accounts: (.accounts | with_entries(.value = (.value.plans | plans)))}' "$CONFIG/accounts.json")
 fi
 # ---- quota evidence: one snapshot per authorized credential store -------------
+# Default quota reads must use the same captain-owned pins as launch and intake.
+DEFAULT_CLAUDE_STORE=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+DEFAULT_PI_STORE=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}
+for default_harness in claude pi; do
+  default_selection=$(fm_worker_account_resolve "$default_harness" "$CONFIG") || die "invalid $default_harness worker account pin"
+  [ -n "$default_selection" ] || continue
+  default_store=${default_selection#*$'\t'}
+  default_store=${default_store%%$'\t'*}
+  case "$default_harness" in
+    claude) DEFAULT_CLAUDE_STORE=${default_store:-$HOME/.claude} ;;
+    pi) DEFAULT_PI_STORE=$default_store ;;
+  esac
+done
 # Under the shared-quota opt-out no quota-axi call is made: a stub snapshot keeps
 # the slurpfile contract, and registered accounts are recorded without one.
 SQ=false
@@ -478,7 +467,7 @@ fi
 gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapshot
   local fresh
   fresh=$(mktemp) || { printf 'mktemp failed'; return 1; }
-  if ! quota-axi --json > "$fresh" 2>/dev/null; then
+  if ! CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "$DEFAULT_CLAUDE_STORE") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "$DEFAULT_PI_STORE") fm_dispatch_bounded quota-axi --json > "$fresh" 2>/dev/null; then
     rm -f "$fresh"
     printf 'quota-axi --json failed'
     return 1
@@ -501,7 +490,7 @@ gather_account_snapshot() {  # <account>: refresh ACCOUNT_QUOTAS[account] from i
   [ "${#stores[@]}" -eq 3 ] || return 0
   store_key=$(printf '%s\n' "${stores[@]}" | jq -Rsc .)
   account_quota=$(mktemp) || emit_error "mktemp failed"
-  if ! CODEX_HOME=${stores[2]} PI_CODING_AGENT_DIR=${stores[1]} CLAUDE_CONFIG_DIR=${stores[0]} quota-axi --json > "$account_quota" 2>/dev/null || ! fm_quota_json_valid < "$account_quota"; then
+  if ! CODEX_HOME=$(fm_account_read_store codex "${stores[2]}") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "${stores[1]}") CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "${stores[0]}") fm_dispatch_bounded quota-axi --json > "$account_quota" 2>/dev/null || ! fm_quota_json_valid < "$account_quota"; then
     ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" '. + {($a): {key: $key, failed: true}}' <<<"$ACCOUNT_QUOTAS")
   else
     ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" --slurpfile snapshot "$account_quota" '. + {($a): {key: $key, snapshot: $snapshot[0]}}' <<<"$ACCOUNT_QUOTAS")
@@ -708,8 +697,19 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
    elif $rule_floor_state == "below"
      then {source: "default", use: profiles($cfg.default // null), note: "rule \($choice) floor \($rule.floor.scope) below \($rule.floor.min_percent)%: fall through to default"}
    else {source: $choice, use: profiles($rule.use), note: "rule matched"} end) as $sel |
-  (if (($fb.below and ($fb.to | not)) or $sel.escalate) then $answer_use else ($sel.use // []) end) as $decision_use |
-  ($decision_use | map(. as $c | (provider_of($c)) as $p | (evaluate($c) + plan_for($c; $p)))) as $cands |
+  ($fb.below and ($fb.to | not)) as $ambiguous |
+  ([$a.probabilities | to_entries[] | select(.value >= 0.25) | .key]) as $union_ids |
+  ([$union_ids[] | . as $id | if $id == "default" then profiles($cfg.default // null) else profiles(rule_at($id).use) end | .[]]) as $union |
+  (if $ambiguous then $union else ($sel.use // $answer_use // []) end) as $raw_use |
+  ($ambiguous and (any($union[]; (.reasoning_class | type) != "number") or ($union | length) == 0)) as $missing_class |
+  (if $ambiguous and ($missing_class | not) then ($union | map(.reasoning_class) | max) as $strongest | [$union[] | select(.reasoning_class == $strongest)] | unique else $raw_use end) as $decision_use |
+  ($ambiguous and any($union_ids[]; rule_at(.).approval == "captain")) as $union_approval |
+  ([$union_ids[] | . as $id | rule_at($id) | select(.floor != null) | .floor as $f |
+    {id:$id, floor:$f, state:($q | floor_state($f; $f.provider; ""))}]) as $union_floors |
+  ($decision_use | map(. as $c | (provider_of($c)) as $p |
+    (if $ambiguous and any($union_floors[]; .state == "below" and (rule_at(.id).use | profiles(.) | index($c)) != null)
+     then {profile:$c, provider:$p, eligible:false, reason:"ambiguous row floor below minimum"}
+     else evaluate($c) end) + plan_for($c; $p))) as $cands |
   ([$cands[] | select(.incomplete)]) as $incomplete |
   def when_of($c): (if rule_at($c) == null then $none_criterion else rule_at($c).when end | .[0:60]);
   ({
@@ -720,7 +720,13 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   }
   + (if $fb.to then {fallback: "\($choice) (\(when_of($choice))) probability \($fb.p) clears its floor \($fb.to_floor); \($picked) probability \($a.probabilities[$picked]) is below its floor \($picked_floor)"} else {} end))
   as $ev |
-  if $sel.invalid then $ev + {status: "error", reason: $sel.invalid}
+  if $missing_class then $ev + {status: "escalate", reason: "ambiguous union needs numeric reasoning_class on every candidate"}
+  elif $union_approval then $ev + {status: "escalate", reason: "ambiguous union requires captain approval"}
+  elif $ambiguous and any($union_floors[]; .state == "absent") then $ev + {status:"escalate",reason:"ambiguous union rule floor is unverifiable"}
+  elif $ambiguous and any($union_floors[]; .state == "unmeasured") then
+    $ev + {status:"incomplete",reason:"ambiguous union rule floor unmeasured",candidates:$cands,
+      incomplete:[$union_floors[] | select(.state == "unmeasured") | {account:null,provider:.floor.provider,missing:[.floor.scope]}]}
+  elif $sel.invalid then $ev + {status: "error", reason: $sel.invalid}
   elif ($incomplete | length) > 0 or ($sel.rule_floor_incomplete // false) then
     $ev + {
       status: "incomplete",
@@ -737,13 +743,9 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
          else [] end)),
       quota_attempts: $quota_attempts, warmups: $warmups
     }
-  elif $fb.below and $fb.global then
-    $ev + {status: "ambiguous", reason: "confidence \($a.confidence) below floor \($floor)", candidates: $cands}
-  elif $fb.below and ($fb.to | not) then
-    $ev + {status: "ambiguous", reason: "\($picked) probability \($a.probabilities[$picked]) below its floor \($picked_floor); \($fb.why)", candidates: $cands}
-  elif $sel.escalate then
+  elif $sel.escalate and ($ambiguous | not) then
     $ev + {status: "escalate", reason: $sel.escalate, candidates: $cands}
-  elif ($sel.use | length) == 0 then $ev + {status: "escalate", reason: "no profiles configured for \($sel.source)", note: $sel.note, candidates: []}
+  elif ($decision_use | length) == 0 then $ev + {status: "escalate", reason: "no profiles configured for \($sel.source)", note: $sel.note, candidates: []}
   else
     ([$cands[] | select(.provider == $cfg.preferred_provider)]) as $family |
     ([$family[] | select(.eligible)]) as $preferred_family |
@@ -760,14 +762,18 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
         (if ($preferred_family | length) > 0 then " in preferred provider \($cfg.preferred_provider); uncertainty does not authorize fallback" else "" end)),
       note: $sel.note, candidates: $cands}
     elif $sq then
-      $ev + {status: "clear", note: ($sel.note + "; quota ranking off: home declares a single shared quota, declared order picks"), candidates: $cands, chosen: ($elig | first)}
+      $ev + {status: "clear", note: ($sel.note + "; quota ranking off: home declares a single shared quota, declared order picks"), candidates: $cands, chosen: ($elig | first), row: $sel.source}
     else
       ($elig | max_by(.spendPriority)) as $best |
       ([$elig[] | select(.spendPriority == $best.spendPriority)]) as $ties |
-      ([$ties[] | . as $candidate | $sel.use | to_entries[] |
-        select(.value == $candidate.profile) | select($ev.profile_preference == "\($sel.source)_\(.key + 1)") | $candidate] | first) as $preferred |
+      ([ $ties[] | . as $candidate |
+        (if $ambiguous then $union_ids[] else $sel.source end) as $id |
+        (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | to_entries[] |
+        select(.value == $candidate.profile) | select($ev.profile_preference == "\($id)_\(.key + 1)") | $candidate] | first) as $preferred |
       if ($ties | length) > 1 and $preferred == null then $ev + {status: "escalate", reason: "genuine spendPriority tie", note: $sel.note, candidates: $cands}
-      else $ev + {status: "clear", note: ($sel.note + (if ([$elig[].plan] | unique | length) > 1 then "; compare candidate plan tiers before accepting percent-based capacity" else "" end)), candidates: $cands, chosen: ($preferred // $best)}
+      else ($preferred // $best) as $winner |
+        (if $ambiguous then ([$union_ids[] | . as $id | (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | select(index($winner.profile)) | $id] | first) else $sel.source end) as $winner_row |
+        $ev + {status: "clear", note: (if $ambiguous then "ambiguous union >= 0.25; strongest reasoning class" else $sel.note end), candidates: $cands, chosen: $winner, row: $winner_row}
         + (if ($unranked | length) > 0 then
              {unranked_note: "\($unranked | length) eligible candidate(s) unranked (\([$unranked[].provider] | unique | join(", ")))"}
            else {} end)
@@ -776,6 +782,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   end'
 }
 RESULT=$(fm_dispatch_resolve_json 1 0) || emit_error "resolution failed"
+QUOTA_DEADLINE=$(( $(date +%s) + QUOTA_WAIT_SECONDS ))
 quota_attempts=1
 warmups_run=0
 fm_dispatch_epoch_ms_of() {  # <iso8601>: epoch milliseconds, or nothing when unparsable
@@ -785,17 +792,17 @@ fm_dispatch_epoch_ms_of() {  # <iso8601>: epoch milliseconds, or nothing when un
   printf '%s' "$out"
 }
 # Bounded gather loop: an incomplete resolution runs the named warm-up once,
-# re-reads only the named stores with doubling backoff, and stops early when
-# every missing measurement publishes a retry time beyond this tool's bounded
-# wait, so the block names the retry times instead of choosing blind.
-while [ "$(jq -r '.status // ""' <<<"$RESULT" 2>/dev/null)" = "incomplete" ] && [ "$quota_attempts" -lt "$QUOTA_ATTEMPTS" ]; do
+# re-reads only the named stores with doubling backoff up to the deadline.
+# Slow reads and warm-ups share that deadline, including their subprocesses.
+while [ "$(jq -r '.status // ""' <<<"$RESULT" 2>/dev/null)" = "incomplete" ] && [ "$quota_attempts" -lt "$QUOTA_ATTEMPTS" ] && [ "$(date +%s)" -lt "$QUOTA_DEADLINE" ]; do
   if [ "$warmups_run" -eq 0 ] && jq -e 'any(.incomplete[]?; .provider == "zai")' <<<"$RESULT" >/dev/null 2>&1; then
     warmups_run=1
     if command -v zai-window-warm >/dev/null 2>&1; then
-      zai-window-warm >/dev/null 2>&1 || true
+      fm_dispatch_bounded zai-window-warm >/dev/null 2>&1 || true
     fi
   fi
-  budget_ms=$(awk -v base="$QUOTA_BACKOFF_MS" -v done_retries="$(( quota_attempts - 1 ))" -v total="$QUOTA_ATTEMPTS" 'BEGIN { s = 0; for (i = done_retries; i < total - 1; i++) s += base * (2 ^ i); printf "%d", s }')
+  budget_ms=$(( (QUOTA_DEADLINE - $(date +%s)) * 1000 ))
+  [ "$budget_ms" -gt 0 ] || break
   now_ms=$(fm_timing_now_ms)
   all_late=1
   any_hint=0
@@ -805,10 +812,13 @@ while [ "$(jq -r '.status // ""' <<<"$RESULT" 2>/dev/null)" = "incomplete" ] && 
     retry_ms=$(fm_dispatch_epoch_ms_of "$retry_after") || { all_late=0; continue; }
     [ "$(( retry_ms - now_ms ))" -gt "$budget_ms" ] || all_late=0
   done < <(jq -r '.incomplete[]? | .retry_after // ""' <<<"$RESULT" | sort -u)
+  # Even a later retry hint waits to the deadline, rather than exiting early.
   if [ "$any_hint" -eq 1 ] && [ "$all_late" -eq 1 ]; then
+    sleep "$(( (budget_ms + 999) / 1000 ))"
     break
   fi
-  sleep "$(awk -v base="$QUOTA_BACKOFF_MS" -v n="$quota_attempts" 'BEGIN { printf "%.3f", (base * (2 ^ (n - 1))) / 1000 }')"
+  sleep "$(awk -v base="$QUOTA_BACKOFF_MS" -v n="$quota_attempts" -v left="$budget_ms" 'BEGIN { if (n > 6) n = 6; delay = base * (2 ^ (n - 1)); if (delay > 30000) delay = 30000; if (delay > left) delay = left; if (delay < 0) delay = 0; printf "%.3f", delay / 1000 }')"
+  [ "$(date +%s)" -lt "$QUOTA_DEADLINE" ] || break
   if jq -e 'any(.incomplete[]?; .account == null)' <<<"$RESULT" >/dev/null 2>&1; then
     gather_home_quota >/dev/null || true
   fi
@@ -853,4 +863,29 @@ TEXT=$(jq -r '
       + (if .chosen.profile.effort then " --effort \(.chosen.profile.effort | shell_arg)" else "" end)
       + (if .chosen.profile.account then " --account \(.chosen.profile.account | shell_arg)" else "" end) else empty end)' <<<"$RESULT") || emit_error "output rendering failed"
 printf '%s\n' "$TEXT"
+# A clear answer is the routing decision, so it leaves the receipt the launch
+# gate will ask for. The per-launch intake is recorded here so even a long
+# incomplete wait produces fresh intake evidence, not a fifteen-minute-old one.
+if [ "$(jq -r '.status // ""' <<<"$RESULT")" = clear ]; then
+  if INTAKE_OUTPUT=$("$SCRIPT_DIR/fm-quota-intake.sh" record); then
+    printf '%s\n' "$INTAKE_OUTPUT"
+  else
+    printf '%s\n' "$INTAKE_OUTPUT"
+    emit_error "quota intake failed; stop and report"
+  fi
+  FM_DR_INTAKE_RECORD=$(awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i ~ /^record=/) { sub(/^record=/, "", $i); print $i } }' <<<"$INTAKE_OUTPUT")
+  [ -n "$FM_DR_INTAKE_RECORD" ] && [ -f "$STATE/quota-intake/$FM_DR_INTAKE_RECORD" ] || emit_error "quota intake produced no record"
+  FM_DR_JEV=$(jq -c --argjson latency "$LAT_MS" '{model, requestId, ruleProbabilities: .answers.rule.probabilities, confidence: .answers.rule.confidence, candidatePreference: .answers.profile.choice, latencyMs: $latency, inputTokens: (.usage.input_tokens // null)}' "$RESP_FILE")
+  FM_DR_DEGRADED_REASON=$DEGRADED_REASON
+  [ -z "$DEGRADED_REASON" ] || FM_DR_JEV=null
+  if RECEIPT_NAME=$(fm_dr_write_clear "$BRIEF" "$TASK_ID" "$RESULT"); then
+    printf '  source: %s\n' "$(if [ -n "$DEGRADED_REASON" ]; then printf degraded; else printf jev; fi)"
+    printf '  receipt: %s (one launch, valid %ss)\n' "$RECEIPT_NAME" "$(fm_dr_max_age)"
+  else
+    printf '  receipt: not written (%s); stop and report\n' "${FM_DR_ERR:-see diagnostic above}"
+    exit 3
+  fi
+else
+  printf '  receipt: none - stop and report; escalate asks the captain, incomplete must wait and re-run (15 minute limit)\n'
+fi
 exit 0

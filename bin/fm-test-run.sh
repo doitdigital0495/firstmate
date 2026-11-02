@@ -365,7 +365,7 @@ family_for_basename() {
     fm-composer-codex-idle-live-e2e.test.sh|\
     fm-codex-continuity-live-e2e.test.sh|fm-codex-hook-layer-live-e2e.test.sh|\
     fm-grok-continuity-live-e2e.test.sh|\
-    fm-cursor-primary-live-e2e.test.sh|fm-claude-settings-live-e2e.test.sh|fm-agy-primary-live-e2e.test.sh|\
+    fm-cursor-primary-live-e2e.test.sh|fm-claude-settings-live-e2e.test.sh|fm-agy-primary-live-e2e.test.sh|fm-claude-bypass-prompt-live-e2e.test.sh|\
     fm-grok-stop-live-e2e.test.sh|fm-harness-adapter-instructions-live-e2e.test.sh|\
     fm-harness-liveness-drift-live-e2e.test.sh|fm-backend-hc-liveness-live-e2e.test.sh|\
     fm-kimi-trust-prompt-live-e2e.test.sh|\
@@ -399,11 +399,12 @@ family_for_basename() {
     fm-herdr-session-cleanup.test.sh|fm-send-resolve-key.test.sh|fm-send-strict.test.sh|\
     fm-send-inbox.test.sh|fm-spawn-batch.test.sh|\
     fm-spawn-dispatch-profile.test.sh|fm-spawn-pi-skill.test.sh|fm-spawn-pi-trust.test.sh|fm-claude-trust.test.sh|\
-    fm-worker-account.test.sh|fm-worker-account-precedence.test.sh|fm-git-strip-ai-trailers.test.sh|\
+    fm-worker-account.test.sh|fm-worker-account-precedence.test.sh|fm-account-seat.test.sh|fm-git-strip-ai-trailers.test.sh|\
     fm-trace-context-spawn.test.sh|fm-spawn-worktree-settle.test.sh|\
     fm-spawn-claude-settings.test.sh|fm-spawn-claude-lean.test.sh|\
     fm-spawn-compact-adviser-disable.test.sh|\
     fm-spawn-compact-adviser-disable-remote.test.sh|\
+    fm-remote-secondmate-dispatch-receipt.test.sh|\
     fm-project-capacity.test.sh|\
     fm-teardown-endpoint-safety.test.sh)
       printf '%s\n' backend-dispatch
@@ -728,6 +729,7 @@ list_portable_serial() {
 # balance rather than coverage. That doc owns the refresh procedure.
 portable_serial_weight_hints() {
   cat <<'EOF'
+tests/fm-account-seat.test.sh 30000
 tests/fm-afk-contract.test.sh 15645
 tests/fm-afk-inject-e2e.test.sh 41958
 tests/fm-afk-pi-herdr-return-e2e.test.sh 117
@@ -781,6 +783,7 @@ tests/fm-ci-workflow.test.sh 5833
 tests/fm-classify-corr-token.test.sh 49294
 tests/fm-classify-decision-key.test.sh 4362
 tests/fm-claude-admission.test.sh 37243
+tests/fm-claude-bypass-prompt-live-e2e.test.sh 60
 tests/fm-claude-settings-live-e2e.test.sh 74
 tests/fm-claude-stop-autoarm-live-e2e.test.sh 73
 tests/fm-claude-stop-autoarm.test.sh 61189
@@ -1699,15 +1702,22 @@ families_for_changed_path() {
     bin/fm-quota-choose.sh)
       printf '%s\n' "__script__:fm-quota-choose.test.sh"
       ;;
-    bin/fm-dispatch-resolve.sh)
+    bin/fm-dispatch-resolve.sh|bin/fm-jevd-dispatch.py|bin/fm-dispatch-bounded.py)
       printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
       ;;
     bin/fm-capacity.sh)
       printf '%s\n' "__script__:fm-capacity.test.sh"
       ;;
+    bin/fm-dispatch-receipt-lib.sh|tests/jevd-dispatch-stub.py)
+      # The receipt gate and socket peer: producers and all launch consumers.
+      printf '%s\n' "__script__:fm-secondmate-harness.test.sh"
+      printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
+      printf '%s\n' "__script__:fm-spawn-dispatch-profile.test.sh"
+      printf '%s\n' "__script__:fm-control-relaunch.test.sh"
+      printf '%s\n' "__script__:fm-remote-secondmate-dispatch-receipt.test.sh"
+      ;;
     bin/fm-env-lib.sh)
-      # The one .env accessor, sourced by bin/fm-x-lib.sh (Relay token) and
-      # bin/fm-dispatch-resolve.sh (TYPESAFE_API_KEY).
+      # The shared .env accessor used by Relay, bootstrap and legacy canary.
       printf '%s\n' pr-forge
       printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
       ;;

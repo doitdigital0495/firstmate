@@ -89,6 +89,7 @@ data/                personal fleet records; LOCAL, gitignored as a whole
   <id>/milestones.status  task milestone lines archived at teardown and appended by later authorized stamps; survives teardown; bin/fm-task-milestones.sh owns it
   <id>/status.log <id>/status.<N>.log <id>/children/<child>/...  optional teardown archives; see docs/architecture.md "Task status archives"
   pipeline-spend.jsonl  optional per-task no-mistakes pipeline spend, written only when config/pipeline-spend is present; bin/fm-pipeline-spend.sh owns the schema
+  dispatch-overrides.jsonl  historical captain overrides of the dispatch table; bin/fm-dispatch-receipt-lib.sh owns the schema and phase-1 restrictions, and the session-start digest lists recent history
 projects/            cloned repos; gitignored; read-only except under hard rule 1's concrete captain-approved project operation exception
 state/               runtime records and signals; gitignored
   <id>.status        append-only wake events, not current-state truth; bin/fm-classify-lib.sh owns their syntax
@@ -130,6 +131,7 @@ state/               runtime records and signals; gitignored
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/fm-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
   claude-admission.check.sh  bound release-shaping poll; bin/fm-claude-admission.sh owns it and the per-store state/claude-admission/ queues
   quota-intake/      private complete quota-intake records and consumed markers; bin/fm-quota-intake.sh owns their schema and gates
+  dispatch-receipt/  private dispatch receipts and their consumed markers; bin/fm-dispatch-receipt-lib.sh owns their schema and the launch gate
   mail.check.sh      generated received-mail poll shim and its .check-trust binding; present only after bin/fm-mail-check.sh arm; report record .mail-check (mail schema: docs/configuration.md "Mail plane")
   usage-warner.check.sh  generated Claude usage threshold poll shim and its .check-trust binding; present only after bin/fm-usage-warner.sh arm; its de-dupe record .usage-warner is what keeps one threshold crossing from warning on every poll, and .usage-warner.lock serializes overlapping checks
   .mail-seen .mail-woken .mail-retry .mail-retry-pos .mail-turn .mail-seen.lock  mail-plane poll cursor, emission journal, transient-fetch retry set, retry-scan position, contended-slot turn flag, and overlapping-poll lock; written only by bin/fm-mail.sh (mail schema: docs/configuration.md "Mail plane")

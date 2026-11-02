@@ -142,6 +142,11 @@
 #   onto a different seat under the same gates, rewriting those recorded
 #   fields and the account= line, so a usage-limit move can cross accounts,
 #   while an omitted --account keeps the recorded account.
+#   A seat that does not own the harness's store (claude, pi or codex are each
+#   optional in config/accounts.json) refuses that harness by name. The worker's
+#   seat id is recorded as seat= in the task record and on the spawned line, and
+#   its seat, plan and login email lead the Claude status line, the Pi footer
+#   status and the Codex launch banner (docs/configuration.md "Worker seat label").
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
@@ -281,7 +286,14 @@
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
 #   spawns require an explicit harness so firstmate cannot silently skip dispatch
-#   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
+#   profile consultation. When that file has routing rows, every launch - ship,
+#   scout, secondmate, and a --relaunch onto a different harness, model, effort,
+#   or account - is also refused unless a dispatch receipt names exactly the
+#   profile being launched (bin/fm-dispatch-receipt-lib.sh owns that gate and
+#   says what it does and does not prevent; no flag turns it off, and a remote
+#   secondmate is gated in this parent home before its host is asked to launch).
+#   A --secondmate spawn is exempt
+#   from the explicit-harness requirement only and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
 #   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|devin|commandcode|cortex|kiro)
@@ -532,8 +544,9 @@
 #   One token selecting the permission flag every claude launch (ship, scout,
 #   secondmate, and relaunch) carries. Absent or `bypass` selects
 #   `--dangerously-skip-permissions`; `auto` selects `--permission-mode auto`,
-#   the model-reviewed remedy for managed machines. Every other part of the claude launch
-#   is unchanged. The token is the file's whitespace-trimmed content; any other
+#   the model-reviewed remedy for managed machines. Bypass also writes
+#   skipDangerousModePermissionPrompt into the per-task settings file; every
+#   other part of the claude launch is unchanged. The token is the file's whitespace-trimmed content; any other
 #   value, or an unreadable file, refuses the spawn before any endpoint,
 #   worktree, or record exists and names the accepted values. The file is read
 #   on every spawn and relaunch, so a change reaches the next launch without a
@@ -1338,6 +1351,18 @@ else
   fi
 fi
 
+spawn_dispatch_receipt_gate() {  # [--consume]
+  local out
+  if ! out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" \
+    FM_CONFIG_OVERRIDE="$CONFIG" FM_DATA_OVERRIDE="$DATA" \
+    "$SCRIPT_DIR/fm-dispatch-resolve.sh" gate "${DISPATCH_GATE_ARGS[@]}" "$@"); then
+    printf '%s\n' "$out" >&2
+    echo "error: $ID was not launched; the dispatch receipt gate refused it and nothing was created - route this task from config/crew-dispatch.json instead of hand-picking a profile" >&2
+    return 1
+  fi
+  [ $# -eq 0 ] || printf '%s\n' "$out" >&2
+}
+
 spawn_remote_secondmate() {
   local id=$1 remote host root home harness positional model effort backend out rc meta tmp
   local remote_backend remote_target remote_harness remote_herdr_session registry_lock remote_lock remote_generation
@@ -1458,6 +1483,19 @@ spawn_remote_secondmate() {
       return 1
     fi
   fi
+  # The dispatch receipt gate for a remote second mate runs here, in the parent
+  # home and against a receipt in the parent home, because the remote host has
+  # no receipt producer; the host-local launch is then admitted on the strength
+  # of this one (contract: bin/fm-dispatch-receipt-lib.sh). Previewed before
+  # anything is transferred, consumed just before the launch is delegated.
+  DISPATCH_GATE_ARGS=(--task "$id" --brief "$DATA/$id/brief.md" --harness "$harness" --recorded-meta "$meta")
+  [ "$model" = - ] || DISPATCH_GATE_ARGS+=(--model "$model")
+  [ "$effort" = - ] || DISPATCH_GATE_ARGS+=(--effort "$effort")
+  if ! spawn_dispatch_receipt_gate; then
+    fm_lock_release "$registry_lock" || true
+    fm_lock_release "$SPAWN_TASK_LOCK" || true
+    return 1
+  fi
   # Gate the host before anything is published or transferred, so a host that
   # cannot hold a durable Herdr endpoint refuses here rather than half-way
   # through a launch. This is also the readiness gate every liveness relaunch
@@ -1533,6 +1571,12 @@ spawn_remote_secondmate() {
   remote_traceparent=
   if [ "$(fm_trace_context_session_effective "$STATE/.trace-context-effective")" = on ]; then
     remote_traceparent=$(FM_TRACE_CONTEXT=on fm_trace_context_resolve "$CONFIG" "$meta" || true)
+  fi
+  if ! spawn_dispatch_receipt_gate --consume; then
+    fm_lock_release "$remote_lock" || true
+    fm_lock_release "$registry_lock" || true
+    fm_lock_release "$SPAWN_TASK_LOCK" || true
+    return 1
   fi
   launch_args=("$id" "$harness" "$model" "$effort" "$backend")
   [ -z "$remote_traceparent" ] || launch_args+=("$remote_traceparent")
@@ -3388,6 +3432,11 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
   fi
 fi
 
+# The profile exactly as it was asked for, before a lean task-worker default
+# fills an omitted axis: the dispatch receipt gate compares these to the receipt.
+DISPATCH_REQ_MODEL=$MODEL
+DISPATCH_REQ_EFFORT=$EFFORT
+
 # Check configured pins against the actual profile, before lean defaults can
 # invent a provider on a pinned launch.
 RAW_COMMAND=
@@ -3621,6 +3670,20 @@ if [ "$ACCOUNT_SET" -eq 1 ]; then
   SPAWN_PI_STORE=${SPAWN_ACCOUNT_STORES[1]}
   SPAWN_CODEX_STORE=${SPAWN_ACCOUNT_STORES[2]}
   SPAWN_ACCOUNT_ORIGIN="explicit --account '$ACCOUNT_ARG'"
+  # A store the seat does not own is absent, never another account's store.
+  [ "$SPAWN_CLAUDE_STORE" != "$FM_ACCOUNT_NO_STORE" ] || SPAWN_CLAUDE_STORE=
+  [ "$SPAWN_PI_STORE" != "$FM_ACCOUNT_NO_STORE" ] || SPAWN_PI_STORE=
+  [ "$SPAWN_CODEX_STORE" != "$FM_ACCOUNT_NO_STORE" ] || SPAWN_CODEX_STORE=
+fi
+# A registered seat that does not own this harness's store refuses here, named,
+# rather than falling through to the home's own or the ambient store. This covers
+# an explicit --account and a recorded seat carried onto a different harness.
+if [ -n "$ACCOUNT_ARG" ] && [ "$KIND" != secondmate ]; then
+  case "$HARNESS" in
+    claude) fm_account_require_store "$CONFIG/accounts.json" "$ACCOUNT_ARG" claude || exit 1 ;;
+    pi|pi-signed) fm_account_require_store "$CONFIG/accounts.json" "$ACCOUNT_ARG" pi || exit 1 ;;
+    codex) fm_account_require_store "$CONFIG/accounts.json" "$ACCOUNT_ARG" codex || exit 1 ;;
+  esac
 fi
 
 case "$HARNESS" in
@@ -3644,6 +3707,43 @@ case "$HARNESS" in
       SPAWN_CODEX_STORE=${CODEX_HOME:-}
     fi ;;
 esac
+
+# The seat this worker runs on, for the window label and the recorded seat=: the
+# registry account id from an explicit or recorded --account, otherwise the one
+# registry account that owns the store the harness will actually use. Only ids
+# and declared plans from config/accounts.json plus a Claude store's login email
+# are read (bin/fm-account-lib.sh); nothing is read for a secondmate, which keeps
+# its own home identity, or for a raw launch command, which is the operator's.
+SPAWN_SEAT=
+SPAWN_SEAT_LABEL=
+if [ "$KIND" != secondmate ]; then
+  SPAWN_SEAT_KIND=
+  SPAWN_SEAT_PROVIDER=
+  SPAWN_SEAT_STORE=
+  case "$HARNESS" in
+    claude) SPAWN_SEAT_KIND=claude; SPAWN_SEAT_PROVIDER=claude
+      SPAWN_SEAT_STORE=$SPAWN_CLAUDE_STORE
+      case "$SPAWN_SEAT_STORE" in ''|default) SPAWN_SEAT_STORE="$HOME/.claude" ;; esac ;;
+    pi|pi-signed) SPAWN_SEAT_KIND=pi
+      case "${PI_PROVIDER:-}" in zai) SPAWN_SEAT_PROVIDER=zai ;; *) SPAWN_SEAT_PROVIDER=codex ;; esac
+      SPAWN_SEAT_STORE=${SPAWN_PI_STORE:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}} ;;
+    codex) SPAWN_SEAT_KIND=codex; SPAWN_SEAT_PROVIDER=codex
+      SPAWN_SEAT_STORE=${SPAWN_CODEX_STORE:-${CODEX_HOME:-$HOME/.codex}} ;;
+  esac
+  if [ -n "$SPAWN_SEAT_KIND" ]; then
+    if [ -n "$ACCOUNT_ARG" ] && fm_account_registry_valid "$CONFIG/accounts.json" &&
+      jq -e --arg a "$ACCOUNT_ARG" '.accounts[$a] != null' "$CONFIG/accounts.json" >/dev/null 2>&1; then
+      SPAWN_SEAT=$ACCOUNT_ARG
+    else
+      SPAWN_SEAT=$(fm_account_seat_for_store "$CONFIG/accounts.json" "$SPAWN_SEAT_KIND" "$SPAWN_SEAT_STORE")
+    fi
+    if [ -n "$SPAWN_SEAT" ] && [ "$RAW_LAUNCH" -eq 0 ]; then
+      SPAWN_SEAT_CLAUDE_STORE=
+      [ "$SPAWN_SEAT_KIND" != claude ] || SPAWN_SEAT_CLAUDE_STORE=$SPAWN_SEAT_STORE
+      SPAWN_SEAT_LABEL=$(fm_account_seat_label "$CONFIG/accounts.json" "$SPAWN_SEAT" "$SPAWN_SEAT_PROVIDER" "$SPAWN_SEAT_CLAUDE_STORE")
+    fi
+  fi
+fi
 
 secondmate_registry_value() {
   secondmate_registry_field "$DATA/secondmates.md" "$1" "$2"
@@ -4771,6 +4871,25 @@ if [ "$KIND" = secondmate ]; then
   fi
 fi
 
+# Phase 1.9, routing half: the dispatch receipt gate (contract:
+# bin/fm-dispatch-receipt-lib.sh). A launch whose harness, model, effort, and
+# account did not come out of this home's dispatch table stops here, whatever
+# flags it was given. It is previewed before the quota record is spent and
+# consumed after, so a refused routing decision never burns a quota read. A
+# relaunch or a secondmate respawn that keeps the task's recorded profile makes
+# no new routing decision and needs no receipt. A remote second mate passes
+# this same gate in its parent home, inside spawn_remote_secondmate, and its
+# host-local fm-spawn is admitted here on the strength of that.
+DISPATCH_GATE_ARGS=(--task "$ID" --brief "${SOURCE_BRIEF:-$BRIEF}" --harness "$HARNESS")
+[ -z "$DISPATCH_REQ_MODEL" ] || DISPATCH_GATE_ARGS+=(--model "$DISPATCH_REQ_MODEL")
+[ -z "$DISPATCH_REQ_EFFORT" ] || DISPATCH_GATE_ARGS+=(--effort "$DISPATCH_REQ_EFFORT")
+[ -z "$ACCOUNT_ARG" ] || DISPATCH_GATE_ARGS+=(--account "$ACCOUNT_ARG")
+[ "$RAW_LAUNCH" -eq 0 ] || DISPATCH_GATE_ARGS+=(--raw)
+if [ "$RELAUNCH" -eq 1 ] || { [ "$KIND" = secondmate ] && [ -f "$STATE/$ID.meta" ]; }; then
+  DISPATCH_GATE_ARGS+=(--recorded-meta "$STATE/$ID.meta" --resolved-model "${MODEL:-default}" --resolved-effort "${EFFORT:-default}")
+fi
+spawn_dispatch_receipt_gate || exit 1
+
 # Phase 1.9: bin/fm-quota-intake.sh gate. Every worker, scout, and local
 # second-mate launch stops here until a fresh quota intake record proves this
 # exact harness, model, account, and credential store still has every usage
@@ -4793,6 +4912,7 @@ if ! QUOTA_GATE_OUT=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
   exit 1
 fi
 printf '%s\n' "$QUOTA_GATE_OUT" >&2
+spawn_dispatch_receipt_gate --consume || exit 1
 
 # Phase 2. bin/fm-claude-admission.sh owns the whole decision, including which
 # stores this home shapes at all - a store the home does not shape takes no
@@ -7244,6 +7364,10 @@ const herdrReport = (state: string) =>
       "--agent", "pi", "--state", state,
     ], () => resolve());
   });
+// The worker's seat, plan and login email (bin/fm-account-lib.sh), shown on Pi's
+// footer status line for as long as the footer is on screen; empty when no seat
+// is known, in which case nothing is published.
+const seatLabel = $(perl -MJSON::PP -MEncode=decode_utf8 -e 'print encode_json(decode_utf8($ARGV[0]))' -- "$SPAWN_SEAT_LABEL");
 export default function (pi: any) {
   let checkedExclusions = false;
   let request = 0;
@@ -7302,6 +7426,11 @@ export default function (pi: any) {
       if (event.message?.role === "assistant") return closeStream();
     });
     pi.on("tool_execution_start", closeStream);
+  }
+  if (seatLabel) {
+    pi.on("session_start", (_event: any, ctx: any) => {
+      if (ctx.hasUI) ctx.ui.setStatus("firstmate-seat", seatLabel);
+    });
   }
   pi.on("agent_start", async () => {
     await Promise.all([busyEvent("busy", "agent-start"), herdrReport("working")]);
@@ -7542,9 +7671,10 @@ EOF
   esac
 
 # The single --settings source every claude launch is handed. It carries the
-# per-launch feedback-draft and attribution policy for EVERY kind, plus the
-# semantic busy-state hooks resolved above (a secondmate's hooks update only its
-# busy record in this parent home, never the parent's turn-ended marker). One file rather than a second inline --settings argument, because claude
+# per-launch feedback-draft, attribution and bypass-acceptance policy for EVERY
+# kind, plus the semantic busy-state hooks resolved above (a secondmate's hooks
+# update only its busy record in this parent home, never the parent's
+# turn-ended marker). One file rather than a second inline --settings argument, because claude
 # takes one settings source. It lives in state/, never in the worktree, so a
 # project's own .claude/settings.local.json is never written or clobbered. A raw
 # launch command is the operator's verbatim string and never reaches the template
@@ -7561,8 +7691,34 @@ case "$HARNESS" in
       fi
       claude_attribution_json=
       [ "$KEEP_AI_TRAILERS" = 1 ] || claude_attribution_json=',"attribution":{"commit":"","pr":"","sessionUrl":false}'
-      printf '{"feedbackDrafts":"off"%s%s}\n' \
-        "$claude_attribution_json" "$claude_hooks_json" \
+      # A bypass launch would otherwise park on Claude's Bypass Permissions
+      # accept dialog: a task worker's --setting-sources '' never reads the
+      # captain's user-scope acceptance, while this --settings layer is read
+      # under every --setting-sources value. A launch under
+      # config/claude-permission-mode=auto requests no bypass, so it gets no key.
+      claude_bypass_json=
+      [ "$CLAUDE_PERMISSION_MODE" != bypass ] || claude_bypass_json=',"skipDangerousModePermissionPrompt":true'
+      # A lean task worker runs without a status bar, so a one-line statusLine
+      # keeps the model and effort visible in a corner of its terminal. The jq
+      # filter prints only model.display_name and effort.level (no effort part
+      # when the level is null or absent); a secondmate keeps its full
+      # primary-session status line and gets no key.
+      claude_status_json=
+      if [ "$CLAUDE_TASK_WORKER" -eq 1 ]; then
+        # The seat label (seat · plan · login email) leads the line when the
+        # worker's seat is known. It is sanitized to a quote-free charset by
+        # fm_account_seat_label, so single-quoting it into the command is safe.
+        claude_seat_arg=
+        [ -z "$SPAWN_SEAT_LABEL" ] || claude_seat_arg="--arg seat '$SPAWN_SEAT_LABEL' "
+        claude_seat_item=
+        # shellcheck disable=SC2016 # a jq variable reference, not a shell expansion
+        [ -z "$SPAWN_SEAT_LABEL" ] || claude_seat_item='$seat, '
+        claude_status_json=$(jq -cn --arg cmd "jq -r ${claude_seat_arg}'[${claude_seat_item}.model.display_name, .effort.level] | map(select(. != null and . != \"\")) | join(\" · \")'" \
+          '{type: "command", command: $cmd}')
+        claude_status_json=",\"statusLine\":$claude_status_json"
+      fi
+      printf '{"feedbackDrafts":"off"%s%s%s%s}\n' \
+        "$claude_attribution_json" "$claude_bypass_json" "$claude_status_json" "$claude_hooks_json" \
         > "$STATE_REAL/$ID.claude-settings.json"
       # A task worker excludes the user, project and local settings layers, so
       # carry their tool guards (PreToolUse/PostToolUse hooks and deny rules)
@@ -7689,7 +7845,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo lane branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider worker_account omp_profile busy_gen spawn_gen approval_mode traceparent claude_config_dir pi_agent_dir codex_home backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id hc_session hc_terminal home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo lane branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider worker_account seat omp_profile busy_gen spawn_gen approval_mode traceparent claude_config_dir pi_agent_dir codex_home backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id hc_session hc_terminal home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -7737,6 +7893,9 @@ preserve_relaunch_meta() {
   # The per-secondmate omp profile pin, only when one applies, so every other
   # task record stays byte-identical.
   [ -z "$OMP_PROFILE_PIN" ] || echo "omp_profile=$OMP_PROFILE_PIN"
+  # The registry seat id this worker runs on: non-secret, rewritten by every
+  # relaunch, and the one field agentic-setup's seat-info and cockpit read.
+  [ -z "$SPAWN_SEAT" ] || echo "seat=$SPAWN_SEAT"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
@@ -7938,6 +8097,12 @@ LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
 LAUNCH=${LAUNCH//__PIHERDREXT__/$sq_piherdrext}
 LAUNCH=${LAUNCH//__PIRTKEXT__/$sq_pirtkext}
 LAUNCH=${LAUNCH//__PIWORKERCONTRACT__/$sq_piworkercontract}
+# Codex has no status-line surface that takes custom text, so its seat label is
+# printed once above the TUI at launch. It stays in the window's scrollback only;
+# Claude and Pi workers keep the label on screen for the whole session.
+if [ "$HARNESS" = codex ] && [ -n "$SPAWN_SEAT_LABEL" ]; then
+  LAUNCH="printf '%s\\n' $(shell_quote "seat: $SPAWN_SEAT_LABEL"); $LAUNCH"
+fi
 if [ "$KIND" = scout ]; then PI_TOOLS=read,bash; else PI_TOOLS=read,bash,edit,write; fi
 LAUNCH=${LAUNCH//__PITOOLS__/$PI_TOOLS}
 if [ "$KIND" = scout ]; then CLAUDE_TOOLS=Read,Bash; else CLAUDE_TOOLS=Read,Bash,Edit,Write; fi
@@ -8656,6 +8821,7 @@ SPAWN_ACCOUNT=
 [ -z "$WORKER_ACCOUNT" ] || SPAWN_ACCOUNT=" account=$WORKER_ACCOUNT_DECLARED"
 [ -z "$WORKER_ACCOUNT_PROVIDER" ] || SPAWN_ACCOUNT="$SPAWN_ACCOUNT account_provider=$WORKER_ACCOUNT_PROVIDER"
 [ -z "$OMP_PROFILE_PIN" ] || SPAWN_ACCOUNT="$SPAWN_ACCOUNT omp_profile=$OMP_PROFILE_PIN"
+[ -z "$SPAWN_SEAT" ] || SPAWN_ACCOUNT="$SPAWN_ACCOUNT seat=$SPAWN_SEAT"
 # Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
 [ ! -e "$CONFIG/fleet-ledger" ] || [ "$RELAUNCH" -eq 1 ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" dispatched "$ID" "$KIND" "${PROJ_ABS##*/}" "$HARNESS" "$MODEL" || true
 # Opt-in Herdr project groups (docs/herdr-backend.md "Project groups") tag the

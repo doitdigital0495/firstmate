@@ -356,8 +356,8 @@ test_raw_compound_launch_command_carries_the_switch() {
   local rec out status seen launch probe_dir
   rec=$(make_case raw-compound claude raw-compound-a1)
   read_case "$rec"
-  printf '%s\n' '{"rules":[{"when":"current events","use":{"harness":"grok","model":"grok-4","effort":"high"}}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
-    > "$HOME_DIR/config/crew-dispatch.json"
+  # This raw-command compatibility case is for an unconfigured home.
+  # Configured homes reject raw commands in the dispatch-profile suite.
 
   probe_dir="$CASE_DIR/agent-cwd"
   mkdir -p "$probe_dir"

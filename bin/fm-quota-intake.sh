@@ -154,9 +154,9 @@ quota_axi_full_json() { # stdout: raw --full --json snapshot; rc nonzero on fail
   if command -v timeout >/dev/null 2>&1; then
     runner=(timeout "$READ_TIMEOUT")
   fi
-  CLAUDE_CONFIG_DIR=$(printf '%s\n' "$stores" | sed -n 1p) \
-  PI_CODING_AGENT_DIR=$(printf '%s\n' "$stores" | sed -n 2p) \
-  CODEX_HOME=$(printf '%s\n' "$stores" | sed -n 3p) \
+  CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "$(printf '%s\n' "$stores" | sed -n 1p)") \
+  PI_CODING_AGENT_DIR=$(fm_account_read_store pi "$(printf '%s\n' "$stores" | sed -n 2p)") \
+  CODEX_HOME=$(fm_account_read_store codex "$(printf '%s\n' "$stores" | sed -n 3p)") \
     "${runner[@]}" quota-axi --full --json </dev/null 2>/dev/null
 }
 

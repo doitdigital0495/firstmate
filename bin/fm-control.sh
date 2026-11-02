@@ -91,6 +91,11 @@
 #              already recorded for it.
 #              A prefixed raw-command basename cannot reconstruct its launch
 #              command, so relaunch requires an explicit --harness for it.
+#              A relaunch that changes the harness, model, effort, or account
+#              is a new routing decision: it refuses before the old agent
+#              stops unless a dispatch receipt names that exact profile
+#              (bin/fm-dispatch-receipt-lib.sh). Keeping the recorded profile
+#              needs none.
 #              A replacement Claude or Pi profile must also pass this home's
 #              worker account pin (bin/fm-worker-account-lib.sh) here, so a pin
 #              that no longer resolves or is signed out refuses before the old
@@ -1255,7 +1260,8 @@ do_relaunch() {
   local exit_result state note_line admission_out admission_store
   local quota_gate_out quota_gate_store relaunch_claude_store relaunch_pi_store relaunch_codex_store account_origin
   local identity_store identity_session identity_out
-  local -a spawn_args admission_args relaunch_account_stores quota_gate_args
+  local dispatch_gate_brief dispatch_gate_account dispatch_gate_out
+  local -a spawn_args admission_args relaunch_account_stores quota_gate_args dispatch_gate_args
 
   require_state_verified_backend relaunch
   fm_control_backend_relaunch_supported "$BACKEND" \
@@ -1301,6 +1307,23 @@ do_relaunch() {
     relaunch_pi_store=${relaunch_account_stores[1]}
     relaunch_codex_store=${relaunch_account_stores[2]}
     account_origin="explicit --account '$NEW_ACCOUNT'"
+    # A store the seat does not own is absent, never another account's store.
+    [ "$relaunch_claude_store" != "$FM_ACCOUNT_NO_STORE" ] || relaunch_claude_store=
+    [ "$relaunch_pi_store" != "$FM_ACCOUNT_NO_STORE" ] || relaunch_pi_store=
+    [ "$relaunch_codex_store" != "$FM_ACCOUNT_NO_STORE" ] || relaunch_codex_store=
+  fi
+  # A registered seat that does not own the target harness's store refuses now,
+  # while the running agent is still untouched (bin/fm-spawn.sh re-checks).
+  if [ "$KIND" != secondmate ]; then
+    relaunch_seat=$NEW_ACCOUNT
+    [ "$ACCOUNT_SET" = 1 ] || relaunch_seat=$(fm_meta_get "$META" account 2>/dev/null) || relaunch_seat=
+    if [ -n "$relaunch_seat" ]; then
+      case "$TARGET_HARNESS" in
+        claude) fm_account_require_store "$CONFIG/accounts.json" "$relaunch_seat" claude || return 1 ;;
+        pi|pi-signed) fm_account_require_store "$CONFIG/accounts.json" "$relaunch_seat" pi || return 1 ;;
+        codex) fm_account_require_store "$CONFIG/accounts.json" "$relaunch_seat" codex || return 1 ;;
+      esac
+    fi
   fi
   case "$TARGET_HARNESS" in
     claude)
@@ -1350,6 +1373,32 @@ do_relaunch() {
       printf '%s\n' "$admission_out" >&2
       die "relaunch of $ID is not released onto its Claude credential store yet; the running agent was left untouched and nothing changed"
     fi
+  fi
+  # Dispatch receipt preview, BEFORE anything is stopped (contract:
+  # bin/fm-dispatch-receipt-lib.sh). A relaunch that changes the harness, model,
+  # effort, or account is a new routing decision and needs a receipt out of this
+  # home's dispatch table; one that keeps the recorded profile needs none.
+  # bin/fm-spawn.sh runs the same gate at launch and consumes the receipt there.
+  dispatch_gate_brief=$RELAUNCH_BRIEF
+  if [ "$KIND" = secondmate ]; then
+    dispatch_gate_brief="$DATA/$ID/brief.md"
+    [ ! -f "$WT/data/charter.md" ] || dispatch_gate_brief="$WT/data/charter.md"
+  fi
+  if [ "$ACCOUNT_SET" = 1 ]; then
+    dispatch_gate_account=$NEW_ACCOUNT
+  else
+    dispatch_gate_account=$(fm_meta_get "$META" account) || dispatch_gate_account=
+    case "$dispatch_gate_account" in ordinary|/*) dispatch_gate_account= ;; esac
+  fi
+  dispatch_gate_args=(--task "$ID" --brief "$dispatch_gate_brief" --harness "$TARGET_HARNESS" --recorded-meta "$META")
+  [ "$TARGET_MODEL" = default ] || dispatch_gate_args+=(--model "$TARGET_MODEL")
+  [ "$TARGET_EFFORT" = default ] || dispatch_gate_args+=(--effort "$TARGET_EFFORT")
+  [ -z "$dispatch_gate_account" ] || dispatch_gate_args+=(--account "$dispatch_gate_account")
+  if ! dispatch_gate_out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
+    FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" FM_DATA_OVERRIDE="$DATA" \
+    "$SCRIPT_DIR/fm-dispatch-resolve.sh" gate "${dispatch_gate_args[@]}"); then
+    printf '%s\n' "$dispatch_gate_out" >&2
+    die "relaunch of $ID onto a new harness, model, effort, or account is not routed from config/crew-dispatch.json; the running agent was left untouched and nothing changed"
   fi
   # Quota intake preview, also BEFORE anything is stopped: a relaunch is a
   # fresh launch against a fresh consumption reading, and bin/fm-spawn.sh runs

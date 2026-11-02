@@ -215,8 +215,6 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
-# shellcheck source=bin/fm-credential-source-lib.sh disable=SC1091
-. "$SCRIPT_DIR/fm-credential-source-lib.sh"
 # Shared secondmate endpoint probe + guarded relaunch; the watcher's poll tick
 # drives the same library so session start and ordinary supervision recover
 # from identical evidence through an identical path.
@@ -1155,7 +1153,7 @@ EOF
 }
 
 crew_dispatch_validate() {
-  local file cred err verified_harnesses typed_key typed_provider typed_active=false
+  local file cred err verified_harnesses typed_key typed_active=false
   file="$CONFIG/crew-dispatch.json"
   [ -f "$file" ] || return 0
   if ! command -v jq >/dev/null 2>&1; then
@@ -1167,20 +1165,12 @@ crew_dispatch_validate() {
     return 0
   fi
   typed_key=$OPENROUTER_API_KEY_PRIVATE
-  typed_provider=openrouter
   if [ "${FM_DISPATCH_ROUTE:-}" = direct ]; then
-    typed_provider=typesafe
     [ -n "$typed_key" ] || typed_key=$(fmx_env_get TYPESAFE_API_KEY "$FM_HOME/.env")
   else
     [ -n "$typed_key" ] || typed_key=$(fmx_env_get OPENROUTER_API_KEY "$FM_HOME/.env")
   fi
-  cred="$CONFIG/dispatch-credential-sources.json"
-  if [ -n "$typed_key" ]; then
-    typed_active=true
-  elif [ -f "$cred" ] && fm_credsrc_check "$cred" typesafe openrouter >/dev/null &&
-    fm_credsrc_declares "$cred" "$typed_provider"; then
-    typed_active=true
-  fi
+  [ -z "$typed_key" ] || typed_active=true
   if $typed_active; then
     verified_harnesses=$(fm_control_harnesses | jq -Rsc 'split("\n") | map(select(length > 0))')
   else
