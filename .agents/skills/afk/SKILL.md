@@ -57,6 +57,8 @@ Hold-for-return is the default and the only reach profile this release records: 
 
 - The record exists, so the watcher never rechecks an item held for the captain, in either supervision shape; the return brief lists it instead.
   Declared external waits keep their condition-aware, hours-long recheck cadence (`bin/fm-watch.sh`, `bin/fm-classify-lib.sh`).
+- Lanes that are neither wedged nor declared waits still escalate while away: a `check: away long wait:` wake names each lane CI-active, parked at a base rebase, or idle on a green PR past its threshold (`bin/fm-classify-lib.sh` owns the thresholds and why).
+  Act on it as on any wake, under the words and standing authority, and otherwise record it for the return brief rather than letting the lane sit.
 - The away session acts on the captain's words.
   It reads them at the tail of every wake, decides by its own judgment whether the event in front of it is the moment they name, acts on them only through the guarded scripts under standing authority, never by analogy, holds with verdict captain on doubt, and opens every outcome summary for an action taken under the words with "per your away instructions:" (`bin/fm-branch-prompt.sh` "Postures" owns the execution rules).
   Destructive, irreversible, and security-sensitive actions are never pre-authorizable whatever the words say, and ask-user findings keep the `ask-user-authority` policy unless the words pre-answer the exact decision; anything else that needs the captain holds for their return.
