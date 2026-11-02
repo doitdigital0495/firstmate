@@ -455,6 +455,8 @@ fm_ask_user_escalation_block() {  # <data-dir> <task-id>
    For a no-mistakes ask-user gate specifically, escalate all ask-user findings as one event plus one snapshot file, using that same shape even when the gate holds only a single ask-user finding: write only the ask-user findings, verbatim and unparaphrased (id, severity, file, line, description, authority), to \`$data/$id/nm-<run>-findings.txt\`, then report the gate with
    \`needs-decision [at=<epoch>] [key=nm-<run>-<step>]: ask-user findings=<id1>,<id2>,... file=$data/$id/nm-<run>-findings.txt\`
    naming every ask-user finding id from that gate. The status line only points at the file; it never restates or summarizes a finding's content.
+   Below the findings, the file may add one \`standing: <finding-id> <row>\` line per finding that matches a row of this brief's project standing answers, and one \`prior: <finding-id> <key>\` line per finding identical to one firstmate already decided in this task under that \`needs-decision\` key.
+   Those lines are hints for firstmate, never your answer: still stop and wait for its decision.
 EOF
 }
 

@@ -119,6 +119,7 @@ The loader reads only the effective `FM_HOME/config/brief-addenda/` directory, m
 Keep these files out of shared tracked material and never put credentials or secrets in them.
 An addendum must explicitly name any bounded exception to generic ship rules while preserving the selected delivery mode and scout/local-only limits.
 The primary's addenda are inherited into secondmate homes as a per-file set under the primary-authoritative contract owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md): each valid `<repo>.md` is copied when it differs, and a secondmate addendum the primary lacks is removed at the next convergence, so install, edit and delete addenda in the primary.
+An addendum may carry a `## Standing answers` table for that project's recurring review-gate questions; the `ask-user-authority` skill owns how firstmate applies it.
 Untracked files and directories whose names begin with `scratchpad` are also gitignored, so temporary scratch does not make porcelain-based secondmate sync guards treat a home as dirty.
 
 ### Format and lifecycle references
