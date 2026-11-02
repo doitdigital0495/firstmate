@@ -12,6 +12,7 @@
 #                 "BACKEND_INVALID: <name> (known: <names>)",
 #                 "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>",
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
+#                 "ACCOUNTS: invalid config/accounts.json - <reason>",
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
 #                 "HOME_SUMMARY: <ledger never published|not republished since
 #                 <stamp>>; <n> failed attempt(s) ... last: <recorded failure>",
@@ -191,6 +192,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 # shellcheck source=bin/fm-quota-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-quota-axi-lib.sh"
+# shellcheck source=bin/fm-account-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-account-lib.sh"
 # shellcheck source=bin/fm-control-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-control-lib.sh"
 # shellcheck source=bin/fm-env-lib.sh disable=SC1091
@@ -1282,6 +1285,19 @@ crew_dispatch_validate() {
     echo "CREW_DISPATCH: invalid config/crew-dispatch.json - $err"
     return 0
   fi
+  # S1: with config/accounts.json present every profile names a registered
+  # account that owns its harness store and serves its provider, and the
+  # registry itself has no ambiguous seats; each problem is printed, so a
+  # profile can never fall quietly onto the supervisor's own login.
+  local problem
+  while IFS= read -r problem; do
+    [ -n "$problem" ] || continue
+    echo "ACCOUNTS: invalid config/accounts.json - $problem"
+  done < <(fm_account_registry_problems "$CONFIG/accounts.json")
+  while IFS= read -r problem; do
+    [ -n "$problem" ] || continue
+    echo "CREW_DISPATCH: invalid config/crew-dispatch.json - $problem"
+  done < <(fm_account_dispatch_problems "$CONFIG/accounts.json" "$file")
   if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
     jq -r '
     def profile($p):

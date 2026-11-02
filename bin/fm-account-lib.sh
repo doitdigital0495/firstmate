@@ -6,6 +6,10 @@
 # but at least one must be present, so a Claude-only seat registers without
 # borrowing another account's Pi or Codex store. A store that is present must
 # still be a valid path; a present-but-malformed store invalidates the registry.
+# An optional `provider` names the one quota provider family the account spends
+# (claude, codex, zai, ...). It is what tells two seats that share one store
+# apart (a Codex seat and a Z.ai seat both on ~/.pi/agent), and the intake and
+# the resolver read only that provider's rows for the account.
 fm_account_registry_valid() {
   local file=$1
   [ -f "$file" ] && jq -e '
@@ -14,6 +18,8 @@ fm_account_registry_valid() {
     type == "object" and (.accounts | type == "object") and
     all(.accounts | to_entries[]; (.key | test("^[a-z][a-z0-9-]*$")) and
       (.value | type == "object") and
+      ((.value.provider // null) == null or
+        ((.value.provider | type) == "string" and (.value.provider | test("^[a-z0-9]+(-[a-z0-9]+)*$")))) and
       ([.value.claude, .value.pi, .value.codex] | map(select(. != null))) as $present |
       ($present | length) > 0 and all($present[]; store_path)) and
     ((.crossAccount // null) == null or
@@ -104,22 +110,88 @@ fm_account_expand_store() {
   printf '%s\n' "$value"
 }
 
-# fm_account_seat_for_store <file> <claude|pi|codex> <store>: the registry
-# account id that owns <store> for that kind, or nothing. Several accounts
-# sharing one store (the Pi agent directory is shared between seats) is
-# ambiguous and names no seat. Needs a valid registry; the routing switch may be off.
+# fm_account_canonical_store <path>: ~/ expanded, trailing slashes trimmed, and
+# symlinks resolved, so a symlinked alias and its target name one store. A path
+# that does not exist yet is resolved as far as it exists (realpath -m).
+fm_account_canonical_store() {
+  local value
+  value=$(fm_account_expand_store "$1")
+  [ -n "$value" ] || return 0
+  realpath -m -- "$value" 2>/dev/null || printf '%s\n' "$value"
+}
+
+# fm_account_provider <file> <account>: the account's declared provider, or nothing.
+fm_account_provider() {
+  fm_account_registry_valid "$1" || return 0
+  jq -r --arg a "$2" '.accounts[$a].provider // empty | strings' "$1" 2>/dev/null || true
+}
+
+# fm_account_seat_for_store <file> <claude|pi|codex> <store> [<provider>]: the
+# registry account id that owns <store> for that kind, or nothing. Stores are
+# compared after symlink resolution. Several accounts sharing one store (the Pi
+# agent directory is shared between a Codex and a Z.ai seat) name no seat,
+# unless <provider> is given and exactly one of them declares that provider.
+# Needs a valid registry; the routing switch may be off.
 fm_account_seat_for_store() {
-  local file=$1 kind=$2 store matches count
+  local file=$1 kind=$2 provider=${4:-} store matches count account candidate
   fm_account_registry_valid "$file" || return 0
-  store=$(fm_account_expand_store "$3")
+  store=$(fm_account_canonical_store "$3")
   [ -n "$store" ] || return 0
-  matches=$(jq -r --arg k "$kind" --arg home "${HOME:?}" --arg s "$store" '
-    def norm: if startswith("~/") then $home + .[1:] else . end
-              | sub("/+$"; "");
-    .accounts | to_entries[] | select((.value[$k] // null) != null and ((.value[$k] | norm) == $s)) | .key
-  ' "$file" 2>/dev/null) || return 0
+  matches=
+  while IFS=$'\t' read -r account candidate; do
+    [ -n "$account" ] || continue
+    [ "$(fm_account_canonical_store "$candidate")" = "$store" ] || continue
+    matches="${matches}${account}"$'\n'
+  done < <(jq -r --arg k "$kind" '.accounts | to_entries[] | select((.value[$k] // null) != null) | "\(.key)\t\(.value[$k])"' "$file" 2>/dev/null)
   count=$(printf '%s' "$matches" | grep -c . || true)
-  [ "$count" -eq 1 ] && printf '%s\n' "$matches"
+  if [ "$count" -gt 1 ] && [ -n "$provider" ]; then
+    matches=$(printf '%s' "$matches" | while IFS= read -r account; do
+      [ -n "$account" ] || continue
+      [ "$(fm_account_provider "$file" "$account")" != "$provider" ] || printf '%s\n' "$account"
+    done)
+    count=$(printf '%s' "$matches" | grep -c . || true)
+  fi
+  [ "$count" -eq 1 ] && printf '%s\n' "$(printf '%s' "$matches" | grep . )"
+  return 0
+}
+
+# fm_account_registry_problems <file>: one line per problem a valid-shaped
+# registry still has, so bootstrap can fail loudly instead of routing quietly
+# around them. Prints nothing for an absent file or a clean registry.
+#   - a declared provider whose store the account does not own (claude needs a
+#     claude store; codex needs a codex or pi store; any other provider needs pi)
+#   - two accounts declaring the same provider on the same canonical store, which
+#     would read and bill one login twice under two names
+fm_account_registry_problems() {
+  local file=$1 account provider kind store key seen=''
+  [ -e "$file" ] || return 0
+  if ! fm_account_registry_valid "$file"; then
+    printf 'malformed registry (see docs/configuration.md "Cross-account worker routing")\n'
+    return 0
+  fi
+  while IFS=$'\t' read -r account provider; do
+    [ -n "$account" ] || continue
+    [ -n "$provider" ] || continue
+    case "$provider" in
+      claude) jq -e --arg a "$account" '.accounts[$a].claude != null' "$file" >/dev/null 2>&1 ||
+        printf 'account %s declares provider claude but owns no claude store\n' "$account" ;;
+      codex) jq -e --arg a "$account" '.accounts[$a].codex != null or .accounts[$a].pi != null' "$file" >/dev/null 2>&1 ||
+        printf 'account %s declares provider codex but owns no codex or pi store\n' "$account" ;;
+      *) jq -e --arg a "$account" '.accounts[$a].pi != null' "$file" >/dev/null 2>&1 ||
+        printf 'account %s declares provider %s but owns no pi store\n' "$account" "$provider" ;;
+    esac
+    for kind in claude pi codex; do
+      store=$(jq -r --arg a "$account" --arg k "$kind" '.accounts[$a][$k] // empty' "$file")
+      [ -n "$store" ] || continue
+      key="$provider|$kind|$(fm_account_canonical_store "$store")"
+      case "$seen" in
+        *$'\n'"$key="*)
+          printf 'accounts %s and %s both declare provider %s on %s store %s\n' \
+            "$(printf '%s' "$seen" | grep -F "$key=" | head -1 | sed 's/.*=//')" "$account" "$provider" "$kind" "${key##*|}" ;;
+      esac
+      seen="$seen"$'\n'"$key=$account"
+    done
+  done < <(jq -r '.accounts | to_entries[] | "\(.key)\t\(.value.provider // "")"' "$file")
   return 0
 }
 
@@ -157,4 +229,61 @@ fm_account_seat_label() {
   [ -z "$plan" ] || label="$label · $(fm_account_label_text "$plan" 80)"
   [ -z "$email" ] || label="$label · $(fm_account_label_text "$email" 120)"
   printf '%s\n' "$label"
+}
+
+# ---- six-account dispatch guard (S1) -------------------------------------------
+# fm_account_dispatch_problems <accounts-file> <crew-dispatch-file>: one line per
+# dispatch profile that would route silently. With a valid registry present,
+# every rule and default profile must name a registered account; a profile
+# without one would fall onto the home pin store (the supervisor's own login).
+# A named account must own the store its harness launches from, and an account
+# that declares a provider must match the profile's provider family. Prints
+# nothing when no registry exists, so homes without accounts are unchanged.
+fm_account_dispatch_problems() {
+  local accounts=$1 rules=$2
+  [ -f "$rules" ] || return 0
+  fm_account_registry_valid "$accounts" || return 0
+  jq -r --slurpfile reg "$accounts" '
+    def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
+    def store_kind($h): {"claude":"claude","pi":"pi","pi-signed":"pi","codex":"codex"}[$h] // null;
+    def family($p): $p.provider // ({"claude":"claude","codex":"codex","opencode":"codex"}[$p.harness] // null);
+    def plabel($p): "\($p.harness):\($p.model // "default")/\($p.effort // "default")";
+    ($reg[0].accounts) as $acc |
+    ([(.rules // []) | to_entries[] | .key as $i | profiles(.value.use)[] | {where: "rule \($i + 1)", p: .}]
+      + [profiles(.default // null)[] | {where: "default", p: .}])[] |
+    .where as $w | .p as $p |
+    if ($p | type) != "object" then empty
+    elif ($p.account // null) == null then "\($w) profile \(plabel($p)) names no account; with config/accounts.json present every profile must name one"
+    elif $acc[$p.account] == null then "\($w) profile \(plabel($p)) names unregistered account \($p.account)"
+    elif store_kind($p.harness) != null and $acc[$p.account][store_kind($p.harness)] == null then
+      "\($w) profile \(plabel($p)) runs on \($p.harness) but account \($p.account) owns no \(store_kind($p.harness)) store"
+    elif ($acc[$p.account].provider // null) != null and family($p) != null and family($p) != $acc[$p.account].provider then
+      "\($w) profile \(plabel($p)) spends provider \(family($p)) but account \($p.account) declares provider \($acc[$p.account].provider)"
+    else empty end
+  ' "$rules" 2>/dev/null || printf 'crew dispatch file is not JSON\n'
+}
+
+# fm_account_coverage_gaps <accounts-file> <crew-dispatch-file>: S7 audit. For
+# every rule and the default, each distinct harness/model/effort rung of a
+# provider must list every registered account that declares that provider, so
+# one seat at its limit never strands a rung. Prints one line per gap, and one
+# note per provider served by a single account (a single point of failure).
+fm_account_coverage_gaps() {
+  local accounts=$1 rules=$2
+  [ -f "$rules" ] || return 0
+  fm_account_registry_valid "$accounts" || return 0
+  jq -r --slurpfile reg "$accounts" '
+    def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
+    def family($p): $p.provider // ({"claude":"claude","codex":"codex","opencode":"codex"}[$p.harness] // null);
+    ($reg[0].accounts | to_entries | map(select(.value.provider != null)) | group_by(.value.provider)
+      | map({key: .[0].value.provider, value: map(.key)}) | from_entries) as $byp |
+    ([(.rules // []) | to_entries[] | {where: "rule \(.key + 1)", use: profiles(.value.use)}]
+      + [{where: "default", use: profiles(.default // null)}]) as $rows |
+    ([$rows[] | .where as $w | .use | group_by([.harness, (.model // ""), (.effort // ""), (family(.) // "")])[]
+      | (family(.[0])) as $f | select($f != null and $byp[$f] != null)
+      | ([.[].account] | map(select(. != null))) as $have
+      | ($byp[$f] - $have) as $missing | select(($missing | length) > 0)
+      | "gap: \($w) \(.[0].harness):\(.[0].model // "default")/\(.[0].effort // "default") lacks \($f) account(s) \($missing | join(", "))"]
+    + [$byp | to_entries[] | select((.value | length) == 1) | "single point: provider \(.key) has one account (\(.value[0]))"]) | .[]
+  ' "$rules" 2>/dev/null || true
 }

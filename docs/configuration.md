@@ -1810,6 +1810,7 @@ This section is the single owner of the canonical schema and its per-field seman
       "approval": "captain",
       "min_confidence": 0.85,
       "floor": { "scope": "<quota-axi scope>", "min_percent": 20, "provider": "<quota-axi provider>" },
+      "never_providers": ["<optional provider ID this rule may never run on>"],
       "use": [
         { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "account": "<optional registry account id>", "provider": "<optional quota-axi provider>", "quota_scope": "<optional quota-axi scope>", "fallback_only": false, "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
       ],
@@ -1835,7 +1836,13 @@ This section is the single owner of the canonical schema and its per-field seman
 | Top-level `shared_quota` | Optional; see "Shared-quota opt-out" below. |
 | Profile `fallback_only` | Optional boolean reserve-tier flag; see "Fallback-only reserve tier" below. |
 
-An absent `account` keeps the home seat; a named account must be allowlisted in the enabled home registry and is passed as `--account`. A configured worker pin is authoritative; disagreeing explicit or relaunch bindings refuse.
+An absent `account` keeps the home seat only in a home without `config/accounts.json`; once that registry exists every profile must name a registered account that owns the store its harness launches from and, when the account declares `provider`, spends that provider, or the resolver exits 2 and bootstrap prints `CREW_DISPATCH: invalid config/crew-dispatch.json - <profile> names no account` (or the unregistered account, missing store, or provider mismatch), so no profile falls quietly onto the home's own login. A named account must be allowlisted in the enabled home registry and is passed as `--account`. A configured worker pin is authoritative; disagreeing explicit or relaunch bindings refuse.
+
+**Supervisor reserve and provider bans**
+
+- In a six-account home the supervisor's own login (claude3) sits on worker rows as a `fallback_only` reserve (see the field above): it is held while claude1 or claude2 still has weekly capacity and picked only when no other candidate is rankable. A held reserve is out of the choice, so its own quota, known or not, never makes the choice incomplete. Add a profile `floor` on the seven-day scope to cap how far the reserve may drain that login.
+- A rule `never_providers` is a non-empty array of provider IDs that rule's work may never run on, such as `["zai"]` on front-end design. A rule that lists a profile of a provider it bans is a configuration error, and when an ambiguous union pulls profiles of a banned provider in from another rule, those candidates read `provider <id> is banned for this work (never_providers)` and are never chosen.
+- `bin/fm-account-routing.sh audit` reports any rung that lists fewer accounts of a provider than the registry declares for it, and notes a provider served by a single account.
 
 **Preferred provider**
 
@@ -1929,6 +1936,7 @@ See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a star
 - When the file exists, bootstrap validates it with `jq`.
 - Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
 - Malformed JSON, malformed rules, an empty or malformed profile array, a malformed `preferred_provider`, a malformed `fallback_only`, an unverified harness, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
+- With `config/accounts.json` present, a profile that names no account, an unregistered account, an account without the profile's harness store, or an account declaring another provider is also reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`, and a registry problem as `ACCOUNTS: invalid config/accounts.json - ...`.
 - Bootstrap enables resolver-only checks for `approval`, `min_confidence`, `floor`, and present `provider` declarations when the route's key is non-empty in the environment or the home's `.env`: `OPENROUTER_API_KEY` by default, or `TYPESAFE_API_KEY` with `FM_DISPATCH_ROUTE=direct`.
   Without a typesafe key or a declared typesafe source, bootstrap retains its pre-existing verified-harness baseline.
 - Missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
@@ -1941,13 +1949,18 @@ Secondmate homes inherit this file from the primary, so a secondmate's own crewm
 ## Cross-account worker routing (config/accounts.json)
 
 `config/accounts.json` is an optional, per-home, local account allowlist; absent or malformed files never enable cross-account routing.
-The registry and `crossAccount.enabled` are independent in each home, so a Geris-only home with no switch has no route to a personal seat.
+The registry and `crossAccount.enabled` are independent in each home, so a home whose registry has no switch has no cross-account route at all.
 For the schema and path validation, `bin/fm-account-lib.sh` is authoritative.
-A typical personal-home file is:
+A six-account home file is:
 
 ```json
-{"crossAccount":{"enabled":true},"plans":{"claude":"Max 5x","codex":"ChatGPT Plus"},"accounts":{"personal":{"claude":"~/.claude","pi":"~/.pi/agent","codex":"~/.codex","plans":{"claude":"Max 5x"}},"geris":{"claude":"~/.claude-3","pi":"~/.pi-geris/agent","codex":"~/.codex-geris","plans":{"claude":"Pro","zai":"Z.ai Pro"}}}}
+{"crossAccount":{"enabled":true},"plans":{"claude":"Team premium","codex":"Pro 5x","zai":"Pro 6x"},"accounts":{"claude1":{"provider":"claude","claude":"~/.claude","plans":{"claude":"Max 20x"}},"claude2":{"provider":"claude","claude":"~/.claude-2","plans":{"claude":"Ultra"}},"claude3":{"provider":"claude","claude":"~/.claude-3","plans":{"claude":"Team premium"}},"codex1":{"provider":"codex","codex":"~/.codex","pi":"~/.pi/agent","plans":{"codex":"Pro 5x"}},"codex2":{"provider":"codex","codex":"~/.codex-2","pi":"~/.pi-2/agent","plans":{"codex":"Business"}},"glm":{"provider":"zai","pi":"~/.pi/agent","plans":{"zai":"Pro 6x"}}}}
 ```
+
+An account's optional `provider` names the one quota provider family it spends (`claude`, `codex`, `zai`, ...).
+The intake records that account with that provider's rows only, the seat label resolves a store shared by two seats (one Pi agent directory for a Codex and a Z.ai seat) by the launch's provider, and every profile naming the account must spend that provider.
+Stores are compared after symlink resolution, so a symlinked alias names its target's seat, and the intake reads each canonical store triple once.
+Bootstrap prints `ACCOUNTS: invalid config/accounts.json - <reason>` for a declared provider whose store the account does not own, and for two accounts declaring the same provider on one canonical store.
 
 Each account names the stores it owns: `claude`, `pi` and `codex` are each optional, but at least one must be present, so a Claude-only seat such as `{"claude2":{"claude":"~/.claude-2","plans":{"claude":"Ultra"}}}` registers without borrowing another account's Pi or Codex store.
 A store that is present must still be a valid path.
@@ -1965,7 +1978,9 @@ A configured [worker account pin](#worker-account-pin-configclaude-account-confi
 The selected store is pinned per harness (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, or `CODEX_HOME`), and the task record retains all three paths for a relaunch that does not name a new `--account`, even after routing is switched off.
 Without `--account`, a first Pi or Codex launch records an ambient `PI_CODING_AGENT_DIR` or `CODEX_HOME` and relaunches on it; when none is set, nothing is recorded and the worker keeps inheriting the pane's store as before.
 With no pin present, all of this registered cross-account behaviour is unchanged; a task record that carries no store is unbound, so a pin added later may redirect it (see [Failures, reporting, and inheritance](#failures-reporting-and-inheritance)).
-Quota ranking uses one `quota-axi` snapshot for the default store and one environment-pinned snapshot per distinct named store triple, then compares applicable `spendPriority` across the union without a reserve or quota floor.
+Quota ranking uses one `quota-axi` snapshot for the default store and one environment-pinned snapshot per distinct canonical named store triple, then compares applicable `spendPriority` across the union; the only reserve is a declared profile `floor`, and the supervisor's login is protected by `fallback_only` reserve profiles (see "Crew dispatch profiles").
+
+**Renaming accounts.** `bin/fm-account-migrate.sh` rewrites task records (`state/*.meta`) and worker pin files for a registry rename in one step: `--id <old>:<provider>=<new>` maps the account a record names (or `-` for none) per provider family and moves the record's launch store to the new seat's store, so a relaunch lands on the new seat, and `--path <old>=<new>` rewrites store paths in records and pins. It is a dry run without `--apply`, refuses `--apply` while any process still runs with an old store in `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR` or `CODEX_HOME`, copies every changed file under `state/account-migrate/pre-<stamp>/` first, and changes nothing when re-run.
 Unmeasurable Team-seat five-hour quota remains disclosed uncertainty, not healthy headroom.
 
 ### Worker seat label and recorded seat
@@ -2022,14 +2037,15 @@ A relaunch of a secondmate still pinned to another identity refuses before stopp
 Running workers and their `state/<id>.meta` records are untouched, and a worker's relaunch retains its recorded account.
 Worker account pins, cross-account routing, quota intake, and release shaping remain independent configuration; rebinding does not rewrite them.
 
-Choose the subscription per launch: from an `hp` shell (`HERDR_SESSION=personal`), after exiting the current firstmate with `/exit`, start this same home on either Claude subscription without logging out anywhere:
+Choose the subscription per launch: from an `hp` shell (`HERDR_SESSION=personal`), after exiting the current firstmate with `/exit`, start this same home on any registered Claude account without logging out anywhere:
 
 ```bash
-~/.firstmate/bin/fm-open.sh geris      # $HOME/.claude-3
-~/.firstmate/bin/fm-open.sh personal   # $HOME/.claude
+~/.firstmate/bin/fm-open.sh claude3   # the claude store config/accounts.json registers for claude3
+~/.firstmate/bin/fm-open.sh claude1   # the same for claude1
 ```
 
-Arguments after the account name go to Claude, for example `fm-open.sh geris --model opus --effort medium --continue`.
+The account is any registered account in `config/accounts.json` that owns a Claude store; the routing switch does not matter here.
+Arguments after the account name go to Claude, for example `fm-open.sh claude3 --model opus --effort medium --continue`.
 The account argument is the deliberate operator act, so the launcher runs the `rebind --confirm` above before it starts Claude.
 It therefore refuses a live session lock without touching it, and refuses a target store with no `.credentials.json`.
 It keeps every previous identity in `data/home-identity.history`, moves only secondmates it can, and reports the rest as skipped.
@@ -2144,6 +2160,9 @@ An absent or empty table returns `no rules to match`; a default-only table can r
 An existing unreadable or malformed table, including a broken symlink, is an exit 2 configuration error.
 Everything after the answer runs in code: the confidence floor, the matched rule's `approval`, `min_confidence`, and `floor`, each candidate's `provider`, `quota_scope`, and `floor`, every applicable account-wide and model/product row from the default and authorized named-store `quota-axi --json` snapshots, the optional `preferred_provider` restriction under the [profile-array procedure](../.agents/skills/quota-array-dispatch/SKILL.md#4-rank-by-spendpriority), and the numeric `spendPriority` argmax within that candidate pool using each candidate's limiting row, restricted to the highest declared `reasoning_class` first under the keep-strongest rule below.
 A candidate is rankable only with complete limit information: every window its applicable rows are bounded by - the weekly limit, a session limit where the plan has one, and named model windows - must carry a known remaining percent and reset time.
+A five-hour window counts whenever it can be read; one that is missing or has no readable percent or reset time is ignored on every account and never makes a candidate incomplete (captain 2026-11-02), and a row unknown only because of such a window ranks on its other windows.
+A provider whose state is `auth_required` makes only that candidate ineligible as `credential unusable ... not an unknown quota`; it never makes the whole choice incomplete.
+A provider row that a read could not measure for any other reason (rate limited, stale, unavailable, or the read failed outright) reuses that provider's last good reading of the same canonical store while it is at most `FM_QUOTA_RECENT_MAX_AGE` (1800) seconds old; the candidate line then shows `reading_age=<s>s (recent reading reused)`, a reused exhausted reading still excludes, and nothing older is used. The readings live privately under `state/quota-last-good/`.
 A row whose own status is not known, an unmeasured provider, a profile floor whose scope row is unmeasured, a candidate with no applicable row, or a window without a percent or reset makes that candidate incomplete and the whole choice `incomplete` before any ranking or hand-picking; a candidate is never left merely unranked, dropped, or treated as healthy because its limits are unknown.
 A profile's `quota_scope` binds the candidate to that named quota-axi row in addition to its account-wide and model rows; a declared scope with no row beside otherwise complete evidence leaves the candidate eligible but unranked.
 The resolver prints its preferred-family decision while retaining evidence for every candidate.
@@ -2189,8 +2208,8 @@ Jev error, outage, or invalid answer gets exactly one retry, then code resolves 
 At most three degraded receipts may be issued per UTC day per home; an atomic reservation counts even if writing subsequently fails, and a busy or stale counter lock fails closed for operator review.
 Session startup lists degraded receipts issued in the last 24 hours, including reservations that were not launched.
 After the cap, routing stops and reports; there is no self-service degraded producer and no profile parameter on the resolve path.
-An approval row or genuine spendPriority tie stops and asks the captain.
-Only a matching Jev preference may break a real spendPriority tie.
+An approval row stops and asks the captain.
+An exact spendPriority tie keeps the candidates whose binding window (the windows bounding the limiting row) resets soonest, then takes the next slot of a fixed round-robin over a stable account, harness, model and effort order kept in `state/dispatch-tie-round-robin`; the result prints a `tie_break:` line naming the tie, the reset and the slot (captain 2026-11-02).
 The resolver does not replace launch-time catalog, authentication, account, quota-intake, or harness validation.
 Firstmate can stop a route it judges unsafe, but cannot select another profile or mint an override in phase 1.
 The historical direct-HTTP canary is not evidence for this socket route.
@@ -2205,7 +2224,7 @@ The request envelope is `{"type":"dispatch_choices","version":1,"request":{"mode
 The reply envelope is `{"type":"dispatch_choices","version":1,"requestId":"<jevd-log-id>","response":{"model":"...","answers":{"rule":{"choice":"rule_1","confidence":0.9,"probabilities":{}},"profile":{"choice":"rule_1_1","confidence":0.9,"probabilities":{}}},"usage":{"input_tokens":1,"output_tokens":1}}}`.
 Probability maps must contain all offered choices; the example's empty maps are placeholders, not valid answers.
 `requestId` is a nonempty daemon-generated audit identifier, not supplied by firstmate; failure replies, unsupported types, missing ids, and invalid Choices count as errors for retry/degraded handling.
-The dispatch request type explicitly allows every project's intent/spec text, including Geris; the command-gate request type keeps its separate scope.
+The dispatch request type explicitly allows every project's intent/spec text, including client projects; the command-gate request type keeps its separate scope.
 No account labels, quota, credentials, approval, `why`, or reasoning ranks are sent.
 The daemon owns the key, pinned model, upstream request, and request-id log; the resolver owns eligibility, ranking, and receipts.
 `tests/jevd-dispatch-stub.py` implements this contract for deterministic verification; the daemon implementation ships separately.

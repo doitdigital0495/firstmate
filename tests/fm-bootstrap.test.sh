@@ -1420,7 +1420,7 @@ one-element array use is accepted^{"rules":[{"when":"focused feature","use":[{"h
 default array is accepted^{"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5"},{"harness":"grok"}]}^empty^
 provider-less multi-provider profile remains accepted without opt-in^{"rules":[{"when":"cross-provider work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5"}}],"default":{"harness":"pi","model":"anthropic/claude-sonnet-5"}}^empty^
 one-element default array is accepted^{"default":[{"harness":"codex"}]}^empty^
-valid named account field is accepted^{"rules":[{"when":"small job","use":[{"harness":"codex","account":"geris"},{"harness":"codex"}]}]}^empty^
+valid named account field is accepted^{"rules":[{"when":"small job","use":[{"harness":"codex","account":"second"},{"harness":"codex"}]}]}^empty^
 malformed named account is flagged^{"rules":[{"when":"small job","use":{"harness":"codex","account":"../../other"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model, effort, and account must be valid strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
 empty array use is flagged^{"rules":[{"when":"big feature","use":[]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each rule needs at least one use profile
 array profile without harness is flagged^{"rules":[{"when":"big feature","use":[{"model":"gpt-5.5"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each use profile needs harness
@@ -1439,7 +1439,7 @@ profile floor without scope is flagged^{"rules":[{"when":"images","use":[{"harne
 profile floor provider override is flagged^{"rules":[{"when":"images","use":{"harness":"codex","floor":{"scope":"all_models","min_percent":50,"provider":"claude"}}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile floor needs scope and min_percent 0..100
 profile quota_scope empty is flagged^{"rules":[{"when":"images","use":{"harness":"agy","quota_scope":""}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile quota_scope must be a non-empty string when present
 default profile quota_scope non-string is flagged^{"default":{"harness":"agy","quota_scope":3}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile quota_scope must be a non-empty string when present
-profile fallback_only true is accepted^{"rules":[{"when":"reserve work","use":[{"harness":"claude","account":"geris","fallback_only":true},{"harness":"claude"}]}]}^empty^
+profile fallback_only true is accepted^{"rules":[{"when":"reserve work","use":[{"harness":"claude","account":"claude3","fallback_only":true},{"harness":"claude"}]}]}^empty^
 non-boolean use fallback_only is flagged^{"rules":[{"when":"reserve work","use":{"harness":"claude","fallback_only":"yes"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile fallback_only must be true or false when present
 default profile fallback_only non-boolean is flagged^{"default":{"harness":"claude","fallback_only":1}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile fallback_only must be true or false when present
 unknown select is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"mystery"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unknown select: mystery

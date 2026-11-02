@@ -111,7 +111,7 @@ run_with_fake() {
 # the tripwire has to protect, and the shape that used to refuse outright.
 OPERATOR_FLEET='[
   {"default":true,"name":"default","running":false,"socket_path":"/home/test/.config/herdr/herdr.sock"},
-  {"default":false,"name":"geris","running":true,"socket_path":"/home/test/.config/herdr/sessions/geris/herdr.sock"},
+  {"default":false,"name":"second","running":true,"socket_path":"/home/test/.config/herdr/sessions/second/herdr.sock"},
   {"default":false,"name":"personal","running":true,"socket_path":"/home/test/.config/herdr/sessions/personal/herdr.sock"}
 ]'
 
@@ -122,7 +122,7 @@ test_anchors_to_running_named_sessions_with_a_stopped_default() {
     run_with_fake fm_herdr_lab_provision "$name" \
     || fail "a lab must provision against running named sessions when default is stopped"
   snapshot=$(cat "$TRIPWIRES/$name.fleet-state.json")
-  assert_contains "$snapshot" '"name":"geris"' "the tripwire must watch the work session"
+  assert_contains "$snapshot" '"name":"second"' "the tripwire must watch the work session"
   assert_contains "$snapshot" '"name":"personal"' "the tripwire must watch the personal session"
   assert_contains "$snapshot" '"name":"default"' "the tripwire must watch the stopped default session too"
   assert_not_contains "$snapshot" "$name" "the tripwire must exclude the lab session itself"
@@ -134,14 +134,14 @@ test_anchors_to_running_named_sessions_with_a_stopped_default() {
 }
 
 test_a_changed_work_session_trips_the_tripwire() {
-  local name="fm-lab-geris-change-$$" status=0 changed
+  local name="fm-lab-second-change-$$" status=0 changed
   : > "$FAKE_LOG"
   FM_FAKE_HERDR_FLEET="$OPERATOR_FLEET" \
     run_with_fake fm_herdr_lab_provision "$name" || fail "fixture provision failed"
   # The work session stops during lab work: the lab must be blamed loudly rather
   # than tearing down as though nothing happened.
   changed=$(printf '%s' "$OPERATOR_FLEET" | jq -c '
-    map(if .name == "geris" then .running = false else . end)')
+    map(if .name == "second" then .running = false else . end)')
   FM_FAKE_HERDR_FLEET="$changed" \
     run_with_fake fm_herdr_lab_teardown "$name" >/dev/null 2>&1 || status=$?
   expect_code 1 "$status" "a changed work session must fail teardown"
@@ -172,7 +172,7 @@ test_a_disappearing_session_trips_the_tripwire() {
   : > "$FAKE_LOG"
   FM_FAKE_HERDR_FLEET="$OPERATOR_FLEET" \
     run_with_fake fm_herdr_lab_provision "$name" || fail "fixture provision failed"
-  changed=$(printf '%s' "$OPERATOR_FLEET" | jq -c 'map(select(.name != "geris"))')
+  changed=$(printf '%s' "$OPERATOR_FLEET" | jq -c 'map(select(.name != "second"))')
   FM_FAKE_HERDR_FLEET="$changed" \
     run_with_fake fm_herdr_lab_teardown "$name" >/dev/null 2>&1 || status=$?
   expect_code 1 "$status" "a vanished work session must fail teardown"

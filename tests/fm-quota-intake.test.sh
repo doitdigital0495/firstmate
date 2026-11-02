@@ -28,9 +28,10 @@
 #      provider with no Notes entry.
 #   5. gate passes print the chosen candidate's full window table (zai).
 #   6. the test bypass is explicit and prints that it bypassed.
-#   7. the cached-read exception: a fresh statusline cache converts USED
-#      percentages to remaining and is marked cached; a stale one fails
-#      closed.
+#   7. the recent-reading fallback: a rate-limited read reuses the store's
+#      last good reading under 30 minutes with its age; an older one or a
+#      credential failure refuses; a seat that declares a provider carries
+#      only that provider's rows.
 #   8. the real bin/fm-spawn.sh heals a missing or spent record with its own
 #      intake and still refuses a limit verdict, and the real bin/fm-control.sh relaunch
 #      gate refuses BEFORE the running agent is stopped and passes on a real
@@ -139,7 +140,7 @@ jq '(.providers[] | select(.provider == "zai") | .windows[] | select(.id == "wee
   "$TMP_ROOT/snap-zeropct.json" > "$TMP_ROOT/snap-usedonly.json"
 
 # No claude provider at all: the live personal Claude read is missing, which
-# is the cached-read exception's trigger.
+# is what the recent-reading fallback answers.
 cat > "$TMP_ROOT/snap-codexonly.json" <<'EOF'
 {"schemaVersion":5,"providers":[
  {"provider":"codex","label":"ProLite","plan":"prolite","state":{"status":"fresh"},
@@ -169,7 +170,7 @@ EOF
 
 # The live Codex ProLite shape: quota-axi reports only the weekly window,
 # with its used percent, reset time, and plan label (next to a healthy claude
-# read, so the cached-read exception stays out of the way).
+# read, so the recent-reading fallback stays out of the way).
 cat > "$TMP_ROOT/snap-prolite.json" <<'EOF'
 {"schemaVersion":5,"providers":[
  {"provider":"claude","label":"Max","plan":"max","state":{"status":"fresh"},
@@ -306,16 +307,16 @@ file_mode() {  # <path> -> numeric mode, GNU then BSD stat
 # --- 1. record shape: every window, reset, plan source ----------------------
 
 test_record_shape() {
-  local home geris out rec
+  local home second out rec
   home=$(make_home shape)
-  geris=$home/geris-store
-  mkdir -p "$geris/claude" "$geris/pi" "$geris/codex"
+  second=$home/second-store
+  mkdir -p "$second/claude" "$second/pi" "$second/codex"
   # The live model_notes shape: bare provider keys next to harness-scoped
   # model keys, which must never become providers of their own.
   printf '%s\n' '{"model_notes":{"claude":"personal max line","codex":"codex pool line","zai":"glm coding line","claude/opus":"opus line","pi/openai-codex/gpt-6-luna":"luna line","pi/zai/glm-5.3":"glm 5.3 line"}}' \
     > "$home/config/crew-dispatch.json"
   seed_record "$home" "$TMP_ROOT/snap-base.json" \
-    '{"crossAccount":{"enabled":true},"plans":{"codex":"pro"},"accounts":{"geris":{"claude":"'"$geris"'/claude","pi":"'"$geris"'/pi","codex":"'"$geris"'/codex","plans":{"claude":"geris-max"}}}}'
+    '{"crossAccount":{"enabled":true},"plans":{"codex":"pro"},"accounts":{"second":{"claude":"'"$second"'/claude","pi":"'"$second"'/pi","codex":"'"$second"'/codex","plans":{"claude":"second-max"}}}}'
   rec=$(newest_record "$home") || fail "no intake record was written"
 
   # Every window of every provider of both accounts, with its used percent
@@ -323,7 +324,7 @@ test_record_shape() {
   # three sources, and the Notes column from both notes sources.
   jq -e '
     .schemaVersion == 2 and
-    .accounts[0].account == "default" and .accounts[1].account == "geris" and
+    .accounts[0].account == "default" and .accounts[1].account == "second" and
     ([.accounts[] | .readStatus] | all(. == "ok")) and
     ([.accounts[0].providers[] | select(.provider == "claude") | .windows[] |
       (.percentRemaining | type) == "number" and (.resetsAt | type) == "string"] | length) == 2 and
@@ -344,15 +345,15 @@ test_record_shape() {
     ([.accounts[0].providers[] | select(.provider == "claude") | .modelNotes] == [{"claude/opus": "opus line"}]) and
     ([.accounts[0].providers[] | select(.provider == "codex") | .modelNotes] == [{"pi/openai-codex/gpt-6-luna": "luna line"}]) and
     ([.accounts[0].providers[] | select(.provider == "zai") | .modelNotes] == [{"pi/zai/glm-5.3": "glm 5.3 line"}]) and
-    ([.accounts[1].providers[] | select(.provider == "claude") | .plan] == ["geris-max"]) and
-    ([.accounts[1].providers[] | select(.provider == "claude") | .planSource] == ["accounts.json:geris"])
+    ([.accounts[1].providers[] | select(.provider == "claude") | .plan] == ["second-max"]) and
+    ([.accounts[1].providers[] | select(.provider == "claude") | .planSource] == ["accounts.json:second"])
   ' "$rec" >/dev/null || fail "the record does not carry every window, used percent, reset, plan source, and notes"
 
   # The full table lands on stdout so it reaches the transcript, with every
   # window as a USED percent (remaining is never shown alone).
   run_record "$home" "$(make_fake_quota_axi "$home/quota-fake2" "$TMP_ROOT/snap-base.json")" > "$TMP_ROOT/shape-table.txt" || true
   assert_grep "account=default status=ok" "$TMP_ROOT/shape-table.txt" "the table must list the default account"
-  assert_grep "account=geris status=ok" "$TMP_ROOT/shape-table.txt" "the table must list every enabled account"
+  assert_grep "account=second status=ok" "$TMP_ROOT/shape-table.txt" "the table must list every enabled account"
   assert_grep "provider=claude status=ok plan=max (quota-axi) quota-axi=max spendPriority=0.4 runway=through_reset notes=personal max line" \
     "$TMP_ROOT/shape-table.txt" "the table must show the claude provider row with its notes"
   assert_grep "model=claude/opus notes=opus line" \
@@ -436,9 +437,9 @@ test_gate_refusals() {
   assert_contains "$out" "run bin/fm-quota-intake.sh now" "gate: the stale refusal must demand a fresh read"
 
   # Uncovered account.
-  out=$(run_gate "$home" --harness codex --account geris); rc=$?
+  out=$(run_gate "$home" --harness codex --account second); rc=$?
   expect_code 4 "$rc" "gate: an account the record does not cover must refuse with the refresh status"
-  assert_contains "$out" "does not cover account 'geris'" "gate: the uncovered-account refusal must name the account"
+  assert_contains "$out" "does not cover account 'second'" "gate: the uncovered-account refusal must name the account"
 
   # Uncovered store.
   out=$(run_gate "$home" --harness codex --codex-store /elsewhere/codex); rc=$?
@@ -471,13 +472,13 @@ test_gate_refusals() {
 }
 
 test_gate_exhausted_account() {
-  local home geris out rc
+  local home second out rc
   home=$(make_home exhausted)
-  geris=$home/geris-store
-  mkdir -p "$geris/claude" "$geris/pi" "$geris/codex"
+  second=$home/second-store
+  mkdir -p "$second/claude" "$second/pi" "$second/codex"
   seed_record "$home" "$TMP_ROOT/snap-exhausted.json" \
-    '{"crossAccount":{"enabled":true},"accounts":{"geris":{"claude":"'"$geris"'/claude","pi":"'"$geris"'/pi","codex":"'"$geris"'/codex"}}}'
-  out=$(run_gate "$home" --harness claude --account geris --claude-store "$geris/claude"); rc=$?
+    '{"crossAccount":{"enabled":true},"accounts":{"second":{"claude":"'"$second"'/claude","pi":"'"$second"'/pi","codex":"'"$second"'/codex"}}}'
+  out=$(run_gate "$home" --harness claude --account second --claude-store "$second/claude"); rc=$?
   expect_code 3 "$rc" "gate: an exhausted account must refuse"
   assert_contains "$out" "exhausted_now" "gate: the refusal must name the exhausted runway"
   assert_contains "$out" "(window five_hour)" "gate: the refusal must name the limiting window"
@@ -632,21 +633,31 @@ test_gate_idle_claude_five_hour() {
   assert_contains "$out" "window=seven_day used=7% resets=2026-10-05T17:59:59Z source=live" \
     "gate: the pass must still show the Claude 7d used percent and reset"
 
-  # The exemption is Claude-only: the same idle shape on codex still refuses.
+  # Captain 2026-11-02: an unreadable 5h window is ignored on every provider,
+  # so the same shape on codex passes and says the window was ignored.
   out=$(run_gate "$home" --harness codex); rc=$?
-  expect_code 3 "$rc" "gate: an idle codex 5h window without a reset must still refuse"
-  assert_contains "$out" "windows without a known used percent or reset time: five_hour" \
-    "gate: the codex refusal must name the five_hour window"
+  expect_code 0 "$rc" "gate: an unreadable codex 5h window is ignored: $out"
+  assert_contains "$out" "window=five_hour used=unreadable, ignored resets=unreadable, ignored" \
+    "gate: the pass must say the codex 5h window was ignored"
 
-  # A Claude 5h window with use but no reset time is not idle and still refuses.
+  # A Claude 5h window with use but no reset time cannot be read either.
   home=$(make_home used5h)
   seed_record "$home" "$TMP_ROOT/snap-used5h-noreset.json"
   out=$(run_gate "$home" --harness claude); rc=$?
-  expect_code 3 "$rc" "gate: a used Claude 5h window without a reset must still refuse"
-  assert_contains "$out" "windows without a known used percent or reset time: five_hour" \
-    "gate: the used-window refusal must name the five_hour window"
+  expect_code 0 "$rc" "gate: a Claude 5h window without a reset is ignored: $out"
+  assert_contains "$out" "window=five_hour used=unreadable, ignored" \
+    "gate: the pass must say the unreadable Claude 5h window was ignored"
 
-  pass "gate: an idle Claude 5h window (0% used, no reset) does not block; codex and used windows without a reset still refuse"
+  # A readable 5h window still counts: a spent one refuses.
+  home=$(make_home spent5h)
+  jq '(.providers[] | select(.provider == "codex") | .windows[] | select(.id == "five_hour")) |= (.percentUsed = 100 | .percentRemaining = 0 | .resetsAt = "2026-09-29T19:00:00Z")' \
+    "$TMP_ROOT/snap-idle5h.json" > "$TMP_ROOT/snap-spent5h.json"
+  seed_record "$home" "$TMP_ROOT/snap-spent5h.json"
+  out=$(run_gate "$home" --harness codex); rc=$?
+  expect_code 3 "$rc" "gate: a readable spent 5h window still refuses"
+  assert_contains "$out" "window five_hour is at 100% used" "gate: the spent 5h window is named"
+
+  pass "gate: an idle or unreadable 5h window is ignored on every provider; a readable spent one still refuses"
 }
 
 test_gate_test_bypass() {
@@ -663,55 +674,74 @@ test_gate_test_bypass() {
   pass "gate: the FM_QUOTA_INTAKE_TEST_BYPASS escape hatch is explicit and loud"
 }
 
-# --- 7. the cached-read exception -------------------------------------------
+# --- 7. the recent-reading fallback (R11) -----------------------------------
 
-write_statusline_cache() {  # <home> <line>
-  mkdir -p "$home/user-home/.claude/tmp"
-  printf '%s\n' "$2" > "$home/user-home/.claude/tmp/sl-quota.txt"
+# The claude row rate-limited: no windows, unmeasured semantics.
+rate_limited_claude() {  # <source-snapshot> <dest>
+  jq '(.providers[] | select(.provider == "claude")) |= (.state = {status: "rate_limited", error: "Claude quota endpoint rate limited"} | .windows = [] | .quotaSemantics = {status: "unknown", effectiveAvailability: []})' "$1" > "$2"
 }
 
-test_cached_fallback_fresh() {
-  local home fakebin out rc rec
-  home=$(make_home cachefresh)
-  fakebin=$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-codexonly.json")
-  write_statusline_cache "$home" 'cl personal 5h 42% (1h 12m) | 7d 61% (Wed 17:00)'
+test_recent_reading_fresh() {
+  local home out rc rec
+  home=$(make_home recentfresh)
   printf '%s\n' '{"plans":{"claude":"max-20x"},"accounts":{}}' > "$home/config/accounts.json"
-  out=$(run_record "$home" "$fakebin"); rc=$?
-  [ "$rc" -eq 0 ] || fail "a fresh usable cache must keep the record run green: $out"
+  seed_record "$home" "$TMP_ROOT/snap-prolite.json"
+  rate_limited_claude "$TMP_ROOT/snap-prolite.json" "$TMP_ROOT/snap-ratelimited.json"
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake-rl" "$TMP_ROOT/snap-ratelimited.json")"); rc=$?
+  [ "$rc" -eq 0 ] || fail "a rate-limited read with a recent good reading must keep the record green: $out"
   rec=$(newest_record "$home")
-  jq -e '([.accounts[0].providers[] | select(.provider == "claude")] | length == 1) and
-    ([.accounts[0].providers[] | select(.provider == "claude") | .readStatus] == ["cached"]) and
-    ([.accounts[0].providers[] | select(.provider == "claude") | .plan] == ["max-20x"]) and
-    ([.accounts[0].providers[] | select(.provider == "claude") | .windows[] | .percentRemaining] == [58, 39]) and
-    ([.accounts[0].providers[] | select(.provider == "claude") | .windows[] | .percentUsed] == [42, 61]) and
-    ([.accounts[0].providers[] | select(.provider == "claude") | .scopes[] | .effectivePercentUsed] == [61]) and
-    ([.accounts[0].providers[] | select(.provider == "claude") | .notes] == ["personal max line"]) and
-    (all(.accounts[0].providers[] | select(.provider == "claude") | .windows[]; (.resetsAt | type) == "string"))' \
-    "$rec" >/dev/null || fail "the cached entry must store the statusline USED percents with resets and notes"
-  assert_contains "$out" "provider=claude status=cached" "the table must mark the cached read"
-  assert_contains "$out" "window=five_hour used=42%" "the table must show the statusline's own 5h used percent"
-  assert_contains "$out" "source=cached" "the table must mark every cached window"
+  jq -e '([.accounts[0].providers[] | select(.provider == "claude") | .readStatus] == ["cached"]) and
+    ([.accounts[0].providers[] | select(.provider == "claude") | .windows[] | .percentUsed] == [10, 7]) and
+    ([.accounts[0].providers[] | select(.provider == "claude") | .readingAgeSeconds | type] == ["number"])' \
+    "$rec" >/dev/null || fail "the reused claude row must keep its last good windows and state its age"
+  assert_contains "$out" "provider=claude status=cached" "the table must mark the reused read"
+  assert_contains "$out" "source=cached age=" "the table must state the reading age"
   out=$(run_gate "$home" --harness claude); rc=$?
-  expect_code 0 "$rc" "gate: a fresh cached read must pass the gate"
-  assert_contains "$out" "source=cached" "gate: the pass must mark the windows as cached"
-  pass "cached read: a fresh statusline cache is recorded with its own used percents, marked cached, and gates"
+  expect_code 0 "$rc" "gate: a recent reading keeps the decision going: $out"
+  assert_contains "$out" "source=cached age=" "gate: the pass must state the reading age"
+  pass "recent reading: a rate-limited read reuses the store's last good reading under 30 minutes, with its age"
 }
 
-test_cached_fallback_stale() {
-  local home fakebin out rc now
-  home=$(make_home cachestale)
-  fakebin=$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-codexonly.json")
-  write_statusline_cache "$home" 'cl personal 5h 42% (1h 12m) | 7d 61% (Wed 17:00)'
-  now=$(date -u +%s)
-  fm_touch_epoch $(( now - 4000 )) "$home/user-home/.claude/tmp/sl-quota.txt"
-  out=$(run_record "$home" "$fakebin"); rc=$?
-  [ "$rc" -ne 0 ] || fail "a stale cache must fail the record run closed"
-  jq -e '[.accounts[0].providers[] | select(.provider == "claude" and .readStatus == "failed")] | length == 1' \
-    "$(newest_record "$home")" >/dev/null || fail "the stale-cache claude entry must be recorded as failed"
+test_recent_reading_stale_and_auth() {
+  local home out rc cache
+  home=$(make_home recentstale)
+  seed_record "$home" "$TMP_ROOT/snap-prolite.json"
+  for cache in "$home"/state/quota-last-good/intake*.json; do
+    jq '.rows |= map_values(.at -= 4000)' "$cache" > "$cache.tmp" && mv "$cache.tmp" "$cache"
+  done
+  rate_limited_claude "$TMP_ROOT/snap-prolite.json" "$TMP_ROOT/snap-ratelimited.json"
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake-rl" "$TMP_ROOT/snap-ratelimited.json")"); rc=$?
   out=$(run_gate "$home" --harness claude); rc=$?
-  expect_code 3 "$rc" "gate: a stale cache must refuse the launch"
-  assert_contains "$out" "the claude read failed" "gate: the refusal must name the failed read"
-  pass "cached read: a statusline cache older than 30 minutes fails closed"
+  expect_code 3 "$rc" "gate: a reading older than 30 minutes is not evidence"
+  assert_contains "$out" "no quota evidence rows for provider claude" "gate: the refusal names the unmeasured provider"
+
+  home=$(make_home recentauth)
+  seed_record "$home" "$TMP_ROOT/snap-prolite.json"
+  jq '(.providers[] | select(.provider == "claude")) |= (.state = {status: "auth_required", error: "claude_credential_unavailable"} | .windows = [] | .quotaSemantics = {status: "unknown", effectiveAvailability: []})' \
+    "$TMP_ROOT/snap-prolite.json" > "$TMP_ROOT/snap-auth.json"
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake-auth" "$TMP_ROOT/snap-auth.json")"); rc=$?
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 3 "$rc" "gate: a credential failure is never papered over by a recent reading"
+  assert_contains "$out" "credential on account default is unusable" "gate: the refusal names the credential failure"
+  pass "recent reading: nothing older than 30 minutes is reused, and a credential failure stays a credential failure"
+}
+
+test_provider_row_filter() {
+  local home out rc rec
+  home=$(make_home provfilter)
+  mkdir -p "$home/user-home/.pi/agent" "$home/user-home/.codex"
+  seed_record "$home" "$TMP_ROOT/snap-prolite.json" \
+    '{"crossAccount":{"enabled":true},"accounts":{"codex1":{"provider":"codex","codex":"~/.codex","pi":"~/.pi/agent","plans":{"codex":"Pro 5x"}},"glm":{"provider":"zai","pi":"~/.pi/agent","plans":{"zai":"Pro 6x"}}}}'
+  rec=$(newest_record "$home")
+  jq -e '([.accounts[] | select(.account == "codex1") | .providers[].provider] == ["codex"]) and
+    ([.accounts[] | select(.account == "glm") | .providers[].provider] == [])' "$rec" >/dev/null ||
+    fail "each declared-provider seat must carry only its own provider rows: $(jq -c '[.accounts[] | {account, p: [.providers[].provider]}]' "$rec")"
+  out=$(run_gate "$home" --harness codex --account codex1 --codex-store "$home/user-home/.codex"); rc=$?
+  expect_code 0 "$rc" "gate: the codex seat passes on its own rows: $out"
+  out=$(run_gate "$home" --harness claude --account codex1); rc=$?
+  [ "$rc" -ne 0 ] || fail "gate: a codex seat never passes on another provider's rows: $out"
+  assert_contains "$out" "refusing" "gate: the other provider is refused"
+  pass "provider filter: a seat that declares a provider is recorded and gated on that provider's rows only"
 }
 
 # --- 8. the real spawn and relaunch gates ------------------------------------
@@ -841,13 +871,13 @@ test_gate_symlinked_store_matches_its_target() {
   elsewhere=$home/claude-elsewhere
   mkdir -p "$target"
   ln -s -- "$target" "$link"
-  printf '%s\n' '{"crossAccount":{"enabled":true},"accounts":{"geris":{"claude":"'"$target"'"}}}' \
+  printf '%s\n' '{"crossAccount":{"enabled":true},"accounts":{"claude3":{"claude":"'"$target"'"}}}' \
     > "$home/config/accounts.json"
   fakebin=$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-base.json")
   out=$(run_record "$home" "$fakebin" CLAUDE_CONFIG_DIR="$target") || fail "the record run failed: $out"
 
   # An explicitly chosen symlink onto the recorded store is that store.
-  out=$(run_gate "$home" --harness claude --claude-store "$link" --account geris); rc=$?
+  out=$(run_gate "$home" --harness claude --claude-store "$link" --account claude3); rc=$?
   expect_code 0 "$rc" "a symlinked chosen store must match the record's real store"$'\n'"$out"
 
   # The ambient default store resolves through the same symlink.
@@ -857,7 +887,7 @@ test_gate_symlinked_store_matches_its_target() {
   expect_code 0 "$rc" "a symlinked ambient store must match the record's real store"$'\n'"$out"
 
   # A store that resolves somewhere else still refuses with the literal names.
-  out=$(run_gate "$home" --harness claude --claude-store "$elsewhere" --account geris); rc=$?
+  out=$(run_gate "$home" --harness claude --claude-store "$elsewhere" --account claude3); rc=$?
   expect_code 4 "$rc" "a different store must still refuse with the refresh status"$'\n'"$out"
   assert_contains "$out" "does not cover the chosen store $elsewhere" "the refusal must name the uncovered store"
   pass "gate: a store pinned through a symlink equals the recorded store it resolves onto, and only that"
@@ -1040,21 +1070,21 @@ test_relaunch_pre_stop_gate() {
   # A task bound to a named account relaunches onto that account's stores
   # without --account: both the pre-stop preview and fm-spawn's own gate must
   # check the recorded account's entry, not the default one.
-  dir=$(new_relaunch_case relaunch-geris q3)
-  mkdir -p "$dir/geris/claude" "$dir/geris/pi" "$dir/geris/codex" "$dir/home/config"
+  dir=$(new_relaunch_case relaunch-second q3)
+  mkdir -p "$dir/second/claude" "$dir/second/pi" "$dir/second/codex" "$dir/home/config"
   {
-    echo "account=geris"
-    echo "claude_config_dir=$dir/geris/claude"
-    echo "pi_agent_dir=$dir/geris/pi"
-    echo "codex_home=$dir/geris/codex"
+    echo "account=second"
+    echo "claude_config_dir=$dir/second/claude"
+    echo "pi_agent_dir=$dir/second/pi"
+    echo "codex_home=$dir/second/codex"
   } >> "$dir/home/state/q3.meta"
-  printf '%s\n' '{"crossAccount":{"enabled":true},"accounts":{"geris":{"claude":"'"$dir"'/geris/claude","pi":"'"$dir"'/geris/pi","codex":"'"$dir"'/geris/codex"}}}' \
+  printf '%s\n' '{"crossAccount":{"enabled":true},"accounts":{"second":{"claude":"'"$dir"'/second/claude","pi":"'"$dir"'/second/pi","codex":"'"$dir"'/second/codex"}}}' \
     > "$dir/home/config/accounts.json"
   rec=$(make_fake_quota_axi "$dir/quota-fake" "$TMP_ROOT/snap-base.json")
   run_record "$dir/home" "$rec" >/dev/null || fail "seeding the named-account relaunch record failed"
   out=$(run_relaunch_control "$dir" q3 relaunch --note "named account relaunch"); rc=$?
   expect_code 0 "$rc" "relaunch: a named-account task must relaunch on a covering record"$'\n'"$out"
-  assert_contains "$out" "account=geris provider=codex" "relaunch: the gate must check the recorded account"
+  assert_contains "$out" "account=second provider=codex" "relaunch: the gate must check the recorded account"
   assert_contains "$out" "relaunched q3 harness=codex" "relaunch: the named-account transaction should complete"
   pass "fm-control relaunch: the quota gate refuses before the agent is stopped and passes on a real record, named accounts included"
 }
@@ -1070,8 +1100,9 @@ test_gate_table_content
 test_gate_idle_claude_five_hour
 test_gate_zai_pass_prints_table
 test_gate_test_bypass
-test_cached_fallback_fresh
-test_cached_fallback_stale
+test_recent_reading_fresh
+test_recent_reading_stale_and_auth
+test_provider_row_filter
 test_real_spawn_gate
 test_worker_pin_record_covers_the_pinned_store
 test_gate_symlinked_store_matches_its_target

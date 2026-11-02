@@ -134,6 +134,8 @@ cp "$TMP_ROOT/rules-backup" "$RULES"
 # Unknown quota waits within the configured, shorten-only deadline, never guesses.
 cp "$QUOTA" "$TMP_ROOT/quota-backup"
 jq '.providers[0].quotaSemantics = {status:"unknown", effectiveAvailability:[]}' "$TMP_ROOT/quota-backup" > "$QUOTA"
+# No recent good reading exists, so the R11 reuse cannot answer for it.
+rm -rf "$HOME_DIR/state/quota-last-good"
 run "$BRIEF" --task pager
 assert_contains "$out" 'status: incomplete' "unknown quota stays incomplete: $out"
 hang_started=$SECONDS
@@ -149,11 +151,26 @@ jq '.rules[0].use=[.rules[0].use,.rules[1].use] | .rules[0].use[0].floor={scope:
 write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'
 run "$BRIEF" --task pager
 assert_equals opus "$(jq -r .profile.model "$(latest)")" 'profile floor excludes below-minimum preferred candidate'
-# An equal-class tie still needs a preference for one of the tied candidates, not default.
+# C5: an exact equal-class tie no longer stops dispatch. Equal binding resets
+# fall to a fixed round-robin over a stable order, logged, and the next tie rotates.
 jq 'del(.rules[0].use[0].floor) | .rules[0].use[0].reasoning_class = .rules[0].use[1].reasoning_class' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
 write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}' default_1
+rm -f "$HOME_DIR/state/dispatch-tie-round-robin"
 run "$BRIEF" --task pager
-assert_contains "$out" 'genuine spendPriority tie' 'unrelated preference cannot break tie'
+assert_contains "$out" 'status: clear' "an exact tie still dispatches: $out"
+assert_contains "$out" 'tie_break: 2 candidates tied at spendPriority 1; sooner binding reset 2030-01-02T00:00:00Z kept 2; round-robin slot 1 of 2' 'tie break is logged'
+first_tie=$(jq -r .profile.model "$(latest)")
+run "$BRIEF" --task pager
+assert_contains "$out" 'round-robin slot 2 of 2' 'the next tie takes the next slot'
+[ "$first_tie" != "$(jq -r .profile.model "$(latest)")" ] || fail 'round-robin must rotate between tied candidates'
+# The sooner binding reset wins before any rotation.
+jq '.rules[0].use[1].model = "haiku"' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+jq '.providers[0].windows += [{id:"model:haiku",kind:"model",percentRemaining:80,resetsAt:"2030-01-01T06:00:00Z"}] | .providers[0].quotaSemantics.effectiveAvailability += [{scope:"model:haiku",status:"known",effectivePercentRemaining:80,boundedBy:["model:haiku"],runway:{status:"through_reset"},selection:{spendPriority:1}}]' "$TMP_ROOT/original-quota" > "$QUOTA"
+run "$BRIEF" --task pager
+assert_contains "$out" 'sooner binding reset 2030-01-01T06:00:00Z kept 1' "sooner reset breaks the tie: $out"
+assert_equals haiku "$(jq -r .profile.model "$(latest)")" 'the candidate whose binding window resets sooner wins'
+cp "$TMP_ROOT/original-quota" "$QUOTA"
+jq '.rules[0].use=[.rules[0].use,.rules[1].use]' "$TMP_ROOT/original-rules" > "$RULES"
 # A model-specific bound must constrain its candidate, not its neighbor.
 jq '.providers[0].quotaSemantics.effectiveAvailability += [{scope:"model:sonnet",status:"known",effectivePercentRemaining:50,boundedBy:["seven_day"],runway:{status:"through_reset"},selection:{spendPriority:-1}}]' "$TMP_ROOT/original-quota" > "$QUOTA"
 write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'
@@ -274,24 +291,27 @@ assert_equals opus "$(jq -r .profile.model "$(latest)")" 'declared order picks, 
 assert_equals "$json_reads_before" "$(grep -c '^--json$' "$QUOTA_CALL_LOG" 2>/dev/null || true)" 'shared quota takes no quota-axi --json snapshot'
 cp "$TMP_ROOT/original-rules" "$RULES"
 pass 'shared_quota resolves declared order with no quota snapshot, and rejects non-booleans'
-# Fallback-only reserve tier: a geris-style Claude reserve seat is picked only
+# Fallback-only reserve tier: a supervisor-login Claude reserve seat is picked only
 # when every non-fallback Claude seat is at its weekly limit, never over a
-# healthy same-family seat or another family's candidate.
-mkdir -p "$TMP_ROOT/claude2-seat" "$TMP_ROOT/geris-seat"
-jq -n --arg c2 "$TMP_ROOT/claude2-seat" --arg g "$TMP_ROOT/geris-seat" \
-  '{crossAccount:{enabled:true},accounts:{claude2:{claude:$c2},geris:{claude:$g}}}' > "$HOME_DIR/config/accounts.json"
+# healthy same-family seat or another family's candidate. With a registry
+# present every profile names a registered account (S1), so with_accounts
+# binds the rows this case does not exercise.
+mkdir -p "$TMP_ROOT/claude1-seat" "$TMP_ROOT/claude2-seat" "$TMP_ROOT/claude3-seat" "$TMP_ROOT/codex1-pi"
+jq -n --arg c1 "$TMP_ROOT/claude1-seat" --arg c2 "$TMP_ROOT/claude2-seat" --arg g "$TMP_ROOT/claude3-seat" --arg pi "$TMP_ROOT/codex1-pi" \
+  '{crossAccount:{enabled:true},accounts:{claude1:{claude:$c1},claude2:{claude:$c2},claude3:{claude:$g},codex1:{pi:$pi}}}' > "$HOME_DIR/config/accounts.json"
+with_accounts() { jq '.rules[1].use.account = "claude1" | .default.account = "claude1"'; }
 seat_quota() {  # <weekly-remaining> <spend-priority> <runway> <session-remaining>
   jq -cn --argjson r7 "$1" --argjson sp "$2" --arg runway "$3" --argjson r5 "$4" \
     '{schemaVersion:5,generatedAt:"2030-01-01T00:00:00Z",providers:[{provider:"claude",plan:"Team",state:{status:"fresh"},windows:[{id:"five_hour",kind:"session",percentRemaining:$r5,resetsAt:"2030-01-02T00:00:00Z"},{id:"seven_day",kind:"weekly",percentRemaining:$r7,resetsAt:"2030-01-04T00:00:00Z"}],quotaSemantics:{status:"known",effectiveAvailability:[{scope:"all_models",status:"known",effectivePercentRemaining:([$r5,$r7]|min),boundedBy:["five_hour","seven_day"],runway:{status:$runway},selection:{spendPriority:$sp}}]}}]}'
 }
 seat_quota 80 1 through_reset 90 > "$TMP_ROOT/claude2-quota.json"
-seat_quota 70 5 through_reset 90 > "$TMP_ROOT/geris-quota.json"
-QUOTA_FIXTURE_MAP=$(jq -cn --arg c2 "$TMP_ROOT/claude2-seat" --arg g "$TMP_ROOT/geris-seat" \
-  --arg cf "$TMP_ROOT/claude2-quota.json" --arg gf "$TMP_ROOT/geris-quota.json" '{($c2):$cf,($g):$gf}')
+seat_quota 70 5 through_reset 90 > "$TMP_ROOT/claude3-quota.json"
+QUOTA_FIXTURE_MAP=$(jq -cn --arg c2 "$TMP_ROOT/claude2-seat" --arg g "$TMP_ROOT/claude3-seat" \
+  --arg cf "$TMP_ROOT/claude2-quota.json" --arg gf "$TMP_ROOT/claude3-quota.json" '{($c2):$cf,($g):$gf}')
 export QUOTA_FIXTURE_MAP
-reserve_rules() {  # rule_1 pool: sonnet on the claude2 seat plus haiku on the geris seat
-  jq '.rules[0].use = [{"harness":"claude","model":"sonnet","account":"claude2","reasoning_class":1},{"harness":"claude","model":"haiku","account":"geris","reasoning_class":1}]' \
-    "$TMP_ROOT/original-rules" > "$RULES"
+reserve_rules() {  # rule_1 pool: sonnet on the claude2 seat plus haiku on the claude3 seat
+  jq '.rules[0].use = [{"harness":"claude","model":"sonnet","account":"claude2","reasoning_class":1},{"harness":"claude","model":"haiku","account":"claude3","reasoning_class":1}]' \
+    "$TMP_ROOT/original-rules" | with_accounts > "$RULES"
 }
 reserve_rules
 write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}' rule_1_2
@@ -299,7 +319,7 @@ run "$BRIEF" --task pager
 assert_not_contains "$out" 'fallback_only' 'an unset fallback_only changes nothing'
 receipt=$(latest)
 assert_equals haiku "$(jq -r .profile.model "$receipt")" 'unset flag keeps the spendPriority argmax'
-assert_equals geris "$(jq -r .profile.account "$receipt")" 'unset flag keeps the declared account'
+assert_equals claude3 "$(jq -r .profile.account "$receipt")" 'unset flag keeps the declared account'
 jq '.rules[0].use[1].fallback_only = true' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
 run "$BRIEF" --task pager
 assert_contains "$out" 'status: clear' "a held reserve still clears: $out"
@@ -312,7 +332,7 @@ run "$BRIEF" --task pager
 assert_contains "$out" 'eligible, reserve pick: every non-fallback claude seat is at its limit' 'picked line states the reserve and why'
 receipt=$(latest)
 assert_equals haiku "$(jq -r .profile.model "$receipt")" 'a fully used weekly window releases the reserve'
-assert_equals geris "$(jq -r .profile.account "$receipt")" 'the reserve launches on its declared account'
+assert_equals claude3 "$(jq -r .profile.account "$receipt")" 'the reserve launches on its declared account'
 assert_contains "$(jq -r .rationale "$receipt")" 'reserve pick' 'the receipt rationale states the reserve pick'
 seat_quota 5 1 exhausted_now 90 > "$TMP_ROOT/claude2-quota.json"
 run "$BRIEF" --task pager
@@ -325,18 +345,18 @@ assert_contains "$out" 'fallback_only reserve held' 'the held reserve is disclos
 jq '.providers += [{provider:"codex",plan:"Plus",state:{status:"fresh"},windows:[{id:"five_hour",kind:"session",percentRemaining:85,resetsAt:"2030-01-02T00:00:00Z"}],quotaSemantics:{status:"known",effectiveAvailability:[{scope:"all_models",status:"known",effectivePercentRemaining:85,boundedBy:["five_hour"],runway:{status:"through_reset"},selection:{spendPriority:1}}]}}]' \
   "$TMP_ROOT/original-quota" > "$QUOTA"
 seat_quota 0 1 exhausted_now 0 > "$TMP_ROOT/claude2-quota.json"
-jq '.rules[0].use += [{"harness":"pi","model":"openai-codex/gpt-6-luna","provider":"codex","reasoning_class":1}]' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+jq '.rules[0].use += [{"harness":"pi","model":"openai-codex/gpt-6-luna","provider":"codex","account":"codex1","reasoning_class":1}]' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
 write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}' rule_1_1
 run "$BRIEF" --task pager
 assert_equals pi "$(jq -r .profile.harness "$(latest)")" 'another family candidate still outranks the reserve'
 assert_contains "$out" 'eligible, reserve pick: every non-fallback claude seat is at its limit' 'the activated reserve stays disclosed when not chosen'
-jq '.shared_quota = true | .rules[0].use = [{"harness":"claude","account":"geris","fallback_only":true,"reasoning_class":1}]' "$TMP_ROOT/original-rules" > "$RULES"
+jq '.shared_quota = true | .rules[0].use = [{"harness":"claude","account":"claude3","fallback_only":true,"reasoning_class":1}]' "$TMP_ROOT/original-rules" | with_accounts > "$RULES"
 write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}' rule_1_1
 run "$BRIEF" --task pager
 assert_contains "$out" 'status: clear' 'a lone reserve under the shared-quota opt-out still resolves'
 assert_not_contains "$out" '; ok' 'a reserve pick never leaks a placeholder reason'
-assert_equals geris "$(jq -r .profile.account "$(latest)")" 'the shared-quota reserve launches on its declared account'
-jq '.rules[0].use = [{"harness":"claude","model":"sonnet","account":"claude2","reasoning_class":1},{"harness":"claude","model":"haiku","account":"geris","fallback_only":"yes","reasoning_class":1}]' "$TMP_ROOT/original-rules" > "$RULES"
+assert_equals claude3 "$(jq -r .profile.account "$(latest)")" 'the shared-quota reserve launches on its declared account'
+jq '.rules[0].use = [{"harness":"claude","model":"sonnet","account":"claude2","reasoning_class":1},{"harness":"claude","model":"haiku","account":"claude3","fallback_only":"yes","reasoning_class":1}]' "$TMP_ROOT/original-rules" | with_accounts > "$RULES"
 run "$BRIEF" --task pager
 expect_code 2 "$code" 'a non-boolean fallback_only is a configuration error'
 assert_contains "$out" 'fallback_only must be true or false when present' 'the fallback_only error is actionable'
