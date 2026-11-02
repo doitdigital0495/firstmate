@@ -1,9 +1,8 @@
 // Firstmate Calm for Claude Code: the hooks module of the Calm mod, whose plugin name is `fm`.
 //
-// A Claude Code "mod" is a plugin whose behavior lives in one hooks module. Claude Code
-// may load this module through its rollout flag or `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`,
-// but every handler requires that environment variable to equal `1`, so rollout-only
-// loading remains a complete no-op.
+// A Claude Code "mod" is a plugin whose behavior lives in one hooks module. Mods are
+// generally available, so the module carries no gate of its own: the manifest sets
+// `defaultEnabled: false`, which keeps the mod off until a captain enables `fm@skills-dir`.
 // The plugin carries no command, skill, agent, or classic hook of its own; the `/calm`
 // command below exists only once this module has registered it. docs/calm.md owns the
 // captain-facing contract and docs/calm-mode-feasibility.md the version-scoped evidence.
@@ -77,14 +76,10 @@ import {
   type HostHealth,
 } from "../lib/fm-branch-notes.ts";
 
-/** The slash command the mod serves, the same name as Pi's `/calm`. */
-const CALM_COMMAND = "calm";
-
 // One module environment holds one Calm state; a hot reload starts a fresh one, the
 // same as a new Pi extension lifetime.
 let calm = false;
 let preferencePath: string | undefined;
-let activation: Promise<boolean> | undefined;
 let loading: Promise<void> | undefined;
 let ticker: { cancel(): void } | undefined;
 const workingNotes = new Set<string>();
@@ -126,16 +121,6 @@ type NotesState = {
 let notes: NotesState | undefined;
 let notesTimer: { cancel(): void } | undefined;
 let notesPolling = false;
-
-function isActivated($: EngineInterface): Promise<boolean> {
-  if (activation === undefined) {
-    activation = $.env.get("CLAUDE_CODE_ENABLE_FUNCTION_HOOKS").then(
-      (value) => value === "1",
-      () => false,
-    );
-  }
-  return activation;
-}
 
 // A missing file is checked first because every rejected read or stat is an error in
 // Claude Code's debug log, and the supervision notes look for absent files every tick.
@@ -370,19 +355,19 @@ function hiddenRow($: EngineInterface, e: RenderInput): RenderElement {
 
 export const register: Register = (on) => {
   on("session.start", async ($, e, next) => {
-    if (!(await isActivated($))) return next(e);
     await resetSession($);
     // Notes that cannot start leave Calm and the transcript exactly as they were.
     await startNotes($).catch(() => undefined);
+    // The slash command is the same name as Pi's `/calm`. Its name stays a string literal in
+    // the registration and the hook below, so `claude plugin validate` can see the hook answer it.
     await $.command.register({
-      name: CALM_COMMAND,
+      name: "calm",
       description: "Toggle Firstmate's Calm transcript presentation and working ship.",
     });
     return next(e);
   });
 
-  on("command.run", { command: CALM_COMMAND }, async ($, e, next) => {
-    if (!(await isActivated($))) return next(e);
+  on("command.run", { command: "calm" }, async ($) => {
     await ensureLoaded($);
     const active = !calm;
     // Persist before changing live presentation, so a failed write leaves the current
@@ -404,7 +389,6 @@ export const register: Register = (on) => {
 
   // Follow a theme change: the next drawing and every later blit use the new family.
   on("config.set", { key: "theme" }, async ($, e, next) => {
-    if (!(await isActivated($))) return next(e);
     const result = await next(e);
     if (result.deny === undefined) {
       const chosen = CALM_SHIP_RASTER_PALETTES[calmShipPaletteFamily(result.value)];
@@ -414,16 +398,11 @@ export const register: Register = (on) => {
       }
     }
     return result;
-  });
+  }).catch(($, e, next) => next(e)); // A failed palette follow-up must not block the setting change.
 
   // Record mid-turn narration as it streams: the text blocks of a model step that
   // stopped to call tools. Subagent steps never draw in the main transcript.
   on("turn.step", async function* ($, e, next) {
-    if (!(await isActivated($))) {
-      const untouched = next(e);
-      for await (const chunk of untouched) yield chunk;
-      return await untouched.result;
-    }
     const stream = next(e);
     const blocks = new Map<number, string>();
     for await (const chunk of stream) {
@@ -454,7 +433,6 @@ export const register: Register = (on) => {
   });
 
   on("ui.render", { component: "Spinner" }, async ($, e, next) => {
-    if (!(await isActivated($))) return next(e);
     await ensureLoaded($);
     if (!calm || e.surface !== "terminal") {
       sites.delete(e.requestId);
@@ -471,23 +449,19 @@ export const register: Register = (on) => {
   });
 
   on("ui.render", { component: "ToolUse" }, async ($, e, next) => {
-    if (!(await isActivated($))) return next(e);
     await ensureLoaded($);
     return calm ? hiddenRow($, e) : next(e);
   });
   on("ui.render", { component: "ToolResult" }, async ($, e, next) => {
-    if (!(await isActivated($))) return next(e);
     await ensureLoaded($);
     return calm ? hiddenRow($, e) : next(e);
   });
   on("ui.render", { component: "ToolGroup" }, async ($, e, next) => {
-    if (!(await isActivated($))) return next(e);
     await ensureLoaded($);
     return calm ? hiddenRow($, e) : next(e);
   });
 
   on("ui.render", { component: "UserMessage" }, async ($, e, next) => {
-    if (!(await isActivated($))) return next(e);
     await ensureLoaded($);
     if (!calm) return next(e);
     const operational =
@@ -496,7 +470,6 @@ export const register: Register = (on) => {
   });
 
   on("ui.render", { component: "AssistantMessage" }, async ($, e, next) => {
-    if (!(await isActivated($))) return next(e);
     await ensureLoaded($);
     const key = workingNoteKey(e.props.text);
     return calm && workingNotes.has(key) && !finalReplies.has(key) ? hiddenRow($, e) : next(e);

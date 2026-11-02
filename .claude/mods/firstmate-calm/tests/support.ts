@@ -51,8 +51,6 @@ export type WorldOptions = {
   preference?: string;
   /** Extra environment beside FM_HOME; pass `{}` with `home: undefined` to unset FM_HOME. */
   env?: Record<string, string>;
-  /** Function-hooks opt-in value; omitted options default to the active value `1`. */
-  functionHooks?: string | undefined;
   /** The Firstmate home FM_HOME names; undefined leaves FM_HOME unset. */
   home?: string | undefined;
   /** What `$.session.messages()` answers. */
@@ -66,11 +64,9 @@ export const STOCK_TEXT = "STOCK-DRAWING";
 
 export function world(on: On, options: WorldOptions = {}): World {
   const home = "home" in options ? options.home : HOME;
-  const functionHooks = "functionHooks" in options ? options.functionHooks : "1";
   mock.env(on, {
     ...(home === undefined ? {} : { FM_HOME: home }),
     ...(options.env ?? {}),
-    ...(functionHooks === undefined ? {} : { CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: functionHooks }),
   });
   const clock = mock.clock(on);
   mock.store(on);

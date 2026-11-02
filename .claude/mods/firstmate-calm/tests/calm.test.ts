@@ -22,43 +22,16 @@ import {
 const sessionStart = { cwd: "/work", surface: "terminal" as const, isInteractive: true };
 
 describe("activation", () => {
-  async function expectInert($: Engine, on: Parameters<typeof world>[0], functionHooks: string | undefined) {
-    const { clock, files, journal } = world(on, {
-      functionHooks,
+  test("ignores the retired function-hooks variable, whatever it holds", async ($, on) => {
+    const { journal } = world(on, {
+      env: { CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: "0" },
       preference: "on\n",
       messages: [{ role: "assistant", text: "Working", toolUses: [{ name: "Bash" }] }],
     });
-    files.set(
-      `${HOME}/state/.branch-outcomes-tail.jsonl`,
-      '{"seq":1,"epoch":0,"task":"fm-x","wake":"","verdict":"captain","summary":"PR ready","silent":false}\n',
-    );
     await $.session.start(sessionStart);
-    const drawings = await Promise.all([
-      $.ui.render(spinner()),
-      $.ui.render(toolUse()),
-      $.ui.render(toolResult()),
-      $.ui.render(toolGroup()),
-      $.ui.render(userMessage(operational("watcher", "signal: x"))),
-      $.ui.render(assistantMessage("Working")),
-    ]);
-    expect(drawings.every(isStock)).toBe(true);
-    await clock.advance(220 * 16);
-    expect(journal.commands).toHaveLength(0);
-    expect(journal.blits).toHaveLength(0);
-    expect(journal.invalidations).toHaveLength(0);
-    expect(journal.toasts).toHaveLength(0);
-    expect(journal.fsReads).toHaveLength(0);
-    expect(journal.logs).toHaveLength(0);
-    expect(journal.sessionMessageReads).toBe(0);
-    expect(journal.configLists).toBe(0);
-  }
-
-  test("is fully inert when the function-hooks opt-in is absent", async ($, on) => {
-    await expectInert($, on, undefined);
-  });
-
-  test("is fully inert when the function-hooks opt-in is not exactly one", async ($, on) => {
-    await expectInert($, on, "true");
+    expect(journal.commands).toEqual(["calm"]);
+    expect(isHidden(await $.ui.render(toolUse()))).toBe(true);
+    expect(isHidden(await $.ui.render(toolResult()))).toBe(true);
   });
 
   test("registers /calm at session start and stays a pass-through while off", async ($, on) => {

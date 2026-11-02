@@ -267,7 +267,7 @@ grok 0.2.106 (bde89716f679)
 
 | Harness | Conclusion | Evidence |
 | --- | --- | --- |
-| Claude Code 2.1.272 (superseding the 2.1.218 row, which found no transcript-row renderer in project hooks or the plugin CLI) | Feasible through the early-access Claude Code mods surface (function hooks), default-off behind `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, and initially shipped with the plugin name `firstmate-calm` (now `fm`; see [`calm.md`](calm.md#the-calm-mod)). | A `ui.render` hook draws per-component transcript rows and the working row, `$.ui.invalidate` redraws the transcript, and `$.ui.blit` animates a `Raster`; the [2026-09-15 record](#2026-09-15-claude-code-21272-mods-feasibility-and-the-shipped-mod) owns the spike-verified working animation, gapless hiding and retroactive redraw of tool, narration, and operational rows, the persisted per-home toggle, and the three bounded gaps: an early-access API that may change, main-screen scrollback keeping pre-toggle copies, and 256-color Raster paint. |
+| Claude Code 2.1.272 (superseding the 2.1.218 row, which found no transcript-row renderer in project hooks or the plugin CLI) | Feasible through the Claude Code mods surface (function hooks), which was early access and default-off behind `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` when this row was verified and is generally available since Claude Code 2.1.287 (see the [2.1.316 record](#2026-11-02-claude-code-21316-ga-gate-for-the-calm-mod)), and initially shipped with the plugin name `firstmate-calm` (now `fm`; see [`calm.md`](calm.md#the-calm-mod)). | A `ui.render` hook draws per-component transcript rows and the working row, `$.ui.invalidate` redraws the transcript, and `$.ui.blit` animates a `Raster`; the [2026-09-15 record](#2026-09-15-claude-code-21272-mods-feasibility-and-the-shipped-mod) owns the spike-verified working animation, gapless hiding and retroactive redraw of tool, narration, and operational rows, the persisted per-home toggle, and the three bounded gaps: an API that was then early access, main-screen scrollback keeping pre-toggle copies, and 256-color Raster paint. |
 | Codex CLI 0.144.6 | Not feasible through the inspected supported project surface. | The tracked hooks expose session, pre-tool, and stop handling, while the plugin and feature inventories expose no TUI tool-row renderer or transcript redraw control. |
 | OpenCode 1.17.18 | Not feasible without violating the preservation boundary. | Plugins expose events and tool execution hooks, not a built-in transcript-row renderer; same-name tool replacement changes execution rather than presentation alone. |
 | Pi (verified 0.81.1 through 0.82.0) | Partially feasible with two API-probed exported-class adapters. | Public APIs control working visibility, collapsed labels, known tool slots, custom entries, and expansion redraws; exported assistant and interactive-mode classes provide the collapsed-thinking and operational-user layout boundaries, gated on the exact method's presence rather than a version number, while generic user, tool, and status filtering remains unavailable. |
@@ -311,9 +311,9 @@ Queued-row coverage drives Pi's real listing and restore methods over a stand-in
 `tests/fm-calm-pi-queue-retention-live-e2e.test.sh` is the default-on, token-free guard that probes a running Pi session for every member the check requires and fails naming the installed Pi version.
 `tests/fm-pi-primary-live-e2e.test.sh` also proves the working ship replaces the built-in `Working...` row while Calm is active on the credentialed provider path, and that it clears when the run settles, before continuing its ordinary watcher lifecycle.
 [`tests/fm-pi-primary-types.test.sh`](../tests/fm-pi-primary-types.test.sh) owns the strict production-consumer typecheck and its dependency contract.
-`tests/fm-calm-claude-mod.test.sh` needs no Claude Code binary: it proves the mod is one hooks module with no command, skill, agent, or classic hook path around its opt-in, that Pi's working ship renders byte-for-byte the shared sprite core painted in ANSI at every width and step, that the Raster packing lays that frame out exactly, that the mod resolves its home like Pi, that its live and restored working-note classifiers enforce the visibility boundaries [`calm.md`](calm.md#claude-code) owns, and that its operational-input classifier agrees with `bin/fm-operational-input.sh` on a corpus the shell owner itself encodes plus legacy shapes and near misses.
+`tests/fm-calm-claude-mod.test.sh` needs no Claude Code binary: it proves the mod is one hooks module with no command, skill, agent, or classic hook path beside its hooks module and a manifest that starts it disabled, that Pi's working ship renders byte-for-byte the shared sprite core painted in ANSI at every width and step, that the Raster packing lays that frame out exactly, that the mod resolves its home like Pi, that its live and restored working-note classifiers enforce the visibility boundaries [`calm.md`](calm.md#claude-code) owns, and that its operational-input classifier agrees with `bin/fm-operational-input.sh` on a corpus the shell owner itself encodes plus legacy shapes and near misses.
 `tests/fm-calm-claude-mod-plugin.test.sh` runs wherever `claude` is installed without spending a model turn: strict `claude plugin validate` on the folder and on the `.claude/skills` auto-load path, then the mod's own `claude plugin test` suites, which drive the hooks module in the engine's host against a mocked clock, environment, file system, and drawing surface.
-`tests/fm-calm-claude-mod-live-e2e.test.sh` is the opt-in credentialed guard in a real Claude Code TUI under tmux: flag off is a complete no-op with the preference already on, flag on shows the moving boat, hides tool and operational rows, toggles and persists through `/calm`, and `claude --continue` restores the hidden rows.
+`tests/fm-calm-claude-mod-live-e2e.test.sh` is the opt-in credentialed guard in a real Claude Code TUI under tmux: the plugin left at its disabled default is a complete no-op with the preference already on, the plugin enabled shows the moving boat, hides tool and operational rows, toggles and persists through `/calm`, and `claude --continue` restores the hidden rows.
 
 The relevant commands are:
 
@@ -674,10 +674,11 @@ With the queued-row adapter left uninstalled, the real-Pi Escape case failed on 
 
 ## 2026-09-15 Claude Code 2.1.272 mods feasibility and the shipped mod
 
-Claude Code 2.1.272 exposes exactly the capability the 2026-07-22 row found missing, through its early-access "Claude Mods" surface, whose engineering primitive is the function hook: a plugin whose behavior lives in one hooks module exporting `register(on, options)`, hooking dotted engine events as `($, e, next)` middleware, with `ui.render` drawing per-component transcript rows and the working row, `$.ui.invalidate("ui.render")` redrawing every hooked drawing, and `$.ui.blit` repainting a mounted `Raster` without a render pass.
-The surface is default-off: hooks modules load only when the `tengu_plugin_hooks_modules` rollout flag or the `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` environment variable turns them on, never under safe mode, `disableAllHooks`, or a managed-hooks-only policy, and only after workspace trust is accepted.
-The generated declarations (`/plugin-types`) carry the header "EARLY ACCESS: this surface may change between releases without notice", and the public proposal invites testing behind that variable while the feature is not yet in the public docs or CHANGELOG.
-The feasibility spike (scout `fm-claude-mods-calm-sailboat-s1`, whose private report holds the raw captures) and the shipped `firstmate-calm` mod both use only that documented-in-binary plugin API; the shipped mod also checks that `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is exactly `1` before any preference read, transcript read, timer, command registration, or drawing change, so loading its module through the rollout flag alone remains a complete no-op. Nothing patches installed Claude Code code, and no prompt, tool, or session event is rewritten.
+Claude Code 2.1.272 exposes exactly the capability the 2026-07-22 row found missing, through its "Claude Mods" surface, which was early access at the time and is generally available since Claude Code 2.1.287, and whose engineering primitive is the function hook: a plugin whose behavior lives in one hooks module exporting `register(on, options)`, hooking dotted engine events as `($, e, next)` middleware, with `ui.render` drawing per-component transcript rows and the working row, `$.ui.invalidate("ui.render")` redrawing every hooked drawing, and `$.ui.blit` repainting a mounted `Raster` without a render pass.
+When this record was written the surface was default-off: hooks modules loaded only when the `tengu_plugin_hooks_modules` rollout flag or the `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` environment variable turned them on, never under safe mode, `disableAllHooks`, or a managed-hooks-only policy, and only after workspace trust was accepted.
+The generated declarations (`/plugin-types`) then carried the header "EARLY ACCESS: this surface may change between releases without notice".
+The evidence records dated before the 2.1.316 record describe the surface as it was on the Claude Code build each names; the mod no longer reads the environment variable.
+The feasibility spike (scout `fm-claude-mods-calm-sailboat-s1`, whose private report holds the raw captures) and the shipped `firstmate-calm` mod both use only that documented-in-binary plugin API; the shipped mod first checked that `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` was exactly `1` before any preference read, transcript read, timer, command registration, or drawing change, and now stays off through its manifest's `defaultEnabled: false` instead. Nothing patches installed Claude Code code, and no prompt, tool, or session event is rewritten.
 
 ```text
 $ claude --version
@@ -721,7 +722,7 @@ An escape-preserving capture of the boat from the spike, taken before the palett
 
 | Requirement | Result on Claude Code 2.1.272 |
 | --- | --- |
-| Auto-load from the trusted project | Met, behind the flag: the project's `.claude/skills/<mod>` entry, a symlink or directory, is adopted as a `<mod>@skills-dir` plugin after trust; dot-prefixed entries are skipped, and hooks-module imports must resolve physically inside the plugin folder. |
+| Auto-load from the trusted project | Met, once the surface was on: the project's `.claude/skills/<mod>` entry, a symlink or directory, is adopted as a `<mod>@skills-dir` plugin after trust; dot-prefixed entries are skipped, and hooks-module imports must resolve physically inside the plugin folder. |
 | Persist the toggle for the effective home across starts and resumes | Met: the same `config/calm` file and values as Pi, resolved the same way; the plugin API's `$.fs.write` is a plain write rather than Pi's temp-plus-rename. |
 | Keep working activity visible | Met: the boat draws in place of `Spinner` on every working frame on both layouts. |
 | Emit no Calm status row | Met: `/calm` answers with a transient toast and no output row. |
@@ -734,7 +735,7 @@ An escape-preserving capture of the boat from the spike, taken before the palett
 
 ### Bounded gaps
 
-1. The whole surface is early access and default-off, and its API may change between releases without notice; the real TUI behavior is verified on Claude Code 2.1.272, the plugin compatibility guard also passes on 2.1.273, the mod refuses nothing newer, and `tests/fm-calm-claude-mod-plugin.test.sh` is the check that says when a newer Claude Code stops accepting it.
+1. The surface was early access and default-off when this record was written, and its API could change between releases; the real TUI behavior is verified on Claude Code 2.1.272, the plugin compatibility guard also passes on 2.1.273, the mod refuses nothing newer, and `tests/fm-calm-claude-mod-plugin.test.sh` is the check that says when a newer Claude Code stops accepting it.
 2. On the main-screen (non-fullscreen) layout a toggle redraws the live screen by clearing and reprinting the whole conversation, and the terminal's own scrollback keeps the previous rendering above it; the fullscreen layout has no such stale copy.
 3. The Raster paints RGB through a quantized palette, so the boat renders as 256-color escapes rather than Pi's standard 16-color ANSI codes.
 
@@ -744,7 +745,7 @@ Three further observations, recorded so they are not read as failures: the `ctrl
 
 `.claude/mods/firstmate-calm` holds the plugin: its manifest, `hooks/hooks.json` naming the one module, `hooks/register.ts` (the only file that touches `$`), and pure libraries the tests drive under Node: the sprite core both harnesses share, the Raster packing, the presentation policy, and a port of `bin/fm-operational-input.sh`'s `classify` guarded by a corpus parity test.
 `.agents/skills/firstmate-calm` is a symlink to it, so the project's `.claude/skills` scan adopts it, and it carries no `SKILL.md` so other harnesses' skill loaders see nothing.
-The mod declares no command file, skill, agent, or classic hook; its function-hooks handlers independently require the exact environment opt-in before `/calm` registration or any other side effect, including when Claude Code loads the module through its rollout flag.
+The mod declares no command file, skill, agent, or classic hook; its manifest sets `defaultEnabled: false`, so none of the module runs until a captain enables `fm@skills-dir`, and its handlers read no environment opt-in.
 Working-note and preserved-reply keys are recorded from `turn.step` per text block and seeded from `$.session.messages()` for a restored transcript, with [`calm.md`](calm.md#claude-code) owning the exact Claude Code visibility contract.
 
 ```text
@@ -891,3 +892,16 @@ ok - Claude Code 2.1.284 (Claude Code) with the flag on: the mod auto-loads from
 ok - Claude Code 2.1.284 (Claude Code) resumes the transcript with Calm's hidden rows still hidden and the preference intact
 ok - Claude Code 2.1.284 (Claude Code) with Calm off shows the supervision notes: the session-start anchor for an unprocessed captain outcome, a sailboat for a new routine outcome, an anchor for a new captain outcome, and the latch-trip note, each behind the fm: label, skipping processed and silent outcomes, moving no store marker, never reaching the model, and on resume showing each anchor once
 ```
+
+## 2026-11-02 Claude Code 2.1.316 GA gate for the Calm mod
+
+Claude Code mods are generally available since 2.1.287 and `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is ignored, so the Calm mod no longer reads it.
+The gate is the manifest's `defaultEnabled: false`: Claude Code 2.1.316 lists the project plugin as `fm@skills-dir`, scope project, status disabled, until a captain enables it.
+Checked on the installed Claude Code 2.1.316, not from memory:
+
+- The plugin manifest schema in the binary declares `defaultEnabled` as an optional boolean: "Whether the plugin starts enabled when the user has no explicit enabled/disabled setting for it (default: true). Explicit enabledPlugins values always win".
+- The binary's generated declarations no longer carry the "EARLY ACCESS" header.
+- `claude plugin validate --strict` passes with no environment variable set, and its env-read scan lists `FM_CONFIG_OVERRIDE, FM_HOME, FM_ROOT_OVERRIDE, FM_STATE_OVERRIDE` only.
+- The scan reports `config.set{key=theme}` as a gating hook with `.catch` (the registration chains `.catch(($, e, next) => next(e))`, so a failed palette follow-up lets the setting change through) and `command.run{command=calm}` as answering its own command, so neither lint note remains.
+- The credentialed live guard `tests/fm-calm-claude-mod-live-e2e.test.sh` now leaves the plugin disabled for its no-op case and enables `fm@skills-dir` through that launch's `--settings` for the rest.
+  It was edited for this change and not run, because it submits model turns.
