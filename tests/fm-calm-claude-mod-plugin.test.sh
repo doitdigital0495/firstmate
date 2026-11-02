@@ -8,8 +8,8 @@
 # guard runs by default wherever `claude` is installed; the portable checks that need
 # no Claude Code binary live in tests/fm-calm-claude-mod.test.sh.
 #
-# The early-access function-hooks surface is default-off; the flag is set on this
-# test's own processes only and never written into any settings file.
+# Mods are generally available, so no environment flag is needed; the manifest's
+# `defaultEnabled: false` keeps the mod off until a captain enables it.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -37,7 +37,7 @@ expect_in_report() {
 test_validate_strict() {
   local path report
   for path in "$MOD" "$AUTOLOAD_PATH"; do
-    if ! report=$(CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin validate --strict "$path" 2>&1); then
+    if ! report=$(claude plugin validate --strict "$path" 2>&1); then
       printf '%s\n' "$report" >&2
       fail "Claude Code $CLAUDE_VERSION refused the Calm mod at $path under strict validation"
     fi
@@ -50,9 +50,15 @@ test_validate_strict() {
     expect_in_report "$report" "ui.render{component=UserMessage}" "the scan of $path does not hook user rows"
     expect_in_report "$report" "ui.render{component=AssistantMessage}" "the scan of $path does not hook assistant rows"
     expect_in_report "$report" "command.run{command=calm}" "the scan of $path does not serve /calm"
-    expect_in_report "$report" "env reads: CLAUDE_CODE_ENABLE_FUNCTION_HOOKS, FM_CONFIG_OVERRIDE, FM_HOME, FM_ROOT_OVERRIDE, FM_STATE_OVERRIDE" "the scan of $path reads a different environment"
+    expect_in_report "$report" "env reads: FM_CONFIG_OVERRIDE, FM_HOME, FM_ROOT_OVERRIDE, FM_STATE_OVERRIDE" "the scan of $path reads a different environment"
     expect_in_report "$report" "env writes: nothing" "the scan of $path writes the environment"
     expect_in_report "$report" '$.ui.log (via' "the scan of $path does not write supervision notes to the transcript"
+    case "$report" in
+      *"gating hook without .catch"*)
+        printf '%s\n' "$report" >&2
+        fail "Claude Code $CLAUDE_VERSION lints a gating hook without .catch in the Calm mod at $path"
+        ;;
+    esac
     case "$report" in
       *"process.run"*|*"http.fetch"*|*"env.set"*|*"prompt."*|*"tool.call"*)
         printf '%s\n' "$report" >&2
@@ -65,7 +71,7 @@ test_validate_strict() {
 
 test_plugin_suites() {
   local report
-  if ! report=$(cd "$TMP_ROOT" && CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test "$MOD" 2>&1); then
+  if ! report=$(cd "$TMP_ROOT" && claude plugin test "$MOD" 2>&1); then
     printf '%s\n' "$report" >&2
     fail "Claude Code $CLAUDE_VERSION failed the Calm mod's plugin test suites"
   fi

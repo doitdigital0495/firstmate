@@ -3,10 +3,10 @@
 # (.claude/mods/firstmate-calm) in a real Claude Code TUI under tmux, mirroring the
 # Pi interactive case in tests/fm-calm-pi-extension.test.sh. It proves, against the
 # installed Claude Code and the shipped project auto-load path (.claude/skills):
-#   1. With CLAUDE_CODE_ENABLE_FUNCTION_HOOKS unset, the mod is a complete no-op even
+#   1. With the plugin left at its manifest default (defaultEnabled false), the mod is a complete no-op even
 #      with the per-home preference already on: no hooks module loads, /calm is not a
 #      command, the stock working row shows, and tool rows draw as stock.
-#   2. With the flag on, the sailboat replaces the working row and moves, tool rows and
+#   2. With fm@skills-dir enabled, the sailboat replaces the working row and moves, tool rows and
 #      a record-backed operational doorbell (the carrier Firstmate types into Claude
 #      Code, which strips U+2063 from submitted prompts) draw at zero height, /calm
 #      restores them and persists off, /calm hides them again and persists on, all
@@ -61,7 +61,8 @@ printf 'alpha\nbeta\ngamma\n' >"$PROJECT/notes.txt"
 printf 'on\n' >"$FM_HOME_DIR/config/calm"
 
 # Claude Code refuses to nest inside another Claude session, so the inherited session
-# markers are dropped from the lab's environment; the flag is set per launch only.
+# markers are dropped from the lab's environment; the plugin is enabled per launch only,
+# through that launch's --settings, and never in a settings file.
 unset_inherited() {
   local name
   while IFS= read -r name; do
@@ -69,13 +70,13 @@ unset_inherited() {
   done < <(env | grep -E '^(CLAUDECODE|CLAUDE_CODE_[A-Z_]+|CLAUDE_CONFIG_DIR)=' | cut -d= -f1 | sort -u)
 }
 
-launch() {  # <debug-log> <flag: 1|0> [claude args...]
-  local log=$1 flag=$2 flag_env=''
+launch() {  # <debug-log> <enabled: 1|0> [claude args...]
+  local log=$1 flag=$2 enabled_json=''
   shift 2
-  [ "$flag" = 1 ] && flag_env="CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1"
+  [ "$flag" = 1 ] && enabled_json=',"enabledPlugins":{"fm@skills-dir":true}'
   tmux -L "$SOCKET" kill-session -t "$SESSION" 2>/dev/null || true
   tmux -L "$SOCKET" new-session -d -s "$SESSION" -x 160 -y 44 -c "$PROJECT" \
-    "env $(unset_inherited) $flag_env FM_HOME='$FM_HOME_DIR' CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --model haiku --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\"}' --debug-file '$log' $*; printf '\nCLAUDE_EXIT=%s\n' \"\$?\"; sleep 30"
+    "env $(unset_inherited) FM_HOME='$FM_HOME_DIR' CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --model haiku --dangerously-skip-permissions --settings '{\"feedbackDrafts\":\"off\"$enabled_json}' --debug-file '$log' $*; printf '\nCLAUDE_EXIT=%s\n' \"\$?\"; sleep 30"
 }
 
 screen() {
@@ -214,21 +215,19 @@ wait_settled() {  # <what> [iterations]
 # Claude Code 2.1.280 logs `hooks module fm@<source> loaded`; 2.1.272 had no source suffix.
 MODULE_LOADED='hooks module fm(@[^ ]+)? loaded'
 
-# --- 1. Flag off: a complete no-op even with the preference on --------------------
+# --- 1. Plugin disabled by default: a complete no-op even with the preference on --------------------
 launch "$DEBUG_LOG_OFF" 0
 wait_idle
-grep -q 'hooks modules not loaded' "$DEBUG_LOG_OFF" \
-  || fail "Claude Code $CLAUDE_VERSION did not report hooks modules off with the flag unset"
 if grep -Eq "$MODULE_LOADED" "$DEBUG_LOG_OFF"; then
-  fail "Claude Code $CLAUDE_VERSION loaded the Calm hooks module although the flag was unset"
+  fail "Claude Code $CLAUDE_VERSION loaded the Calm hooks module although the plugin was left disabled"
 fi
 if command_listed calm; then
-  fail "Claude Code $CLAUDE_VERSION lists /calm although the flag is unset"
+  fail "Claude Code $CLAUDE_VERSION lists /calm although the plugin is left disabled"
 fi
 send "$PROMPT"
 enter
 # Sample every frame until the turn settles: the boat must never appear, and the
-# stock working row must have been seen, or the flag-off case proved nothing.
+# stock working row must have been seen, or the plugin-disabled case proved nothing.
 saw_working=0
 i=0
 while [ "$i" -lt 600 ]; do
@@ -236,11 +235,11 @@ while [ "$i" -lt 600 ]; do
   case "$off_frame" in
     *"$HULL"*|*"$SAIL"*)
       printf '%s\n' "$off_frame" >&2
-      fail "the working ship appeared although the flag is unset"
+      fail "the working ship appeared although the plugin is left disabled"
       ;;
     *'CLAUDE_EXIT='*)
       printf '%s\n' "$off_frame" >&2
-      fail "Claude Code $CLAUDE_VERSION exited during the flag-off turn"
+      fail "Claude Code $CLAUDE_VERSION exited during the plugin-disabled turn"
       ;;
   esac
   if working_row_shown "$off_frame"; then
@@ -253,22 +252,22 @@ while [ "$i" -lt 600 ]; do
   sleep 0.1
   i=$((i + 1))
 done
-[ "$saw_working" -eq 1 ] || fail "Claude Code $CLAUDE_VERSION showed no stock working row during the flag-off turn, so the no-op case cannot be judged"
-wait_settled 'the turn with the flag off'
+[ "$saw_working" -eq 1 ] || fail "Claude Code $CLAUDE_VERSION showed no stock working row during the plugin-disabled turn, so the no-op case cannot be judged"
+wait_settled 'the turn with the plugin disabled'
 off_settled=$(screen)
 case "$off_settled" in
   *'Bash('*|*'shell command'*) : ;;
   *)
     printf '%s\n' "$off_settled" >&2
-    fail "the stock tool row did not draw with the flag unset"
+    fail "the stock tool row did not draw with the plugin disabled"
     ;;
 esac
 send '/exit'
 enter
 sleep 2
-pass "Claude Code $CLAUDE_VERSION with the flag unset: no hooks module, no /calm, stock working row, stock tool rows, preference on ignored"
+pass "Claude Code $CLAUDE_VERSION with the plugin disabled: no hooks module, no /calm, stock working row, stock tool rows, preference on ignored"
 
-# --- 2. Flag on: the boat, the hidden rows, the toggle, the persisted choice -------
+# --- 2. Plugin enabled: the boat, the hidden rows, the toggle, the persisted choice -------
 launch "$DEBUG_LOG_ON" 1
 wait_idle
 i=0
@@ -277,13 +276,13 @@ while [ "$i" -lt 100 ] && ! grep -Eq "$MODULE_LOADED" "$DEBUG_LOG_ON"; do
   i=$((i + 1))
 done
 grep -Eq "$MODULE_LOADED" "$DEBUG_LOG_ON" \
-  || fail "Claude Code $CLAUDE_VERSION did not load the Calm hooks module from the project's .claude/skills path with the flag on"
+  || fail "Claude Code $CLAUDE_VERSION did not load the Calm hooks module from the project's .claude/skills path with the plugin enabled"
 # The engine logs one benign notice for every options-less hooks module ("options
 # requested but its manifest declares no userConfig"); anything else is a real problem.
 if grep -E '\[(WARN|ERROR)\].*(plugin fm[:@ ]|\[fm\]|module fm@)' "$DEBUG_LOG_ON" | grep -v 'declares no userConfig' >&2; then
   fail "Claude Code $CLAUDE_VERSION loaded the Calm mod with a warning or error"
 fi
-command_listed calm || fail "Claude Code $CLAUDE_VERSION does not list /calm with the flag on"
+command_listed calm || fail "Claude Code $CLAUDE_VERSION does not list /calm with the plugin enabled"
 send "$PROMPT"
 enter
 wait_screen "$HULL" 'the working ship during a real turn' 200
@@ -309,7 +308,7 @@ while [ "$i" -lt 120 ]; do
 done
 [ -n "$column_two" ] && [ "$column_two" != "$column_one" ] \
   || fail "the working ship never moved (hull stayed at column $column_one)"
-wait_settled 'the turn with the flag on'
+wait_settled 'the turn with the plugin enabled'
 on_settled=$(screen)
 case "$on_settled" in
   *"$HULL"*|*"$SAIL"*) fail "the working ship stayed on screen after the turn settled" ;;
@@ -420,7 +419,7 @@ esac
 send '/exit'
 enter
 sleep 2
-pass "Claude Code $CLAUDE_VERSION with the flag on: the mod auto-loads from .claude/skills, /calm exists, the sailboat replaces and moves in the working row, tool rows and the record-backed operational doorbell draw at zero height, /calm restores and re-hides them while persisting the shared preference"
+pass "Claude Code $CLAUDE_VERSION with the plugin enabled: the mod auto-loads from .claude/skills, /calm exists, the sailboat replaces and moves in the working row, tool rows and the record-backed operational doorbell draw at zero height, /calm restores and re-hides them while persisting the shared preference"
 
 # --- 3. Resume: the restored transcript keeps the hidden rows hidden ---------------
 launch "$DEBUG_LOG_RESUME" 1 --continue
