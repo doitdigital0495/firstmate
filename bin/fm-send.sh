@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Steer a task by durable record: write the message into the task's steering
 # inbox and ring a constant doorbell through its backend endpoint, best-effort.
-# Usage: fm-send.sh <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] <text...>
+# Usage: fm-send.sh <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--after-done <reason>] <text...>
 #   <target> may be an exact task id, a legacy fm-<id> task label resolved
 #   through this home's state/<id>.meta, or an explicit well-formed backend
 #   target. fm-send refuses unresolved guesses rather than falling back to a
@@ -153,6 +153,16 @@
 # FM_SEND_EXPECTED_REMOTE_HOST to require that sampled identity to still match
 # during the final locked remote-route validation; unset or empty guards do not
 # change ordinary sends.
+#
+# One task, one worker: text to a recorded crewmate or scout whose newest
+# lifecycle status (working, needs-decision, blocked, paused, done, failed) is
+# done or failed is refused, because new work for a finished worker is a new
+# task with its own brief, route, and worker. A send that still belongs to the
+# finished task names why with --after-done <reason>: conclude (wrap up or
+# hand over), promote (bin/fm-promote.sh's instructions; the promoted brief
+# routes again), board (a review round on its own artifact), or recover (its
+# own unfinished deliverable). --resolve-key answers and --key are not new
+# work and pass; second mates are persistent homes and are exempt.
 #
 # Decision closure (answerer-closes): pass --resolve-key <key> (repeatable,
 # before the message) when this send answers an open keyed needs-decision: or
@@ -514,6 +524,7 @@ fi
 # message exactly as before, so ordinary sends are byte-identical.
 RESOLVE_KEYS=
 FIRE_AND_FORGET_ID=
+AFTER_DONE=
 fm_send_add_resolve_key() { # <key>
   local k=$1
   case "$k" in
@@ -564,9 +575,42 @@ while :; do
     FIRE_AND_FORGET_ID=${1#--fire-and-forget=}
     shift
     ;;
+  --after-done)
+    [ $# -ge 2 ] || {
+      echo "error: --after-done requires a reason (conclude, promote, board, recover)" >&2
+      exit 1
+    }
+    AFTER_DONE=$2
+    shift 2
+    ;;
   *) break ;;
   esac
 done
+case "${AFTER_DONE:-}" in
+'' | conclude | promote | board | recover) ;;
+*)
+  echo "error: --after-done '$AFTER_DONE' is not a reason (conclude, promote, board, recover); new work for a finished worker is a new task" >&2
+  exit 1
+  ;;
+esac
+
+# One task, one worker (see the header): no new work for a finished worker.
+fm_send_lifecycle_state() { # <status-file>: newest lifecycle state, or nothing
+  [ -f "$1" ] || return 0
+  awk '{ s = $1; sub(/[^a-z-].*$/, "", s) }
+    s == "working" || s == "needs-decision" || s == "blocked" || s == "paused" || s == "done" || s == "failed" { last = s }
+    END { print last }' "$1" 2>/dev/null
+}
+if [ -n "$TARGET_SELECTOR" ] && [ -n "$TARGET_META" ] && [ "${1:-}" != --key ] && [ -z "$RESOLVE_KEYS" ] \
+  && [ -z "${AFTER_DONE:-}" ] && [ "$(fm_meta_get "$TARGET_META" kind)" != secondmate ]; then
+  REUSE_ID=$(fm_send_id_from_meta "$TARGET_META")
+  case "$(fm_send_lifecycle_state "$STATE/$REUSE_ID.status")" in
+  done | failed)
+    echo "error: task $REUSE_ID reported $(fm_send_lifecycle_state "$STATE/$REUSE_ID.status"); a finished worker takes no new work. New work is a new task: write its brief, route it with bin/fm-dispatch-resolve.sh, and spawn a fresh worker. If this message still belongs to $REUSE_ID, pass --after-done <conclude|promote|board|recover>." >&2
+    exit 1
+    ;;
+  esac
+fi
 
 if [ "$TARGET_BACKEND" != remote ]; then
   fm_backend_validate "$TARGET_BACKEND" || exit 1

@@ -4,8 +4,11 @@
 # state/<task-id>.meta so fm-teardown.sh applies the full ship-task teardown protection
 # again. Promotion also writes the crewmate's ship instructions to
 # data/<task-id>/ship-instructions.md, appends that same superseding contract to
-# data/<task-id>/brief.md for future relaunches, and prints the fm-send.sh command
-# that delivers it to the current worker. Those instructions carry the
+# data/<task-id>/brief.md for future relaunches, and prints the two next steps:
+# route the promoted brief again (bin/fm-dispatch-resolve.sh), then either
+# relaunch onto a different routed profile (bin/fm-control.sh relaunch, which
+# the dispatch receipt gate admits) or deliver the instructions to the current
+# worker with fm-send.sh --after-done promote when the route is unchanged. Those instructions carry the
 # scratch-state inventory, the clean
 # default-branch base, the immutable ship branch, and - rendered from
 # bin/fm-dod-lib.sh, the single owner an ordinary ship brief also uses - the
@@ -448,7 +451,8 @@ HOME_Q=$(printf '%q' "$FM_HOME")
 INSTRUCTIONS_Q=$(printf '%q' "$INSTRUCTIONS")
 echo "promoted $ID to ship mode=$MODE${LANE:+ lane=$LANE} yolo=$YOLO$PROMOTE_FORGE_WORDS$PROMOTE_PR_WORDS (teardown protection restored)"
 echo "wrote ship instructions for mode=$MODE$PROMOTE_FORGE_WORDS$PROMOTE_PR_WORDS: $INSTRUCTIONS"
-echo "next: FM_HOME=$HOME_Q bin/fm-send.sh fm-$ID \"\$(cat $INSTRUCTIONS_Q)\""
+echo "route: FM_HOME=$HOME_Q bin/fm-dispatch-resolve.sh $(printf '%q' "$SCOUT_BRIEF") --task $ID   (a profile that differs from the worker's recorded one relaunches with bin/fm-control.sh $ID relaunch <its profile flags>; otherwise run next:)"
+echo "next: FM_HOME=$HOME_Q bin/fm-send.sh fm-$ID --after-done promote \"\$(cat $INSTRUCTIONS_Q)\""
 
 promote_print_rechain_hint() {
   local consent_home=$1 work_home=$2 task_id=$3 id prefix

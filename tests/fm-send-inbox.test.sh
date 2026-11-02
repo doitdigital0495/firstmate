@@ -27,6 +27,9 @@
 #  10. An empty or whitespace-only text steer is refused before anything is
 #      marked, recorded, or typed - on the marked secondmate path that means
 #      no marker-only record and no pending-reply expectation.
+#  11. A crewmate or scout whose newest lifecycle status is done or failed
+#      takes no new work: text needs --after-done <reason>, while --key,
+#      --resolve-key, a resumed task, and a second mate pass.
 # Every case below that passes a literal `$...` message quotes it on purpose
 # (the point is sending an unexpanded `$` line), so SC2016 is disabled.
 # shellcheck disable=SC2016
@@ -504,6 +507,35 @@ test_empty_message_refused() {
   pass "fm-send: an empty or whitespace-only text steer refuses before marking, recording, or typing"
 }
 
+# One task, one worker: a finished crewmate or scout takes no new work unless
+# the send names why it still belongs to that task; second mates are exempt.
+test_finished_worker_takes_no_new_work() {
+  local dir err rc
+  dir=$(setup_case finished)
+  err="$dir/send.err"
+  printf 'working [at=1]: building\ndone [at=2]: PR https://example.invalid/pr/1; asks 1/1\nresolved [key=x] [at=3]: answered\n' > "$dir/home/state/t1.status"
+  run_send "$dir" "$err" -- t1 "now also implement the follow-up"
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "new work to a finished worker should refuse"
+  assert_contains "$(cat "$err")" "a finished worker takes no new work" "the refusal should name the rule"
+  assert_contains "$(cat "$err")" "--after-done <conclude|promote|board|recover>" "the refusal should name the legitimate escape"
+  [ ! -d "$dir/home/state/t1.inbox" ] || fail "a refused steer still wrote an inbox record"
+  run_send "$dir" "$err" -- t1 --after-done conclude "wrap up and stop" || fail "a conclude message to a finished worker should send"
+  [ -f "$dir/home/state/t1.inbox/001.msg" ] || fail "the conclude message was not recorded"
+  run_send "$dir" "$err" -- t1 --after-done more-work "x"
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "an unknown --after-done reason should refuse"
+  run_send "$dir" "$err" -- t1 --key Enter || fail "a --key send is not new work"
+  printf 'working [at=4]: resumed\n' >> "$dir/home/state/t1.status"
+  run_send "$dir" "$err" -- t1 "a steer within the running task" || fail "a working task still takes steers"
+  dir=$(setup_case finished-secondmate)
+  err="$dir/send.err"
+  fm_write_secondmate_meta "$dir/home/state/domain.meta" "$dir/home" "sess:fm-domain"
+  printf 'done [at=2]: idle\n' > "$dir/home/state/domain.status"
+  run_send "$dir" "$err" -- fm-domain "new domain work" || fail "a persistent second mate is exempt: $(cat "$err")"
+  pass "fm-send: a finished crewmate takes no new work; conclude/promote/board/recover and second mates pass"
+}
+
 test_text_steer_rides_inbox
 test_deep_home_doorbell_stays_short
 test_multiline_steer_is_legal
@@ -520,3 +552,4 @@ test_post_enqueue_bookkeeping_failure_is_not_retryable
 test_meta_lock_contention_fails_bounded
 test_unwritable_inbox_fails_loudly
 test_empty_message_refused
+test_finished_worker_takes_no_new_work
