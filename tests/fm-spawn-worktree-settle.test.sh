@@ -253,8 +253,62 @@ test_unborn_head_project_is_refused_at_once() {
   pass "a project with an unborn HEAD is refused at once with its cause named"
 }
 
+# A `treehouse get` that fails leaves the pane in the project. A full pool
+# answers "all N worktrees are in use or dirty" and exits 1 at once, so the
+# spawn must stop on the next poll and name the pool, not wait out the whole
+# window and blame the project path. The fake tmux runs the line fm-spawn sends
+# through a real shell, with a fake treehouse that fails like a full pool, so
+# the marker contract is exercised end to end.
+test_failed_treehouse_get_refuses_at_once_naming_the_pool() {
+  local rec id out status reads
+  id=settle-pool-full-z6
+  rec=$(make_settle_case settle-pool-full "$id" 100000)
+  read_settle_record "$rec"
+  fm_test_fake_sleep_noop "$FAKEBIN_DIR"
+  cat > "$FAKEBIN_DIR/treehouse" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  get)
+    printf '%s\n' 'all 16 worktrees are in use or dirty (max_trees = 16).' >&2
+    exit 1
+    ;;
+  status) printf '%s\n' '[{"name":"1","status":"in-use"},{"name":"2","status":"dirty"}]' ;;
+esac
+SH
+  chmod +x "$FAKEBIN_DIR/treehouse"
+  cat > "$FAKEBIN_DIR/tmux-send" <<'SH'
+#!/usr/bin/env bash
+# send-keys -t <target> <text> Enter: run a treehouse line as the pane would.
+case "$4" in
+  "treehouse get"*) bash -c "$4" 2>/dev/null ;;
+esac
+exit 0
+SH
+  chmod +x "$FAKEBIN_DIR/tmux-send"
+  # shellcheck disable=SC2016 # The $(...) and $@ are literal text written into the fake tmux.
+  sed -i.bak 's|^  send-keys) exit 0 ;;$|  send-keys) exec "$(dirname "$0")/tmux-send" "$@" ;;|' "$FAKEBIN_DIR/tmux"
+  grep -q 'tmux-send' "$FAKEBIN_DIR/tmux" || fail "fixture: the fake tmux was not wired to run sent lines"
+
+  out=$(run_settle_spawn "$id")
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn launched after treehouse get failed"$'\n'"$out"
+  assert_contains "$out" "treehouse get exited with status 1 before entering a worktree" \
+    "the refusal did not report treehouse get's own failure"
+  assert_contains "$out" "pool: 2 slot(s): 1 dirty, 1 in-use" \
+    "the refusal did not summarize the pool"
+  assert_contains "$out" "free a slot by tearing down a landed or abandoned task" \
+    "the refusal did not give the next step for a full pool"
+  assert_not_contains "$out" "within 60s" \
+    "a failed treehouse get must not be reported as a timeout"
+  reads=$(cat "$COUNTFILE" 2>/dev/null || echo 0)
+  [ "$reads" -le 1 ] || fail "a failed treehouse get still polled the pane $reads times before refusing"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "refused spawn published task metadata"
+  pass "a failed treehouse get refuses at once and names the pool"
+}
+
 test_single_stale_first_read_is_not_accepted
 test_already_settled_pane_costs_one_confirm_read
+test_failed_treehouse_get_refuses_at_once_naming_the_pool
 test_transient_primary_checkout_is_not_accepted
 test_primary_checkout_that_never_settles_fails_at_the_deadline
 test_unborn_head_project_is_refused_at_once

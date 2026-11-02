@@ -1286,18 +1286,41 @@ test_completion_refuses_an_unresolvable_data_directory() {
   pass "completion refuses before mutation when backlog data is unresolvable"
 }
 
-test_dispatch_refuses_an_id_this_home_has_no_item_for() {
+test_dispatch_files_a_missing_item_before_dispatching() {
   local case_dir id out rc=0
   id=atomic-dispatch-b2
   case_dir=$(make_home dispatch-no-item "$id")
 
   out=$(run_ship_spawn "$case_dir" "$id") || rc=$?
-  [ "$rc" -ne 0 ] || fail "spawn dispatched work no backlog item owns"
+  expect_code 0 "$rc" "a fresh dispatch with no backlog item should file it and launch"$'\n'"$out"
+  assert_contains "$out" "had no backlog item in this home; filed it Queued as 'Exercise backlog dispatch for $id.'" \
+    "spawn did not report filing the missing item from the brief's intent"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "the filed backlog item was not moved to In flight with the launch"
+  tasks-axi show "$id" --file "$(backlog_of "$case_dir")" 2>/dev/null | grep -q 'Exercise backlog dispatch for' \
+    || fail "the filed backlog item does not carry the brief's intent as its title"
+  assert_present "$(home_of "$case_dir")/state/$id.meta" "the healed dispatch left no task record"
+  pass "a fresh dispatch by main files the missing backlog item, titled from the brief, and launches"
+}
+
+test_unfileable_missing_item_still_refuses_with_the_exact_command() {
+  local case_dir id out rc=0
+  id=atomic-dispatch-unfileable-b2
+  case_dir=$(make_home dispatch-no-item-unfileable "$id")
+  break_verb "$case_dir" add
+
+  out=$(run_ship_spawn "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "spawn dispatched work no backlog item owns after filing it failed"
+  assert_contains "$out" "backlog is unwritable" \
+    "the refusal did not carry the backlog's own reason the item could not be filed"
   assert_contains "$out" "no backlog item in this home" \
     "spawn refused without naming the missing backlog item"
+  assert_contains "$out" "bin/fm-tasks-axi.sh add $id Exercise\\ backlog\\ dispatch\\ for\\ $id. --kind ship --repo project" \
+    "the refusal did not print the exact add command"
+  [ -z "$(row_state "$case_dir" "$id")" ] || fail "a failed filing left a backlog item behind"
   assert_absent "$(home_of "$case_dir")/state/$id.meta" \
     "refused dispatch still left a record behind"
-  pass "dispatch refuses, before creating anything, when the home has no item for the id"
+  pass "a missing item that cannot be filed still refuses, before creating anything, with the exact add command"
 }
 
 test_dispatch_reports_a_backlog_read_failure() {
@@ -3128,7 +3151,8 @@ test_dispatch_refuses_a_symlinked_backlog_without_crossing_homes
 test_automatic_backend_refuses_incompatible_tasks_axi_before_mutation
 test_dispatch_refuses_an_unresolvable_data_directory
 test_completion_refuses_an_unresolvable_data_directory
-test_dispatch_refuses_an_id_this_home_has_no_item_for
+test_dispatch_files_a_missing_item_before_dispatching
+test_unfileable_missing_item_still_refuses_with_the_exact_command
 test_dispatch_reports_a_backlog_read_failure
 test_dispatch_refuses_a_closed_item
 test_dispatch_refuses_to_commit_without_a_published_record
