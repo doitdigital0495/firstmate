@@ -1788,7 +1788,7 @@ This section is the single owner of the canonical schema and its per-field seman
       "min_confidence": 0.85,
       "floor": { "scope": "<quota-axi scope>", "min_percent": 20, "provider": "<quota-axi provider>" },
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "account": "<optional registry account id>", "provider": "<optional quota-axi provider>", "quota_scope": "<optional quota-axi scope>", "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
+        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "account": "<optional registry account id>", "provider": "<optional quota-axi provider>", "quota_scope": "<optional quota-axi scope>", "fallback_only": false, "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
       ],
       "why": "<optional rationale for firstmate's routing review; never sent to Jev>"
     }
@@ -1810,6 +1810,7 @@ This section is the single owner of the canonical schema and its per-field seman
 | Profile `model`, `effort`, and `account`; rule `why` | Optional. |
 | Top-level `preferred_provider` | Optional provider-family preference, applied after eligibility checks under `quota-array-dispatch`. |
 | Top-level `shared_quota` | Optional; see "Shared-quota opt-out" below. |
+| Profile `fallback_only` | Optional boolean reserve-tier flag; see "Fallback-only reserve tier" below. |
 
 An absent `account` keeps the home seat; a named account must be allowlisted in the enabled home registry and is passed as `--account`. A configured worker pin is authoritative; disagreeing explicit or relaunch bindings refuse.
 
@@ -1831,9 +1832,20 @@ Firstmate's own `quota-array-dispatch` intake honors the same declaration.
 Without the setting, or with `"shared_quota": false`, behavior is unchanged.
 The declared value must be a boolean; anything else is an actionable configuration error reported like any other malformed rule.
 
+**Fallback-only reserve tier**
+
+An optional per-profile boolean `"fallback_only": true` marks a candidate as a reserve seat, such as a Claude seat the captain keeps for firstmate and secondmate work.
+A reserve candidate is eligible only when no non-fallback candidate of the same provider family is still available, where a seat counts as at its limit only when its weekly (7d) window is at or above 100% used or its runway reports `exhausted_now`.
+Only the weekly window counts: an exhausted session (5h) window alone never releases the reserve, because the weekly allowance is the real limit on such seats.
+Once eligible, the reserve candidate still ranks below every non-fallback candidate, so it is picked only when no non-fallback candidate is rankable, including candidates of other provider families.
+Typed dispatch resolution's candidate lines and the dispatch receipt state the reserve decision and why, for a held reserve and a picked one alike.
+Under the shared-quota opt-out no seat can be shown at its limit, so a reserve candidate is held whenever a non-fallback same-family candidate exists.
+Without the field, or with `"fallback_only": false`, behavior is unchanged.
+The declared value must be a boolean; anything else is an actionable configuration error reported like any other malformed profile field.
+
 **Fields applied only by typed resolution**
 
-Rule `approval`, `min_confidence`, and `floor`, and profile `provider`, `quota_scope`, `floor`, and numeric `reasoning_class` are optional declarations applied in code by [typed dispatch resolution](#typed-dispatch-resolution-jevd-socket).
+Rule `approval`, `min_confidence`, and `floor`, and profile `provider`, `quota_scope`, `fallback_only`, `floor`, and numeric `reasoning_class` are optional declarations applied in code by [typed dispatch resolution](#typed-dispatch-resolution-jevd-socket).
 The resolver supplies the fixed neutral Choice option `No listed rule applies to this task.` for work that matches no listed rule.
 
 - `approval` accepts only `"captain"` and means a task the rule matches is never dispatched from the tool's answer alone.
@@ -1893,7 +1905,7 @@ See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a star
 
 - When the file exists, bootstrap validates it with `jq`.
 - Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
-- Malformed JSON, malformed rules, an empty or malformed profile array, a malformed `preferred_provider`, an unverified harness, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
+- Malformed JSON, malformed rules, an empty or malformed profile array, a malformed `preferred_provider`, a malformed `fallback_only`, an unverified harness, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
 - Bootstrap enables resolver-only checks for `approval`, `min_confidence`, `floor`, and present `provider` declarations when the route's key is non-empty in the environment or the home's `.env`: `OPENROUTER_API_KEY` by default, or `TYPESAFE_API_KEY` with `FM_DISPATCH_ROUTE=direct`.
   Without a typesafe key or a declared typesafe source, bootstrap retains its pre-existing verified-harness baseline.
 - Missing `jq` is reported through the normal `MISSING: jq` install-consent flow.

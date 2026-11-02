@@ -52,6 +52,18 @@
 #   docs/configuration.md "Crew dispatch profiles" owns the declared fields and
 #   "Typed dispatch resolution" owns this tool's operator contract.
 #
+# Fallback-only reserve tier: an optional per-profile boolean "fallback_only":
+#   true holds that candidate out of selection while any non-fallback candidate
+#   of the same provider family still has seat capacity: only the weekly (7d)
+#   window decides, so a seat is at its limit when that window is at or above
+#   100% used or a row it bounds reports runway exhausted_now, and a session
+#   (5h) window alone never releases the reserve. Once every same-family
+#   non-fallback seat is at its limit the reserve candidate is eligible, still
+#   ranked below every non-fallback candidate, and its candidate line and the
+#   receipt state the reserve decision and why. The declared value must be a
+#   boolean; anything else is a configuration error.
+#   docs/configuration.md "Crew dispatch profiles" owns the declared field.
+#
 # Never-send check: when the optional $FM_HOME/config/dispatch-never-send list
 #   exists, every string value of the built request is checked against it
 #   before the socket request. Each non-blank, non-# line is a literal matched
@@ -69,7 +81,7 @@
 #     fallback: <runner-up rule taken when the picked rule missed its own floor>
 #     reason: <why the status is not clear>
 #     preferred_provider: <family and preference or fallback decision, when applied>
-#     candidate: <harness>:<model> provider=.. windows=<id>:<pct>%@<reset>,.. [account=..] scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | not eligible: <reason> | incomplete: <reason>
+#     candidate: <harness>:<model> provider=.. windows=<id>:<pct>%@<reset>,.. [account=..] scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | eligible, reserve pick: <why the tier fired> | not eligible: <reason> | incomplete: <reason>
 #     profile: --harness <h> [--model <m>] [--effort <e>]     (status clear only)
 #     receipt: <name> (one launch, valid <n>s) | none - ... | not written (...)
 #   clear      -> pass the profile line to fm-spawn.sh exactly; the receipt it wrote
@@ -251,12 +263,14 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
     "unknown select: " + ([.rules[] | select(has("select") and .select != "quota-balanced") | .select] | unique | join(", "))
   elif any((.rules // [])[]; has("floor") and floor_bad(.floor; true)) then "rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\\z"
   elif any((.rules // [])[] | profiles(.use)[]; type == "object" and has("quota_scope") and ((.quota_scope | type) != "string" or (.quota_scope | length) == 0)) then "each use profile quota_scope must be a non-empty string when present"
+  elif any((.rules // [])[] | profiles(.use)[]; type == "object" and has("fallback_only") and ((.fallback_only | type) != "boolean")) then "each use profile fallback_only must be true or false when present"
   elif any((.rules // [])[] | profiles(.use)[]; profile_bad(.)) then "each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
   elif any((.rules // [])[]; duplicate_profiles(profiles(.use))) then "each rule use must not contain duplicate harness, model, and effort profiles"
   elif any((.rules // [])[] | profiles(.use)[]; (verified(.harness) | not)) then "each use profile must name a verified harness"
   elif any((.rules // [])[] | profiles(.use)[]; (effort_ok(.harness; .model; .effort) | not)) then "each use profile effort must be supported by its harness and model"
   elif has("default") and (profiles(.default) | length) == 0 then "default must be a profile object or non-empty profile array"
   elif has("default") and any(profiles(.default)[]; type == "object" and has("quota_scope") and ((.quota_scope | type) != "string" or (.quota_scope | length) == 0)) then "each default profile quota_scope must be a non-empty string when present"
+  elif has("default") and any(profiles(.default)[]; type == "object" and has("fallback_only") and ((.fallback_only | type) != "boolean")) then "each default profile fallback_only must be true or false when present"
   elif has("default") and any(profiles(.default)[]; profile_bad(.)) then "each default profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
   elif has("default") and duplicate_profiles(profiles(.default)) then "default must not contain duplicate harness, model, and effort profiles"
   elif has("default") and any(profiles(.default)[]; (verified(.harness) | not)) then "each default profile must name a verified harness"
@@ -564,6 +578,23 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   def provider_windows($p; $lane): (prov($p; $lane).windows // []);
   def window_row($p; $lane; $id): ([provider_windows($p; $lane)[] | select(.id == $id)] | first) // null;
   def clean_reset($t): ($t | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z"));
+  # Fallback-only reserve seat test: only the weekly window decides whether a
+  # non-fallback seat still has capacity, because the weekly allowance is the
+  # real limit such a reserve protects; a session (5h) window alone never
+  # makes a seat ineligible for the reserve test.
+  def reserve_weekly_window($snap; $p; $lane):
+    ([$snap | provider_windows($p; $lane)[] | select(.id == "seven_day" or .kind == "weekly")] | first) // null;
+  def seat_at_limit($c):
+    provider_of($c) as $p | lane_of($c) as $lane |
+    if $p == null then false
+    else account_quota($c) as $snap |
+      reserve_weekly_window($snap; $p; $lane) as $w |
+      if $w == null then false
+      else (($w.percentRemaining // 100) <= 0) or
+        any(($snap | rows($p; $lane))[];
+            ((.boundedBy // []) | index($w.id)) != null and (.runway.status // "") == "exhausted_now")
+      end
+    end;
   def unmeasured_ids($p; $lane):
     ([rows($p; $lane)[] | (.selection.unmeasurableWindowIds // .runway.unmeasurableWindowIds // [])[]] | unique) as $ids |
     (if ($ids | length) == 0 then [provider_windows($p; $lane)[] | .id] | unique else $ids end);
@@ -713,6 +744,25 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     (if $ambiguous and any($union_floors[]; .state == "below" and (rule_at(.id).use | profiles(.) | index($c)) != null)
      then {profile:$c, provider:$p, eligible:false, reason:"ambiguous row floor below minimum"}
      else evaluate($c) end) + plan_for($c; $p))) as $cands |
+  # Fallback-only reserve tier: a fallback candidate is eligible only once
+  # every non-fallback candidate of the same provider family is at its limit
+  # under the weekly-window seat test above; it then ranks below every
+  # non-fallback candidate at selection.
+  ($cands | map(. as $cand |
+    if (($cand.profile.fallback_only // false) | not) or $cand.provider == null then $cand
+    else
+      ([$cands[] | select((.profile.fallback_only // false) | not) | select(.provider == $cand.provider)]) as $kin |
+      if any($kin[]; seat_at_limit(.profile) | not) then
+        $cand + {eligible: false, reserve: true,
+          reason: ("fallback_only reserve held: non-fallback " + $cand.provider + " seats not at their limit (" +
+            ([$kin[] | select(seat_at_limit(.profile) | not) |
+              "\(.profile.harness):\(.profile.model // "default")" +
+              (if .profile.account then "@\(.profile.account)" else "" end)] | join(", ")) + ")")}
+      elif ($cand.sq // false) or (($cand.eligible // false) | not) or ($cand.unranked // false) then $cand + {reserve: true}
+      else $cand + {reserve: true, reserve_active: true,
+        reason: ("reserve pick: every non-fallback " + $cand.provider + " seat is at its limit (weekly window at or above 100% used or runway exhausted_now)")}
+      end
+    end)) as $cands |
   ([$cands[] | select(.incomplete)]) as $incomplete |
   def when_of($c): (if rule_at($c) == null then $none_criterion else rule_at($c).when end | .[0:60]);
   ({
@@ -759,20 +809,25 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
          elif ($preferred_family | length) > 0 then "prefer eligible family candidates"
          else "fall back; every matched family candidate is ineligible" end))} end)) as $ev |
     ([$pool[] | select(.eligible and ((.unranked // false) | not))]) as $elig |
+    # Reserve tier: a fallback_only candidate is picked only when no
+    # non-fallback candidate is rankable, so it ranks below every other.
+    ([$elig[] | select((.reserve // false) | not)]) as $elig_primary |
+    (if ($elig_primary | length) > 0 then $elig_primary else $elig end) as $pickable |
     ([$cands[] | select(.unranked)]) as $unranked |
     if ($elig | length) == 0 then $ev + {status: "escalate",
       reason: ("no rankable eligible candidate" +
         (if ($preferred_family | length) > 0 then " in preferred provider \($cfg.preferred_provider); uncertainty does not authorize fallback" else "" end)),
       note: $sel.note, candidates: $cands}
     elif $sq then
-      $ev + {status: "clear", note: ($sel.note + "; quota ranking off: home declares a single shared quota, declared order picks"), candidates: $cands, chosen: ($elig | first), row: $sel.source}
+      $ev + {status: "clear", note: ($sel.note + "; quota ranking off: home declares a single shared quota, declared order picks"), candidates: $cands, chosen: ($pickable | first), row: $sel.source}
     else
-      # Keep-strongest classes: when every eligible candidate declares a
-      # numeric reasoning_class, only the highest declared class competes on
-      # spendPriority, so an unused weaker pool cannot outbid it by quota alone.
-      ($elig | all((.profile.reasoning_class | type) == "number")) as $all_classed |
-      (if $all_classed then ($elig | map(.profile.reasoning_class) | max) else null end) as $strongest |
-      (if $all_classed then [$elig[] | select(.profile.reasoning_class == $strongest)] else $elig end) as $ranked |
+      # Keep-strongest classes: when every candidate in the pickable tier
+      # declares a numeric reasoning_class, only the highest declared class
+      # competes on spendPriority, so an unused weaker pool cannot outbid it
+      # by quota alone.
+      ($pickable | all((.profile.reasoning_class | type) == "number")) as $all_classed |
+      (if $all_classed then ($pickable | map(.profile.reasoning_class) | max) else null end) as $strongest |
+      (if $all_classed then [$pickable[] | select(.profile.reasoning_class == $strongest)] else $pickable end) as $ranked |
       ($ranked | max_by(.spendPriority)) as $best |
       ([$ranked[] | select(.spendPriority == $best.spendPriority)]) as $ties |
       ([ $ties[] | . as $candidate |
@@ -782,9 +837,10 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       if ($ties | length) > 1 and $preferred == null then $ev + {status: "escalate", reason: "genuine spendPriority tie", note: $sel.note, candidates: $cands}
       else ($preferred // $best) as $winner |
         (if $ambiguous then ([$union_ids[] | . as $id | (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | select(index($winner.profile)) | $id] | first) else $sel.source end) as $winner_row |
-        $ev + {status: "clear", note: (if $ambiguous then "ambiguous union >= 0.25; strongest reasoning class"
-          elif ($ranked | length) < ($elig | length) then "\($sel.note); strongest reasoning class \($strongest), \(($elig | length) - ($ranked | length)) weaker eligible candidate(s) outranked"
-          else $sel.note end), candidates: $cands, chosen: $winner, row: $winner_row}
+        $ev + {status: "clear", note: ((if $ambiguous then "ambiguous union >= 0.25; strongest reasoning class"
+          elif ($ranked | length) < ($pickable | length) then "\($sel.note); strongest reasoning class \($strongest), \(($pickable | length) - ($ranked | length)) weaker eligible candidate(s) outranked"
+          else $sel.note end)
+               + (if ($winner.reserve_active // false) then "; \($winner.reason)" else "" end)), candidates: $cands, chosen: $winner, row: $winner_row}
         + (if ($unranked | length) > 0 then
              {unranked_note: "\($unranked | length) eligible candidate(s) unranked (\([$unranked[].provider] | unique | join(", ")))"}
            else {} end)
@@ -867,7 +923,7 @@ TEXT=$(jq -r '
         elif .windows then "  windows=\(winstr(.windows))" else "" end)
       + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))  runway=\(show(.runway))" else "" end)
       + (if (.bounds // [] | length) > 1 then "  bounds=" + ([.bounds[] | "\(.scope | flat):\(show(.pct))%/\((.runway // .status) | flat)"] | join(",")) else "" end)
-      + "  -> " + (if .incomplete then "incomplete: \(.reason | flat): gather first, wait and re-run" elif .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .sq then "eligible (quota ranking off: home declares a single shared quota)" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)
+      + "  -> " + (if .incomplete then "incomplete: \(.reason | flat): gather first, wait and re-run" elif .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .sq then "eligible (quota ranking off: home declares a single shared quota)" elif .eligible and (.reserve_active // false) then "eligible, \(.reason | flat)" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)
       + "  plan=\(.plan | flat) (\(.plan_source | flat))"),
   (if .chosen then "  profile: --harness \(.chosen.profile.harness | shell_arg)"
       + (if .chosen.profile.model then " --model \(.chosen.profile.model | shell_arg)" else "" end)

@@ -165,6 +165,7 @@ If preferred candidates remain eligible but none can be ranked, escalate with th
 When no matched profile belongs to the preferred family, preserve the rule's candidate set.
 With the field absent, keep the existing candidate set unchanged.
 Print the preferred-family decision, including the reason for any fallback.
+A profile declared `fallback_only` is a reserve tier ranked below every non-fallback candidate; [Crew dispatch profiles](../../../docs/configuration.md#crew-dispatch-profiles-configcrew-dispatchjson) owns its eligibility contract.
 
 Within the resulting candidate set, compare the known `spendPriority` values first, then assess their runway feasibility in descending rank order.
 A higher known scalar is better: positive means paid allowance is on track to reach reset unused, `0` is exact utilization, and negative means overdrawn against the reset clock.
