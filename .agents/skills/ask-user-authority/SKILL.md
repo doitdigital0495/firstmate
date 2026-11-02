@@ -46,6 +46,9 @@ A new product or access guarantee still uses the escalation criteria above; a fa
 | A non-production environment is missing its configured test script | Run the targeted tests available in that environment instead and return that evidence through the gate when the configured script is absent on the branch under test, in any non-production environment, and the replacement tests exercise the changed behavior, recording any coverage that remains unavailable; this is never a skip or waiver of testing. |
 | Stale generated file | Include the regenerated file in the same PR through the gate when the repository's generator produces it from the accepted change or current authoritative inputs, with no unrelated semantic expansion. |
 
+A project's home-private brief addendum may add a `## Standing answers` table of project-specific recurring kinds, which that project's worker briefs then carry; `docs/configuration.md` owns the addendum mechanism.
+Apply its rows exactly like the rows above and under the same conditions, and keep project-specific rows in that addendum rather than in this tracked table.
+A worker's `standing:` or `prior:` hint in a findings snapshot is evidence for the match, never the answer; verify it against the finding before applying a row or reusing a decision.
 Record the matched kind, relevant evidence, and returned answer in the task's decision record.
 When another gate presents the same question, even with a new finding id, reuse that answer if the accepted contract, evidence, and consequences are unchanged instead of asking the captain again.
 If it recurs after a purported fix, inspect the result and authorize completion of the already-decided correction rather than reopening the same choice.

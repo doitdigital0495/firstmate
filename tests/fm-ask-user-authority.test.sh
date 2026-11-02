@@ -33,6 +33,21 @@ test_primary_and_secondmate_instruction_generation() {
     "generated worker brief duplicated the supervisor standing-answer table"
   assert_no_grep 'Record the matched kind' "$ship" \
     "generated worker brief transferred repeat-question decisions to the worker"
+  # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
+  assert_grep 'one `prior: <finding-id> <key>` line per finding identical to one firstmate already decided' "$ship" \
+    "generated worker brief gives no way to cite an already-decided identical finding"
+  assert_grep 'Those lines are hints for firstmate, never your answer' "$ship" \
+    "generated worker brief lets a standing-answer hint stand in for firstmate's decision"
+
+  mkdir -p "$home/config/brief-addenda"
+  printf '%s\n' '## Standing answers' '' '| Recurring kind | Standing answer |' '| --- | --- |' \
+    '| Sample registry drift | Include the regenerated registry. |' >"$home/config/brief-addenda/sample.md"
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    "$BRIEF" authority-addendum sample --mode no-mistakes >/dev/null 2>&1
+  assert_grep '| Sample registry drift | Include the regenerated registry. |' "$home/data/authority-addendum/brief.md" \
+    "project standing-answer table from the private addendum did not reach the worker brief"
+  assert_no_grep 'Machine-limit Test failure' "$home/data/authority-addendum/brief.md" \
+    "project addendum brief duplicated the supervisor standing-answer table"
 
   FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" FM_SECONDMATE_CHARTER='Handle sample work.' \
     "$BRIEF" authority-mate --secondmate --no-projects >/dev/null 2>&1
