@@ -1108,19 +1108,22 @@ test_terminal_outcome_takes_the_pr_its_run_opened() {
 
 # A state-log-sourced terminal state keeps taking its PR from that same line.
 test_status_log_sourced_outcome_keeps_its_own_pr() {
-  local payload
-  make_world outcome-pr-log
-  write_child "$MAIN" child 'done: PR https://github.com/owner/repo/pull/7 checks green'
-  FM_FAKE_CREW_STATE='done' FM_FAKE_CREW_SOURCE='status-log' \
-    FM_FAKE_CREW_DETAIL='PR https://github.com/owner/repo/pull/7 checks green' \
-    run_reconcile "$MAIN" --startup
-  payload=$(queued_payload "$MAIN" 'inactive-outcome:')
-  [ -n "$payload" ] || fail "no terminal outcome was queued"
-  case "$payload" in
-    *'pr=https://github.com/owner/repo/pull/7'*) ;;
-    *) fail "the terminal outcome dropped the pull request its own record named: $payload" ;;
-  esac
-  pass "a status-log sourced outcome keeps the pull request that record named"
+  local payload name detail
+  for name in plain asks; do
+    detail='PR https://github.com/owner/repo/pull/7 checks green'
+    [ "$name" != asks ] || detail="$detail; asks 2/2"
+    make_world "outcome-pr-log-$name"
+    write_child "$MAIN" child "done: $detail"
+    FM_FAKE_CREW_STATE='done' FM_FAKE_CREW_SOURCE='status-log' \
+      FM_FAKE_CREW_DETAIL="$detail" run_reconcile "$MAIN" --startup
+    payload=$(queued_payload "$MAIN" 'inactive-outcome:')
+    [ -n "$payload" ] || fail "no terminal outcome was queued"
+    case "$payload" in
+      *'pr=https://github.com/owner/repo/pull/7'*) ;;
+      *) fail "the $name terminal outcome dropped the pull request its own record named: $payload" ;;
+    esac
+  done
+  pass "a status-log sourced outcome keeps its pull request with or without an asks tally"
 }
 
 # Every supported forge's ready report keeps its review link: a GitLab merge
