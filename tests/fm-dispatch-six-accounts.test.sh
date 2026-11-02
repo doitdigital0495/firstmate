@@ -162,7 +162,7 @@ assert_contains "$(chosen)" "--account 'claude3'" "claude3 is picked when both w
 assert_contains "$out" 'reserve pick: every non-fallback claude seat is at its limit' 'the reserve pick is visible'
 "$ROOT/bin/fm-account-routing.sh" off >/dev/null
 run "$BRIEF" --task six
-assert_contains "$out" 'status: escalate' 'routing off refuses with a reason'
+assert_contains "$out" 'status: captain-pick' 'routing off goes to the captain with a reason, no guessed route'
 assert_contains "$out" 'cross-account routing disabled or account not registered' 'the reason is named'
 assert_not_contains "$(chosen)" 'claude3' 'routing off never concentrates work on claude3'
 "$ROOT/bin/fm-account-routing.sh" on >/dev/null
@@ -209,7 +209,7 @@ for cache in "$HOME_DIR"/state/quota-last-good/resolve*.json; do
   jq '.rows |= map_values(.at -= 4000)' "$cache" > "$cache.tmp" && mv "$cache.tmp" "$cache"
 done
 run "$BRIEF" --task six
-assert_contains "$out" 'status: incomplete' 'a reading older than 30 minutes leaves the choice incomplete'
+assert_contains "$out" 'jev: incomplete' 'a reading older than 30 minutes leaves the choice incomplete, for the captain to pick'
 reset_quota
 jq '.providers[0] |= (.state = {status:"auth_required", error:"claude_credential_unavailable"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$QDIR/claude2.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/claude2.json"
 run "$BRIEF" --task six
