@@ -1000,6 +1000,12 @@ TEXT=$(jq -r '
       + (if .chosen.profile.effort then " --effort \(.chosen.profile.effort | shell_arg)" else "" end)
       + (if .chosen.profile.account then " --account \(.chosen.profile.account | shell_arg)" else "" end) else empty end)' <<<"$RESULT") || emit_error "output rendering failed"
 printf '%s\n' "$TEXT"
+# Missing classes let spare quota alone decide between models: say so on every run.
+UNCLASSED=$(jq -r 'def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
+  [((.rules // [])[] | profiles(.use)[]), profiles(.default // null)[]] | "\([.[] | select((.reasoning_class | type) != "number")] | length) \(length)"' "$RULES")
+if [ "${UNCLASSED%% *}" != 0 ]; then
+  printf '  classes: %s of %s table candidates declare no reasoning_class, so spare quota alone ranks those rows; declare one on every candidate\n' "${UNCLASSED%% *}" "${UNCLASSED#* }"
+fi
 # A clear answer is the routing decision, so it leaves the receipt the launch
 # gate will ask for. The per-launch intake is recorded here so even a long
 # incomplete wait produces fresh intake evidence, not a fifteen-minute-old one.
