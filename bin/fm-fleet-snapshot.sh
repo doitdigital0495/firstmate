@@ -2211,8 +2211,9 @@ if [ "$OUTPUT_MODE" = contribution-input ]; then
   printf '%s\n' "$contribution_tasks" > "$JSON_TRANSPORT_DIR/tasks.json" \
     || { echo "fm-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
   jq -n --slurpfile backlog "$JSON_TRANSPORT_DIR/backlog.json" --slurpfile tasks "$JSON_TRANSPORT_DIR/tasks.json" \
-    '{backlog:$backlog[0],tasks:$tasks[0]}'
-  exit $?
+    '{backlog:$backlog[0],tasks:$tasks[0]}' \
+    || { echo "fm-fleet-snapshot: contribution input assembly failed" >&2; exit 1; }
+  exit 0
 fi
 if [ "$OUTPUT_MODE" = live-board-input ]; then
   board_homes_start || { echo "fm-fleet-snapshot: registered-home board read failed to start" >&2; exit 1; }

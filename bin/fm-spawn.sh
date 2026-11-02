@@ -582,9 +582,6 @@
 #     __CLAUDEADDDIRS__ quoted --add-dir flags granting exactly this task's
 #                  Firstmate channel directories (claude_add_dirs_flag below;
 #                  supplies its own trailing space, empty never used)
-#     __CLAUDESETTINGS__ the single claude --settings value: a quoted inline
-#                  JSON object for a crewmate or scout, or a quoted path to
-#                  state/<task-id>.claude-settings.json for a secondmate
 #     __PIBIN__    quoted concrete Pi-family executable path resolved from PATH
 #     __PIPREFIX__ optional `opr -f __PIOPENV__ -- <bin/fm-pi-tty-bridge.sh> ` prefix for a zai task worker
 #     __PIOPENV__ absolute tracked ZAI_API_KEY reference map
@@ -7914,16 +7911,6 @@ if [ "$RELAUNCH" -eq 1 ]; then
 fi
 LAUNCH=${LAUNCH//__PIRESUME__/$RESUME_ARGS}
 LAUNCH=${LAUNCH//__CLAUDEPERMFLAG__/$CLAUDE_PERM_FLAG}
-case "$LAUNCH" in
-*__CLAUDESETTINGS__*)
-  if [ "$KIND" = secondmate ]; then
-    LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$(shell_quote "$STATE_REAL/$ID.claude-settings.json")}
-  else
-    claude_settings="'{\"feedbackDrafts\":\"off\"__CLAUDEATTRIBUTION__}'"
-    LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$claude_settings}
-  fi
-  ;;
-esac
 LAUNCH=${LAUNCH//__CODEXAPPROVALFLAG__/$CODEX_APPROVAL_FLAG}
 if [ "$KEEP_AI_TRAILERS" = 1 ]; then
   LAUNCH=${LAUNCH//__CLAUDEATTRIBUTION__/}

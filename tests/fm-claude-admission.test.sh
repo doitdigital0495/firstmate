@@ -743,8 +743,19 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
+  # The tmux backend proves its target window exists before sending Enter,
+  # so remember the window new-window created and list it back.
+  list-windows) cat "$(dirname "$0")/.fake-tmux-windows" 2>/dev/null; exit 0 ;;
+  new-window)
+    previous=
+    for arg in "$@"; do
+      [ "$previous" != -n ] || printf '%s\n' "$arg" >> "$(dirname "$0")/.fake-tmux-windows"
+      previous=$arg
+    done
+    exit 0
+    ;;
+  kill-window) : > "$(dirname "$0")/.fake-tmux-windows"; exit 0 ;;
+  has-session|new-session) exit 0 ;;
   send-keys)
     if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
       prev=
@@ -762,6 +773,10 @@ SH
   fm_fake_exit0 "$fakebin" treehouse
   cat > "$fakebin/timeout" <<'SH'
 #!/usr/bin/env bash
+# Match fm_run_timed's `timeout -k <grace> <secs> cmd...` as well as `timeout <secs> cmd...`.
+if [ "${1:-}" = -k ]; then
+  shift 2
+fi
 shift
 exec "$@"
 SH
@@ -829,9 +844,11 @@ stable_claude_launch() { # <launch> <home> <expected launch-brief body>
   body=$("$ROOT/bin/fm-operational-input.sh" body < "$op_record") \
     || fail 'the launch record has no current operational body'
   [ "$body" = "$expected_body" ] || fail 'shaping changed the delivered launch-brief body'
-  # Only the independently verified carrier path varies per spawn. Keep every
-  # flag, store, guard, and hook byte in the launch-command comparison.
-  printf '%s\n' "${launch//"$op_record"/<launch-record>}"
+  # Only the independently verified carrier path and the per-spawn git-config
+  # file token vary per spawn. Keep every flag, store, guard, and hook byte in
+  # the launch-command comparison.
+  printf '%s\n' "${launch//"$op_record"/<launch-record>}" \
+    | sed -E 's#/git-config\.s[0-9]+\.[0-9]+\.[0-9]+\.sh#/git-config.<spawn>.sh#g'
 }
 
 test_spawn_withholds_before_creating_anything() {
@@ -929,7 +946,7 @@ test_a_refusal_after_the_gate_never_spends_the_slot() {
 }
 
 test_spawn_on_unshaped_store_is_unchanged() {
-  local home wt fakebin launchlog proj store baseline baseline_body shaped_elsewhere with_config
+  local home wt fakebin launchlog proj store baseline baseline_body shaped_elsewhere with_config out
   IFS='|' read -r home wt fakebin launchlog proj <<< "$(spawn_case spawn-unshaped ship-one)"
   store=$(make_store "$TMP_ROOT/spawn-unshaped/store")
   add_turn_then_park "$store" parked-1 60 100000
@@ -941,14 +958,14 @@ test_spawn_on_unshaped_store_is_unchanged() {
   [ -n "$baseline" ] || fail "the baseline spawn must record a launch command"
   baseline_body=$(<"$home/data/ship-one/launch-brief.md")
   baseline=$(stable_claude_launch "$baseline" "$home" "$baseline_body") || fail 'cannot verify the baseline launch record'
-  rm -f "$home/state/ship-one.meta"
+  rm -f "$home/state/ship-one.meta" "$fakebin/.fake-tmux-windows"
 
   # A list that names a DIFFERENT store, with parked demand present on the store
   # this spawn actually uses. Nothing about the launch may change.
   shaped_elsewhere=$(make_store "$TMP_ROOT/spawn-unshaped/other")
   printf '%s\n' "$shaped_elsewhere" > "$home/config/claude-shaped-store"
-  run_claude_spawn "$home" "$wt" "$fakebin" "$launchlog" "$store" ship-one "$proj" >/dev/null \
-    || fail "a spawn onto an unlisted store must succeed unchanged"
+  out=$(run_claude_spawn "$home" "$wt" "$fakebin" "$launchlog" "$store" ship-one "$proj") \
+    || fail "a spawn onto an unlisted store must succeed unchanged: $out"
   with_config=$(captured_launch "$launchlog")
   with_config=$(stable_claude_launch "$with_config" "$home" "$baseline_body") || fail 'cannot verify the unshaped launch record'
   [ "$with_config" = "$baseline" ] \

@@ -1022,15 +1022,13 @@ test_spawn_secondmate_harness_model_token() {
     "$(sm_claude_settings "$w" sm)" >/dev/null \
     || fail "model-token: the --settings file did not carry the session keys and busy hooks"
   assert_not_contains "$launch" "--effort" "model-token: launch must not carry an --effort flag"
-  # A secondmate arms no busy contract, so its settings source carries the
-  # per-launch policy keys and nothing else - and still lives in state/, never in
-  # the home, so nothing of the project's is written or clobbered.
+  # The settings source carries the per-launch policy keys beside the
+  # parent-home busy hooks, and lives in state/, never in the home, so nothing
+  # of the project's is written or clobbered.
   assert_grep '"feedbackDrafts":"off"' "$w/home/state/sm.claude-settings.json" \
     "model-token: a secondmate's settings source dropped the feedback-draft policy"
   assert_grep '"attribution":{"commit":"","pr":"","sessionUrl":false}' "$w/home/state/sm.claude-settings.json" \
     "model-token: a secondmate's settings source dropped the attribution policy"
-  ! grep -Fq '"hooks"' "$w/home/state/sm.claude-settings.json" \
-    || fail "model-token: a secondmate armed busy hooks it has no contract for"
   pass "C3 spawn: config/secondmate-harness's model token threads --model into the launch and meta"
 }
 

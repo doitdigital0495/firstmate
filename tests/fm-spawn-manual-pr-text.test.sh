@@ -38,6 +38,7 @@ make_case() {
   content=$(cat "$HOME_DIR/data/$id/brief.md")
   content=${content//'{TASK}'/Write the PR text by hand.}
   content=${content//'{FIRSTMATE_SPEC}'/Exercise the spawn path.}
+  content=${content//'{ASKS}'/'1. [ ] Write the PR text by hand.'}
   printf '%s\n' "$content" > "$HOME_DIR/data/$id/brief.md"
 }
 

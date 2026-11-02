@@ -1148,13 +1148,26 @@ SH
     expect_code 0 "$rc" "the secondmate should relaunch on its $harness pin: $out"
     assert_contains "$(cat "$dir/fake/literal")" "$variable='$dir/mate'" "the replacement must use the mate's pin"
     [ "$(meta_field "$dir" "$id" account)" = "$dir/mate" ] || fail "the record must name the mate's account"
+    # The fork keeps a task on its recorded account: a durable pin that no
+    # longer matches the recorded binding refuses before stop until the captain
+    # reconciles them (docs/configuration.md "Worker account pin").
     printf '%s\n' "$dir/new-mate" > "$pin"
     [ "$harness" = claude ] || printf 'openai-codex\n' >> "$pin"
+    cp "$dir/home/state/$id.meta" "$dir/meta-before"
     : > "$dir/fake/literal"
     out=$(run_control "$dir" "$id" relaunch); rc=$?
-    expect_code 0 "$rc" "a changed durable pin should govern relaunch: $out"
-    assert_contains "$(cat "$dir/fake/literal")" "$variable='$dir/new-mate'" "relaunch must not reuse the old recorded account"
-    rm "$dir/new-mate/.credentials.json" "$dir/new-mate/signed-in"
+    expect_code 1 "$rc" "a changed mate pin that disagrees with the recorded binding must refuse before stop"
+    assert_contains "$out" 'the configured pin is authoritative' "the refusal must name the pin conflict"
+    [ "$(cat "$dir/fake/command")" = "$harness" ] || fail "the running mate must remain alive after a pin conflict"
+    [ ! -s "$dir/fake/literal" ] || fail "the pin-conflict refusal must send no lifecycle input"
+    cmp -s "$dir/meta-before" "$dir/home/state/$id.meta" || fail "the pin-conflict refusal must preserve metadata"
+    rm "$pin"
+    out=$(run_control "$dir" "$id" relaunch); rc=$?
+    expect_code 1 "$rc" "removing the mate pin must not silently move the mate onto the primary's pin"
+    assert_contains "$out" 'the configured pin is authoritative' "the removal refusal must name the pin conflict"
+    printf '%s\n' "$dir/mate" > "$pin"
+    [ "$harness" = claude ] || printf 'openai-codex\n' >> "$pin"
+    rm "$dir/mate/.credentials.json" "$dir/mate/signed-in"
     cp "$dir/home/state/$id.meta" "$dir/meta-before"
     : > "$dir/fake/literal"
     out=$(run_control "$dir" "$id" relaunch); rc=$?
@@ -1164,12 +1177,8 @@ SH
     [ "$(cat "$dir/fake/command")" = "$harness" ] || fail "the running mate must remain alive"
     [ ! -s "$dir/fake/literal" ] || fail "the refused relaunch must send no lifecycle input"
     cmp -s "$dir/meta-before" "$dir/home/state/$id.meta" || fail "the refused relaunch must preserve metadata"
-    rm "$pin"
-    out=$(run_control "$dir" "$id" relaunch); rc=$?
-    expect_code 0 "$rc" "removing the mate pin should restore the primary's pin: $out"
-    assert_contains "$(cat "$dir/fake/literal")" "$variable='$dir/primary'" "an absent mate setting must restore the primary's pin"
   done
-  pass "fm-control relaunch: mate pins are re-read for Claude and Pi, and unusable pins refuse before stopping the agent"
+  pass "fm-control relaunch: mate pins are re-read for Claude and Pi, a pin that disagrees with the recorded binding refuses, and unusable pins refuse before stopping the agent"
 }
 
 test_pi_exclude_tools_follow_the_relaunch() {

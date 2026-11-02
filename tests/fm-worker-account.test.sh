@@ -426,7 +426,10 @@ spawn_account_secondmate() {
   printf '%s\n' "$id" > "$sm/.fm-secondmate-home"
   printf 'charter for %s\n' "$id" > "$sm/data/charter.md"
   : > "$CASE/launch.log"
-  FM_FAKE_LAUNCH_LOG="$CASE/launch.log" \
+  # Same invoking session and store as spawn_ship, so the fork's home-identity
+  # pin (bin/fm-home-identity.sh) sees one session for every launch here.
+  signed_in_claude_root "$CASE/ambient-claude"
+  FM_FAKE_LAUNCH_LOG="$CASE/launch.log" FM_TEST_CLAUDE_CONFIG_DIR="$CASE/ambient-claude" \
     fm_test_run_spawn "$HOME_DIR" "$WT" "$FAKEBIN" "$id" "$sm" --secondmate "$@"
 }
 
