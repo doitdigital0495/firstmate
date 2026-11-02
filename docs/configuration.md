@@ -118,7 +118,7 @@ Firstmate reads these clones, but changes them only through the narrow guarded a
 The loader reads only the effective `FM_HOME/config/brief-addenda/` directory, matching the exact repo argument when it contains only letters, digits, dots, underscores or dashes and is neither `.` nor `..`; paths cannot select addenda, and a missing file silently leaves the generic contract intact.
 Keep these files out of shared tracked material and never put credentials or secrets in them.
 An addendum must explicitly name any bounded exception to generic ship rules while preserving the selected delivery mode and scout/local-only limits.
-Configure the file in each home that needs it; this mechanism adds no secondmate inheritance.
+The primary's addenda are inherited into secondmate homes as a per-file set under the primary-authoritative contract owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md): each valid `<repo>.md` is copied when it differs, and a secondmate addendum the primary lacks is removed at the next convergence, so install, edit and delete addenda in the primary.
 Untracked files and directories whose names begin with `scratchpad` are also gitignored, so temporary scratch does not make porcelain-based secondmate sync guards treat a home as dirty.
 
 ### Format and lifecycle references

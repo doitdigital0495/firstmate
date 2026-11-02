@@ -109,6 +109,17 @@ FM_INHERITABLE_CONFIG="${FM_INHERITABLE_CONFIG:-crew-dispatch.json dispatch-neve
 # rather than leaving a stale proof. bin/fm-role-lib.sh owns how the grant and
 # receipt are interpreted.
 
+# Declared per-file SETS (space-separated config-dir-relative directory names).
+# Each names a directory whose valid `<name>.md` members are inherited one file
+# at a time under the same primary-authoritative rules as a single item: a
+# present member is copied when it differs, and a destination member the
+# primary lacks is mirrored as absence, so a set converges by membership as
+# well as by content. config/brief-addenda holds the home-private per-repo
+# standing instructions bin/fm-brief.sh renders. Member names follow the same
+# letters, digits, dots, underscores and dashes rule the loader applies, and
+# hidden names (lock, generation and staging files) are never members.
+FM_INHERITABLE_CONFIG_SETS="${FM_INHERITABLE_CONFIG_SETS:-brief-addenda}"
+
 # Items whose value is a home-SESSION enablement decision rather than durable
 # local configuration. They are inherited at the launch convergence point, where
 # the primary also hands the new process its frozen on/off decision, and left
@@ -129,12 +140,91 @@ fm_config_inherit_item_session_scoped() {  # <item>
 # line, in propagation order: every FM_INHERITABLE_CONFIG item under config/,
 # then the one shared data file. This is what remote senders and receivers
 # derive from, so both ends of a transfer agree by construction.
-fm_config_inherit_items() {
-  local item
+#
+# An optional <primary-config-dir> argument also lists the primary's present
+# per-file set members (FM_INHERITABLE_CONFIG_SETS) after the single-file items.
+# Without it only the static declaration is listed, which is all a receiver can
+# know, so receivers judge set members with fm_config_inherit_path_allowed.
+fm_config_inherit_items() {  # [primary-config-dir]
+  local item member
   for item in $FM_INHERITABLE_CONFIG; do
     printf 'config/%s\n' "$item"
   done
+  if [ -n "${1:-}" ]; then
+    while IFS= read -r member; do
+      [ -n "$member" ] || continue
+      printf 'config/%s\n' "$member"
+    done < <(fm_config_inherit_set_members "$1")
+  fi
   printf '%s\n' "$FM_SHARED_CAPTAIN_REL"
+}
+
+# True when <set>/<name>.md (config-dir-relative) names a valid member of a
+# declared per-file set. Hidden names are excluded because they hold lock,
+# generation and staging files.
+fm_config_inherit_set_member_valid() {  # <config-relative-item>
+  local rel=$1 set name
+  set=${rel%/*}
+  name=${rel##*/}
+  [ "$set" != "$rel" ] && [ -n "$set" ] || return 1
+  fm_config_inherit_set_declared "$set" || return 1
+  case "$name" in
+    ""|.*|*[!a-zA-Z0-9_.-]*) return 1 ;;
+    *.md) return 0 ;;
+  esac
+  return 1
+}
+
+# True when <config-relative-directory> names a declared per-file set.
+fm_config_inherit_set_declared() {  # <config-relative-directory>
+  local candidate
+  for candidate in $FM_INHERITABLE_CONFIG_SETS; do
+    [ "$candidate" = "$1" ] && return 0
+  done
+  return 1
+}
+
+# True when <home-relative path> may be written or removed by an inheritance
+# receiver: a declared item, the shared captain file, or a valid set member.
+fm_config_inherit_path_allowed() {  # <home-relative-path>
+  local rel=$1 candidate
+  while IFS= read -r candidate; do
+    [ "$candidate" = "$rel" ] && return 0
+  done <<EOF
+$(fm_config_inherit_items "")
+EOF
+  case "$rel" in
+    config/*) fm_config_inherit_set_member_valid "${rel#config/}" && return 0 ;;
+  esac
+  return 1
+}
+
+# Prints "<set>/<name>.md" for every valid member present (as any kind of
+# entry) under <config-dir>, optionally limited to one <set>, sorted bytewise.
+fm_config_inherit_set_members() {  # <config-dir> [set]
+  local dir=$1 only=${2:-} set entry
+  for set in ${only:-$FM_INHERITABLE_CONFIG_SETS}; do
+    for entry in "$dir/$set"/*.md; do
+      [ -e "$entry" ] || [ -L "$entry" ] || continue
+      fm_config_inherit_set_member_valid "$set/${entry##*/}" || continue
+      printf '%s/%s\n' "$set" "${entry##*/}"
+    done
+  done | LC_ALL=C sort
+}
+
+# Prints "absent" or "dir" for a set directory and returns 0. Returns 1 for
+# every state that proves nothing about membership (uninspectable, not a
+# directory, unreadable), so callers preserve the destination instead of
+# mirroring a false absence.
+fm_config_inherit_set_source_state() {  # <set-directory>
+  local dir=$1 present
+  present=$(fm_config_source_present "$dir") || return 1
+  if [ "$present" = 0 ]; then
+    printf 'absent\n'
+    return 0
+  fi
+  [ -d "$dir" ] && [ -r "$dir" ] && [ -x "$dir" ] || return 1
+  printf 'dir\n'
 }
 
 fm_config_source_present() {
@@ -669,6 +759,108 @@ propagate_secondmate_inheritance() {
   return "$rc"
 }
 
+# propagate_inheritable_plain_item <src-config> <dest-config> <item> <source-present> [src-path]
+# An explicit [src-path] overrides <src-config>/<item> (the staged firstmate-role payload).
+# The ordinary byte-copy / absence-mirror step for one item, shared by the
+# single-file items and the members of a declared set. Returns non-zero only on
+# a real propagation error.
+propagate_inheritable_plain_item() {
+  local src_config=$1 dest_config=$2 item=$3 source_present=$4 src dest reason rc=0
+  src=${5:-$src_config/$item}
+  dest="$dest_config/$item"
+  if [ -f "$src" ]; then
+    if ! destination_allows_inherited_item "$dest_config" "$item"; then
+      reason=$(inheritable_config_skip_reason)
+      warn_inheritable_config_skip "$item" "$dest_config" "$reason"
+      record_inheritable_config_result "$item" skipped "$reason"
+      return 0
+    fi
+    if [ -L "$dest" ] || [ ! -f "$dest" ] || ! cmp -s "$src" "$dest"; then
+      if copy_inheritable_file "$src" "$dest"; then
+        record_inheritable_config_result "$item" pushed ""
+      else
+        reason="failed to copy"
+        warn_inheritable_config_error "$item" "$dest" "$reason"
+        record_inheritable_config_result "$item" error "$reason"
+        rc=1
+      fi
+    else
+      record_inheritable_config_result "$item" unchanged ""
+    fi
+  elif [ "$source_present" = 1 ]; then
+    reason="primary source is not a regular file"
+    warn_inheritable_config_error "$item" "$src" "$reason"
+    record_inheritable_config_result "$item" error "$reason"
+    rc=1
+  elif [ -e "$dest" ] || [ -L "$dest" ]; then
+    if ! destination_allows_inherited_item "$dest_config" "$item"; then
+      reason=$(inheritable_config_skip_reason)
+      warn_inheritable_config_skip "$item" "$dest_config" "$reason"
+      record_inheritable_config_result "$item" skipped "$reason"
+      return 0
+    fi
+    # Primary has no value for this item: mirror the absence downstream.
+    if rm -f "$dest" 2>/dev/null; then
+      record_inheritable_config_result "$item" pushed "mirrored primary absence"
+    else
+      reason="failed to remove"
+      warn_inheritable_config_error "$item" "$dest" "$reason"
+      record_inheritable_config_result "$item" error "$reason"
+      rc=1
+    fi
+  else
+    record_inheritable_config_result "$item" unchanged ""
+  fi
+  return "$rc"
+}
+
+# propagate_inheritable_config_sets <src-config-dir> <dest-config-dir>
+# Propagate every declared per-file set member by member. A set directory whose
+# state cannot be proven (uninspectable, not a directory, unreadable) leaves the
+# destination set untouched and reports one error for the set, so a transient
+# failure never mirrors a false absence. Destination members the primary lacks
+# are removed (primary-authoritative absence), and an absent primary set
+# directory means every destination member is absent too.
+propagate_inheritable_config_sets() {
+  local src_config=$1 dest_config=$2 set state item src_members dest_members source_present reason rc=0
+  for set in $FM_INHERITABLE_CONFIG_SETS; do
+    case "$set" in
+      ''|/*|.|..|*/*) return 1 ;;
+    esac
+    if ! state=$(fm_config_inherit_set_source_state "$src_config/$set"); then
+      reason="cannot inspect primary set"
+      warn_inheritable_config_error "$set" "$src_config/$set" "$reason"
+      record_inheritable_config_result "$set" error "$reason"
+      rc=1
+      continue
+    fi
+    src_members=""
+    [ "$state" != dir ] || src_members=$(fm_config_inherit_set_members "$src_config" "$set")
+    dest_members=$(fm_config_inherit_set_members "$dest_config" "$set")
+    while IFS= read -r item; do
+      [ -n "$item" ] || continue
+      source_present=$(fm_config_source_present "$src_config/$item") || source_present=1
+      propagate_inheritable_plain_item "$src_config" "$dest_config" "$item" "$source_present" || rc=1
+    done <<MEMBERS
+$src_members
+MEMBERS
+    while IFS= read -r item; do
+      [ -n "$item" ] || continue
+      case "
+$src_members
+" in
+        *"
+$item
+"*) continue ;;
+      esac
+      propagate_inheritable_plain_item "$src_config" "$dest_config" "$item" 0 || rc=1
+    done <<MEMBERS
+$dest_members
+MEMBERS
+  done
+  return "$rc"
+}
+
 propagate_inheritable_config() {
   local src_config=$1 dest_config=$2 src_home=${3:-${1%/*}} item src dest source_present reason rc
   local prior_dest_config=${FM_INHERIT_DEST_CONFIG-} role_stage=
@@ -752,50 +944,9 @@ propagate_inheritable_config() {
         fi
       fi
     fi
-    if [ -f "$src" ]; then
-      if ! destination_allows_inherited_item "$dest_config" "$item"; then
-        reason=$(inheritable_config_skip_reason)
-        warn_inheritable_config_skip "$item" "$dest_config" "$reason"
-        record_inheritable_config_result "$item" skipped "$reason"
-        continue
-      fi
-      if [ -L "$dest" ] || [ ! -f "$dest" ] || ! cmp -s "$src" "$dest"; then
-        if copy_inheritable_file "$src" "$dest"; then
-          record_inheritable_config_result "$item" pushed ""
-        else
-          reason="failed to copy"
-          warn_inheritable_config_error "$item" "$dest" "$reason"
-          record_inheritable_config_result "$item" error "$reason"
-          rc=1
-        fi
-      else
-        record_inheritable_config_result "$item" unchanged ""
-      fi
-    elif [ "$source_present" = 1 ]; then
-      reason="primary source is not a regular file"
-      warn_inheritable_config_error "$item" "$src" "$reason"
-      record_inheritable_config_result "$item" error "$reason"
-      rc=1
-    elif [ -e "$dest" ] || [ -L "$dest" ]; then
-      if ! destination_allows_inherited_item "$dest_config" "$item"; then
-        reason=$(inheritable_config_skip_reason)
-        warn_inheritable_config_skip "$item" "$dest_config" "$reason"
-        record_inheritable_config_result "$item" skipped "$reason"
-        continue
-      fi
-      # Primary has no value for this item: mirror the absence downstream.
-      if rm -f "$dest" 2>/dev/null; then
-        record_inheritable_config_result "$item" pushed "mirrored primary absence"
-      else
-        reason="failed to remove"
-        warn_inheritable_config_error "$item" "$dest" "$reason"
-        record_inheritable_config_result "$item" error "$reason"
-        rc=1
-      fi
-    else
-      record_inheritable_config_result "$item" unchanged ""
-    fi
+    propagate_inheritable_plain_item "$src_config" "$dest_config" "$item" "$source_present" "$src" || rc=1
   done
+  propagate_inheritable_config_sets "$src_config" "$dest_config" || rc=1
   FM_INHERIT_DEST_CONFIG=$prior_dest_config
   [ -z "$role_stage" ] || rm -rf "$role_stage"
   [ -z "${FM_INHERIT_ROLE_RECEIPT_FAILED:-}" ] || rc=1
@@ -825,18 +976,23 @@ fm_config_reread_is_allowlisted_item() {
   for candidate in $FM_INHERITABLE_CONFIG; do
     [ "$candidate" = "$item" ] && return 0
   done
-  return 1
+  fm_config_inherit_set_member_valid "$item"
 }
 
 # fm_config_reread_changed_items <report>
 # Print bare allowlisted config item names whose report status is "pushed",
-# in FM_INHERITABLE_CONFIG order (deterministic path order). Empty when none.
+# in FM_INHERITABLE_CONFIG order (deterministic path order), then the pushed
+# members of declared sets in bytewise order. Empty when none.
 fm_config_reread_changed_items() {
   local report=$1 item status
   [ -n "$report" ] && [ -f "$report" ] || return 0
   for item in $FM_INHERITABLE_CONFIG; do
     status=$(awk -F '\t' -v item="$item" '$1 == item { print $2; exit }' "$report" 2>/dev/null) || status=""
     [ "$status" = pushed ] || continue
+    printf '%s\n' "$item"
+  done
+  awk -F '\t' '$2 == "pushed" { print $1 }' "$report" 2>/dev/null | LC_ALL=C sort -u | while IFS= read -r item; do
+    fm_config_inherit_set_member_valid "$item" || continue
     printf '%s\n' "$item"
   done
 }
