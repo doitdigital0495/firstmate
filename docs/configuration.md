@@ -2107,7 +2107,7 @@ That one diagnostic names the list line number at most and never prints the list
 
 An absent or empty table returns `no rules to match`; a default-only table can route its default.
 An existing unreadable or malformed table, including a broken symlink, is an exit 2 configuration error.
-Everything after the answer runs in code: the confidence floor, the matched rule's `approval`, `min_confidence`, and `floor`, each candidate's `provider`, `quota_scope`, and `floor`, every applicable account-wide and model/product row from the default and authorized named-store `quota-axi --json` snapshots, the optional `preferred_provider` restriction under the [profile-array procedure](../.agents/skills/quota-array-dispatch/SKILL.md#4-rank-by-spendpriority), and the numeric `spendPriority` argmax within that candidate pool using each candidate's limiting row.
+Everything after the answer runs in code: the confidence floor, the matched rule's `approval`, `min_confidence`, and `floor`, each candidate's `provider`, `quota_scope`, and `floor`, every applicable account-wide and model/product row from the default and authorized named-store `quota-axi --json` snapshots, the optional `preferred_provider` restriction under the [profile-array procedure](../.agents/skills/quota-array-dispatch/SKILL.md#4-rank-by-spendpriority), and the numeric `spendPriority` argmax within that candidate pool using each candidate's limiting row, restricted to the highest declared `reasoning_class` first under the keep-strongest rule below.
 A candidate is rankable only with complete limit information: every window its applicable rows are bounded by - the weekly limit, a session limit where the plan has one, and named model windows - must carry a known remaining percent and reset time.
 A row whose own status is not known, an unmeasured provider, a profile floor whose scope row is unmeasured, a candidate with no applicable row, or a window without a percent or reset makes that candidate incomplete and the whole choice `incomplete` before any ranking or hand-picking; a candidate is never left merely unranked, dropped, or treated as healthy because its limits are unknown.
 A profile's `quota_scope` binds the candidate to that named quota-axi row in addition to its account-wide and model rows; a declared scope with no row beside otherwise complete evidence leaves the candidate eligible but unranked.
@@ -2143,6 +2143,9 @@ When the picked rule declares its own floor but its probability falls below it, 
 No qualifying option, or two equally probable qualifying options, triggers an ambiguous union.
 Code unions rows whose probability is at least 0.25, retains only the highest numeric candidate `reasoning_class`, then applies eligibility and spendPriority.
 `reasoning_class` is an optional finite JSON number on each candidate, higher meaning stronger; every candidate in an ambiguous union must declare it or routing stops for captain review rather than guessing from names.
+A single matched rule and the default row get the same keep-strongest semantics: when every eligible candidate declares a numeric `reasoning_class`, only the highest declared class reaches the `spendPriority` argmax, so an unused weaker pool cannot win on quota headroom alone, while candidates at an equal class still compete on `spendPriority`.
+When any eligible candidate lacks a class, ranking stays plain `spendPriority` with no silent guessing.
+The restriction applies after eligibility, so an ineligible strongest-class candidate never blocks a weaker eligible one.
 An approval-gated union stops for the captain, and rule floors are never silently waived.
 
 **Failure and authority boundary**

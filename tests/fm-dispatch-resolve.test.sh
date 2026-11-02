@@ -140,8 +140,8 @@ jq '.rules[0].use=[.rules[0].use,.rules[1].use] | .rules[0].use[0].floor={scope:
 write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'
 run "$BRIEF" --task pager
 assert_equals opus "$(jq -r .profile.model "$(latest)")" 'profile floor excludes below-minimum preferred candidate'
-# A genuine tie needs a preference for one of the tied candidates, not default.
-jq 'del(.rules[0].use[0].floor)' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+# An equal-class tie still needs a preference for one of the tied candidates, not default.
+jq 'del(.rules[0].use[0].floor) | .rules[0].use[0].reasoning_class = .rules[0].use[1].reasoning_class' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
 write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}' default_1
 run "$BRIEF" --task pager
 assert_contains "$out" 'genuine spendPriority tie' 'unrelated preference cannot break tie'
@@ -171,6 +171,38 @@ assert_contains "$out" 'fallback: rule_2' 'declared confidence runner-up remains
 assert_equals opus "$(jq -r .profile.model "$(latest)")" 'runner-up row selected'
 cp "$TMP_ROOT/original-rules" "$RULES"
 pass 'quota floors, ties, model bounds, missing resets and declared confidence fallback'
+# Keep-strongest classes rank a single matched rule before the spendPriority
+# argmax, so an unused weaker pool cannot outbid the strongest declared class.
+jq '.providers[0].quotaSemantics.effectiveAvailability += [{scope:"model:opus",status:"known",effectivePercentRemaining:70,boundedBy:["seven_day"],runway:{status:"through_reset"},selection:{spendPriority:0.5}}]' "$TMP_ROOT/original-quota" > "$QUOTA"
+jq '.rules[0].use = [.rules[1].use, .rules[0].use]' "$TMP_ROOT/original-rules" > "$RULES"
+write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'
+run "$BRIEF" --task pager
+assert_equals opus "$(jq -r .profile.model "$(latest)")" 'strongest class beats weaker candidate with higher spendPriority'
+assert_contains "$out" 'strongest reasoning class 2' 'class narrowing is disclosed'
+# Equal declared classes still compete on spendPriority alone.
+jq '.rules[0].use[0].reasoning_class = .rules[0].use[1].reasoning_class' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+run "$BRIEF" --task pager
+assert_equals sonnet "$(jq -r .profile.model "$(latest)")" 'equal class falls back to spendPriority'
+assert_not_contains "$out" 'outranked' 'no class narrowing at equal class'
+# A single missing class keeps plain spendPriority ranking, no silent guessing.
+jq 'del(.rules[0].use[0].reasoning_class)' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+run "$BRIEF" --task pager
+assert_equals sonnet "$(jq -r .profile.model "$(latest)")" 'missing class keeps spendPriority ranking'
+# The class filter applies after eligibility, so an ineligible strongest
+# candidate never blocks a weaker eligible one.
+jq '.rules[0].use = [.rules[1].use, .rules[0].use] | .rules[0].use[0].floor = {scope:"all_models",min_percent:90}' "$TMP_ROOT/original-rules" > "$RULES"
+run "$BRIEF" --task pager
+assert_contains "$out" 'status: clear' 'ineligible strongest does not block weaker eligible'
+assert_equals sonnet "$(jq -r .profile.model "$(latest)")" 'eligible weaker class proceeds'
+# The default row gets the same keep-strongest ranking.
+jq '{default:[.rules[1].use,.rules[0].use]}' "$TMP_ROOT/original-rules" > "$RULES"
+write_response default 1 '{"default":1}' default_1
+run "$BRIEF" --task pager
+assert_equals opus "$(jq -r .profile.model "$(latest)")" 'default row keeps strongest class too'
+assert_contains "$out" 'no rule matched; strongest reasoning class 2' 'default-row narrowing is disclosed'
+cp "$TMP_ROOT/original-quota" "$QUOTA"
+cp "$TMP_ROOT/original-rules" "$RULES"
+pass 'single-rule and default rows keep the strongest declared reasoning class'
 mkdir -p "$TMP_ROOT/claude-seat" "$TMP_ROOT/pi-seat"
 printf '%s\n' "$TMP_ROOT/claude-seat" > "$HOME_DIR/config/claude-account"
 printf '%s\nopenai-codex\n' "$TMP_ROOT/pi-seat" > "$HOME_DIR/config/pi-account"
