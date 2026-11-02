@@ -193,6 +193,12 @@ fm_dp_find_words() {
   jq -c '{channel, ref, text, epoch, answer: .answers[0], override}' <<<"$found"
 }
 
+# Claim one captain entry for one pick (noclobber); rc 1 when already claimed.
+fm_dp_mark_used() {  # <marker-path>
+  mkdir -p -- "$(dirname -- "$1")" || return 1
+  ( umask 077; set -C; : > "$1" ) 2>/dev/null
+}
+
 fm_dp_cmd_pick() {
   local code=${1:-} file issued age words answer n option override profile row rows verdict ref used task brief name cands pick
   fm_dp_code_ok "$code" || fm_dr_die "pick needs a 4-character pick code (see --help)"
@@ -213,8 +219,7 @@ fm_dp_cmd_pick() {
   ref=$(jq -r .ref <<<"$words")
   used="$(fm_dp_dir)/used/$(printf '%s' "$ref" | fm_dr_sha256)"
   if [ "$answer" = wait ]; then
-    mkdir -p "$(fm_dp_dir)/used" && ( umask 077; set -C; : > "$used" ) 2>/dev/null \
-      || fm_dp_refuse "the captain entry $ref already answered another pick"
+    fm_dp_mark_used "$used" || fm_dp_refuse "the captain entry $ref already answered another pick"
     ( umask 077; set -C; jq -n --argjson w "$words" --arg at "$(fm_dp_iso "$(date -u +%s)")" '{answer: "wait", at: $at, evidenceRef: $w.ref, channel: $w.channel}' > "$file.answered" ) 2>/dev/null \
       || fm_dp_refuse "pick $code was answered concurrently"
     printf 'dispatch-pick:\n  status: wait\n  pick: %s\n  captain: chose to wait for Jev (%s)\n  receipt: none - re-run the resolver once jevd answers\n' "$code" "$ref"
@@ -233,8 +238,7 @@ fm_dp_cmd_pick() {
     if $row == null then "gone" elif $row.sha256 != $o.row.sha256 then "changed"
     elif any($row.profiles[]; key == ($o.profile | key)) | not then "outside" else "member" end' <<<"$rows")
   [ "$verdict" = member ] || fm_dp_refuse "row $(jq -r .row.id <<<"$option") of option $n is $verdict in config/crew-dispatch.json; route again"
-  mkdir -p "$(fm_dp_dir)/used" && ( umask 077; set -C; : > "$used" ) 2>/dev/null \
-    || fm_dp_refuse "the captain entry $ref already admitted another pick; every pick needs its own answer"
+  fm_dp_mark_used "$used" || fm_dp_refuse "the captain entry $ref already admitted another pick; every pick needs its own answer"
   fm_dr_record_intake || fm_dp_refuse "quota intake failed; stop and report"
   task=$(jq -r '.task // ""' "$file")
   profile=$(jq -c '.profile' <<<"$option")

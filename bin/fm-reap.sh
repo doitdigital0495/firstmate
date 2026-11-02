@@ -94,7 +94,7 @@ verdicts() {
     lc=$(lifecycle "$STATE/$id.status")
     state=${lc%% *}
     at=${lc##* }
-    if [ "$state" != done ]; then
+    if [ "$state" != "done" ]; then
       printf '%s active %s\n' "$id" "${state:-no-status}"
       continue
     fi
