@@ -792,7 +792,10 @@
 # script performs the transition under the task's own meta lock before it reports
 # success. A ship or scout dispatch therefore REFUSES up front, before any
 # endpoint, worktree, or record exists, unless the home's backlog has an
-# unheld, unblocked Queued or In flight item for the id; a transition that fails
+# unheld, unblocked Queued or In flight item for the id. A fresh dispatch by
+# main that finds no item at all files it Queued first (titled from the brief's
+# Captain's intent), while a relaunch or the supervision branch still refuses
+# and prints the exact add command; a transition that fails
 # after publication removes the record it just wrote rather than leaving a
 # worker the backlog does not own. A relaunch re-reads the row instead of
 # re-running the transition, so an eligible In-flight item is left untouched.
@@ -4898,17 +4901,37 @@ spawn_dispatch_receipt_gate || exit 1
 # nothing behind: no worktree, no meta, no pane. Remote second mates run this
 # same gate on their own host inside their own fm-spawn, which is where their
 # credential stores live.
+# A refusal the gate marks as curable by a fresh read (exit 4: no record, or a
+# spent, stale, or uncovering one - the routine case when two launches race
+# for the newest record) is not handed back to the dispatcher: this script
+# runs that intake itself, prints its full table here, and gates once more, so
+# the launch still passes only on numbers read moments ago. Every limit
+# verdict (exit 3) refuses as before.
 QUOTA_GATE_ARGS=(--harness "$HARNESS" --consume)
 [ -z "$MODEL" ] || QUOTA_GATE_ARGS+=(--model "$MODEL")
 [ -z "$ACCOUNT_ARG" ] || QUOTA_GATE_ARGS+=(--account "$ACCOUNT_ARG")
 [ -z "$SPAWN_CLAUDE_STORE" ] || QUOTA_GATE_ARGS+=(--claude-store "$SPAWN_CLAUDE_STORE")
 [ -z "$SPAWN_PI_STORE" ] || QUOTA_GATE_ARGS+=(--pi-store "$SPAWN_PI_STORE")
 [ -z "$SPAWN_CODEX_STORE" ] || QUOTA_GATE_ARGS+=(--codex-store "$SPAWN_CODEX_STORE")
-if ! QUOTA_GATE_OUT=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
-  FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
-  "$SCRIPT_DIR/fm-quota-intake.sh" gate "${QUOTA_GATE_ARGS[@]}"); then
+spawn_quota_intake() { # <subcommand> [args...]
+  FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
+    FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+    "$SCRIPT_DIR/fm-quota-intake.sh" "$@"
+}
+QUOTA_GATE_STATUS=0
+QUOTA_GATE_OUT=$(spawn_quota_intake gate "${QUOTA_GATE_ARGS[@]}") || QUOTA_GATE_STATUS=$?
+if [ "$QUOTA_GATE_STATUS" -eq 4 ]; then
   printf '%s\n' "$QUOTA_GATE_OUT" >&2
-  echo "error: $ID was not launched; the quota intake gate refused it and nothing was created - run bin/fm-quota-intake.sh and re-check every usage limit before relaunching" >&2
+  echo "notice: $ID: the quota intake record needs a fresh read; running bin/fm-quota-intake.sh now and gating again" >&2
+  # The record run prints the whole table and exits nonzero when a store read
+  # fails; its record still lands, and the gate below judges it.
+  spawn_quota_intake record >&2 || true
+  QUOTA_GATE_STATUS=0
+  QUOTA_GATE_OUT=$(spawn_quota_intake gate "${QUOTA_GATE_ARGS[@]}") || QUOTA_GATE_STATUS=$?
+fi
+if [ "$QUOTA_GATE_STATUS" -ne 0 ]; then
+  printf '%s\n' "$QUOTA_GATE_OUT" >&2
+  echo "error: $ID was not launched; the quota intake gate refused it and nothing was created - resolve the refusal above, then run bin/fm-quota-intake.sh, re-check every usage limit, and spawn again" >&2
   exit 1
 fi
 printf '%s\n' "$QUOTA_GATE_OUT" >&2
@@ -5368,8 +5391,35 @@ if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   if fm_backlog_row_probe "$DATA" "$ID"; then
     BACKLOG_ROW_STATE=$FM_BACKLOG_ROW_STATE
   elif [ "$FM_BACKLOG_ROW_RESULT" = not_found ]; then
-    echo "error: task $ID has no backlog item in this home, so dispatching it would leave a worker no record owns; add it first (bin/fm-tasks-axi.sh add $ID '<title>' --kind $KIND) and re-run" >&2
-    exit 1
+    # A fresh dispatch by main files the missing item itself, Queued and titled
+    # from the brief's first Captain's intent line, so the row this launch then
+    # moves to In flight exists instead of the launch being refused for it. A
+    # relaunch (its row vanished, which is not routine) and the supervision
+    # branch (which may dispatch only work already queued or filed from the
+    # captain's away words) still refuse, printing the exact command.
+    spawn_backlog_title=$(awk '
+      /^## / { if (inside) exit; inside = ($0 == "## Captain'"'"'s intent"); next }
+      inside && NF { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); print; exit }
+    ' "${SOURCE_BRIEF:-$BRIEF}" 2>/dev/null | tr -d '\000-\037' | cut -c1-120) || spawn_backlog_title=
+    [ -n "$spawn_backlog_title" ] || spawn_backlog_title=$ID
+    spawn_backlog_add=(add "$ID" "$spawn_backlog_title" --kind "$KIND" --repo "$PROJ_NAME")
+    spawn_backlog_actor=$(fm_lease_actor) || exit "$FM_LEASE_REFUSE_EXIT"
+    spawn_backlog_filed=0
+    if [ "$RELAUNCH" -eq 0 ] && [ "$spawn_backlog_actor" = main ]; then
+      if spawn_backlog_out=$(FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" \
+        "$SCRIPT_DIR/fm-tasks-axi.sh" "${spawn_backlog_add[@]}" 2>&1) &&
+        fm_backlog_row_probe "$DATA" "$ID"; then
+        BACKLOG_ROW_STATE=$FM_BACKLOG_ROW_STATE
+        spawn_backlog_filed=1
+        echo "notice: task $ID had no backlog item in this home; filed it Queued as '$spawn_backlog_title' (kind $KIND, repo $PROJ_NAME) before dispatch" >&2
+      else
+        printf '%s\n' "${spawn_backlog_out:-}" | sed -n '1,3p' >&2
+      fi
+    fi
+    if [ "$spawn_backlog_filed" -ne 1 ]; then
+      echo "error: task $ID has no backlog item in this home, so dispatching it would leave a worker no record owns; add it first ($(printf '%q ' bin/fm-tasks-axi.sh "${spawn_backlog_add[@]}" | sed 's/ $//')) and re-run" >&2
+      exit 1
+    fi
   else
     echo "error: task $ID's backlog item could not be read before dispatch ($FM_BACKLOG_ROW_ERROR)" >&2
     exit 1
@@ -6511,7 +6561,21 @@ elif [ "$RELAUNCH" -eq 1 ]; then
 elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # A t3code slot was leased and validated in its target branch above.
   if [ "$BACKEND" != t3code ]; then
-    spawn_send_text_line "$WT_TARGET" 'treehouse get'
+    # A `treehouse get` that fails (a full pool answers "all N worktrees are in
+    # use or dirty" and exits 1 at once) leaves the pane in the project, which
+    # the wait below would otherwise sit out for its whole window before
+    # refusing with no word about the pool. The pane therefore records get's
+    # nonzero exit status in a private marker, so the wait stops on the first
+    # poll after it and the refusal names the pool instead. A get that succeeds
+    # stays in its subshell and never writes the marker; a later nonzero exit
+    # of that subshell finds the marker directory already removed and stays
+    # silent.
+    TREEHOUSE_GET_MARK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/fm-treehouse-get.XXXXXX") || {
+      echo "error: could not create a private marker directory for treehouse get; $(spawn_endpoint_hint)" >&2
+      exit 1
+    }
+    TREEHOUSE_GET_MARK="$TREEHOUSE_GET_MARK_DIR/rc"
+    spawn_send_text_line "$WT_TARGET" "treehouse get || { printf '%s\\n' \"\$?\" > $(shell_quote "$TREEHOUSE_GET_MARK"); } 2>/dev/null"
 
     # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
     # Target the stable window id, not the name: if the name is ever lost (e.g. an
@@ -6548,7 +6612,12 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     candidate=""
     last_seen=""
     last_reason="the pane reported no path"
+    treehouse_get_rc=""
     for _ in $(seq 1 60); do
+      if [ -s "$TREEHOUSE_GET_MARK" ]; then
+        treehouse_get_rc=$(head -n 1 "$TREEHOUSE_GET_MARK" 2>/dev/null || true)
+        break
+      fi
       p=$(spawn_current_path "$WT_TARGET" || true)
       [ -z "$p" ] || last_seen="$p"
       if [ -n "$p" ] && spawn_worktree_isolated "$p"; then
@@ -6565,6 +6634,16 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
       fi
       sleep 1
     done
+    rm -rf -- "$TREEHOUSE_GET_MARK_DIR"
+    if [ -n "$treehouse_get_rc" ]; then
+      treehouse_pool_summary=$(cd -- "$PROJ_ABS" 2>/dev/null &&
+        (fm_exec_timed 15 2 treehouse status --json) 2>/dev/null |
+        jq -r 'if type == "array" then
+            "pool: \(length) slot(s): " + (group_by(.status) | map("\(length) \(.[0].status)") | join(", "))
+          else empty end' 2>/dev/null) || treehouse_pool_summary=
+      echo "error: treehouse get exited with status ${treehouse_get_rc} before entering a worktree, so task $ID was not launched (spawning project '$PROJ_ABS')${treehouse_pool_summary:+; $treehouse_pool_summary}. Treehouse printed its reason in the task endpoint. When it says every worktree is in use or dirty, the pool is full: free a slot by tearing down a landed or abandoned task (bin/fm-teardown.sh <id>), or raise max_trees in the project's treehouse config, then spawn again; do not retry unchanged; $(spawn_endpoint_hint)" >&2
+      exit 1
+    fi
     if [ -z "$WT" ]; then
       echo "error: treehouse get did not enter an isolated worktree within 60s (last seen '${last_seen:-none}': $last_reason; spawning project '$PROJ_ABS'); $(spawn_endpoint_hint)" >&2
       exit 1

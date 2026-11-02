@@ -36,9 +36,14 @@
 #     percent and reset time, and a non-empty Notes entry.
 #     Any exhausted_now runway or 100%-used (0% remaining) window is refused
 #     naming the window and its reset time, as is any unknown or missing
-#     piece. On pass (exit 0) the chosen candidate's full window table with
-#     used percents and notes is printed; an unpublished 5h window shows as
-#     "not published by provider", never a number. An idle Claude 5h window
+#     piece. A refusal that only a fresh `record` run cures - no record, a
+#     spent, stale, or unreadable one, or one that does not cover the chosen
+#     account or store, or whose read of that account failed - exits 4
+#     instead of 3, so a launcher can run the intake once and gate again;
+#     every limit verdict stays exit 3. On pass (exit 0) the chosen
+#     candidate's full window table with used percents and notes is printed;
+#     an unpublished 5h window shows as "not published by provider", never a
+#     number. An idle Claude 5h window
 #     (0% used, no reset time because no window has been opened) cannot be
 #     exhausted, so it passes and shows as "not started (idle window)"; any
 #     other provider, or a Claude 5h window with use, still needs its reset.
@@ -110,6 +115,11 @@ SCHEMA_VERSION=2
 
 die() { printf 'error: %s\n' "$1" >&2; exit 2; }
 refuse() { printf '%s\n' "$1"; exit 3; }
+# The record itself is missing, spent, stale, unreadable, or does not cover the
+# chosen account or store: a fresh `record` run is what cures it, so the gate
+# says so with its own exit status and bin/fm-spawn.sh can run that intake once
+# and gate again. Every limit verdict stays a plain refusal (exit 3).
+refresh() { printf '%s\n' "$1"; exit 4; }
 
 intake_list_records() { # one path per line, oldest first
   local f
@@ -553,24 +563,24 @@ cmd_gate() {
   provider=$(gate_provider_for_harness "$harness" "$model") ||
     refuse "quota intake gate: refusing - no quota provider family can be established for harness '$harness' with model '$model'; declare the provider family in the dispatch profile or dispatch a measurable harness"
   record=$(intake_list_records | tail -n 1)
-  [ -n "$record" ] || refuse "quota intake gate: refusing - no intake record exists under $INTAKE_DIR; run bin/fm-quota-intake.sh first and re-check every usage limit"
+  [ -n "$record" ] || refresh "quota intake gate: refusing - no intake record exists under $INTAKE_DIR; run bin/fm-quota-intake.sh first and re-check every usage limit"
   spent_msg="quota intake gate: refusing - the newest intake record $(basename -- "$record") was already spent on a launch; every launch needs its own read, so run bin/fm-quota-intake.sh now and re-check every usage limit"
-  [ ! -e "$record.spent" ] || refuse "$spent_msg"
+  [ ! -e "$record.spent" ] || refresh "$spent_msg"
   now=$(intake_epoch_now)
   age=$(jq -r --argjson now "$now" '$now - (.recordedAtEpoch // 0)' "$record" 2>/dev/null)
   case "$age" in
-    ''|*[!0-9-]*) refuse "quota intake gate: refusing - the newest record is unreadable; run bin/fm-quota-intake.sh again" ;;
+    ''|*[!0-9-]*) refresh "quota intake gate: refusing - the newest record is unreadable; run bin/fm-quota-intake.sh again" ;;
   esac
   [ "$age" -le "$MAX_AGE" ] ||
-    refuse "quota intake gate: refusing - the newest intake record is ${age}s old (max ${MAX_AGE}s); run bin/fm-quota-intake.sh now and re-check every usage limit"
+    refresh "quota intake gate: refusing - the newest intake record is ${age}s old (max ${MAX_AGE}s); run bin/fm-quota-intake.sh now and re-check every usage limit"
 
   entry=$(jq -c --arg a "$account" '[.accounts[] | select(.account == $a)] | first // empty' "$record")
   [ -n "$entry" ] || {
     covered=$(jq -r '[.accounts[].account] | join(",")' "$record")
-    refuse "quota intake gate: refusing - the record does not cover account '$account' (covered: ${covered:-none}); run bin/fm-quota-intake.sh for that account's stores"
+    refresh "quota intake gate: refusing - the record does not cover account '$account' (covered: ${covered:-none}); run bin/fm-quota-intake.sh for that account's stores"
   }
   [ "$(jq -r '.readStatus' <<< "$entry")" = ok ] ||
-    refuse "quota intake gate: refusing - the record's read for account '$account' failed ($(jq -r '.error // "unknown error"' <<< "$entry")); re-run bin/fm-quota-intake.sh"
+    refresh "quota intake gate: refusing - the record's read for account '$account' failed ($(jq -r '.error // "unknown error"' <<< "$entry")); re-run bin/fm-quota-intake.sh"
 
   case "$harness" in
     claude) store_field=claude ;;
@@ -591,7 +601,7 @@ cmd_gate() {
       expected=$chosen
     fi
     [ "$(jq -r --arg f "$store_field" '.stores[$f]' <<< "$entry")" = "$expected" ] ||
-      refuse "quota intake gate: refusing - the record's $store_field store $(jq -r --arg f "$store_field" '.stores[$f]' <<< "$entry") does not cover the chosen store $expected; run bin/fm-quota-intake.sh against the store this launch will use"
+      refresh "quota intake gate: refusing - the record's $store_field store $(jq -r --arg f "$store_field" '.stores[$f]' <<< "$entry") does not cover the chosen store $expected; run bin/fm-quota-intake.sh against the store this launch will use"
   fi
 
   local verdict
@@ -687,7 +697,7 @@ cmd_gate() {
 
   if [ "$(jq -r '.verdict' <<< "$verdict")" = pass ]; then
     if [ "$consume" -eq 1 ]; then
-      ( set -C; : > "$record.spent" ) 2>/dev/null || refuse "$spent_msg"
+      ( set -C; : > "$record.spent" ) 2>/dev/null || refresh "$spent_msg"
     fi
     printf 'quota-intake gate: PASS record=%s age=%ss account=%s provider=%s model=%s plan=%s (%s) spendPriority=%s runway=%s\n' \
       "$(basename -- "$record")" "$age" \

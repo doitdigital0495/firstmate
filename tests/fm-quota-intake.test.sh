@@ -29,8 +29,8 @@
 #   7. the cached-read exception: a fresh statusline cache converts USED
 #      percentages to remaining and is marked cached; a stale one fails
 #      closed.
-#   8. the real bin/fm-spawn.sh refuses without a record and passes on one
-#      seeded by the real recorder, and the real bin/fm-control.sh relaunch
+#   8. the real bin/fm-spawn.sh heals a missing or spent record with its own
+#      intake and still refuses a limit verdict, and the real bin/fm-control.sh relaunch
 #      gate refuses BEFORE the running agent is stopped and passes on a real
 #      record.
 set -u
@@ -424,23 +424,23 @@ test_gate_refusals() {
   assert_contains "$out" "provider=codex" "gate: the sanity pass must name the provider"
   rm -rf -- "$home/state/quota-intake"
   out=$(run_gate "$home" --harness codex); rc=$?
-  expect_code 3 "$rc" "gate: no record must refuse"
+  expect_code 4 "$rc" "gate: no record must refuse with the refresh status"
   assert_contains "$out" "no intake record exists" "gate: the no-record refusal must say so"
   seed_record "$home" "$TMP_ROOT/snap-base.json"
 
   # Stale record: anything older than the freshness window refuses.
   out=$(FM_QUOTA_INTAKE_MAX_AGE=-1 run_gate "$home" --harness codex); rc=$?
-  expect_code 3 "$rc" "gate: a stale record must refuse"
+  expect_code 4 "$rc" "gate: a stale record must refuse with the refresh status"
   assert_contains "$out" "run bin/fm-quota-intake.sh now" "gate: the stale refusal must demand a fresh read"
 
   # Uncovered account.
   out=$(run_gate "$home" --harness codex --account geris); rc=$?
-  expect_code 3 "$rc" "gate: an account the record does not cover must refuse"
+  expect_code 4 "$rc" "gate: an account the record does not cover must refuse with the refresh status"
   assert_contains "$out" "does not cover account 'geris'" "gate: the uncovered-account refusal must name the account"
 
   # Uncovered store.
   out=$(run_gate "$home" --harness codex --codex-store /elsewhere/codex); rc=$?
-  expect_code 3 "$rc" "gate: a store the record does not cover must refuse"
+  expect_code 4 "$rc" "gate: a store the record does not cover must refuse with the refresh status"
   assert_contains "$out" "does not cover the chosen store /elsewhere/codex" \
     "gate: the uncovered-store refusal must name the store"
 
@@ -457,10 +457,10 @@ test_gate_refusals() {
   out=$(run_gate "$home" --harness codex --consume); rc=$?
   expect_code 0 "$rc" "gate: the first consuming launch must pass"
   out=$(run_gate "$home" --harness claude --consume); rc=$?
-  expect_code 3 "$rc" "gate: a second launch on a spent record must refuse"
+  expect_code 4 "$rc" "gate: a second launch on a spent record must refuse with the refresh status"
   assert_contains "$out" "was already spent on a launch" "gate: the spent refusal must say so"
   out=$(run_gate "$home" --harness codex); rc=$?
-  expect_code 3 "$rc" "gate: a preview on a spent record must refuse too"
+  expect_code 4 "$rc" "gate: a preview on a spent record must refuse too with the refresh status"
   seed_record "$home" "$TMP_ROOT/snap-base.json"
   out=$(run_gate "$home" --harness claude --consume); rc=$?
   expect_code 0 "$rc" "gate: a new intake must admit the next launch"
@@ -715,7 +715,7 @@ test_cached_fallback_stale() {
 # --- 8. the real spawn and relaunch gates ------------------------------------
 
 test_real_spawn_gate() {
-  local home proj fakebin wt out rc
+  local home proj fakebin wt out rc records
   home=$(make_home spawngate)
   proj=$TMP_ROOT/spawn-proj
   fm_git_init_commit "$proj"
@@ -725,40 +725,52 @@ test_real_spawn_gate() {
   fakebin=$(make_spawn_fakebin "$TMP_ROOT/spawn-fake")
   cp "$(make_fake_quota_axi "$TMP_ROOT/spawn-quota" "$TMP_ROOT/snap-base.json")/quota-axi" "$fakebin/quota-axi"
 
-  # Refusal: no record, the suite-wide bypass stripped, nothing created.
-  fm_test_spawn_brief "$home" spawn-refused "quota gate refusal intent"
+  # No record: the gate's refresh status makes fm-spawn run the intake itself,
+  # print the table, and launch on the record it just read, which it spends.
+  fm_test_spawn_brief "$home" spawn-healed "quota gate self-heal intent"
   out=$( unset FM_QUOTA_INTAKE_TEST_BYPASS
     # shellcheck disable=SC2030 # The pin is deliberately local to this spawn run's subshell.
     export CODEX_HOME=
-    fm_test_run_spawn "$home" "$wt" "$fakebin" spawn-refused "$proj" codex --mode no-mistakes --yolo off ); rc=$?
-  [ "$rc" -ne 0 ] || fail "fm-spawn must refuse without an intake record"
+    fm_test_run_spawn "$home" "$wt" "$fakebin" spawn-healed "$proj" codex --mode no-mistakes --yolo off ); rc=$?
+  expect_code 0 "$rc" "fm-spawn: a missing record must be refreshed and the launch admitted"$'\n'"$out"
   assert_contains "$out" "quota intake gate: refusing - no intake record exists" \
-    "fm-spawn: the refusal must be the quota gate's"
-  assert_contains "$out" "spawn-refused was not launched; the quota intake gate refused it and nothing was created" \
-    "fm-spawn: the refusal must state nothing was created"
-  assert_absent "$home/state/spawn-refused.meta" "fm-spawn: a refused launch must record no meta"
+    "fm-spawn: the first gate must still report why it refused"
+  assert_contains "$out" "running bin/fm-quota-intake.sh now and gating again" \
+    "fm-spawn: the self-heal must announce the fresh intake"
+  assert_contains "$out" "quota-intake gate: PASS" "fm-spawn: the second gate must pass on the fresh record"
+  assert_contains "$out" "spawned spawn-healed" "fm-spawn: the healed launch should succeed"
+  assert_present "$home/state/spawn-healed.meta" "fm-spawn: the healed launch should record meta"
+  assert_present "$(newest_record "$home").spent" "fm-spawn: the healed launch must spend the record it read"
 
-  # Pass: the real recorder seeds the record the real gate then reads.
-  fm_test_spawn_brief "$home" spawn-passed "quota gate pass intent"
-  run_record "$home" "$fakebin" >/dev/null || fail "seeding the spawn home's record failed"
+  # A spent record (the race two launches run for the newest record) heals
+  # the same way, with its own fresh read rather than the spent one.
+  fm_test_spawn_brief "$home" spawn-reused "quota gate reuse intent"
   out=$( unset FM_QUOTA_INTAKE_TEST_BYPASS
     # shellcheck disable=SC2030,SC2031 # The pin is deliberately local to this spawn run's subshell.
     export CODEX_HOME=
-    fm_test_run_spawn "$home" "$wt" "$fakebin" spawn-passed "$proj" codex --mode no-mistakes --yolo off ); rc=$?
-  expect_code 0 "$rc" "fm-spawn: a fresh covering record must admit the launch"$'\n'"$out"
-  assert_contains "$out" "spawned spawn-passed" "fm-spawn: the launch should succeed"
-  assert_present "$home/state/spawn-passed.meta" "fm-spawn: the launch should record meta"
+    fm_test_run_spawn "$home" "$wt" "$fakebin" spawn-reused "$proj" codex --mode no-mistakes --yolo off ); rc=$?
+  expect_code 0 "$rc" "fm-spawn: a spent record must be refreshed and the launch admitted"$'\n'"$out"
+  assert_contains "$out" "was already spent on a launch" "fm-spawn: the spent refusal must be reported before the heal"
+  records=$(find "$home/state/quota-intake" -maxdepth 1 -name 'quota-*.json.spent' | wc -l | tr -d ' ')
+  [ "$records" -eq 2 ] || fail "fm-spawn: each healed launch must spend its own record (spent=$records)"
 
-  # The launch spent that record: the next spawn must re-read every limit.
-  fm_test_spawn_brief "$home" spawn-reused "quota gate reuse intent"
+  # A limit verdict is never healed around: the fresh read still shows the
+  # spent window, so the launch refuses and nothing is created.
+  jq '(.providers[] | select(.provider == "codex") | .windows[] | select(.id == "weekly"))
+        |= (.percentUsed = 100 | .percentRemaining = 0)' "$TMP_ROOT/snap-base.json" \
+    > "$TMP_ROOT/snap-codex-spent.json"
+  cp "$(make_fake_quota_axi "$TMP_ROOT/spawn-quota-spent" "$TMP_ROOT/snap-codex-spent.json")/quota-axi" "$fakebin/quota-axi"
+  fm_test_spawn_brief "$home" spawn-refused "quota gate refusal intent"
   out=$( unset FM_QUOTA_INTAKE_TEST_BYPASS
     # shellcheck disable=SC2031 # The pin is deliberately local to this spawn run's subshell.
     export CODEX_HOME=
-    fm_test_run_spawn "$home" "$wt" "$fakebin" spawn-reused "$proj" codex --mode no-mistakes --yolo off ); rc=$?
-  [ "$rc" -ne 0 ] || fail "fm-spawn must refuse a second launch on an already spent record"
-  assert_contains "$out" "was already spent on a launch" "fm-spawn: the reuse refusal must be the quota gate's"
-  assert_absent "$home/state/spawn-reused.meta" "fm-spawn: a refused reuse must record no meta"
-  pass "fm-spawn: refuses without a record (nothing created), launches on a real seeded record, and refuses to reuse it"
+    fm_test_run_spawn "$home" "$wt" "$fakebin" spawn-refused "$proj" codex --mode no-mistakes --yolo off ); rc=$?
+  [ "$rc" -ne 0 ] || fail "fm-spawn must refuse a launch whose fresh read shows a spent window"
+  assert_contains "$out" "window weekly is at 100% used" "fm-spawn: the refusal must be the gate's limit verdict"
+  assert_contains "$out" "spawn-refused was not launched; the quota intake gate refused it and nothing was created" \
+    "fm-spawn: the refusal must state nothing was created"
+  assert_absent "$home/state/spawn-refused.meta" "fm-spawn: a refused launch must record no meta"
+  pass "fm-spawn: runs the intake itself when the record is missing or spent, launches on that fresh read, and still refuses a limit verdict"
 }
 
 test_worker_pin_record_covers_the_pinned_store() {
@@ -795,7 +807,7 @@ test_worker_pin_record_covers_the_pinned_store() {
   out=$(run_gate "$home" --harness pi --model zai/glm-5.3); rc=$?
   expect_code 0 "$rc" "a storeless Pi gate under a pin must resolve the pinned root"$'\n'"$out"
   out=$(run_gate "$home" --harness claude --claude-store "$ambient"); rc=$?
-  expect_code 3 "$rc" "the ambient store the pin overrides must stay uncovered"
+  expect_code 4 "$rc" "the ambient store the pin overrides must stay uncovered, with the refresh status"
   assert_contains "$out" "does not cover the chosen store $ambient" "the refusal must name the uncovered store"
 
   # The real fm-spawn under the pin, with ambient CLAUDE_CONFIG_DIR elsewhere.
