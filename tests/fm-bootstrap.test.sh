@@ -1508,14 +1508,16 @@ printf '%s\n' declared-source-secret
 SH
   chmod +x "$fakebin/security"
   : > "$case_dir/security.log"
+  # A typesafe entry belongs to the fork's direct route (FM_DISPATCH_ROUTE=direct);
+  # the default OpenRouter route reads only an openrouter entry.
   cred="$case_dir/home/config/dispatch-credential-sources.json"
   printf '%s\n' '{"typesafe":{"source":"macos-keychain","service":"typesafe-api-key"}}' > "$cred"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_TEST_SECURITY_LOG="$case_dir/security.log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+    FM_DISPATCH_ROUTE=direct FM_TEST_SECURITY_LOG="$case_dir/security.log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   [ -z "$out" ] || fail "a declared typesafe source should add verified Gemini crewmate routing, got: $out"
   printf '%s\n' '{"rules":[{"when":"hard design","approval":"Captain","use":{"harness":"claude"}}]}' > "$case_dir/home/config/crew-dispatch.json"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_TEST_SECURITY_LOG="$case_dir/security.log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+    FM_DISPATCH_ROUTE=direct FM_TEST_SECURITY_LOG="$case_dir/security.log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - approval must be "captain" when present' ] \
     || fail "a declared typesafe source must activate resolver-field validation, got: $out"
   printf '%s\n' '{"rules":[{"when":"gemini work","use":{"harness":"gemini","model":"gemini-3.8-flash-high","provider":"google"}}]}' > "$case_dir/home/config/crew-dispatch.json"
@@ -1524,10 +1526,19 @@ SH
     '{"typesafe":{"source":"macos-keychain","service":"typesafe-api-key","key":"inline"}}'; do
     printf '%s\n' "$declaration" > "$cred"
     out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-      FM_TEST_SECURITY_LOG="$case_dir/security.log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+      FM_DISPATCH_ROUTE=direct FM_TEST_SECURITY_LOG="$case_dir/security.log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
     [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - unverified harness: gemini' ] \
       || fail "a declaration that is not a valid typesafe source must keep the verified-harness baseline ($declaration), got: $out"
   done
+  printf '%s\n' '{"openrouter":{"source":"macos-keychain","service":"openrouter-api-key"}}' > "$cred"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_TEST_SECURITY_LOG="$case_dir/security.log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "a declared openrouter source should add verified Gemini crewmate routing on the default route, got: $out"
+  printf '%s\n' '{"typesafe":{"source":"macos-keychain","service":"typesafe-api-key"}}' > "$cred"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_TEST_SECURITY_LOG="$case_dir/security.log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - unverified harness: gemini' ] \
+    || fail "a typesafe declaration must not activate the default OpenRouter route, got: $out"
   [ ! -s "$case_dir/security.log" ] || fail "bootstrap must never run the credential tool, got: $(cat "$case_dir/security.log")"
   rm -f "$cred"
   : > "$case_dir/child-env.log"

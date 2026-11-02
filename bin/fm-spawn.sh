@@ -6906,6 +6906,14 @@ BUSY_GEN=
           claude_hook_entries="$claude_hook_entries${claude_hook_entries:+,}\"$claude_hook_key\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$claude_hook_cmd\"}]}]"
         done
         CLAUDE_HOOK_ENTRIES=$claude_hook_entries
+        # T3 Code starts Claude itself and cannot pass --settings, so a T3
+        # worker's hooks must also sit in the disposable worktree's
+        # .claude/settings.local.json, where the T3 env merge below extends them.
+        if [ "$BACKEND" = t3code ] && [ "$KIND" != secondmate ]; then
+          mkdir -p "$WT/.claude"
+          printf '{"hooks":{%s}}\n' "$claude_hook_entries" >"$WT/.claude/settings.local.json"
+          exclude_path '.claude/settings.local.json'
+        fi
       fi
       ;;
   devin)
