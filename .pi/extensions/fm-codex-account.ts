@@ -48,7 +48,7 @@ const KNOWN_SOURCES = new Set([
 
 /**
  * The credential store this Pi process authenticates from, as the captain reads it:
- * `.pi` and `.pi-geris` rather than two long paths that differ late. The trailing
+ * `.pi` and `.pi-2` rather than two long paths that differ late. The trailing
  * `agent` segment is dropped because it is identical for every home and carries none
  * of the distinction. A directory outside the home keeps its absolute path.
  */

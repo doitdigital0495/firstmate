@@ -66,7 +66,8 @@ Every spawn and every relaunch or model-or-account move runs through `bin/fm-quo
 Start each intake by running `quota-axi` with no `--json` for the home's default account.
 For each distinct named-account store triple referenced by a candidate, read that home's `config/accounts.json` and require `crossAccount.enabled == true` plus an allowlisted account; otherwise mark that candidate `not eligible: cross-account routing disabled` without probing its store.
 Read one additional `quota-axi` snapshot per eligible distinct store triple with `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, and `CODEX_HOME` pinned to that entry; use only that store's snapshot for its candidates, then rank the union with the same spendPriority procedure.
-A home with no `crossAccount` block keeps the default-only intake unchanged, and a home with only the Geris registry entry cannot dispatch a personal candidate.
+A home with no `crossAccount` block keeps the default-only intake unchanged; with `config/accounts.json` present every profile names a registered account (the resolver and bootstrap refuse one that does not), so no candidate falls onto the home's own login unannounced.
+An account that declares `provider` is read and gated on that provider's rows only, which keeps two seats on one shared Pi store apart.
 A usage-limit move of a running worker may likewise pick a candidate on another allowlisted account when its quota does not hurt significantly more than the best intra-account switch; `fm-control.sh relaunch --account <id>` performs that move under the same eligibility gates.
 Reuse each snapshot for its candidates until an unknown pool requires the bounded retry below.
 Post-consolidation quota-axi (the floor owned by `bin/fm-quota-axi-lib.sh`) puts `spendPriority` in the default `quota[]` block beside `effectivePercentRemaining`, `runway`, `confidence`, `limitedBy`, and `resetsAt`.
@@ -101,7 +102,7 @@ Keep the two readings distinct and both visible in the rationale.
 It is a floor, not a forecast - a resumed session runs a burst of turns, not one - so treat a candidate whose remaining window is close to that floor as already committed rather than free, and say so.
 
 This applies only to a store the home actually lists.
-An unlisted store, including the default personal one, has no census to read and no discount to apply, and a Claude candidate on it is ranked from `quota-axi` alone exactly as before.
+An unlisted store, including the home's default one, has no census to read and no discount to apply, and a Claude candidate on it is ranked from `quota-axi` alone exactly as before.
 The census is evidence, never a route: it can lower a shaped candidate's standing, and it never selects, blocks a candidate on its own, or authorizes pausing authorized work.
 An unreadable census is disclosed uncertainty for the ranking, the same as any other unmeasurable fact, and the script's own refusal is what stops a launch.
 
@@ -188,8 +189,8 @@ Do not compare headroom against runway by hand.
 Do not use pace or signed reserve as a later tie-break layer.
 Do not read `aheadWindowIds`, `behindWindowIds`, `onPaceWindowIds`, `limitingWindowIds`, or other window-id lists to reconstruct what `spendPriority` already computed.
 
-Genuine ties: stop and report every tied candidate for captain choice.
-Do not select by array order, harness name, or another arbitrary identity ordering.
+Exact ties (captain 2026-11-02): the resolver keeps the candidates whose binding window resets soonest, then takes the next slot of a fixed round-robin over a stable account, harness, model and effort order, and logs both as `tie_break:`; review that line rather than stopping.
+Do not select by array order, harness name, or any other fixed identity preference.
 Report duplicate concrete profiles as a configuration error.
 
 ### 5. Runway feasibility, Claude orchestration reserve, and split
@@ -197,11 +198,12 @@ Report duplicate concrete profiles as a configuration error.
 Establish an inspectable likely-completion horizon for the work before accepting a full-task launch.
 Read `runway` from every applicable `quota[]` bound: `through_reset` passes the generic feasibility check because the window refills without exhausting; never compare its `resetsAt` with the completion horizon as though reset were an exhaustion deadline.
 `exhausted_now` is zero, and `projected_exhaustion` uses the matching `exhaustion[]` row's `usableRunwaySeconds`.
-Known runway shorter than the full-task horizon fails full-task feasibility even at the highest `spendPriority`; do not launch an unsliced job into a known stall.
+Captain rule: a projected exhaustion never ranks a candidate down or refuses it; only `exhausted_now` excludes. When known runway is shorter than the full-task horizon, plan checkpoints in the brief instead of refusing, so a worker that hits the limit can move to another account of the same class.
 Unknown or unmeasurable runway cannot prove feasibility: it must already have been resolved by the bounded warm-up and retry above, or the whole choice stays incomplete.
 Do not invent a generic percentage floor, and honor an explicit captain floor for a candidate when one exists.
 
 Firstmate itself spends Claude quota while orchestrating.
+In a six-account home the orchestration login (claude3) is protected in code: its worker profiles carry `"fallback_only": true`, which the resolver holds while any other Claude seat in the choice has weekly capacity and ranks below every other candidate once released, and a measured `floor` caps that reserve; the estimate below is evidence for sizing that floor, not a reason to refuse a Claude worker on claude1 or claude2.
 For a Claude worker, estimate Firstmate's Claude orchestration demand through each applicable reset from observed usage and already committed supervision work, then include the proposed worker task or slice on every shared credential store.
 If the worker uses a different store, establish the worker's task-inclusive runway on its store and the orchestration runway on Firstmate's store separately; do not debit one store for another's demand.
 Choose Claude only when the task-inclusive worker runway and Firstmate's orchestration runway still reach their respective resets; `through_reset` on a point-in-time reading alone is not proof that adding the worker preserves this reserve.

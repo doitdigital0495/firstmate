@@ -2133,17 +2133,17 @@ make_case_accounts_registry() {  # <case-dir> <enabled:true|false> <id:store-dir
 }
 
 test_relaunch_switches_the_task_recorded_account() {
-  local dir geris personal meta out rc
+  local dir second personal meta out rc
   dir=$(new_case acctswitch rl43)
   add_ship_task "$dir" rl43 codex
   printf 'codex' > "$dir/fake/becomes"
   meta="$dir/home/state/rl43.meta"
-  geris="$dir/geris-store"
+  second="$dir/second-store"
   personal="$dir/personal-store"
-  mkdir -p "$geris" "$personal"
-  make_case_accounts_registry "$dir" true "geris:$geris" "personal:$personal"
-  printf 'account=geris\nclaude_config_dir=%s/claude\npi_agent_dir=%s/pi\ncodex_home=%s/codex\n' \
-    "$geris" "$geris" "$geris" >> "$meta"
+  mkdir -p "$second" "$personal"
+  make_case_accounts_registry "$dir" true "second:$second" "personal:$personal"
+  printf 'account=second\nclaude_config_dir=%s/claude\npi_agent_dir=%s/pi\ncodex_home=%s/codex\n' \
+    "$second" "$second" "$second" >> "$meta"
 
   out=$(run_control "$dir" rl43 relaunch --account personal --note "usage-limit move"); rc=$?
   expect_code 0 "$rc" "an allowed cross-account relaunch should succeed"$'\n'"$out"
@@ -2157,7 +2157,7 @@ test_relaunch_switches_the_task_recorded_account() {
     || fail "the Pi store must follow the account switch"
   assert_contains "$(cat "$dir/fake/literal")" "export CODEX_HOME='$personal/codex'" \
     "the replacement must launch on the new account's store"
-  assert_not_contains "$(cat "$dir/fake/literal")" "export CODEX_HOME='$geris/codex'" \
+  assert_not_contains "$(cat "$dir/fake/literal")" "export CODEX_HOME='$second/codex'" \
     "the old account's store must not survive the switch"
   [ "$(meta_field "$dir" rl43 worktree)" = "$dir/wt" ] \
     || fail "an account switch must not touch the recorded worktree"
@@ -2165,15 +2165,15 @@ test_relaunch_switches_the_task_recorded_account() {
 }
 
 test_relaunch_account_switch_refuses_an_ineligible_seat_before_stop() {
-  local dir geris meta out rc
+  local dir second meta out rc
   dir=$(new_case acctrefuse rl44)
   add_ship_task "$dir" rl44 codex
   printf 'codex' > "$dir/fake/becomes"
   meta="$dir/home/state/rl44.meta"
-  geris="$dir/geris-store"
-  mkdir -p "$geris"
-  make_case_accounts_registry "$dir" true "geris:$geris"
-  printf 'account=geris\ncodex_home=%s/codex\n' "$geris" >> "$meta"
+  second="$dir/second-store"
+  mkdir -p "$second"
+  make_case_accounts_registry "$dir" true "second:$second"
+  printf 'account=second\ncodex_home=%s/codex\n' "$second" >> "$meta"
   cp "$meta" "$dir/meta.before"
 
   out=$(run_control "$dir" rl44 relaunch --account personal --note "move"); rc=$?
@@ -2183,9 +2183,9 @@ test_relaunch_account_switch_refuses_an_ineligible_seat_before_stop() {
   jq '.crossAccount.enabled = false' "$dir/home/config/accounts.json" \
     > "$dir/home/config/accounts.next"
   mv "$dir/home/config/accounts.next" "$dir/home/config/accounts.json"
-  out=$(run_control "$dir" rl44 relaunch --account geris --note "move"); rc=$?
+  out=$(run_control "$dir" rl44 relaunch --account second --note "move"); rc=$?
   expect_code 1 "$rc" "a disabled crossAccount switch must refuse"
-  assert_contains "$out" "account 'geris' is not enabled in this home's config/accounts.json" \
+  assert_contains "$out" "account 'second' is not enabled in this home's config/accounts.json" \
     "a disabled switch must refuse with the same wording"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "a refused account move must not stop the agent"
   [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused account move must send nothing"
@@ -2197,24 +2197,24 @@ test_relaunch_account_switch_refuses_an_ineligible_seat_before_stop() {
 }
 
 test_relaunch_without_account_keeps_the_recorded_seat() {
-  local dir geris meta out rc
+  local dir second meta out rc
   dir=$(new_case acctkeep rl45)
   add_ship_task "$dir" rl45 codex
   printf 'codex' > "$dir/fake/becomes"
   meta="$dir/home/state/rl45.meta"
-  geris="$dir/geris-store"
-  mkdir -p "$geris"
-  make_case_accounts_registry "$dir" true "geris:$geris"
-  printf 'account=geris\nclaude_config_dir=%s/claude\npi_agent_dir=%s/pi\ncodex_home=%s/codex\n' \
-    "$geris" "$geris" "$geris" >> "$meta"
+  second="$dir/second-store"
+  mkdir -p "$second"
+  make_case_accounts_registry "$dir" true "second:$second"
+  printf 'account=second\nclaude_config_dir=%s/claude\npi_agent_dir=%s/pi\ncodex_home=%s/codex\n' \
+    "$second" "$second" "$second" >> "$meta"
 
   out=$(run_control "$dir" rl45 relaunch --note "same seat"); rc=$?
   expect_code 0 "$rc" "a relaunch that omits --account should succeed"$'\n'"$out"
-  [ "$(meta_field "$dir" rl45 account)" = geris ] \
+  [ "$(meta_field "$dir" rl45 account)" = second ] \
     || fail "an omitted --account must keep the recorded account id"
-  [ "$(meta_field "$dir" rl45 codex_home)" = "$geris/codex" ] \
+  [ "$(meta_field "$dir" rl45 codex_home)" = "$second/codex" ] \
     || fail "an omitted --account must keep the recorded store"
-  assert_contains "$(cat "$dir/fake/literal")" "export CODEX_HOME='$geris/codex'" \
+  assert_contains "$(cat "$dir/fake/literal")" "export CODEX_HOME='$second/codex'" \
     "an omitted --account must relaunch on the recorded store"
   pass "fm-control relaunch: an omitted --account keeps the recorded account"
 }
@@ -2244,7 +2244,7 @@ test_relaunch_account_switch_refuses_a_secondmate() {
   } > "$home/state/sm7.meta"
   printf '%s\n' "fm-sm7" > "$dir/fake/windows"
   printf '%s' "$dir/smhome" > "$dir/fake/cwd"
-  make_case_accounts_registry "$dir" true "geris:$dir/geris-store" "personal:$dir/personal-store"
+  make_case_accounts_registry "$dir" true "second:$dir/second-store" "personal:$dir/personal-store"
 
   out=$(run_control "$dir" sm7 relaunch --account personal); rc=$?
   expect_code 1 "$rc" "a secondmate relaunch must refuse an account switch"

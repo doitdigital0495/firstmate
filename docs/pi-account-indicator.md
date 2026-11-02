@@ -7,7 +7,7 @@ Pi renders it on the footer's extension-status line, directly beneath the token,
 
 It reads one of three forms:
 
-- `codex@<store>` names the credential store in use, written the way the captain reads it: `codex@.pi` for the personal Pi home and `codex@.pi-geris` for the Geris one.
+- `codex@<store>` names the credential store in use, written the way the captain reads it: `codex@.pi` for the codex 1 Pi store and `codex@.pi-2` for the codex 2 one.
   A store outside the home directory is named by its absolute path instead.
 - `codex@unverified(<reason>)` states that no account can be named.
   `no-login` means the store holds no Codex credential, and a source name such as `environment` or `runtime` means the credential in use came from somewhere other than the store, so naming that store would describe the wrong account.

@@ -187,3 +187,98 @@ fm_quota_provider_for_harness() {
     *)            return 1 ;;
   esac
 }
+
+# ---- recent-reading fallback (R11) ---------------------------------------------
+# A rate-limited or otherwise transiently failed quota read must not halt a
+# dispatch decision when the last good reading of that same store is recent.
+# Every good provider row a reader sees is remembered per store; a later read
+# whose row for that provider is unmeasured for any reason other than a
+# credential failure (state auth_required) - or a read that failed outright -
+# reuses the remembered row while it is at most FM_QUOTA_RECENT_MAX_AGE seconds
+# old (default 1800, the captain's 30-minute cached-read window). A reused row
+# carries reusedReading {ageSeconds, savedAt} so every consumer states its age.
+# A reused row that showed exhaustion still excludes; nothing older is reused.
+# A credential failure is never papered over: it stays unmeasured and the
+# resolver reports it as an unusable credential.
+FM_QUOTA_RECENT_MAX_AGE=${FM_QUOTA_RECENT_MAX_AGE:-1800}
+
+# fm_quota_recent_file <state-dir> <mode>: the private cache path. Rows are kept
+# per provider and per that provider's own canonical store (claude rows by the
+# Claude store, codex rows by the Codex store, any other provider by the Pi
+# store), so two reads that share one login - the home default and the seat
+# that owns the same Claude directory - answer for each other.
+fm_quota_recent_file() {
+  printf '%s/quota-last-good/%s.json\n' "$1" "$2"
+}
+
+# The jq key of one provider row: provider, accountKey and its own store.
+# shellcheck disable=SC2016  # jq program text
+FM_QUOTA_RECENT_KEY_JQ='
+  def recent_key($p; $stores):
+    ($p.provider) as $pv |
+    (if $pv == "claude" then $stores[0] elif $pv == "codex" then $stores[2] else $stores[1] end) as $store |
+    "\($pv)|\($p.accountKey // "")|\($store)";'
+
+# fm_quota_recent_save <cache-file> <snapshot-file> <claude> <pi> <codex>:
+# remember every measured row of this read under its own store; a row whose own
+# store this read does not own ("-") is never remembered.
+fm_quota_recent_save() {
+  local cache=$1 snap=$2 now tmp prev stores
+  stores=$(jq -cn --arg c "$3" --arg p "$4" --arg x "$5" '[$c, $p, $x]')
+  now=$(date -u +%s)
+  mkdir -p "$(dirname "$cache")" 2>/dev/null || return 0
+  chmod 700 "$(dirname "$cache")" 2>/dev/null || true
+  prev='{}'
+  [ -f "$cache" ] && prev=$(jq -c '.rows // {}' "$cache" 2>/dev/null) || prev='{}'
+  [ -n "$prev" ] || prev='{}'
+  tmp=$(mktemp "$cache.XXXXXX") || return 0
+  if jq -c --argjson now "$now" --argjson prev "$prev" --argjson stores "$stores" "$FM_QUOTA_RECENT_KEY_JQ"'
+      . as $s |
+      {schemaVersion: ($s.schemaVersion // null),
+       rows: (reduce ($s.providers // [])[] as $p ($prev;
+         if (["known", "partial"] | index($p.quotaSemantics.status // "")) != null
+            and ((["rate_limited", "stale", "auth_required"] | index($p.state.status // "")) == null)
+            and ($p.reusedReading == null)
+            and ((recent_key($p; $stores) | split("|") | .[2]) as $own | $own != "-" and $own != "")
+         then . + {(recent_key($p; $stores)): {at: $now, row: $p}}
+         else . end))}' "$snap" > "$tmp" 2>/dev/null; then
+    chmod 600 "$tmp"; mv -f "$tmp" "$cache"
+  else
+    rm -f "$tmp"
+  fi
+  return 0
+}
+
+# fm_quota_recent_merge <cache-file> <snapshot-file|""> <claude> <pi> <codex>:
+# stdout the snapshot with each transiently unmeasured row replaced by its
+# recent reading. With no snapshot (the read failed outright) the recent rows of
+# these stores alone form the snapshot; rc 1 when nothing usable remains.
+fm_quota_recent_merge() {
+  local cache=$1 snap=${2:-} now cached stores
+  stores=$(jq -cn --arg c "$3" --arg p "$4" --arg x "$5" '[$c, $p, $x]')
+  now=$(date -u +%s)
+  cached='{"rows":{}}'
+  [ -f "$cache" ] && cached=$(jq -c . "$cache" 2>/dev/null) || cached='{"rows":{}}'
+  [ -n "$cached" ] || cached='{"rows":{}}'
+  if [ -n "$snap" ] && [ -s "$snap" ]; then
+    jq -c --argjson now "$now" --argjson max "$FM_QUOTA_RECENT_MAX_AGE" --argjson c "$cached" --argjson stores "$stores" "$FM_QUOTA_RECENT_KEY_JQ"'
+      def recent($k): ($c.rows[$k] // null) as $e |
+        if $e != null and ($now - $e.at) <= $max and ($now - $e.at) >= 0
+        then $e.row + {reusedReading: {ageSeconds: ($now - $e.at), savedAt: ($e.at | todate)}}
+        else null end;
+      .providers = [(.providers // [])[] | . as $p |
+        if (["known", "partial"] | index($p.quotaSemantics.status // "")) != null
+           and ((["rate_limited", "stale"] | index($p.state.status // "")) == null) then $p
+        elif ($p.state.status // "") == "auth_required" then $p
+        else (recent(recent_key($p; $stores)) // $p) end]' "$snap"
+  else
+    jq -ce --argjson now "$now" --argjson max "$FM_QUOTA_RECENT_MAX_AGE" --argjson stores "$stores" '
+      [(.rows // {}) | to_entries[] | select(($now - .value.at) <= $max and ($now - .value.at) >= 0) |
+        (.key | split("|")) as $k |
+        select(($k[0] == "claude" and $k[2] == $stores[0]) or ($k[0] == "codex" and $k[2] == $stores[2])
+               or ($k[0] != "claude" and $k[0] != "codex" and $k[2] == $stores[1])) |
+        .value.row + {reusedReading: {ageSeconds: ($now - .value.at), savedAt: (.value.at | todate)}}] as $rows |
+      if ($rows | length) == 0 then error("no recent reading")
+      else {schemaVersion: (.schemaVersion // 5), generatedAt: (now | todate), providers: $rows} end' <<<"$cached" 2>/dev/null
+  fi
+}

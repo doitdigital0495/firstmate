@@ -38,7 +38,7 @@ mkdir -p \
   "$FIXTURE/.pi/extensions" \
   "$FIXTURE/node_modules/@earendil-works" \
   "$FAKE_HOME/.pi/agent" \
-  "$FAKE_HOME/.pi-geris/agent" \
+  "$FAKE_HOME/.pi-second/agent" \
   "$TMP_ROOT/elsewhere/agent"
 cp "$EXT" "$FIXTURE/.pi/extensions/fm-codex-account.ts"
 ln -s "$PI_PACKAGE_DIR" "$FIXTURE/node_modules/@earendil-works/pi-coding-agent"
@@ -146,26 +146,26 @@ json_field() {
 STORED='[{"configured":true,"source":"stored"}]'
 
 test_store_identity() {
-  local personal geris out
+  local personal second out
 
   out=$(drive "$FAKE_HOME/.pi/agent" "$STORED") || fail "personal store case did not run: $(cat "$TMP_ROOT/drive.err")"
   personal=$(status_text "$out" 0)
   [ "$personal" = "codex@.pi" ] || fail "personal Pi store rendered '$personal', expected codex@.pi"
 
-  out=$(drive "$FAKE_HOME/.pi-geris/agent" "$STORED") || fail "geris store case did not run: $(cat "$TMP_ROOT/drive.err")"
-  geris=$(status_text "$out" 0)
-  [ "$geris" = "codex@.pi-geris" ] || fail "geris Pi store rendered '$geris', expected codex@.pi-geris"
+  out=$(drive "$FAKE_HOME/.pi-second/agent" "$STORED") || fail "second store case did not run: $(cat "$TMP_ROOT/drive.err")"
+  second=$(status_text "$out" 0)
+  [ "$second" = "codex@.pi-second" ] || fail "second Pi store rendered '$second', expected codex@.pi-second"
 
   # Asserted explicitly so the two cases above can never quietly collapse onto one
   # label, which is the exact failure this indicator exists to prevent.
-  [ "$personal" != "$geris" ] || fail "personal and geris Pi stores rendered the same label '$personal'"
+  [ "$personal" != "$second" ] || fail "personal and second Pi stores rendered the same label '$personal'"
 
   # A trailing separator names the same store, not a second one.
-  out=$(drive "$FAKE_HOME/.pi-geris/agent/" "$STORED") || fail "trailing-separator case did not run"
-  [ "$(status_text "$out" 0)" = "$geris" ] \
-    || fail "a trailing separator rendered '$(status_text "$out" 0)' rather than '$geris'"
+  out=$(drive "$FAKE_HOME/.pi-second/agent/" "$STORED") || fail "trailing-separator case did not run"
+  [ "$(status_text "$out" 0)" = "$second" ] \
+    || fail "a trailing separator rendered '$(status_text "$out" 0)' rather than '$second'"
 
-  pass "the personal and geris Pi credential stores render as distinct labels"
+  pass "the personal and second Pi credential stores render as distinct labels"
 }
 
 test_unverified_states() {

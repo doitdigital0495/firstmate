@@ -3787,7 +3787,7 @@ if [ "$KIND" != secondmate ]; then
       jq -e --arg a "$ACCOUNT_ARG" '.accounts[$a] != null' "$CONFIG/accounts.json" >/dev/null 2>&1; then
       SPAWN_SEAT=$ACCOUNT_ARG
     else
-      SPAWN_SEAT=$(fm_account_seat_for_store "$CONFIG/accounts.json" "$SPAWN_SEAT_KIND" "$SPAWN_SEAT_STORE")
+      SPAWN_SEAT=$(fm_account_seat_for_store "$CONFIG/accounts.json" "$SPAWN_SEAT_KIND" "$SPAWN_SEAT_STORE" "$SPAWN_SEAT_PROVIDER")
     fi
     if [ -n "$SPAWN_SEAT" ] && [ "$RAW_LAUNCH" -eq 0 ]; then
       SPAWN_SEAT_CLAUDE_STORE=
