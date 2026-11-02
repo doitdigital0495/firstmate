@@ -79,6 +79,12 @@
 #      without consuming a continuation, so one event epoch yields exactly one recovery turn;
 #      the first fresh exhausted-failure epoch preserves the bounded progression,
 #      while later fresh failed epochs consume it instead of resetting it;
+#      while that window expires the parallel async auto-arm may still be
+#      pre-claim (its gates can legitimately outrun the window under load), so
+#      a live firing record
+#      (state/.claude-autoarm-firing.d - fm_autoarm_firing_live) extends the
+#      same wait up to FM_CLAUDE_AUTOARM_FIRING_WAIT_MS (default 5000ms) for
+#      the claim it announces; a live record alone never allows anything.
 #   4. only when neither materializes is the auto-arm genuinely absent: re-block
 #      with the repair banner, bounded to FM_CLAUDE_TURNEND_BLOCK_BUDGET
 #      (default 3) consecutive blocks per session - safely below Claude Code's
@@ -102,9 +108,11 @@ CLAUDE_MODE=0
 CURSOR_MODE=0
 AGY_MODE=0
 SYNC_WAIT_MS=${FM_CLAUDE_AUTOARM_SYNC_WAIT_MS:-800}
+FIRING_WAIT_MS=${FM_CLAUDE_AUTOARM_FIRING_WAIT_MS:-5000}
 EPOCH_FRESH=${FM_CLAUDE_AUTOARM_EPOCH_FRESH:-15}
 BLOCK_BUDGET=${FM_CLAUDE_TURNEND_BLOCK_BUDGET:-3}
 case "$SYNC_WAIT_MS" in ''|*[!0-9]*) SYNC_WAIT_MS=800 ;; esac
+case "$FIRING_WAIT_MS" in ''|*[!0-9]*) FIRING_WAIT_MS=5000 ;; esac
 case "$EPOCH_FRESH" in ''|*[!0-9]*|0) EPOCH_FRESH=15 ;; esac
 case "$BLOCK_BUDGET" in ''|*[!0-9]*|0) BLOCK_BUDGET=3 ;; esac
 
@@ -543,22 +551,53 @@ failure_episode_verified() {
   esac
 }
 
+# The auto-arm owns recovery for this Stop: allow the turn to end, resetting
+# any accumulated failure episode exactly when the recovery it promises
+# immediately restores a healthy watcher (a reset failure re-blocks instead of
+# allowing a home whose state still demands attention).
+claude_autoarm_allow() {
+  if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
+    fm_failure_episode_reset "$STATE" || exit 2
+  fi
+  exit 0
+}
+
 i=0
 while [ "$i" -lt $((SYNC_WAIT_MS / 100)) ]; do
   if autoarm_owns_recovery; then
-    if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
-      fm_failure_episode_reset "$STATE" || exit 2
-    fi
-    exit 0
+    claude_autoarm_allow
   fi
   sleep 0.1
   i=$((i + 1))
 done
 if autoarm_owns_recovery; then
-  if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
-    fm_failure_episode_reset "$STATE" || exit 2
+  claude_autoarm_allow
+fi
+
+# A live auto-arm firing may still be pre-claim when the base window expires:
+# Claude starts this guard and the async auto-arm on the same Stop in parallel,
+# and the firing's generation claim lands only at the end of its gate chain,
+# which under load can outrun the window above (2026-11-02: the guard blocked
+# three turns whose recovery the auto-arm delivered moments after each block).
+# Every firing publishes its record before any gate (fm_autoarm_firing_publish,
+# bin/fm-claude-stop-autoarm.sh), so that record is the pre-claim signal: keep
+# waiting for the claim it announces, bounded by FIRING_WAIT_MS, and fall
+# straight through to the ordinary block once no live firing remains. A live
+# record alone never proves supervision - only the claim paths in
+# autoarm_owns_recovery do - so a firing that stands down, dies, or wedges
+# pre-claim still reaches the block below when its record clears or the bound
+# expires.
+i=0
+while [ "$i" -lt $((FIRING_WAIT_MS / 100)) ]; do
+  if autoarm_owns_recovery; then
+    claude_autoarm_allow
   fi
-  exit 0
+  fm_autoarm_firing_live "$STATE" || break
+  sleep 0.1
+  i=$((i + 1))
+done
+if autoarm_owns_recovery; then
+  claude_autoarm_allow
 fi
 
 # The auto-arm genuinely failed to establish: consume the bounded re-block

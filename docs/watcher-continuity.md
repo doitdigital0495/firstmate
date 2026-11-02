@@ -190,6 +190,7 @@ The next Stop then re-arms as before.
 The durable wake queue preserves actionable events between a watcher close and the next drain.
 The bounded turn-end guard enforces recovery at Stop when no watcher is live and no open generation claim is still deciding.
 So a finished, hung, or identity-mismatched claim cannot suppress that recovery ([`turnend-guard.md`](turnend-guard.md#harness-integrations) owns that boundary).
+The guard also waits out a live pre-claim firing's own gate chain within its bounded firing window ([`turnend-guard.md`](turnend-guard.md#claude-cooperative-mode)), so a slow-to-claim firing is neither blocked over nor allowed to suppress recovery.
 
 The recovery-episode contract below owns once-per-generation announcement.
 A handling successor does not re-announce the predecessor-delivered wake while its handling handoff remains open.

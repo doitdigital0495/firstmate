@@ -10,6 +10,11 @@
 #   - Scope: only a genuine primary checkout (plain checkout or validly marked
 #     secondmate home) with AGENTS.md, bin/, and the effective state dir - the
 #     exact fm-turnend-guard.sh scope. Child crew/scout worktrees stay inert.
+#   - Live-firing record: every firing publishes a self-removing liveness
+#     record in state/.claude-autoarm-firing.d before any gate, because the
+#     synchronous guard fires on the same Stop and its base sync window can
+#     expire while this hook is still pre-claim. Liveness only, never
+#     supervision: fm-wake-lib.sh owns the contract and the guard's use of it.
 #   - Identity: only when THIS session holds state/.lock, as
 #     bin/fm-session-lock-lib.sh decides it: the recorded pid is a harness
 #     ancestor, or a live lock was recorded under this same trusted Claude
@@ -178,6 +183,20 @@ esac
 # shellcheck source=bin/fm-supervision-engine-lib.sh
 . "$SCRIPT_DIR/fm-supervision-engine-lib.sh"
 
+# Publish this firing before any gate: the synchronous turn-end guard fires on
+# the same Claude Stop in parallel, and its base sync window
+# (FM_CLAUDE_AUTOARM_SYNC_WAIT_MS) can expire while this hook is still
+# pre-claim (payload read, host discrimination, scope, identity - including
+# stale-owner recovery through fm-lock.sh - AFK, need, open-claim probe). The
+# record is a liveness proof only; fm-wake-lib.sh owns the contract. The guard
+# never treats it as supervision and still blocks when this firing stands
+# down, dies, or wedges without claiming. It is the single pre-gate write: the
+# epoch claim stays deferred behind the AFK and need gates as documented
+# below, and the EXIT trap removes the record so an idle or away home is
+# byte-for-byte inert again once no firing remains.
+fm_autoarm_firing_publish "$STATE" || true
+trap 'fm_autoarm_firing_clear "$STATE"' EXIT
+
 # fm-watch.sh touches the liveness beacon once per cycle, immediately before
 # its terminal wait, so a healthy watcher's beacon can legitimately age up to
 # FM_POLL seconds between touches (docs/turnend-guard.md "Guard grace and the
@@ -220,9 +239,11 @@ fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 # Use the shared liveness predicate to recognize only that stale-owner case; it
 # resolves a tagged identity too, so a dead Windows session is still recoverable
 # rather than being read as a malformed lock nobody may ever clear.
-# Defer the mutating claim until after the unchanged AFK and need gates, so an
-# idle or away home remains byte-for-byte inert. Missing or malformed locks are
-# uncertainty rather than stale-owner evidence and remain inert.
+# Defer the mutating epoch claim until after the unchanged AFK and need gates,
+# so an idle or away home remains byte-for-byte inert - the self-removing
+# live-firing record published above is the only pre-gate write. Missing or
+# malformed locks are uncertainty rather than stale-owner evidence and remain
+# inert.
 RECOVER_SESSION_LOCK=0
 if ! fm_session_lock_owned_by_self "$STATE"; then
   LOCK_PID=$(cat "$STATE/.lock" 2>/dev/null || true)
