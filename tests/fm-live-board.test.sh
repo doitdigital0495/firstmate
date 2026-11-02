@@ -39,7 +39,19 @@ make_home() {  # <name>
   cp "$ROOT/.tasks.toml" "$home/.tasks.toml"
   printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
   fakebin=$(fm_fakebin "$home")
-  fm_fake_exit0 "$fakebin" tmux treehouse no-mistakes gh gh-axi
+  fm_fake_exit0 "$fakebin" treehouse no-mistakes gh gh-axi
+  # Crew state proves a worker's tmux window still exists, so list the window
+  # each task record names; every other tmux call is an inert success.
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+if [ "${1-}" = list-windows ]; then
+  for meta in "${FM_STATE_OVERRIDE:-/nonexistent}"/*.meta; do
+    [ -f "$meta" ] && sed -n 's/^window=[^:]*://p' "$meta"
+  done
+fi
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
   # A protocol-shaped Lavish stub: opening lists the board open, poll blocks.
   cat > "$fakebin/lavish-axi" <<'SH'
 #!/usr/bin/env bash
