@@ -348,7 +348,8 @@ family_for_basename() {
     fm-secondmate-restart.test.sh|fm-remote-secondmate-relaunch.test.sh|\
     fm-secondmate-safety.test.sh|fm-secondmate-sync.test.sh|\
     fm-startup-memory-budget.test.sh|fm-stow-cascade.test.sh|\
-    fm-send-secondmate-marker.test.sh|fm-shared-captain-inheritance.test.sh)
+    fm-send-secondmate-marker.test.sh|fm-shared-captain-inheritance.test.sh|\
+    fm-brief-addenda-inheritance.test.sh)
       printf '%s\n' secondmate
       ;;
     fm-backlog-atomicity.test.sh|\
@@ -558,6 +559,7 @@ portable_parallel_weight_hints() {
 tests/fm-arm-pretool-check.test.sh 33778
 tests/fm-backend-herdr.test.sh 36331
 tests/fm-backend-t3code.test.sh 239245
+tests/fm-brief-addenda-inheritance.test.sh 12637
 tests/fm-brief.test.sh 10594
 tests/fm-captain-hold-lifecycle.test.sh 343658
 tests/fm-cd-pretool-check.test.sh 16801

@@ -48,7 +48,8 @@ EMPTY="$TMP/empty"
 : > "$EMPTY"
 EMPTY_HASH=$(sha256_file "$EMPTY") || die "cannot hash empty inheritance payload"
 
-ITEMS=$(fm_config_inherit_items)
+# Set members come from the primary's own present files.
+ITEMS=$(fm_config_inherit_items "$CONFIG")
 # Phase 1 is local: every item is classified, validated, and snapshotted in
 # allowlist order before anything is sent, so a refusal here leaves the remote
 # home untouched. PLAN holds one record per item: skip, put, or absent.
@@ -98,6 +99,41 @@ while IFS= read -r rel; do
 done <<EOF
 $ITEMS
 EOF
+
+# A set whose primary state cannot be proven refuses the push before anything is
+# sent, so a transient failure never mirrors a false absence onto the remote
+# home. Per-item refusals above come first so they name their own item.
+for set in $FM_INHERITABLE_CONFIG_SETS; do
+  fm_config_inherit_set_source_state "$CONFIG/$set" >/dev/null || die "cannot inspect primary set: $set"
+done
+
+# Mirror primary absence for set members: ask the remote home which members it
+# holds (a read-only query) and plan an absent removal for each one the primary
+# does not have. The primary's set state was proven above. A listing failure
+# refuses the push with the transport's own status, so an unreachable or older
+# remote never looks like an empty set.
+for set in $FM_INHERITABLE_CONFIG_SETS; do
+  primary_members=$(fm_config_inherit_set_members "$CONFIG" "$set")
+  list_rc=0
+  remote_members=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-inherit.sh members "config/$set" 0 "$EMPTY_HASH" "$GENERATION" < /dev/null) || list_rc=$?
+  [ "$list_rc" -eq 0 ] || { printf 'error: cannot list remote members of %s\n' "$set" >&2; exit "$list_rc"; }
+  while IFS= read -r member; do
+    [ -n "$member" ] || continue
+    fm_config_inherit_set_member_valid "$member" || die "remote listed an invalid member of $set: $member"
+    case "
+$primary_members
+" in
+      *"
+$member
+"*) continue ;;
+    esac
+    N=$((N + 1))
+    printf 'config/%s\n' "$member" > "$TMP/item.$N.rel"
+    printf 'absent\n' > "$TMP/item.$N.plan"
+  done <<MEMBERS
+$remote_members
+MEMBERS
+done
 
 # Phase 2 sends each item as its own remote command, up to JOBS at a time. Every
 # item is a separate file with its own generation record on the receiver, and

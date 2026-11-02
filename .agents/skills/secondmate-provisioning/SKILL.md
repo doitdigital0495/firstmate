@@ -97,7 +97,7 @@ A remote home is a standalone clone on another machine, so that host imports the
 Neither path moves the host's Firstmate copy, and the host-local launch never re-targets that copy after the parent has already synced the home.
 `/updatefirstmate` is the one path that still follows that copy: it first updates the remote code root from its own origin, then syncs the home to that refreshed code-root commit.
 SSH exit 255 preserves the route and reports unknown completion; it never triggers local respawn or failover.
-The same placement-specific launch and deferred bootstrap sweep also propagate the primary's inherited local material declared by [`fm_config_inherit_items`](../../../bin/fm-config-inherit-lib.sh), whose owner also defines which items are session-scoped.
+The same placement-specific launch and deferred bootstrap sweep also propagate the primary's inherited local material declared by [`fm_config_inherit_items`](../../../bin/fm-config-inherit-lib.sh), whose owner also defines which items are session-scoped and which directories are inherited as per-file sets, such as `config/brief-addenda/`, where each member converges by content and a member the primary lacks is removed downstream, including on a remote home.
 Because these paths are gitignored, that propagation is a separate, primary-authoritative copy independent of the tracked-files fast-forward: it re-converges every live home whether or not its tracked files advanced, and it touches only the declared items.
 Propagation failures warn without blocking a local secondmate launch or session-start continuation; a remote prelaunch transfer failure refuses that launch.
 The destination keeps whatever safely validated state the helper left behind.
