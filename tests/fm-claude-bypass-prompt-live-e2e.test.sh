@@ -34,7 +34,7 @@ LAB=$(fm_test_tmproot fm-claude-bypass-prompt-live)
 # dialog (the accept dialog is on screen), composer (the bypass-mode composer
 # footer rendered with no dialog), or unknown (neither within the deadline).
 arm() {
-  local name=$1 settings=$2 dir="$LAB/$1" pane= verdict=unknown i
+  local name=$1 settings=$2 dir="$LAB/$1" pane='' verdict=unknown i
   mkdir -p "$dir/work" "$dir/config"
   # A scratch store with onboarding finished and the workspace already trusted,
   # so the bypass dialog is the only gate left between launch and composer.
