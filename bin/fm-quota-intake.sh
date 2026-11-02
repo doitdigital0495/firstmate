@@ -38,7 +38,11 @@
 #     naming the window and its reset time, as is any unknown or missing
 #     piece. On pass (exit 0) the chosen candidate's full window table with
 #     used percents and notes is printed; an unpublished 5h window shows as
-#     "not published by provider", never a number. --consume (the launch itself,
+#     "not published by provider", never a number. An idle Claude 5h window
+#     (0% used, no reset time because no window has been opened) cannot be
+#     exhausted, so it passes and shows as "not started (idle window)"; any
+#     other provider, or a Claude 5h window with use, still needs its reset.
+#     --consume (the launch itself,
 #     bin/fm-spawn.sh) atomically marks the record spent on pass, so every
 #     launch needs its own fresh intake; without it the gate is a preview
 #     that marks nothing. The gate reads only the record; it never re-queries
@@ -621,6 +625,11 @@ cmd_gate() {
          elif ($w.percentUsed | type) == "number" then $w.percentUsed
          elif ($w.percentRemaining | type) == "number" then (100 - $w.percentRemaining)
          else null end);
+      # An idle Claude 5h window (0% used, no reset because no window is open)
+      # cannot be exhausted, so its missing reset does not block the launch.
+      def idle5($id):
+        ($provider == "claude" and $w5 != null and $id == $w5.id and
+         used($id) == 0 and ((win($id).resetsAt // "") | length) == 0);
       if ($rows | length) == 0 then
         {verdict: "refuse", reason: ("no quota evidence rows for provider \($provider) with model \($model); dispatch a candidate the intake can measure")}
       elif $w7 == null then
@@ -642,7 +651,7 @@ cmd_gate() {
       elif ($req | length) == 0 then
         {verdict: "refuse", reason: ("no window reset evidence for provider \($provider); re-run bin/fm-quota-intake.sh")}
       else
-        [($req[] | select(win(.) == null or ((used(.) // "x") | type) != "number" or ((win(.).resetsAt // "") | length) == 0))] as $unknown_ids |
+        [($req[] | select((idle5(.) | not) and (win(.) == null or ((used(.) // "x") | type) != "number" or ((win(.).resetsAt // "") | length) == 0)))] as $unknown_ids |
         (if ($unknown_ids | length) > 0 then ($unknown_ids | join(", ")) else "" end) as $miss |
         (($p.modelNotes // {}) as $mn |
          ($mn[$model] // $mn[($model | split("/") | .[0:2] | join("/"))]
@@ -669,7 +678,8 @@ cmd_gate() {
            fiveHourPublished: ($w5 != null),
            scopes: [$rows[] | {scope, status, used: (if (.effectivePercentRemaining | type) == "number" then (100 - .effectivePercentRemaining) else null end),
                                spendPriority: (.spendPriority // null), runway: (.runway // null)}],
-           windows: [$req[] | {id: ., used: used(.), resetsAt: win(.).resetsAt,
+           windows: [$req[] | {id: ., used: used(.),
+                               resetsAt: (if idle5(.) then "not started (idle window)" else win(.).resetsAt end),
                                source: (if $p.readStatus == "cached" then "cached" else "live" end)}]}
         end
       end

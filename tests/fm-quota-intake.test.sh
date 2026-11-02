@@ -21,7 +21,8 @@
 #      store, an exhausted account (window and reset time named), a 100%-used
 #      (0% remaining) window, a model-scoped window without evidence, an
 #      unmappable harness/model provider family, a missing 7d window (a 5h
-#      window is required only when the provider publishes one), and a
+#      window is required only when the provider publishes one, and an idle
+#      Claude 5h window with 0% used and no reset passes), and a
 #      provider with no Notes entry.
 #   5. gate passes print the chosen candidate's full window table (zai).
 #   6. the test bypass is explicit and prints that it bypassed.
@@ -181,6 +182,31 @@ cat > "$TMP_ROOT/snap-prolite.json" <<'EOF'
   "quotaSemantics":{"status":"known","effectiveAvailability":[
    {"scope":"all_models","status":"known","effectivePercentRemaining":56,"boundedBy":["weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":0.2341}}]}}]}
 EOF
+
+# An idle Claude five-hour window: quota-axi reports the window that has not
+# been opened yet as 0% used with no reset time (the live shape seen after a
+# window lapses with no use). Codex carries the same idle shape so the test can
+# prove the exemption stays Claude-only.
+cat > "$TMP_ROOT/snap-idle5h.json" <<'EOF'
+{"schemaVersion":5,"providers":[
+ {"provider":"claude","label":"Max","plan":"max","state":{"status":"fresh"},
+  "windows":[
+   {"id":"five_hour","label":"5h","kind":"session","percentUsed":0,"percentRemaining":100,"resetsAt":null},
+   {"id":"seven_day","label":"7d","kind":"weekly","percentUsed":7,"percentRemaining":93,"resetsAt":"2026-10-05T17:59:59Z"}],
+  "quotaSemantics":{"status":"known","effectiveAvailability":[
+   {"scope":"all_models","status":"known","effectivePercentRemaining":93,"boundedBy":["five_hour","seven_day"],"limitingWindowIds":["five_hour","seven_day"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":1.5}}]}},
+ {"provider":"codex","label":"ProLite","plan":"prolite","state":{"status":"fresh"},
+  "windows":[
+   {"id":"five_hour","label":"5h","kind":"five_hour","percentUsed":0,"percentRemaining":100,"resetsAt":null},
+   {"id":"weekly","label":"week","kind":"weekly","percentUsed":8,"percentRemaining":92,"resetsAt":"2026-10-04T05:00:39.000Z","windowSeconds":604800}],
+  "quotaSemantics":{"status":"known","effectiveAvailability":[
+   {"scope":"all_models","status":"known","effectivePercentRemaining":92,"boundedBy":["five_hour","weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":1.1213}}]}}]}
+EOF
+
+# The same Claude five-hour window with use but no reset time is not idle:
+# it must still be refused as unknown.
+jq '(.providers[] | select(.provider == "claude") | .windows[0]) |= (.percentUsed = 5 | .percentRemaining = 95)' \
+  "$TMP_ROOT/snap-idle5h.json" > "$TMP_ROOT/snap-used5h-noreset.json"
 
 # Codex publishing no windows at all: nothing to launch against.
 jq '(.providers[] | select(.provider == "codex")) |= (.windows = [] | .quotaSemantics.effectiveAvailability[0].boundedBy = [] | .quotaSemantics.effectiveAvailability[0].limitingWindowIds = [])' \
@@ -590,6 +616,37 @@ test_gate_table_content() {
   pass "gate: an unpublished 5h window passes as not published; a missing 7d window or Notes entry is refused"
 }
 
+test_gate_idle_claude_five_hour() {
+  local home out rc
+  home=$(make_home idle5h)
+  seed_record "$home" "$TMP_ROOT/snap-idle5h.json"
+
+  # An idle Claude 5h window (0% used, no reset) cannot be exhausted, so it
+  # does not block; the pass names it as idle instead of a reset time.
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 0 "$rc" "gate: an idle Claude 5h window must not block: $out"
+  assert_contains "$out" "window=five_hour used=0% resets=not started (idle window) source=live" \
+    "gate: the pass must show the idle 5h window as not started"
+  assert_contains "$out" "window=seven_day used=7% resets=2026-10-05T17:59:59Z source=live" \
+    "gate: the pass must still show the Claude 7d used percent and reset"
+
+  # The exemption is Claude-only: the same idle shape on codex still refuses.
+  out=$(run_gate "$home" --harness codex); rc=$?
+  expect_code 3 "$rc" "gate: an idle codex 5h window without a reset must still refuse"
+  assert_contains "$out" "windows without a known used percent or reset time: five_hour" \
+    "gate: the codex refusal must name the five_hour window"
+
+  # A Claude 5h window with use but no reset time is not idle and still refuses.
+  home=$(make_home used5h)
+  seed_record "$home" "$TMP_ROOT/snap-used5h-noreset.json"
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 3 "$rc" "gate: a used Claude 5h window without a reset must still refuse"
+  assert_contains "$out" "windows without a known used percent or reset time: five_hour" \
+    "gate: the used-window refusal must name the five_hour window"
+
+  pass "gate: an idle Claude 5h window (0% used, no reset) does not block; codex and used windows without a reset still refuse"
+}
+
 test_gate_test_bypass() {
   local home out rc
   home=$(make_home bypass)
@@ -966,6 +1023,7 @@ test_gate_exhausted_account
 test_gate_zero_percent_window
 test_gate_model_scoped_window
 test_gate_table_content
+test_gate_idle_claude_five_hour
 test_gate_zai_pass_prints_table
 test_gate_test_bypass
 test_cached_fallback_fresh
