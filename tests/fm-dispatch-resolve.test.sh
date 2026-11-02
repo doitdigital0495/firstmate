@@ -327,8 +327,9 @@ run "$BRIEF" --task pager
 assert_equals haiku "$(jq -r .profile.model "$(latest)")" 'an exhausted_now runway releases the reserve'
 seat_quota 80 1 through_reset 0 > "$TMP_ROOT/claude2-quota.json"
 run "$BRIEF" --task pager
-assert_contains "$out" 'status: escalate' 'an exhausted session window alone never releases the reserve'
-assert_contains "$out" 'fallback_only reserve held' 'the held reserve is disclosed while escalating'
+assert_contains "$out" 'status: captain-pick' 'an exhausted session window alone never releases the reserve'
+assert_contains "$out" 'fallback_only reserve held' 'the held reserve is disclosed while asking the captain'
+assert_contains "$out" '--account geris  class=1  remaining=70%  spendPriority=5  -> not eligible: fallback_only reserve held' 'the pick card marks the held reserve'
 # Another family's candidate still outranks an activated reserve.
 jq '.providers += [{provider:"codex",plan:"Plus",state:{status:"fresh"},windows:[{id:"five_hour",kind:"session",percentRemaining:85,resetsAt:"2030-01-02T00:00:00Z"}],quotaSemantics:{status:"known",effectiveAvailability:[{scope:"all_models",status:"known",effectivePercentRemaining:85,boundedBy:["five_hour"],runway:{status:"through_reset"},selection:{spendPriority:1}}]}}]' \
   "$TMP_ROOT/original-quota" > "$QUOTA"

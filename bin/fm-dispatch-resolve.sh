@@ -735,15 +735,31 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   def confidence_floor($c): if declared_confidence($c) then rule_at($c).min_confidence else ($floor | tonumber) end;
   # Captain-pick evidence: every row of the table, most probable first when Jev
   # answered, each candidate evaluated exactly as a clear resolution would be.
+  # Fallback-only reserve tier over one candidate set (see the header).
+  def reserve_tier: . as $cands | map(. as $cand |
+    if (($cand.profile.fallback_only // false) | not) or $cand.provider == null then $cand
+    else
+      ([$cands[] | select((.profile.fallback_only // false) | not) | select(.provider == $cand.provider)]) as $kin |
+      if any($kin[]; seat_at_limit(.profile) | not) then
+        $cand + {eligible: false, reserve: true,
+          reason: ("fallback_only reserve held: non-fallback " + $cand.provider + " seats not at their limit (" +
+            ([$kin[] | select(seat_at_limit(.profile) | not) |
+              "\(.profile.harness):\(.profile.model // "default")" +
+              (if .profile.account then "@\(.profile.account)" else "" end)] | join(", ")) + ")")}
+      elif ($cand.sq // false) or (($cand.eligible // false) | not) or ($cand.unranked // false) then $cand + {reserve: true}
+      else $cand + {reserve: true, reserve_active: true,
+        reason: ("reserve pick: every non-fallback " + $cand.provider + " seat is at its limit (weekly window at or above 100% used or runway exhausted_now)")}
+      end
+    end);
   def row_ids: [(($cfg.rules // []) | to_entries[] | "rule_\(.key + 1)"), (if $cfg | has("default") then "default" else empty end)];
   def row_use($id): if $id == "default" then profiles($cfg.default // null) else profiles(rule_at($id).use) end;
   def row_floor($id): (rule_at($id).floor // null) as $f | if $sq or $f == null then "none" else ($q | floor_state($f; $f.provider; "")) end;
   def pick_rows($probs):
     [row_ids | to_entries[] | .key as $order | .value as $id |
       (row_floor($id)) as $rf |
-      [row_use($id)[] | . as $c | (provider_of($c)) as $p |
+      ([row_use($id)[] | . as $c | (provider_of($c)) as $p |
         (if $rf == "below" then {profile: $c, provider: $p, eligible: false, reason: "row floor \(rule_at($id).floor.scope) below \(rule_at($id).floor.min_percent)%"}
-         else evaluate($c) end) + plan_for($c; $p)] as $cs |
+         else evaluate($c) end) + plan_for($c; $p)] | reserve_tier) as $cs |
       ([$cs[] | select(.eligible and ((.unranked // false) | not) and ((.incomplete // false) | not)) | .profile.reasoning_class | select(type == "number")] | max // null) as $strongest |
       {id: $id, order: $order, when: (if $id == "default" then $none_criterion else rule_at($id).when end),
        approval: (rule_at($id).approval // null), row_floor: $rf,
@@ -804,21 +820,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   # every non-fallback candidate of the same provider family is at its limit
   # under the weekly-window seat test above; it then ranks below every
   # non-fallback candidate at selection.
-  ($cands | map(. as $cand |
-    if (($cand.profile.fallback_only // false) | not) or $cand.provider == null then $cand
-    else
-      ([$cands[] | select((.profile.fallback_only // false) | not) | select(.provider == $cand.provider)]) as $kin |
-      if any($kin[]; seat_at_limit(.profile) | not) then
-        $cand + {eligible: false, reserve: true,
-          reason: ("fallback_only reserve held: non-fallback " + $cand.provider + " seats not at their limit (" +
-            ([$kin[] | select(seat_at_limit(.profile) | not) |
-              "\(.profile.harness):\(.profile.model // "default")" +
-              (if .profile.account then "@\(.profile.account)" else "" end)] | join(", ")) + ")")}
-      elif ($cand.sq // false) or (($cand.eligible // false) | not) or ($cand.unranked // false) then $cand + {reserve: true}
-      else $cand + {reserve: true, reserve_active: true,
-        reason: ("reserve pick: every non-fallback " + $cand.provider + " seat is at its limit (weekly window at or above 100% used or runway exhausted_now)")}
-      end
-    end)) as $cands |
+  ($cands | reserve_tier) as $cands |
   ([$cands[] | select(.incomplete)]) as $incomplete |
   def when_of($c): (if rule_at($c) == null then $none_criterion else rule_at($c).when end | .[0:60]);
   ({
