@@ -7,7 +7,8 @@
 #                      the set of due workers or the last run's outcome changes
 #   fm-reap.sh run     tear down every due worker now, printing closed/kept
 #   fm-reap.sh arm     write state/reaper.check.sh and bind it with
-#                      bin/fm-check-register.sh (bootstrap arms it every start)
+#                      bin/fm-check-register.sh (bootstrap arms it every start
+#                      while config/reaper exists)
 #
 # Due: a ship or scout task recorded in state/<id>.meta whose newest lifecycle
 #   status (working, needs-decision, blocked, paused, done, failed) is done,
@@ -19,7 +20,8 @@
 #   Second mates are persistent homes and are never due; failed, blocked, and
 #   waiting tasks are left for firstmate.
 #
-# Mode: config/reaper holds `shadow` (also when absent) or `enforce`.
+# Mode: config/reaper holds `shadow` or `enforce`; without the file the reaper
+#   is off and its check prints nothing. Roll out with a shadow week first.
 #   shadow reports the due workers in one check line and closes nothing.
 #   enforce starts `run` in the background and reports its outcome on the next
 #   check. `run` calls bin/fm-teardown.sh <id> without --force, so a worker
@@ -44,9 +46,9 @@ fail() { printf 'fm-reap: %s\n' "$1" >&2; exit 2; }
 case "$DONE_SECS$BOARD_SECS" in *[!0-9]*) fail 'FM_REAP_DONE_SECS and FM_REAP_BOARD_SECS must be whole seconds' ;; esac
 
 mode() {
-  local m=shadow
+  local m=off
   [ ! -f "$CONFIG/reaper" ] || read -r m < "$CONFIG/reaper" || true
-  case "$m" in enforce) printf enforce ;; *) printf shadow ;; esac
+  case "$m" in off) printf off ;; enforce) printf enforce ;; *) printf shadow ;; esac
 }
 
 meta_get() { awk -F= -v k="$2" '$1 == k { v = substr($0, length(k) + 2) } END { print v }' "$1" 2>/dev/null; }
@@ -134,6 +136,7 @@ cmd_run() {
 cmd_check() {
   local due mark="$STATE/.reaper-due" log="$STATE/reaper-run.log" reported="$STATE/.reaper-reported" m
   m=$(mode)
+  [ "$m" != off ] || return 0
   due=$(verdicts | awk '$2 == "due" { $2 = ""; sub(/  /, " "); print }' | LC_ALL=C sort)
   if [ "$m" = enforce ]; then
     if [ -f "$log" ] && [ "$log" -nt "$reported" ] && [ ! -d "$STATE/.reaper-run.lock" ]; then

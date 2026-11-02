@@ -541,6 +541,7 @@ card="$HOME_DIR/data/dispatch-pick/route-pick.html"
 assert_present "$card" 'card written'
 assert_contains "$(<"$card")" "data-prompt=\"route $code_e 1\"" 'each option queues its exact words'
 assert_contains "$(<"$card")" 'color-scheme:dark' 'card is dark'
+assert_contains "$(<"$card")" 'data-lavish-annotate="off"' 'card is a decision page, not an annotation surface'
 assert_not_contains "$(<"$card")" 'http' 'card makes no external request'
 assert_not_contains "$(<"$card")" "route $code_a" 'answered picks are not on the card'
 run picks --recent

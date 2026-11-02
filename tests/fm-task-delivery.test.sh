@@ -630,7 +630,7 @@ test_promotion_delivers_the_real_definition_of_done() {
   cat > "$sendroot/bin/fm-send.sh" <<'STUB'
 #!/usr/bin/env bash
 # Capture the message a promoted worker would receive, instead of steering one.
-printf '%s' "$2" > "$FM_TEST_CAPTURE"
+printf '%s' "${@: -1}" > "$FM_TEST_CAPTURE"
 STUB
   chmod +x "$sendroot/bin/fm-send.sh"
 
@@ -1213,7 +1213,7 @@ test_promotion_carries_the_pr_text_binding() {
   printf '%s\n' '- proj [no-mistakes pr=manual] - fixture (added 2026-01-01)' > "$home/data/projects.md"
   cat > "$sendroot/bin/fm-send.sh" <<'STUB'
 #!/usr/bin/env bash
-printf '%s' "$2" > "$FM_TEST_CAPTURE"
+printf '%s' "${@: -1}" > "$FM_TEST_CAPTURE"
 STUB
   chmod +x "$sendroot/bin/fm-send.sh"
 
@@ -2262,7 +2262,7 @@ test_promotion_carries_the_forge_binding() {
   printf '%s\n' '- proj [no-mistakes forge=gerrit] - fixture (added 2026-01-01)' > "$home/data/projects.md"
   cat > "$sendroot/bin/fm-send.sh" <<'STUB'
 #!/usr/bin/env bash
-printf '%s' "$2" > "$FM_TEST_CAPTURE"
+printf '%s' "${@: -1}" > "$FM_TEST_CAPTURE"
 STUB
   chmod +x "$sendroot/bin/fm-send.sh"
 
@@ -2334,7 +2334,7 @@ EOF
   mkdir -p "$sendroot/bin"
   cat > "$sendroot/bin/fm-send.sh" <<'STUB'
 #!/usr/bin/env bash
-printf '%s' "$2" > "$FM_TEST_CAPTURE"
+printf '%s' "${@: -1}" > "$FM_TEST_CAPTURE"
 STUB
   chmod +x "$sendroot/bin/fm-send.sh"
   id="forge-forgejo-p1"

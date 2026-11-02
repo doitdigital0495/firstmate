@@ -310,7 +310,7 @@ fm_dp_cmd_card() {
           + (if .[0].row.probability != null then " &middot; Jev \(.[0].row.probability | e)" else "" end)
           + " &middot; \(.[0].row.when | .[0:140] | e)</summary><ul>" + (map(opt($code)) | join("")) + "</ul></details>"] | join(""))
       + "<p class=\"wait\"><button type=\"button\" data-prompt=\"route \($code) wait\">Wait for Jev</button> Or type <code>route \($code) &lt;number&gt;</code> to firstmate.</p></section>";
-    "<!doctype html><html lang=\"en\" style=\"background:#0d1117\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"dark\"><title>Route pick</title>"
+    "<!doctype html><html lang=\"en\" data-lavish-annotate=\"off\" style=\"background:#0d1117\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"dark\"><title>Route pick</title>"
     + "<style>:root{color-scheme:dark}html,body{background:#0d1117;color:#e6edf3;margin:0}body{font:15px/1.5 system-ui,sans-serif;padding:14px;max-width:900px;margin:0 auto}"
     + "h1{font-size:20px}h2{font-size:17px;margin:20px 0 4px}.code{background:#0f2540;color:#58a6ff;border-radius:6px;padding:1px 8px}.why{color:#9da7b3}"
     + "details{background:#161b22;border:1px solid #30363d;border-radius:10px;margin:8px 0;padding:6px 10px}summary{cursor:pointer;font-weight:600}"

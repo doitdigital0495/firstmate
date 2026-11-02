@@ -34,6 +34,8 @@ assert_contains "$out" 'scoutdone due' 'a finished scout is due'
 assert_not_contains "$out" 'mate' 'second mates are never listed'
 assert_contains "$out" 'review waiting done 60m ago board, closes in 1380m' 'a board in review waits a day from its last round'
 pass 'verdicts: done past its time, resumed, board grace, second mates exempt'
+assert_equals '' "$("$REAP" check)" 'without config/reaper the reaper is off'
+printf 'shadow\n' > "$HOME_DIR/config/reaper"
 out=$("$REAP" check)
 assert_contains "$out" 'reap (shadow, nothing closed): 2 finished worker(s) past their close time: old done 2h ago; scoutdone done 8h ago' 'shadow names every due worker once'
 assert_equals '' "$("$REAP" check)" 'an unchanged due set does not wake again'

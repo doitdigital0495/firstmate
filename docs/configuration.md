@@ -2301,12 +2301,13 @@ A remote secondmate's own launch is the one exception described under "Second ma
 
 No crewmate or scout outlives its task.
 `bin/fm-send.sh` refuses new work for a worker whose newest lifecycle status is done or failed, so new work becomes a new task with its own route and worker; its header owns the `--after-done` reasons that still reach a finished worker.
-Session start arms the reaper as the watcher check `state/reaper.check.sh`, which looks at every recorded ship and scout task on the normal `FM_CHECK_INTERVAL` cadence.
+While `config/reaper` exists, session start arms the reaper as the watcher check `state/reaper.check.sh`, which looks at every recorded ship and scout task on the normal `FM_CHECK_INTERVAL` cadence.
 A task is due two hours after its done line (`FM_REAP_DONE_SECS`), or, while a Lavish board is registered for it, one day after the later of that line and the board's newest round (`FM_REAP_BOARD_SECS`); second mates are never due.
 
 | `config/reaper` | Behavior |
 | --- | --- |
-| absent or `shadow` | One `check:` wake names the due workers when that set changes; nothing is closed. |
+| absent | The reaper is off; `bin/fm-reap.sh list` still shows every verdict. |
+| `shadow` | One `check:` wake names the due workers when that set changes; nothing is closed. Run a shadow week before enforcing. |
 | `enforce` | Due workers are torn down in the background through `bin/fm-teardown.sh` without `--force`, and the next check wake names what closed and what was kept. |
 
 Teardown keeps a worker whose work has not landed and retains a backlog item the captain still holds, so enforcing never discards work or a captain call; `bin/fm-reap.sh list` shows every verdict.
