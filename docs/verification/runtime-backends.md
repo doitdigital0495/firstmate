@@ -3710,6 +3710,36 @@ On 2.0.22 the brief is submitted on its own, yet the composer still reads pendin
 `opencode debug config` on 2.0.11 normalized the launch's legacy `{"permission":{"*":"allow"}}` into an allow-all `permissions` rule; the same command printed no configuration on 2.0.22, so on 2.0.22 the legacy shape rests on the earlier 2.0.21 verification recorded in the OpenCode harness reference.
 `tests/fm-spawn-dispatch-profile.test.sh` pins the gate's outcomes portably: an auto-submitted brief gets no extra Enter, a prefilled brief gets exactly one, a composer that reads unknown before it draws gets its one Enter only once it reads pending, a composer that only reads unknown gets its one Enter at the submit deadline, and a turn that never starts fails the spawn.
 
+## Routing-store write seatbelt (Claude and Pi)
+
+Verified on 2026-11-03 UTC on Linux x86_64 with Claude Code 2.1.317, Pi 0.86.1, and Node 22.23.4.
+The policy and threat-model limits are owned by the header of `bin/fm-routing-write-policy.mjs`; both harnesses use `bin/fm-routing-write-pretool-check.sh` and its existing primary-home scope predicate.
+The live guard uses disposable primary homes and stores, the shipped Claude settings matcher, and the real Pi `tool_call` extension.
+Each harness executed an ordinary write, then emitted four actual error tool results for direct receipt Write, pick Edit, mirror Bash redirection, and Lavish answer Write; none of those protected mutations landed.
+
+Refresh the per-harness evidence with:
+
+```sh
+FM_ROUTING_WRITE_LIVE=1 bash bin/fm-test-run.sh tests/fm-routing-write-seatbelt.test.sh tests/fm-routing-write-seatbelt-live-e2e.test.sh
+ok - routing write seatbelt: 92 public hook checks; internal writer completed
+ok - Pi tool_call adapter blocks write/edit/bash and preserves ordinary tools
+ok - claude 2.1.317 (Claude Code) routing seatbelt: ordinary write executed; Write/Edit/Bash/Lavish vetoed (4 tool-result refusals)
+ok - pi 0.86.1 routing seatbelt: ordinary write executed; Write/Edit/Bash/Lavish vetoed (4 tool-result refusals)
+FM_TEST_SUMMARY total=2 failed=0 skipped_gate=0 duration_ms=27494
+```
+
+The portable regression `tests/fm-routing-write-seatbelt.test.sh` proves direct-write refusals, ordinary reads/writes, script invocation preservation, actual internal-writer execution, canonical path aliases, nested shell redirects, primary/worker scoping, and the Pi adapter without inference.
+The resolver and mirror suites separately retain their real producer coverage:
+
+```sh
+bash bin/fm-test-run.sh tests/fm-routing-write-seatbelt.test.sh tests/fm-subagent-pretool-check.test.sh tests/fm-arm-pretool-check.test.sh tests/fm-cd-pretool-check.test.sh tests/fm-dispatch-resolve.test.sh tests/fm-host-mirror.test.sh tests/fm-pi-primary-types.test.sh tests/fm-test-run.test.sh
+ok - Jev receipt binds profile, quota intake, request id, one launch
+ok - mirror: the Claude and Cursor registrations each write the captain's prompt and main's reply
+FM_TEST_SUMMARY total=8 failed=0 skipped_gate=0 duration_ms=372761
+```
+
+This evidence does not establish Codex, Grok or OpenCode enforcement, arbitrary-program sandboxing, or protection from deliberate hook modification.
+
 ## Pi repeated-read containment
 
 Verified on 2026-10-27 UTC on Linux x86_64 with Node 24.22.1 and npm 11.19.1.
