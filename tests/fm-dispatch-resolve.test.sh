@@ -534,6 +534,12 @@ run "$BRIEF" --task pager
 code_b=$(pick_code)
 assert_contains "$out" 'option 2: --harness claude --model opus' 'ineligible option still offered'
 assert_contains "$out" 'not eligible: profile floor all_models below 90%' 'ineligibility reason shown'
+assert_contains "$out" 'Pi, Codex, Grok and OpenCode: Lavish only' 'pick instructions name the verifiable channel on non-Claude primaries'
+# Pi has no disk mirror: the Lavish-only path must work without that file.
+mv "$MIRROR" "$MIRROR.saved"
+run pick "$code_b"
+expect_code 3 "$code" 'without captured words no primary can self-attest a pick'
+assert_contains "$out" 'Pi, Codex, Grok and OpenCode require Lavish' 'missing-evidence refusal gives the supported channel'
 captain_lavish "route $code_b 2"
 run pick "$code_b"
 expect_code 3 "$code" 'not eligible without override is refused'
@@ -541,7 +547,8 @@ assert_contains "$out" "route $code_b 2 override" 'the refusal names the overrid
 captain_lavish "Ok then: route $code_b 2 override"
 run pick "$code_b"
 expect_code 0 "$code" "override answer on the card admits the option: $out"
-assert_equals "lavish true" "$(jq -r '"\(.captainPick.channel) \(.captainPick.override)"' "$(latest)")" 'override recorded'
+assert_equals "lavish true" "$(jq -r '"\(.captainPick.channel) \(.captainPick.override)"' "$(latest)")" 'override recorded without a host mirror'
+mv "$MIRROR.saved" "$MIRROR"
 run gate --brief "$BRIEF" --task pager --harness claude --model opus
 expect_code 0 "$code" 'override receipt admits its launch'
 cp "$TMP_ROOT/original-rules" "$RULES"

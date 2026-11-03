@@ -2217,7 +2217,8 @@ An exact spendPriority tie keeps the candidates whose binding window (the window
 A captain pick writes a private request under `state/dispatch-pick/` and launches nothing.
 The request offers every row of the table, Jev's most probable rows first when Jev answered, with each candidate's eligibility, reasons, remaining quota, `spendPriority`, `reasoning_class`, and strongest-class mark computed exactly as for a clear resolution.
 The resolver prints the numbered options, and `bin/fm-dispatch-resolve.sh pick-card [<code>...]` renders them into one self-contained card under `data/dispatch-pick/` for the captain's Lavish board.
-The captain answers `route <code> <n>` on the card or in chat, adding `override` to take an option that is not eligible, or `route <code> wait` to wait for Jev.
+The captain answers `route <code> <n>` on the Lavish card or in Claude chat, adding `override` to take an option that is not eligible, or `route <code> wait` to wait for Jev.
+Pi, Codex, Grok and OpenCode primaries require the Lavish channel: they have no host-mirror file writer, and Pi's in-process dialog mirror is not pick evidence.
 Retry the broker with `--pick <code>` to have `bin/fm-dispatch-resolve.sh pick <code>` turn that answer into a `captain` receipt only after verifying the captain's own captured words; `bin/fm-dispatch-pick-lib.sh`'s header owns the request format and that verification.
 `--captain-pick` on a resolution asks for the same request even when Jev's answer is dispatchable, which is how a per-task captain override is made: the request shows what Jev and code would take, and only the captain's words decide.
 The resolver does not replace launch-time catalog, authentication, account, quota-intake, or harness validation.
