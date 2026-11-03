@@ -444,6 +444,11 @@ fi
 cat > /dev/null
 printf 'START %s %s %s %s\n' "$host" "$command_name" "$subcommand" "$item_rel" >> "$log"
 case "$command_name:$subcommand" in
+  fm-remote-inherit.sh:members)
+    # An empty remote set returns no member names, not a mutation receipt.
+    printf 'END %s %s %s %s\n' "$host" "$command_name" "$subcommand" "$item_rel" >> "$log"
+    exit 0
+    ;;
   fm-remote-secondmate-control.sh:sync)
     if [ "$host" = "${FM_FAKE_SYNC_HANG_HOST:-none}" ]; then
       sleep 120

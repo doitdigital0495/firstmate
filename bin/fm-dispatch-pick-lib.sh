@@ -38,6 +38,8 @@
 #      Claude prompt-submit hook, bin/fm-host-mirror.sh) or a `role: user`
 #      chat entry of the Lavish server's own state ($FM_LAVISH_STATE, default
 #      ~/.lavish-axi/state.json), which the card's button produces.
+#      Pi, Codex, Grok and OpenCode have no file mirror writer; their picks
+#      must use Lavish, not primary chat (Pi's in-process mirror is not evidence).
 #   2. It is newer than the request and says `route <CODE> <n>` (or
 #      `route <CODE> wait`), case-insensitive; the newest such entry wins,
 #      and one entry naming two different answers for the code is refused.
@@ -154,7 +156,7 @@ fm_dp_render_options() {  # <code>: the TOON-style lines the resolver prints
         + " (\(.[0].row.when | flat | .[0:90]))",
       (.[] | "    option \(.n): \(.profile | prof)  class=\(show(.reasoning_class))  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))  -> \(.status)"
         + (if .strongest then ", strongest" else "" end) + (if .status != "eligible" then ": \(.reason | flat)" else "" end))),
-    "  answer: the captain says \"route \(.code) <n>\" (adding \"override\" for an option that is not eligible) or \"route \(.code) wait\" in chat or on the card",
+    "  answer: the captain says \"route \(.code) <n>\" (adding \"override\" for an option that is not eligible) or \"route \(.code) wait\" on the Lavish card or in Claude chat (Pi, Codex, Grok and OpenCode: Lavish only)",
     "  card: bin/fm-dispatch-resolve.sh pick-card \(.code)   then: bin/fm-dispatch-resolve.sh pick \(.code)"' "$file"
 }
 
@@ -183,7 +185,7 @@ fm_dp_find_words() {
   fi
   found=$(jq -c 'sort_by(.epoch) | last // empty' <<<"$candidates")
   if [ -z "$found" ]; then
-    printf 'no captain words answer route %s since %s: the captain answers on the card or says "route %s <n>" in chat\n' "$code" "$(fm_dp_iso "$since")" "$code"
+    printf 'no captain words answer route %s since %s: the captain answers on the Lavish card or says "route %s <n>" in Claude chat; Pi, Codex, Grok and OpenCode require Lavish\n' "$code" "$(fm_dp_iso "$since")" "$code"
     return 1
   fi
   if [ "$(jq '.answers | length' <<<"$found")" -ne 1 ]; then
@@ -309,7 +311,7 @@ fm_dp_cmd_card() {
           "<details\(if (.[0].row.probability // 0) >= 0.25 or (.[0].n == 1) then " open" else "" end)><summary>\(.[0].row.id | e)"
           + (if .[0].row.probability != null then " &middot; Jev \(.[0].row.probability | e)" else "" end)
           + " &middot; \(.[0].row.when | .[0:140] | e)</summary><ul>" + (map(opt($code)) | join("")) + "</ul></details>"] | join(""))
-      + "<p class=\"wait\"><button type=\"button\" data-prompt=\"route \($code) wait\">Wait for Jev</button> Or type <code>route \($code) &lt;number&gt;</code> to firstmate.</p></section>";
+      + "<p class=\"wait\"><button type=\"button\" data-prompt=\"route \($code) wait\">Wait for Jev</button> Or type <code>route \($code) &lt;number&gt;</code> in Lavish or Claude chat (other primaries: Lavish only).</p></section>";
     "<!doctype html><html lang=\"en\" data-lavish-annotate=\"off\" style=\"background:#0d1117\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"dark\"><title>Route pick</title>"
     + "<style>:root{color-scheme:dark}html,body{background:#0d1117;color:#e6edf3;margin:0}body{font:15px/1.5 system-ui,sans-serif;padding:14px;max-width:900px;margin:0 auto}"
     + "h1{font-size:20px}h2{font-size:17px;margin:20px 0 4px}.code{background:#0f2540;color:#58a6ff;border-radius:6px;padding:1px 8px}.why{color:#9da7b3}"

@@ -899,12 +899,13 @@ The guard submits no prompt and spends no tokens, so it runs by default wherever
 
 ## Secondmate busy contract
 
-Verified 2026-09-22 on this host with Claude Code 2.1.278, OpenCode 1.18.31, Pi 0.86.1, and Grok 1.0.40.
+Live no-prompt guard refreshed 2026-11-03 with Claude Code 2.1.317, OpenCode 1.19.5, Pi 0.86.1, and codex-cli 0.166.0.
+The separate Claude Stop-hook probe below dates to 2026-09-22.
 
 A tmux-backed secondmate's active-turn gate reads the parent home's semantic busy record.
 Launches of opencode, pi, pi-signed, and omp arm that record and load the same hook or extension an ordinary worker uses, and those hooks do not touch the parent's turn-ended marker.
 A Claude secondmate arms the same record through busy hooks in the parent home's `state/<id>.claude-settings.json`, passed as Claude Code's `--settings` file, and does not write the mate home's `.claude/settings.local.json`.
-That `--settings` load and the merge of its hook entries with the home's own hooks rest on Claude Code's documentation (<https://code.claude.com/docs/en/cli-reference>, <https://code.claude.com/docs/en/hooks>) and not on a live run recorded in this section: the sample output below predates the `--settings` mechanism.
+That `--settings` load and the merge of its hook entries with the home's own hooks rest on Claude Code's documentation (<https://code.claude.com/docs/en/cli-reference>, <https://code.claude.com/docs/en/hooks>) and not on a prompted live run recorded in this section: the no-prompt sample below verifies startup with that wiring, not hook execution.
 A Claude secondmate is the one exception on Stop: its home's tracked Stop guard is the only Stop writer, recording idle when it allows the Stop and busy when it blocks it into a continuation, because Claude runs Stop hooks in parallel.
 Claude Code 2.1.278 was probed live in a scratch project with logging `UserPromptSubmit` and `Stop` hooks.
 A synchronous Stop hook that exits 2 forced a continuation with no `UserPromptSubmit`, which is why the guard itself records busy when it blocks.
@@ -919,7 +920,7 @@ rewake 1790092386.979819188        block 1790092418.692480013
 ups    1790092387.025050498        stop  1790092419.717886938
 stop   1790092388.953108486
 ```
-Codex stays unverified.
+Codex's semantic busy hooks stay unverified; its unarmed launch is covered below.
 Grok keeps its rendered-tail verdict and gets no parent turn-end hook.
 Cursor's transcript sidecar is written for a secondmate the same way it is for an ordinary worker, and this host has no Cursor agent binary, so that path was not started.
 Kimi stays unarmed, and a secondmate still gets no parent turn-end token.
@@ -934,21 +935,21 @@ The spawn pane is a sleeper, so the launch brief is never delivered to a model.
 Each installed armed harness is then started for real, with no prompt and no keystrokes.
 
 ```sh
-bash tests/fm-secondmate-busy-contract-live-e2e.test.sh
+bash bin/fm-test-run.sh tests/fm-secondmate-busy-contract-live-e2e.test.sh
 ```
 
 ```text
-# claude 2.1.278 (Claude Code): real process stayed up; pane tail classify=busy fm-spawn
-ok - claude 2.1.278 (Claude Code): a tmux secondmate spawn arms a busy verdict the active-turn gate can see
-# opencode 1.18.31: real process stayed up; pane tail classify=busy fm-spawn
-ok - opencode 1.18.31: a tmux secondmate spawn arms a busy verdict the active-turn gate can see
+# claude 2.1.317 (Claude Code): real process stayed up; pane tail classify=busy fm-spawn
+ok - claude 2.1.317 (Claude Code): a tmux secondmate spawn arms a busy verdict the active-turn gate can see
+# opencode 1.19.5: real process stayed up; pane tail classify=busy fm-spawn
+ok - opencode 1.19.5: a tmux secondmate spawn arms a busy verdict the active-turn gate can see
 # pi 0.86.1: real process stayed up; pane tail classify=unknown launch-prompt
 ok - pi 0.86.1: a tmux secondmate spawn arms a busy verdict the active-turn gate can see
 # skip: pi-signed is not installed on this machine, so its secondmate busy contract is unverified here
 # skip: omp is not installed on this machine, so its secondmate busy contract is unverified here
-ok - grok grok 1.0.40 (eb1a2256660d) [stable]: secondmate spawn stays unarmed and does not emit a parent turn-end
-# skip: codex is not installed on this machine, so its secondmate busy contract is unverified here
-# checked 4 harness(es); absent: pi-signed omp codex
+# skip: grok is not installed on this machine, so its secondmate busy contract is unverified here
+ok - codex codex-cli 0.166.0: secondmate spawn stays unarmed and does not emit a parent turn-end
+# checked 4 harness(es); absent: pi-signed omp grok
 ok - secondmate busy contract live guard checked every installed harness
 ```
 

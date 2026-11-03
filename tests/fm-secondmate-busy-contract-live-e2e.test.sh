@@ -73,8 +73,10 @@ install_sleeper() {  # <dir> <name> <real-bin>
 # Spawn probes the resolved executable with --help before it builds the
 # launch. Those probes must reach the real binary. The pane command is the
 # launch itself, which carries the brief, and that one must not.
+# A real binary may itself be a PATH-searching launcher. Remove this test's
+# sleeper from its probe PATH or that launcher can recurse into the sleeper.
 case "\${1:-}" in
-  --help|--version|-v|-V) exec $(printf '%q' "$real") "\$@" ;;
+  --help|--version|-v|-V) PATH=$(printf '%q' "$PATH") exec $(printf '%q' "$real") "\$@" ;;
 esac
 printf 'working\n'
 exec sleep 300
