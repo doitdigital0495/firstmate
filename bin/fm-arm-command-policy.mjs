@@ -284,7 +284,7 @@ export class Lexer {
 
   readRedirection() {
     const remaining = this.source.slice(this.index);
-    const match = remaining.match(/^(\d+)?(<<<|<<-|<<|>>|<>|>&|<&|>|<)(?:&?[0-9-]+)?/);
+    const match = remaining.match(/^(\d+)?(<<<|<<-|<<|>>|<>|>&|<&|>\||>|<)(?:&?[0-9-]+)?/);
     if (!match) return "";
     this.index += match[0].length;
     const inlineTarget = /(?:>&|<&)[0-9-]+$/.test(match[0]);

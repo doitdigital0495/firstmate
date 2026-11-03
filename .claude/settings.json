@@ -13,6 +13,15 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "Write|Edit|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"${GROK_AGENT:-}${GROK_HOOK_EVENT:-}\" ] || exit 0; exec \"$CLAUDE_PROJECT_DIR\"/bin/fm-routing-write-pretool-check.sh --claude"
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
