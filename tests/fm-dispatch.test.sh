@@ -147,6 +147,7 @@ last_args | jq -e '. == ["fm-task","--after-done","promote","ship instructions w
 pass 'same-profile promotion routes ship contract and sends through guarded send'
 
 reset_case
+# shellcheck disable=SC2016 # Deliberate shell syntax: profile data must stay inert.
 printf '{"harness":"pi","model":"provider/model with spaces;$(false)","effort":"high","account":"other"}\n' > "$PROFILE_FILE"
 run_broker promote task --mode local-only --yolo off
 assert_rc 0
