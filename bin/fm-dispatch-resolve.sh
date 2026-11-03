@@ -889,7 +889,12 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   ([$union_ids[] | . as $id | if $id == "default" then profiles($cfg.default // null) else profiles(rule_at($id).use) end | .[]]) as $union |
   (if $ambiguous then $union else ($sel.use // $answer_use // []) end) as $raw_use |
   ($ambiguous and (any($union[]; (.reasoning_class | type) != "number") or ($union | length) == 0)) as $missing_class |
-  (if $ambiguous and ($missing_class | not) then ($union | map(.reasoning_class) | max) as $strongest | [$union[] | select(.reasoning_class == $strongest)] | unique else $raw_use end) as $decision_use |
+  # Anchor the class to the most probable row, not the hardest union member.
+  # Equal row probabilities keep table order, with default after explicit rules.
+  (row_ids | to_entries | map(select(.value as $id | $union_ids | index($id)))
+    | sort_by([-$a.probabilities[.value], .key]) | first | .value) as $anchor_id |
+  (if $anchor_id == null then [] else row_use($anchor_id) end) as $anchor_use |
+  (if $ambiguous and ($missing_class | not) then ($anchor_use | map(.reasoning_class) | max) as $strongest | [$union[] | select(.reasoning_class == $strongest)] | unique else $raw_use end) as $decision_use |
   ($ambiguous and any($union_ids[]; rule_at(.).approval == "captain")) as $union_approval |
   ([$union_ids[] | . as $id | rule_at($id) | select(.floor != null) | .floor as $f |
     {id:$id, floor:$f, state:($q | floor_state($f; $f.provider; ""))}]) as $union_floors |
@@ -994,7 +999,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       if false then empty
       else ($tb.winner) as $winner |
         (if $ambiguous then ([$union_ids[] | . as $id | (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | select(index($winner.profile)) | $id] | first) else $sel.source end) as $winner_row |
-        $ev + {status: "clear", note: ((if $ambiguous then "ambiguous union >= 0.25; strongest reasoning class"
+        $ev + {status: "clear", note: ((if $ambiguous then "ambiguous union >= 0.25; strongest reasoning class of most probable row \($anchor_id)"
           elif ($ranked | length) < ($pickable | length) then "\($sel.note); strongest reasoning class \($strongest), \(($pickable | length) - ($ranked | length)) weaker eligible candidate(s) outranked"
           else $sel.note end)
                + (if ($winner.reserve_active // false) then "; \($winner.reason)" else "" end)), candidates: $cands, chosen: $winner, row: $winner_row}
