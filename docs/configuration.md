@@ -2195,7 +2195,8 @@ When the picked rule declares its own floor but its probability falls below it, 
 2. Print a `fallback:` line naming both floors and resolve that rule as though it had been picked.
 
 No qualifying option, or two equally probable qualifying options, triggers an ambiguous union.
-Code unions rows whose probability is at least 0.25, retains only the highest numeric candidate `reasoning_class`, then applies eligibility and spendPriority.
+Code unions rows whose probability is at least 0.25, retains only candidates at the highest numeric `reasoning_class` of the most probable row, then applies eligibility and spendPriority.
+Equal row probabilities use table order, with the default row after explicit rules.
 `reasoning_class` is an optional finite JSON number on each candidate, higher meaning stronger; every candidate in an ambiguous union must declare it or routing stops for captain review rather than guessing from names.
 A single matched rule and the default row get the same keep-strongest semantics within the pickable tier (`fallback_only` reserves enter only when no non-fallback candidate is rankable): when every eligible candidate declares a numeric `reasoning_class`, only the highest declared class reaches the `spendPriority` argmax, so an unused weaker pool cannot win on quota headroom alone, while candidates at an equal class still compete on `spendPriority`.
 When any eligible candidate lacks a class, ranking stays plain `spendPriority` with no silent guessing.

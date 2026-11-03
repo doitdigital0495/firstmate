@@ -115,12 +115,29 @@ printf '\nChanged deliverable\n' >> "$BRIEF"
 run gate --brief "$BRIEF" --task pager --harness claude --model sonnet
 expect_code 3 "$code" 'changed brief refused'
 pass 'stale, spent, changed brief and legacy override receipts refused'
-# Low confidence unions the qualifying rows, retaining only the strongest class.
+# Low confidence unions retain the strongest class of the most probable row.
 write_response rule_1 0.4 '{"rule_1":0.4,"rule_2":0.35,"default":0.25}'
 run "$BRIEF" --task pager
 assert_contains "$out" 'ambiguous union >= 0.25' "ambiguous union routed: $out"
-assert_equals opus "$(jq -r .profile.model "$(latest)")" 'stronger class wins over Jev preference'
+assert_equals sonnet "$(jq -r .profile.model "$(latest)")" 'less probable hard row cannot inflate the required class'
 cp "$RULES" "$TMP_ROOT/rules-backup"
+# The probability argmax, not Jev choice or confidence, owns the class anchor.
+write_response rule_1 0.4 '{"rule_1":0.35,"rule_2":0.4,"default":0.25}'
+run "$BRIEF" --task pager
+assert_equals opus "$(jq -r .profile.model "$(latest)")" 'most probable hard row keeps its strongest class'
+write_response rule_1 0.4 '{"rule_1":0.3,"rule_2":0.25,"default":0.45}'
+run "$BRIEF" --task pager
+assert_equals sonnet "$(jq -r .profile.model "$(latest)")" 'default can anchor the union class'
+write_response rule_2 0.4 '{"rule_1":0.4,"rule_2":0.4,"default":0.2}'
+run "$BRIEF" --task pager
+assert_equals sonnet "$(jq -r .profile.model "$(latest)")" 'equal top row probabilities use table order'
+# A row may offer several classes; retain its strongest, including union peers.
+jq '.rules[0].use = [.rules[0].use, .rules[1].use] | .rules[1].use.reasoning_class = 3' "$TMP_ROOT/rules-backup" > "$RULES"
+write_response rule_1 0.4 '{"rule_1":0.4,"rule_2":0.35,"default":0.25}'
+run "$BRIEF" --task pager
+assert_equals opus "$(jq -r .profile.model "$(latest)")" 'anchor uses its strongest class, not the union maximum'
+cp "$TMP_ROOT/rules-backup" "$RULES"
+write_response rule_1 0.4 '{"rule_1":0.4,"rule_2":0.35,"default":0.25}'
 jq 'del(.default.reasoning_class)' "$TMP_ROOT/rules-backup" > "$RULES"
 run "$BRIEF" --task pager
 assert_contains "$out" 'ambiguous union needs numeric reasoning_class' 'missing class stops'
@@ -129,7 +146,14 @@ jq '.rules[1].approval="captain"' "$TMP_ROOT/rules-backup" > "$RULES"
 run "$BRIEF" --task pager
 assert_contains "$out" 'requires captain approval' 'approval union stops'
 cp "$TMP_ROOT/rules-backup" "$RULES"
-pass 'ambiguous unions keep strongest class; unknown class and approval stop'
+# No row reaching 0.25 still fails closed rather than inventing a class anchor.
+jq '.rules += [.rules[0], .rules[1]]' "$TMP_ROOT/rules-backup" > "$RULES"
+write_response rule_1 0.2 '{"rule_1":0.2,"rule_2":0.2,"rule_3":0.2,"rule_4":0.2,"default":0.2}'
+run "$BRIEF" --task pager
+assert_contains "$out" 'status: captain-pick' 'empty qualifying union waits for the captain'
+assert_contains "$out" 'ambiguous union needs numeric reasoning_class' 'empty union has no class anchor'
+cp "$TMP_ROOT/rules-backup" "$RULES"
+pass 'ambiguous unions keep most-probable-row strongest class; unknown class and approval stop'
 write_response rule_2 0.95 '{"rule_1":0.03,"rule_2":0.95,"default":0.02}'
 jq '.rules[1].approval="captain"' "$TMP_ROOT/rules-backup" > "$RULES"
 run "$BRIEF" --task pager
@@ -167,9 +191,17 @@ run "$BRIEF" --task pager
 assert_contains "$out" 'status: clear' "an exact tie still dispatches: $out"
 assert_contains "$out" 'tie_break: 2 candidates tied at spendPriority 1; sooner binding reset 2030-01-02T00:00:00Z kept 2; round-robin slot 1 of 2' 'tie break is logged'
 first_tie=$(jq -r .profile.model "$(latest)")
+assert_equals opus "$first_tie" 'same-quota tie starts in stable model order regardless of Jev preference'
 run "$BRIEF" --task pager
 assert_contains "$out" 'round-robin slot 2 of 2' 'the next tie takes the next slot'
 [ "$first_tie" != "$(jq -r .profile.model "$(latest)")" ] || fail 'round-robin must rotate between tied candidates'
+# Same provider, account and quota row remains deterministic with reversed input.
+jq '.rules[0].use |= reverse' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}' rule_1_2
+run "$BRIEF" --task pager
+assert_contains "$out" 'round-robin slot 1 of 2' 'same-quota rotation wraps deterministically'
+assert_equals "$first_tie" "$(jq -r .profile.model "$(latest)")" 'input order and Jev preference do not alter same-quota tie order'
+jq '.rules[0].use |= reverse' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
 # The sooner binding reset wins before any rotation.
 jq '.rules[0].use[1].model = "haiku"' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
 jq '.providers[0].windows += [{id:"model:haiku",kind:"model",percentRemaining:80,resetsAt:"2030-01-01T06:00:00Z"}] | .providers[0].quotaSemantics.effectiveAvailability += [{scope:"model:haiku",status:"known",effectivePercentRemaining:80,boundedBy:["model:haiku"],runway:{status:"through_reset"},selection:{spendPriority:1}}]' "$TMP_ROOT/original-quota" > "$QUOTA"
@@ -193,6 +225,7 @@ jq '.rules[1].floor={scope:"all_models",provider:"claude",min_percent:10}' "$TMP
 write_response rule_1 0.4 '{"rule_1":0.4,"rule_2":0.35,"default":0.25}'
 run "$BRIEF" --task pager
 assert_contains "$out" 'ambiguous union >= 0.25' 'measured ambiguous rule floor can route'
+write_response rule_2 0.4 '{"rule_1":0.35,"rule_2":0.4,"default":0.25}'
 jq '.rules[1].floor.min_percent=99' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
 run "$BRIEF" --task pager
 assert_contains "$out" 'status: captain-pick' 'strongest class below rule floor stops rather than downgrading'
