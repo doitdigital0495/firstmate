@@ -1361,7 +1361,7 @@ test_preferred_provider_validation() {
 }
 
 test_crew_dispatch_validation() {
-  local label body expect mode case_dir fakebin out child_env n cred declaration
+  local label body expect mode case_dir fakebin out child_env n
   n=0
   while IFS='^' read -r label body mode expect; do
     [ -n "$label" ] || continue

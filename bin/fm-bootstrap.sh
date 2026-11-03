@@ -1156,7 +1156,7 @@ EOF
 }
 
 crew_dispatch_validate() {
-  local file cred err verified_harnesses typed_key typed_active=false
+  local file err verified_harnesses typed_key typed_active=false
   file="$CONFIG/crew-dispatch.json"
   [ -f "$file" ] || return 0
   if ! command -v jq >/dev/null 2>&1; then

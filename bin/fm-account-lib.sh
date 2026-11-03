@@ -71,7 +71,7 @@ fm_account_has_store() {
 # that does not own the store the launch needs is refused by name; an account the
 # registry does not know is not this function's to judge and passes through.
 fm_account_require_store() {
-  local file=$1 account=$2 kind=$3 stores
+  local file=$1 account=$2 kind=$3
   fm_account_registry_valid "$file" || return 0
   jq -e --arg a "$account" '.accounts[$a] != null' "$file" >/dev/null 2>&1 || return 0
   if jq -e --arg a "$account" --arg k "$kind" '.accounts[$a][$k] != null' "$file" >/dev/null 2>&1; then
