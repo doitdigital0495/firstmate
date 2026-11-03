@@ -2112,20 +2112,23 @@ See [`docs/examples/claude-shaped-store`](examples/claude-shaped-store) for a st
 
 ## Typed dispatch resolution (jevd socket)
 
-`bin/fm-dispatch-resolve.sh` resolves a written brief through Jev's Choices via the private `jevd` unix socket.
-The resolver never reads a key or `.env` and has no direct HTTP fallback.
-It records quota intake, requests the rule and candidate preference, and writes a [dispatch receipt](#dispatch-receipts-statedispatch-receipt) only for a dispatchable result.
-This section is the single owner of the tool's operator contract; the script header owns its exact flags and output lines, and "Crew dispatch profiles" above owns the declared rule and profile fields it applies.
+`bin/fm-dispatch.sh new|relaunch|promote` is firstmate's entry point for routed crewmate and scout work, composing `bin/fm-dispatch-resolve.sh` with the existing guarded launch scripts.
+The resolver uses Jev's Choices via the private `jevd` unix socket, never reads a key or `.env`, and has no direct HTTP fallback.
+It requests the rule and candidate preference, records fresh quota intake, and writes a [dispatch receipt](#dispatch-receipts-statedispatch-receipt) only for a dispatchable result; the broker launches the receipt's profile without a second intake or caller-selected profile flags.
+Promotion routes the written ship contract, delivers instructions through `fm-send` when the profile is unchanged, and otherwise uses `fm-control relaunch` in the same worktree.
+A refused route launches nothing; a promotion's written ship contract remains available for retry.
+This section is the single owner of the operator contract; the scripts' headers and the broker's `--help` own exact flags and output lines, and "Crew dispatch profiles" above owns the declared rule and profile fields.
 
 Rules come only from the effective home's `config/crew-dispatch.json`; `FM_CONFIG_OVERRIDE` selects the config directory for tests and specialized setup like the other scripts.
 
 ```sh
-bin/fm-dispatch-resolve.sh data/<id>/brief.md --project <name>        # TOON block on stdout
+bin/fm-dispatch.sh new <id> <project-dir> --mode <mode> --yolo <on|off>
 ```
 
-**When firstmate invokes the resolver**
+**When firstmate invokes the broker**
 
-Firstmate invokes the resolver directly after writing the brief, without a preflight or profile selection.
+Firstmate invokes the broker directly after writing the brief, without a preflight or profile selection.
+The resolver remains the sole receipt writer; the broker reads its selected profile as data and delegates admission to the existing receipt and launch gates.
 
 **What the model receives**
 
@@ -2214,7 +2217,7 @@ A captain pick writes a private request under `state/dispatch-pick/` and launche
 The request offers every row of the table, Jev's most probable rows first when Jev answered, with each candidate's eligibility, reasons, remaining quota, `spendPriority`, `reasoning_class`, and strongest-class mark computed exactly as for a clear resolution.
 The resolver prints the numbered options, and `bin/fm-dispatch-resolve.sh pick-card [<code>...]` renders them into one self-contained card under `data/dispatch-pick/` for the captain's Lavish board.
 The captain answers `route <code> <n>` on the card or in chat, adding `override` to take an option that is not eligible, or `route <code> wait` to wait for Jev.
-`bin/fm-dispatch-resolve.sh pick <code>` turns that answer into a `captain` receipt only after verifying the captain's own captured words; `bin/fm-dispatch-pick-lib.sh`'s header owns the request format and that verification.
+Retry the broker with `--pick <code>` to have `bin/fm-dispatch-resolve.sh pick <code>` turn that answer into a `captain` receipt only after verifying the captain's own captured words; `bin/fm-dispatch-pick-lib.sh`'s header owns the request format and that verification.
 `--captain-pick` on a resolution asks for the same request even when Jev's answer is dispatchable, which is how a per-task captain override is made: the request shows what Jev and code would take, and only the captain's words decide.
 The resolver does not replace launch-time catalog, authentication, account, quota-intake, or harness validation.
 Firstmate can stop a route it judges unsafe, but cannot select another profile, mint a receipt, or answer a pick.
@@ -2239,15 +2242,10 @@ The daemon owns the key, pinned model, upstream request, and request-id log; the
 
 A home whose `config/crew-dispatch.json` has routing rows (at least one rule or a `default`) launches a worker only on a profile that came out of that table.
 `bin/fm-spawn.sh` refuses a ship, scout, or secondmate launch, and `bin/fm-control.sh relaunch` refuses a move onto a different harness, model, effort, or account, unless a fresh, unspent dispatch receipt binds that task's brief and names exactly the profile being launched.
-This section is the operator contract; `bin/fm-dispatch-receipt-lib.sh`'s header is the single owner of the receipt fields and the gate's rules, and `bin/fm-dispatch-resolve.sh`'s header owns the commands.
+This section is the operator contract; `bin/fm-dispatch-receipt-lib.sh`'s header is the single owner of the receipt fields and the gate's rules, and `bin/fm-dispatch.sh --help` owns the broker commands.
 
-The normal sequence needs no extra step, because a `clear` resolution writes the receipt itself:
-
-```sh
-bin/fm-dispatch-resolve.sh data/<id>/brief.md --project <name> --task <id>
-# Only after a receipt is printed, launch with exactly its profile flags:
-bin/fm-spawn.sh <id> <project> <the printed profile flags> --mode <mode>
-```
+The normal path is the [dispatch broker](#typed-dispatch-resolution-jevd-socket), which resolves and launches in one invocation without hand-composing profile flags.
+`tests/fm-dispatch.test.sh` verifies broker composition and refusal behavior through executable stubs; `tests/fm-dispatch-resolve.test.sh` verifies resolution and the receipt gate.
 
 **Producers**
 

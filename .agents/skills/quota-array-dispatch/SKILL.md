@@ -55,9 +55,9 @@ When the resolver prints `status: captain-pick`, Jev could not route the brief a
 2. Render the card with `bin/fm-dispatch-resolve.sh pick-card` (one card covers every pending pick), open it with `bin/fm-lavish-open.sh <card>`, and arm it with `bin/fm-procevent-lavish.sh arm <card>`.
 3. Hold the gated task for the captain under `captain-hold-lifecycle`, naming in plain words what is waiting and that the card shows each option's quota and strength; relay it as a captain decision.
 4. Your own read of the brief may go into that decision as a one-line suggestion of the fitting row, labelled as yours; the captain's answer decides.
-5. When he answers `route <code> <n>` (on the card or in chat), run `bin/fm-dispatch-resolve.sh pick <code>` and launch exactly the printed profile; a refusal names what is missing, so ask him again rather than working around it.
-6. `route <code> wait` means re-run the resolver once jevd answers; a new resolution issues a new code.
-When the captain asks for a specific route on one task, resolve with `--captain-pick` and follow the same steps.
+5. When he answers `route <code> <n>` (on the card or in chat), retry the dispatch broker with `--pick <code>` (operator contract: `docs/configuration.md` "Typed dispatch resolution"); a refusal names what is missing, so ask him again rather than working around it.
+6. `route <code> wait` means retry the broker without `--pick` once jevd answers; a new resolution issues a new code.
+When the captain asks for a specific route on one task, invoke the broker with `--captain-pick` and follow the same steps.
 
 ## Read the default TOON
 
