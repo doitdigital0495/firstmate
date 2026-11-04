@@ -1303,7 +1303,7 @@ crew_dispatch_validate() {
   while IFS= read -r problem; do
     [ -n "$problem" ] || continue
     echo "CREW_DISPATCH: invalid config/crew-dispatch.json - $problem"
-  done < <(fm_account_dispatch_problems "$CONFIG/accounts.json" "$file")
+  done < <(fm_account_dispatch_problems "$CONFIG/accounts.json" "$file"; fm_account_pipeline_problems "$file")
   if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
     jq -r '
     def profile($p):

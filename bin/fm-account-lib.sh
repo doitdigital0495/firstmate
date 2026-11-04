@@ -250,7 +250,8 @@ fm_account_dispatch_problems() {
     def plabel($p): "\($p.harness):\($p.model // "default")/\($p.effort // "default")";
     ($reg[0].accounts) as $acc |
     ([(.rules // []) | to_entries[] | .key as $i | profiles(.value.use)[] | {where: "rule \($i + 1)", p: .}]
-      + [profiles(.default // null)[] | {where: "default", p: .}])[] |
+      + [profiles(.default // null)[] | {where: "default", p: .}]
+      + [(.pipeline_rows | if type == "array" then . else [] end) | to_entries[] | .key as $i | (.value | objects | .use | arrays)[] | {where: "pipeline row \($i + 1)", p: .}])[] |
     .where as $w | .p as $p |
     if ($p | type) != "object" then empty
     elif ($p.account // null) == null then "\($w) profile \(plabel($p)) names no account; with config/accounts.json present every profile must name one"
@@ -261,6 +262,49 @@ fm_account_dispatch_problems() {
       "\($w) profile \(plabel($p)) spends provider \(family($p)) but account \($p.account) declares provider \($acc[$p.account].provider)"
     else empty end
   ' "$rules" 2>/dev/null || printf 'crew dispatch file is not JSON\n'
+}
+
+# fm_account_pipeline_problems <crew-dispatch-file>: one line per problem in the
+# optional top-level pipeline_rows, shared by the resolver and bootstrap.
+# docs/configuration.md "Pipeline seat rows" owns the fields. Prints nothing for a
+# file that is not a JSON object, whose own diagnostic belongs to its caller.
+fm_account_pipeline_problems() {
+  local rules=$1
+  [ -f "$rules" ] || return 0
+  jq -r '
+    def family($p): $p.provider // ({"claude":"claude","codex":"codex","opencode":"codex"}[$p.harness] // null);
+    def tier_ok($t): ($t | type) == "number" and $t >= 1 and ($t | floor) == $t;
+    def row_problems($w):
+      if type != "object" then "\($w) must be an object"
+      elif (.steps | type) != "array" or (.steps | length) == 0 or any(.steps[]; type != "string" or length == 0) then "\($w) needs steps, a non-empty array of step names"
+      elif (.never_providers | type) != "array" or (.never_providers | length) == 0 or any(.never_providers[]; type != "string") then "\($w) needs never_providers, a non-empty array of provider IDs"
+      elif (.use | type) != "array" or (.use | length) == 0 or any(.use[]; type != "object") then "\($w) needs use, a non-empty array of profile objects"
+      else . as $row |
+        (.use[] | . as $p | "\($p.harness // "?"):\($p.model // "default")" as $l |
+          if ($p.account | type) != "string" then "\($w) profile \($l) must name an account"
+          elif ($p.pool != 1 and $p.pool != 2) then "\($w) profile \($l) pool must be 1 or 2"
+          elif (tier_ok($p.seat_tier) | not) then "\($w) profile \($l) seat_tier must be a positive integer"
+          elif ($p.reasoning_class | type) != "number" then "\($w) profile \($l) reasoning_class must be a number"
+          elif $p | has("fallback_only") then "\($w) profile \($l) must not set fallback_only: the seat tier orders the pools"
+          elif ($p | has("weekly_floor_percent")) and (($p.weekly_floor_percent | type) != "number" or $p.weekly_floor_percent < 0 or $p.weekly_floor_percent > 100) then "\($w) profile \($l) weekly_floor_percent must be a number from 0 through 100"
+          elif (family($p) as $f | $f != null and ($row.never_providers | index($f)) != null) then "\($w) profile \($l) spends provider \(family($p)), which never_providers bans"
+          else empty end),
+        (if all(.use[]; (.seat_tier | type) == "number" and (.pool == 1 or .pool == 2)) then
+           (if any(.use[]; .pool == 1) | not then "\($w) needs a pool 1 profile" else empty end),
+           ([.use[] | select(.pool == 1) | .seat_tier] | max) as $last_one |
+           ([.use[] | select(.pool == 2) | .seat_tier] | min) as $first_two |
+           (if $first_two != null and $last_one != null and $first_two <= $last_one then "\($w) pool 2 seat_tier values must all follow pool 1" else empty end)
+         else empty end),
+        (if ([.use[].reasoning_class] | unique | length) > 1 then "\($w) profiles must share one reasoning_class, so no fallback lowers the step" else empty end),
+        (if (.use | map(.account) | length) != (.use | map(.account) | unique | length) then "\($w) must not list an account twice" else empty end)
+      end;
+    if type != "object" or (has("pipeline_rows") | not) then empty
+    elif (.pipeline_rows | type) != "array" or (.pipeline_rows | length) == 0 then "pipeline_rows must be a non-empty array"
+    else
+      (.pipeline_rows | to_entries[] | .key as $i | .value | row_problems("pipeline row \($i + 1)")),
+      ([.pipeline_rows[] | objects | .steps | arrays | .[]] | group_by(.) | map(select(length > 1) | .[0]) | .[] | "pipeline step \(.) is named by more than one row")
+    end
+  ' "$rules" 2>/dev/null || true
 }
 
 # fm_account_coverage_gaps <accounts-file> <crew-dispatch-file>: S7 audit. For

@@ -14,7 +14,7 @@ case "$1" in on|off|status|audit) ;; *) echo 'usage: fm-account-routing.sh on|of
 file=$CONFIG/accounts.json
 fm_account_registry_valid "$file" || { echo "error: missing or malformed account registry: $file" >&2; exit 1; }
 if [ "$1" = audit ]; then
-  report=$(fm_account_registry_problems "$file"; fm_account_dispatch_problems "$file" "$CONFIG/crew-dispatch.json"; fm_account_coverage_gaps "$file" "$CONFIG/crew-dispatch.json")
+  report=$(fm_account_registry_problems "$file"; fm_account_dispatch_problems "$file" "$CONFIG/crew-dispatch.json"; fm_account_pipeline_problems "$CONFIG/crew-dispatch.json"; fm_account_coverage_gaps "$file" "$CONFIG/crew-dispatch.json")
   if [ -z "$report" ]; then echo 'account coverage: complete'; exit 0; fi
   printf '%s\n' "$report"
   if printf '%s\n' "$report" | grep -qv '^single point: '; then exit 1; fi

@@ -370,6 +370,7 @@ The intake and authority contract in `AGENTS.md` owns when separate scout resear
 Crewmate and scout dispatch can stay on the static crewmate harness resolved by `config/crew-harness`, or it can use local dispatch profiles in `config/crew-dispatch.json`.
 [`AGENTS.md` section 4](../AGENTS.md) owns firstmate's dispatch decision boundary, and [`quota-array-dispatch`](../.agents/skills/quota-array-dispatch/SKILL.md) owns its profile-array selection procedure.
 The optional typed resolver's rule matching and deterministic profile selection are owned by [configuration.md](configuration.md#typed-dispatch-resolution-env-openrouter_api_key).
+A no-mistakes step can ask the same resolver for a seat through [pipeline seat rows](configuration.md#pipeline-seat-rows), which reuse its seat logic with no model call and no receipt; [decisions.md](decisions.md) records why the pools are ordered as they are.
 The session-start bootstrap step keeps valid dispatch configuration silent unless verbose facts are enabled and surfaces a concise invalid-config line when validation fails.
 When the file exists, `fm-spawn.sh` refuses crewmate and scout launches without an explicit harness, so `config/crew-harness` is only automatic when no dispatch profile file is active.
 Secondmate launches are exempt because they resolve the secondmate harness and any optional secondmate model or effort tokens instead.
