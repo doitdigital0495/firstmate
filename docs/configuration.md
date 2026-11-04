@@ -1805,6 +1805,7 @@ This section is the single owner of the canonical schema and its per-field seman
   "preferred_provider": "<optional quota-axi provider family to spend first>",
   "shared_quota": false,
   "seat_tiers_by_delivery": { "<delivery mode>": { "<registry account id>": 1 } },
+  "pipeline_rows": [ { "steps": ["<no-mistakes step>"], "never_providers": ["zai"], "use": [ { "<profile>": "see Pipeline seat rows" } ] } ],
   "rules": [
     {
       "when": "<natural-language condition describing a kind of task>",
@@ -1885,10 +1886,47 @@ Inside the open tier the existing rules decide: `fallback_only`, keep-strongest 
 A released `fallback_only` candidate competes in its own tier, so a later tier of another family waits for it, unlike a reserve with no tier.
 An ambiguous union takes its class from the first declared tier of its most probable row, so a stronger fallback seat cannot drop that row's default seat out of the union.
 The optional top-level `"seat_tiers_by_delivery"` maps a delivery mode, read from the brief's `Delivery contract: mode=` line, to `{account: tier}` entries that replace `seat_tier` for those accounts on that delivery.
-This orders only the worker that drives the delivery: a no-mistakes pipeline's own agent seat is chosen by no-mistakes `agent` and `agent_path_override` configuration, outside this table.
+This orders only the worker that drives the delivery: a no-mistakes pipeline's own agent seat is chosen by no-mistakes `agent` and `agent_path_override` configuration, whose wrapper can ask for a seat through [pipeline seat rows](#pipeline-seat-rows).
 A firstmate or secondmate does not launch through `--account`: its seat is the home identity or a per-secondmate pin, so its row's order names the seat for a [deliberate subscription switch](#deliberate-claude-subscription-switch-and-clean-exit) when the current seat reaches its limit.
 Without either field, behavior is unchanged.
 A value of any other shape is an actionable configuration error reported like any other malformed profile field.
+
+### Pipeline seat rows
+
+The optional top-level `pipeline_rows` gives each no-mistakes step a fixed row, and `bin/fm-dispatch-resolve.sh pipeline --step <step>` returns that step's seat from it.
+This mode makes no model call, reads no brief, writes no dispatch receipt, and never asks the captain to pick, because a pipeline step cannot wait for any of them.
+Jev never sees these rows, because they sit outside `rules`.
+A no-mistakes wrapper has to call this mode for it to take effect; the rows alone change no launch.
+
+Each row declares these fields, and every one is required unless marked optional:
+
+| Field | Meaning |
+| --- | --- |
+| `steps` | The step names this row serves; a step may appear in only one row. |
+| `never_providers` | Provider families the row may never spend, such as `zai`; listing a profile of one is a configuration error. |
+| `use` | The row's profiles, each with `harness`, `account`, and optional `model` and `effort`, plus the three fields below. |
+| Profile `pool` | `1` or `2`. Pool 2 is used only when pool 1 has no seat with room. Every `seat_tier` of pool 2 must follow every `seat_tier` of pool 1. |
+| Profile `seat_tier` | The strict order described in [Seat tiers](#crew-dispatch-profiles-configcrew-dispatchjson); seats that share a tier compete on quota. `seat_tiers_by_delivery` does not apply here. |
+| Profile `reasoning_class` | A number that every profile of the row must share, so no fallback lowers the step. |
+| Profile `weekly_floor_percent` | Optional. The seat stops once its weekly room left is at or below this percent. |
+
+`fallback_only` is refused in a row, because its reserve test would hold a seat until the earlier seats reach their weekly limit and so skip it when they are only out on a five-hour window.
+Selection uses the same quota evaluation, seat tier hold, spendPriority ranking, and tie-break as worker resolution, with two additions.
+The weekly floor reads the weekly window itself, because a quota row bounded by both windows would also trip on a low five-hour window.
+Inside the open tier, a seat projected to run out within 90 minutes loses to a seat that lasts to its reset, and an idle five-hour window with no reset does not count.
+That runway test never opens a later tier: if every open seat is short, they still compete on spendPriority.
+
+Quota evidence gets at most 30 seconds in total, including the first reads, and `FM_DISPATCH_QUOTA_WAIT_SECONDS` can only shorten that.
+After that, a measured seat of the open tier wins; otherwise that tier's first seat is returned with `measured` false.
+Unreadable quota never opens a later pool, and a seat whose weekly floor cannot be read is out rather than running unchecked.
+
+| Exit | stdout | Meaning |
+| --- | --- | --- |
+| 0 | JSON with `status` `ok` and `seat`, `harness`, `model`, `effort`, `provider`, `pool`, `tier`, `reasoning_class`, `measured`, `reason`, and `candidates` | Run the step on this seat. |
+| 3 | JSON with `status` `exhausted` and one `seats` entry per seat | No seat has room. stderr carries one line per seat with its reset time, and nothing is downgraded. |
+| 2 | Empty | Usage or configuration error, including a step with no row, a malformed row, and a seat that cannot be routed because cross-account routing is off. |
+
+`fm-bootstrap.sh`, `fm-account-routing.sh audit`, and the resolver all report malformed rows, and the resolver refuses both modes while any row is malformed.
 
 **Fields applied only by typed resolution**
 
@@ -2134,6 +2172,7 @@ The resolver uses Jev's Choices via the private `jevd` unix socket, never reads 
 It requests the rule and candidate preference, records fresh quota intake, and writes a [dispatch receipt](#dispatch-receipts-statedispatch-receipt) only for a dispatchable result; the broker launches the receipt's profile without a second intake or caller-selected profile flags.
 Promotion routes the written ship contract, delivers instructions through `fm-send` when the profile is unchanged, and otherwise uses `fm-control relaunch` in the same worktree.
 A refused route launches nothing; a promotion's written ship contract remains available for retry.
+[Pipeline seat rows](#pipeline-seat-rows) own the separate model-free mode for a no-mistakes step.
 This section is the single owner of the operator contract; the scripts' headers and the broker's `--help` own exact flags and output lines, and "Crew dispatch profiles" above owns the declared rule and profile fields.
 
 Rules come only from the effective home's `config/crew-dispatch.json`; `FM_CONFIG_OVERRIDE` selects the config directory for tests and specialized setup like the other scripts.

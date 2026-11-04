@@ -4,6 +4,7 @@
 #
 # Usage:
 #   fm-dispatch-resolve.sh <brief-file> [--project <name>] [--task <id>] [--captain-pick]
+#   fm-dispatch-resolve.sh pipeline --step <step> (no-mistakes step -> seat JSON)
 #   fm-dispatch-resolve.sh pick <CODE>            (captain's answer -> receipt)
 #   fm-dispatch-resolve.sh pick-card [<CODE>...]  (render the captain's card)
 #   fm-dispatch-resolve.sh picks [--recent]       (pending and answered picks)
@@ -79,6 +80,25 @@
 #   contract: mode=" value to {account: tier} entries that replace "seat_tier"
 #   for those accounts. With no tier declared, behavior is unchanged.
 #   docs/configuration.md "Crew dispatch profiles" owns the declared fields.
+#
+# Pipeline mode: `pipeline --step <step>` picks the seat for one no-mistakes
+#   step from the top-level "pipeline_rows" row naming that step, with no model
+#   call, brief, receipt, or captain pick. Each profile declares its "pool" and
+#   "seat_tier", so the seat tier hold above keeps every later pool out until the
+#   earlier one has no seat with room. On top of the shared evaluation: an
+#   optional profile "weekly_floor_percent" takes a seat out once its weekly room
+#   left is at or below that percent, and inside the open tier a seat projected
+#   to run out within 90 minutes loses to one that lasts to its reset. Quota
+#   evidence waits at most 30 seconds in total; then a measured seat of the open
+#   tier wins, else that tier's first seat with measured false, except that an
+#   unreadable weekly floor takes its seat out. Unreadable quota never opens a
+#   later pool.
+#   stdout is one JSON object. status ok (exit 0) carries seat, harness, model,
+#   effort, provider, pool, tier, reasoning_class, measured, reason, and
+#   candidates. status exhausted (exit 3) carries one seats entry per seat, and
+#   stderr carries one line per seat naming its reset. Exit 2 is a usage or
+#   configuration error, including a step with no row.
+#   docs/configuration.md "Pipeline seat rows" owns the declared fields.
 #
 # Never-send check: when the optional $FM_HOME/config/dispatch-never-send list
 #   exists, every string value of the built request is checked against it
@@ -218,6 +238,8 @@ usage() {
   ' "$0"
 }
 
+MODE=worker STEP=''
+if [ "${1:-}" = pipeline ]; then MODE=pipeline; shift; fi
 BRIEF='' PROJECT='' TASK_ID='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES='' FORCE_PICK=false
 NEVER_SEND_PATH="$CONFIG/dispatch-never-send"
 while [ $# -gt 0 ]; do
@@ -225,6 +247,7 @@ while [ $# -gt 0 ]; do
     --project) [ $# -ge 2 ] || die "--project needs a value"; PROJECT=$2; shift 2 ;;
     --task) [ $# -ge 2 ] || die "--task needs a value"; TASK_ID=$2; shift 2 ;;
     --captain-pick) FORCE_PICK=true; shift ;;
+    --step) [ $# -ge 2 ] || die "--step needs a value"; STEP=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown flag $1" ;;
     *) [ -z "$BRIEF" ] || die "one brief file only"; BRIEF=$1; shift ;;
@@ -232,10 +255,21 @@ while [ $# -gt 0 ]; do
 done
 
 # ---- inputs --------------------------------------------------------------------
-[ -n "$BRIEF" ] || die "brief file required (see --help)"
-[ -r "$BRIEF" ] || die "brief file not readable: $BRIEF"
-BRIEF_DELIVERY=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
-[ -e "$RULES_PATH" ] || [ -L "$RULES_PATH" ] || no_rules
+BRIEF_DELIVERY=''
+if [ "$MODE" = pipeline ]; then
+  [ -n "$STEP" ] || die "pipeline needs --step <step>"
+  [ -z "$BRIEF$PROJECT$TASK_ID" ] && [ "$FORCE_PICK" = false ] || die "pipeline takes only --step"
+  [ -e "$RULES_PATH" ] || [ -L "$RULES_PATH" ] || die "rules file absent: $RULES_PATH"
+  # The whole pipeline decision, including its first quota reads, shares one bound.
+  [ "$QUOTA_WAIT_SECONDS" -le 30 ] || QUOTA_WAIT_SECONDS=30
+  QUOTA_DEADLINE=$(( $(date +%s) + QUOTA_WAIT_SECONDS ))
+else
+  [ -z "$STEP" ] || die "--step belongs to pipeline mode"
+  [ -n "$BRIEF" ] || die "brief file required (see --help)"
+  [ -r "$BRIEF" ] || die "brief file not readable: $BRIEF"
+  BRIEF_DELIVERY=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
+  [ -e "$RULES_PATH" ] || [ -L "$RULES_PATH" ] || no_rules
+fi
 [ -r "$RULES_PATH" ] || die "rules file not readable: $RULES_PATH"
 command -v jq >/dev/null 2>&1 || die "jq required"
 RULES=$(mktemp) || die "mktemp failed"
@@ -243,8 +277,13 @@ trap 'rm -f "$RULES"' EXIT
 cp "$RULES_PATH" "$RULES" || die "could not snapshot rules file: $RULES_PATH"
 chmod 400 "$RULES" || die "could not protect rules snapshot"
 FM_DR_TABLE_SHA=$(fm_dr_sha256 < "$RULES") || die "could not hash rules snapshot"
-FM_DR_BRIEF_SHA=$(fm_dr_brief_hash "$BRIEF") || die "could not hash brief"
+if [ "$MODE" = worker ]; then
+  FM_DR_BRIEF_SHA=$(fm_dr_brief_hash "$BRIEF") || die "could not hash brief"
+fi
 VERIFIED_HARNESSES=$(fm_control_harnesses | jq -Rsc 'split("\n") | map(select(length > 0))')
+
+pipeline_problems=$(fm_account_pipeline_problems "$RULES")
+[ -z "$pipeline_problems" ] || die "malformed rules file: $RULES_PATH - $(printf '%s' "$pipeline_problems" | paste -sd ';' - | sed 's/;/; /g')"
 
 # The fields this tool consumes must be well formed; bootstrap owns the wider
 # schema diagnostic, but an intake never selects around a malformed file.
@@ -309,6 +348,9 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   elif any((.rules // [])[]; duplicate_profiles(profiles(.use))) then "each rule use must not contain duplicate harness, model, and effort profiles"
   elif any((.rules // [])[] | profiles(.use)[]; (verified(.harness) | not)) then "each use profile must name a verified harness"
   elif any((.rules // [])[] | profiles(.use)[]; (effort_ok(.harness; .model; .effort) | not)) then "each use profile effort must be supported by its harness and model"
+  elif any((.pipeline_rows // [])[] | .use[]; profile_bad(.)) then "each pipeline_rows profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
+  elif any((.pipeline_rows // [])[] | .use[]; (verified(.harness) | not)) then "each pipeline_rows profile must name a verified harness"
+  elif any((.pipeline_rows // [])[] | .use[]; (effort_ok(.harness; .model; .effort) | not)) then "each pipeline_rows profile effort must be supported by its harness and model"
   elif has("default") and (profiles(.default) | length) == 0 then "default must be a profile object or non-empty profile array"
   elif has("default") and any(profiles(.default)[]; type == "object" and has("quota_scope") and ((.quota_scope | type) != "string" or (.quota_scope | length) == 0)) then "each default profile quota_scope must be a non-empty string when present"
   elif has("default") and any(profiles(.default)[]; type == "object" and has("fallback_only") and ((.fallback_only | type) != "boolean")) then "each default profile fallback_only must be true or false when present"
@@ -329,7 +371,8 @@ account_problems=$(fm_account_dispatch_problems "$CONFIG/accounts.json" "$RULES"
 missing_provider=$(jq -r '
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
   ((.rules // [])[] | profiles(.use)[] | select(has("provider") | not) | "use\t\(.harness)"),
-  (profiles(.default // null)[] | select(has("provider") | not) | "default\t\(.harness)")
+  (profiles(.default // null)[] | select(has("provider") | not) | "default\t\(.harness)"),
+  ((.pipeline_rows // [])[] | .use[] | select(has("provider") | not) | "pipeline_rows\t\(.harness)")
 ' "$RULES" | while IFS=$'\t' read -r location harness; do
   if ! fm_quota_single_provider_for_harness "$harness" >/dev/null; then
     printf '%s\t%s\n' "$location" "$harness"
@@ -351,20 +394,24 @@ while IFS= read -r h; do
   PMAP=$(jq -c --arg h "$h" --arg p "$p" '. + {($h): (if $p == "" then null else $p end)}' <<<"$PMAP")
 done < <(jq -r '
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
-  ([((.rules // [])[]) | profiles(.use)[]] + profiles(.default // null))
+  ([((.rules // [])[]) | profiles(.use)[]] + profiles(.default // null) + [(.pipeline_rows // [])[] | .use[]])
   | map(.harness) | unique | .[]' "$RULES")
 
 RULE_COUNT=$(jq -r '(.rules // []) | length' "$RULES")
 
 emit_error() {
   local reason=$1
+  [ "$MODE" = worker ] || die "$reason"
   echo "dispatch-resolve: error ($reason)" >&2
   printf 'dispatch-resolve:\n  status: error\n  reason: %s\n' "$reason"
   exit 0
 }
 
-if [ "$RULE_COUNT" -eq 0 ] && ! jq -e 'has("default")' "$RULES" >/dev/null; then
+if [ "$MODE" = worker ] && [ "$RULE_COUNT" -eq 0 ] && ! jq -e 'has("default")' "$RULES" >/dev/null; then
   no_rules
+fi
+if [ "$MODE" = pipeline ] && ! jq -e --arg step "$STEP" 'any((.pipeline_rows // [])[]; .steps | index($step))' "$RULES" >/dev/null; then
+  die "no pipeline_rows row names step $STEP"
 fi
 
 RESP_FILE=$(mktemp) || die "mktemp failed"
@@ -424,15 +471,17 @@ task_sections() {
     printf '%s\n%s\n\n' "$heading" "$(fm_brief_task_heading_body "$BRIEF" "$heading")"
   done
 }
-SECTIONS=$(task_sections)
-if [ -n "$SECTIONS" ]; then
-  { brief_kind; printf '%s\n' "$SECTIONS"; } > "$TASK_TEXT" || die "could not read brief: $BRIEF"
-else
-  cp "$BRIEF" "$TASK_TEXT" || die "could not read brief: $BRIEF"
-fi
 LAT_MS=null
-command -v python3 >/dev/null 2>&1 || emit_error "python3 not installed"
-REQUEST=$(jq -n --rawfile brief "$TASK_TEXT" --arg project "$PROJECT" --arg model "$TS_MODEL" \
+# Pipeline mode resolves a fixed row, so nothing below reaches the socket.
+if [ "$MODE" = worker ]; then
+  SECTIONS=$(task_sections)
+  if [ -n "$SECTIONS" ]; then
+    { brief_kind; printf '%s\n' "$SECTIONS"; } > "$TASK_TEXT" || die "could not read brief: $BRIEF"
+  else
+    cp "$BRIEF" "$TASK_TEXT" || die "could not read brief: $BRIEF"
+  fi
+  command -v python3 >/dev/null 2>&1 || emit_error "python3 not installed"
+  REQUEST=$(jq -n --rawfile brief "$TASK_TEXT" --arg project "$PROJECT" --arg model "$TS_MODEL" \
     --arg none_criterion "$DEFAULT_WHEN" --slurpfile rules "$RULES" '
     ($rules[0] | .rules //= []) as $cfg |
     ($cfg.rules | to_entries | map({key: ("rule_" + ((.key + 1) | tostring)), value: .value.when}) | from_entries) as $criteria |
@@ -509,6 +558,7 @@ REQUEST=$(jq -n --rawfile brief "$TASK_TEXT" --arg project "$PROJECT" --arg mode
     # No row is assumed: the captain picks from every row (status captain-pick).
     jq -n '{model: null, requestId: null, answers: {rule: {choice: "default", confidence: 0, probabilities: {}}, profile: {choice: "", confidence: 0, probabilities: {}}}}' > "$RESP_FILE"
   fi
+fi
 
 # ---- plan evidence: declared plans in config/accounts.json ---------------------
 PLAN_CONFIG='{}'
@@ -534,9 +584,11 @@ done
 SQ=false
 SHARED_QUOTA=$(jq -r '.shared_quota // false' "$RULES" 2>/dev/null) || SHARED_QUOTA=false
 [ "$SHARED_QUOTA" != true ] || SQ=true
-if [ "$SQ" = true ]; then
+# Every pipeline profile names an account, so that mode never reads the home store.
+if [ "$SQ" = true ] || [ "$MODE" = pipeline ]; then
   printf '{"providers":[]}\n' > "$QUOTA"
-else
+fi
+if [ "$SQ" = false ]; then
   command -v quota-axi >/dev/null 2>&1 || emit_error "quota-axi not installed"
 fi
 # fm_dispatch_recent_read <cache-file> <fresh-file> <read-ok 0|1> <claude> <pi> <codex>: R11. Turns a
@@ -589,7 +641,7 @@ gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapsh
   fi
   mv "$fresh" "$QUOTA"
 }
-if [ "$SQ" = false ]; then
+if [ "$SQ" = false ] && [ "$MODE" = worker ]; then
   home_quota_error=$(gather_home_quota) || emit_error "$home_quota_error"
 fi
 gather_account_snapshot() {  # <account>: refresh ACCOUNT_QUOTAS[account] from its pinned store
@@ -632,7 +684,14 @@ while IFS= read -r account; do
     continue
   fi
   gather_account_snapshot "$account"
-done < <(jq -r '[((.rules // [])[] | .use | if type == "array" then .[] else . end), (.default // empty | if type == "array" then .[] else . end) | .account // empty] | unique[]' "$RULES")
+done < <(jq -r --arg mode "$MODE" --arg step "$STEP" '
+  if $mode == "pipeline" then [(.pipeline_rows // [])[] | select(.steps | index($step)) | .use[] | .account] | unique[]
+  else [((.rules // [])[] | .use | if type == "array" then .[] else . end), (.default // empty | if type == "array" then .[] else . end) | .account // empty] | unique[] end' "$RULES")
+# Routing off or an unregistered seat is a configuration fact, never quota exhaustion.
+if [ "$MODE" = pipeline ]; then
+  unrouted=$(jq -r --argjson quotas "$ACCOUNT_QUOTAS" --arg step "$STEP" '[(.pipeline_rows // [])[] | select(.steps | index($step)) | .use[] | .account | select($quotas[.] == null)] | unique | join(", ")' "$RULES")
+  [ -z "$unrouted" ] || die "pipeline seat not routable (cross-account routing off or account not registered): $unrouted"
+fi
 
 # ---- C5 round-robin slot: a fixed rotation over exactly tied candidates --------
 TIE_RR_FILE=$STATE/dispatch-tie-round-robin
@@ -640,11 +699,11 @@ TIE_RR=$(cat "$TIE_RR_FILE" 2>/dev/null) || TIE_RR=0
 case "$TIE_RR" in '' | *[!0-9]*) TIE_RR=0 ;; esac
 [ "${#TIE_RR}" -le 9 ] || TIE_RR=0
 # ---- resolution: declared gates + quota evidence + argmax, all in jq ----------
-fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
-  jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
-    --argjson final "${3:-false}" --arg jev_failed "$JEV_FAILED_REASON" --argjson force_pick "$FORCE_PICK" --arg delivery "$BRIEF_DELIVERY" \
-    --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
-  ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
+# Seat evaluation shared by worker and pipeline resolution: quota evidence,
+# completeness, reserve and seat-tier holds, and the spend-priority argmax. It
+# expects $cfg and $q bound, and the --argjson values both programs pass.
+# shellcheck disable=SC2016  # a jq program, expanded by jq and not the shell
+FM_DR_SEAT_JQ='
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
   def account_quota($c): (if $c.account then $account_quotas[$c.account].snapshot else $q end);
   def prov($p; $lane): quota_row(.; $p; $lane);
@@ -821,15 +880,6 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
          reading_age: $reading_age, eligible: true, reason: "ok"}
       end
     end;
-  def rule_at($c):
-    if ($c | test("^rule_[1-9][0-9]*$")) then
-      ($c | ltrimstr("rule_") | tonumber) as $n |
-      if $n <= (($cfg.rules // []) | length) then $cfg.rules[$n - 1] else null end
-    else null end;
-  def declared_confidence($c): rule_at($c) as $x | $x != null and ($x | has("min_confidence"));
-  def confidence_floor($c): if declared_confidence($c) then rule_at($c).min_confidence else ($floor | tonumber) end;
-  # Captain-pick evidence: every row of the table, most probable first when Jev
-  # answered, each candidate evaluated exactly as a clear resolution would be.
   # Fallback-only reserve tier over one candidate set (see the header).
   def reserve_tier: . as $cands | map(. as $cand |
     if (($cand.profile.fallback_only // false) | not) or $cand.provider == null then $cand
@@ -863,6 +913,128 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
             ("seat_tier held: an earlier seat still has capacity (" + ([$live[] | select(seat_rank(.profile) == $open) | seat_label] | join(", ")) + ")")}
         else . end | del(.at_limit))
     end;
+  # Spend-priority argmax over a ranked candidate set. C5: an exact tie goes to
+  # the sooner reset of the binding window, then to a fixed round-robin over a
+  # stable order; both are logged.
+  def reset_epoch($c): ($c.binding_reset // null) as $r | if ($r | type) == "string" then ($r | try fromdateiso8601 catch null) else null end;
+  def rank_winner:
+    . as $ranked |
+    ($ranked | max_by(.spendPriority)) as $best |
+    ([$ranked[] | select(.spendPriority == $best.spendPriority)]) as $ties |
+    (if ($ties | length) < 2 then {winner: $best}
+     else
+       ([$ties[] | reset_epoch(.)] | map(select(. != null)) | min) as $soonest |
+       (if $soonest == null then $ties else [$ties[] | select(reset_epoch(.) == $soonest)] end
+         | sort_by([(.profile.account // ""), .profile.harness, (.profile.model // ""), (.profile.effort // "")])) as $ordered |
+       ($rr % ($ordered | length)) as $slot |
+       {winner: $ordered[$slot], round_robin: (($ordered | length) > 1),
+        tie_break: ("\($ties | length) candidates tied at spendPriority \($best.spendPriority); " +
+          (if $soonest == null then "no binding reset known" else "sooner binding reset \($soonest | todate) kept \($ordered | length)" end) +
+          (if ($ordered | length) > 1 then "; round-robin slot \($slot + 1) of \($ordered | length)" else "" end) +
+          " -> \($ordered[$slot].profile.harness):\($ordered[$slot].profile.model // "default")\(if $ordered[$slot].profile.account then " @" + $ordered[$slot].profile.account else "" end)")}
+     end);
+'
+# Pipeline resolution for one step's fixed row (see the header): no model, no
+# receipt, and every pool decision made by the shared seat logic above.
+fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
+  jq -cn --arg step "$STEP" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
+    --argjson final "${3:-false}" --arg delivery '' --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
+  ($rules[0]) as $cfg | ($quota[0]) as $q |
+'"$FM_DR_SEAT_JQ"'
+  # The weekly floor reads the weekly window itself, because a row bounded by
+  # both windows would also trip on a live five-hour window. Room left must stay
+  # above the floor; a floor that cannot be read never fails open at the deadline.
+  def weekly_window($e): reserve_weekly_window(account_quota($e.profile) // {providers: []}; $e.provider; lane_of($e.profile));
+  def apply_weekly_floor:
+    . as $e | $e.profile.weekly_floor_percent as $f |
+    if $f == null or $sq or (($e.eligible or ($e.incomplete // false)) | not) then $e
+    else (weekly_window($e).percentRemaining) as $pct |
+      if ($pct | type) == "number" then
+        if $pct <= $f then
+          ($e | del(.incomplete, .windows_missing, .unranked)) + {eligible: false, floor_stop: true, reason: "weekly floor: \($pct)% left, stops at \($f)%"}
+        else $e end
+      elif $final then
+        ($e | del(.incomplete, .windows_missing, .unranked)) + {eligible: false, reason: "weekly floor \($f)% is unverifiable: no weekly reading"}
+      else
+        $e + {eligible: false, incomplete: true, windows_missing: (($e.windows_missing // []) + ["weekly"] | unique), reason: "weekly floor \($f)% is unmeasured"}
+      end
+    end;
+  # A live window that will not last: projected exhaustion inside the usable
+  # runway limit. An idle five-hour window with no reset stays noise.
+  def limiting_ids: [(.runway.limitingWindowId // empty), (.runway.limitingWindowIds // [])[], (.limitingWindowIds // [])[]];
+  def short_runway($e):
+    if $sq then false
+    else $e.provider as $p | lane_of($e.profile) as $lane | account_quota($e.profile) |
+      five_hour_ids($p; $lane) as $five | provider_windows($p; $lane) as $windows |
+      any(applicable($p; $lane; ($e.profile.model // ""); ($e.profile.quota_scope // null))[];
+        (.runway.status // "") == "projected_exhaustion"
+        and ((.runway.usableRunwaySeconds | type) == "number" and .runway.usableRunwaySeconds < 5400)
+        and (limiting_ids as $ids | (($ids | length) > 0 and all($ids[]; . as $id |
+              ($five | index($id)) != null
+              and (([$windows[] | select(.id == $id)] | first | .resetsAt? | type) != "string"))) | not))
+    end;
+  # When an out seat comes back: its emptied windows (the latest of them), else
+  # its weekly window. Null when no reset is known.
+  def seat_reset($e):
+    (account_quota($e.profile) // {providers: []}) as $snap |
+    ($snap | provider_windows($e.provider; lane_of($e.profile))) as $windows |
+    ($snap | [rows($e.provider; lane_of($e.profile))[] | select((.runway.status // "") == "exhausted_now") | limiting_ids[]]) as $limiting |
+    ([$windows[] | select((.resetsAt | type) == "string") | select(((.percentRemaining | type) == "number" and .percentRemaining <= 0) or (.id as $id | $limiting | index($id)) != null) | clean_reset(.resetsAt)] | max) as $emptied |
+    (reserve_weekly_window($snap; $e.provider; lane_of($e.profile)).resetsAt) as $weekly |
+    if (($e.floor_stop // false) | not) and $emptied != null then $emptied
+    elif ($weekly | type) == "string" then clean_reset($weekly)
+    else $emptied end;
+  ([($cfg.pipeline_rows // [])[] | select(.steps | index($step))] | first) as $row |
+  ($row.use | map(. as $c | evaluate($c) | apply_weekly_floor | . + {out_reason: .reason}) | seat_tier_hold) as $cands |
+  def seat_view: {seat: .profile.account, pool: .profile.pool, tier: .profile.seat_tier, eligible: (.eligible // false), reason: .reason,
+    remaining: (.pct // null), spendPriority: (.spendPriority // null), runway: (.runway // null)};
+  ([$cands[] | select(.incomplete)]) as $incomplete |
+  ([$cands[] | select(.eligible or (.incomplete // false))]) as $open |
+  if ($incomplete | length) > 0 and ($final | not) then
+    {status: "incomplete", step: $step, reason: "quota window evidence incomplete", candidates: [$cands[] | seat_view],
+     incomplete: [$incomplete[] | {account: .profile.account, provider: (.provider // null), missing: (.windows_missing // []), retry_after: (.retry_after // null)}]}
+  elif ($open | length) == 0 then
+    {status: "exhausted", step: $step, reason: "quota exhausted: no seat with room in any pool",
+     seats: [$cands[] | {seat: .profile.account, pool: .profile.pool, reset: seat_reset(.), reason: .out_reason}]}
+  else
+    ([$open[] | select(.eligible and ((.unranked // false) | not))]) as $ready |
+    ([$ready[] | select(short_runway(.) | not)]) as $lasting |
+    (if ($lasting | length) > 0 then $lasting else $ready end) as $ranked |
+    (if ($ready | length) == 0 then {winner: ($open | first), measured: false}
+     elif $sq then {winner: ($ready | first), measured: true}
+     else ($ranked | rank_winner) + {measured: true} end) as $tb |
+    ($tb.winner) as $w |
+    ($ready | length) as $n_ready |
+    ([$ready[] | select(short_runway(.)) | .profile.account]) as $short |
+    {status: "ok", step: $step, seat: $w.profile.account, harness: $w.profile.harness, model: ($w.profile.model // null), effort: ($w.profile.effort // null),
+     provider: ($w.provider // null), pool: $w.profile.pool, tier: $w.profile.seat_tier, reasoning_class: $w.profile.reasoning_class, measured: $tb.measured,
+     reason: ("pool \($w.profile.pool) tier \($w.profile.seat_tier): " +
+       (if ($tb.measured | not) then "quota unreadable, first seat of the open tier"
+        elif $sq then "quota ranking off, declared order"
+        else "best spendPriority of \($ranked | length) seat(s)" end) +
+       (if ($short | length) > 0 and ($lasting | length) > 0 then "; \($short | join(", ")) will not last to reset" else "" end) +
+       (if ($n_ready > 0 and ($lasting | length) == 0) then "; no open seat lasts to reset" else "" end) +
+       (if $w.profile.pool != ([$row.use[].pool] | min) then "; pool \([$row.use[].pool] | min) has no seat with room" else "" end)),
+     candidates: [$cands[] | seat_view]}
+    + (if $tb.tie_break then {tie_break: $tb.tie_break, tie_round_robin: ($tb.round_robin // false)} else {} end)
+  end'
+}
+fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
+  if [ "$MODE" = pipeline ]; then fm_dispatch_pipeline_json "$@"; return; fi
+  jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
+    --argjson final "${3:-false}" --arg jev_failed "$JEV_FAILED_REASON" --argjson force_pick "$FORCE_PICK" --arg delivery "$BRIEF_DELIVERY" \
+    --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
+  ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
+'"$FM_DR_SEAT_JQ"'
+  def rule_at($c):
+    if ($c | test("^rule_[1-9][0-9]*$")) then
+      ($c | ltrimstr("rule_") | tonumber) as $n |
+      if $n <= (($cfg.rules // []) | length) then $cfg.rules[$n - 1] else null end
+    else null end;
+  def declared_confidence($c): rule_at($c) as $x | $x != null and ($x | has("min_confidence"));
+  def confidence_floor($c): if declared_confidence($c) then rule_at($c).min_confidence else ($floor | tonumber) end;
+  # Captain-pick evidence: every row of the table, most probable first when Jev
+  # answered, each candidate evaluated exactly as a clear resolution would be.
   def row_ids: [(($cfg.rules // []) | to_entries[] | "rule_\(.key + 1)"), (if $cfg | has("default") then "default" else empty end)];
   def row_use($id): if $id == "default" then profiles($cfg.default // null) else profiles(rule_at($id).use) end;
   def row_floor($id): (rule_at($id).floor // null) as $f | if $sq or $f == null then "none" else ($q | floor_state($f; $f.provider; "")) end;
@@ -1013,23 +1185,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       ($pickable | all((.profile.reasoning_class | type) == "number")) as $all_classed |
       (if $all_classed then ($pickable | map(.profile.reasoning_class) | max) else null end) as $strongest |
       (if $all_classed then [$pickable[] | select(.profile.reasoning_class == $strongest)] else $pickable end) as $ranked |
-      ($ranked | max_by(.spendPriority)) as $best |
-      ([$ranked[] | select(.spendPriority == $best.spendPriority)]) as $ties |
-      # C5: an exact tie goes to the sooner reset of the binding window, then
-      # to a fixed round-robin over a stable order; both are logged.
-      def reset_epoch($c): ($c.binding_reset // null) as $r | if ($r | type) == "string" then ($r | try fromdateiso8601 catch null) else null end;
-      (if ($ties | length) < 2 then {winner: $best}
-       else
-         ([$ties[] | reset_epoch(.)] | map(select(. != null)) | min) as $soonest |
-         (if $soonest == null then $ties else [$ties[] | select(reset_epoch(.) == $soonest)] end
-           | sort_by([(.profile.account // ""), .profile.harness, (.profile.model // ""), (.profile.effort // "")])) as $ordered |
-         ($rr % ($ordered | length)) as $slot |
-         {winner: $ordered[$slot], round_robin: (($ordered | length) > 1),
-          tie_break: ("\($ties | length) candidates tied at spendPriority \($best.spendPriority); " +
-            (if $soonest == null then "no binding reset known" else "sooner binding reset \($soonest | todate) kept \($ordered | length)" end) +
-            (if ($ordered | length) > 1 then "; round-robin slot \($slot + 1) of \($ordered | length)" else "" end) +
-            " -> \($ordered[$slot].profile.harness):\($ordered[$slot].profile.model // "default")\(if $ordered[$slot].profile.account then " @" + $ordered[$slot].profile.account else "" end)")}
-       end) as $tb |
+      ($ranked | rank_winner) as $tb |
       if false then empty
       else ($tb.winner) as $winner |
         (if $ambiguous then ([$union_ids[] | . as $id | (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | select(index($winner.profile)) | $id] | first) else $sel.source end) as $winner_row |
@@ -1055,7 +1211,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   end'
 }
 RESULT=$(fm_dispatch_resolve_json 1 0) || emit_error "resolution failed"
-QUOTA_DEADLINE=$(( $(date +%s) + QUOTA_WAIT_SECONDS ))
+[ "$MODE" = pipeline ] || QUOTA_DEADLINE=$(( $(date +%s) + QUOTA_WAIT_SECONDS ))
 quota_attempts=1
 warmups_run=0
 fm_dispatch_epoch_ms_of() {  # <iso8601>: epoch milliseconds, or nothing when unparsable
@@ -1108,6 +1264,31 @@ if [ "$(jq -r '.status // ""' <<<"$RESULT")" = incomplete ]; then
   RESULT=$(fm_dispatch_resolve_json "$quota_attempts" "$warmups_run" true) || emit_error "resolution failed"
 fi
 
+fm_dispatch_tie_rr_advance() {  # move the shared rotation on after a round-robin pick
+  [ "$(jq -r '(.status == "clear" or .status == "ok") and (.tie_round_robin // false)' <<<"$RESULT")" = true ] || return 0
+  mkdir -p "$STATE" 2>/dev/null || true
+  if tie_rr_tmp=$(mktemp "$TIE_RR_FILE.XXXXXX" 2>/dev/null); then
+    if ! { printf '%s\n' "$(( (TIE_RR + 1) % 1000000 ))" > "$tie_rr_tmp" && mv -f "$tie_rr_tmp" "$TIE_RR_FILE"; }; then
+      rm -f "$tie_rr_tmp"
+    fi
+  fi
+}
+if [ "$MODE" = pipeline ]; then
+  printf '%s\n' "$RESULT"
+  case "$(jq -r '.status // ""' <<<"$RESULT")" in
+    ok)
+      fm_dispatch_tie_rr_advance
+      exit 0
+      ;;
+    exhausted)
+      jq -r 'def flat: tostring | gsub("[\t\r\n]"; " ");
+        .seats[] | "dispatch-resolve: \(.seat | flat) (pool \(.pool | flat)) has no room, resets \((.reset // "unknown") | flat): \(.reason | flat)"' <<<"$RESULT" >&2
+      exit 3
+      ;;
+    *) die "pipeline resolution failed" ;;
+  esac
+fi
+
 TEXT=$(jq -r '
   def flat: tostring | gsub("[\t\r\n]"; " ");
   def show($value): ($value // "-") | flat;
@@ -1143,14 +1324,7 @@ TEXT=$(jq -r '
       + (if .chosen.profile.effort then " --effort \(.chosen.profile.effort | shell_arg)" else "" end)
       + (if .chosen.profile.account then " --account \(.chosen.profile.account | shell_arg)" else "" end) else empty end)' <<<"$RESULT") || emit_error "output rendering failed"
 printf '%s\n' "$TEXT"
-if [ "$(jq -r '(.status == "clear") and (.tie_round_robin // false)' <<<"$RESULT")" = true ]; then
-  mkdir -p "$STATE" 2>/dev/null || true
-  if tie_rr_tmp=$(mktemp "$TIE_RR_FILE.XXXXXX" 2>/dev/null); then
-    if ! { printf '%s\n' "$(( (TIE_RR + 1) % 1000000 ))" > "$tie_rr_tmp" && mv -f "$tie_rr_tmp" "$TIE_RR_FILE"; }; then
-      rm -f "$tie_rr_tmp"
-    fi
-  fi
-fi
+fm_dispatch_tie_rr_advance
 # Missing classes let spare quota alone decide between models: say so on every run.
 UNCLASSED=$(jq -r 'def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
   [((.rules // [])[] | profiles(.use)[]), profiles(.default // null)[]] | "\([.[] | select((.reasoning_class | type) != "number")] | length) \(length)"' "$RULES")

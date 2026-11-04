@@ -9,6 +9,7 @@
 #   R11 a rate-limited read reuses that store's last good reading under 30 min
 #   S4  a credential failure is named as such, never as unknown quota
 #   T   seat_tier strict order, per-delivery tiers, and their reserve and class rules
+#   P   pipeline mode: fixed row per step, pools, weekly floor, live five-hour window
 #   A   provider-aware, symlink-canonical seat lookup and the one-shot migration
 set -u
 # shellcheck source=tests/lib.sh
@@ -332,6 +333,248 @@ assert_contains "$out" 'credential unusable for provider claude on account claud
 assert_contains "$(chosen)" "--account 'claude1'" 'the remaining worker seat runs the work'
 reset_quota
 pass 'C3, R11 and S4: unreadable five-hour windows are ignored, recent readings reused under 30 minutes, credential failures named'
+
+# ---- P: pipeline seat rows -------------------------------------------------------
+# The fixed row per no-mistakes step: pool 1 is claude1 and claude2, pool 2 is
+# claude3 above its weekly floor and then the Codex seats. A healthy glm seat with
+# the most room stays out, because no row may list a banned provider.
+mkdir -p "$STORES/codex2"
+cp "$ACCOUNTS" "$TMP_ROOT/accounts-original"
+jq --arg store "$STORES" '.accounts.codex2 = {provider:"codex",codex:"\($store)/codex2",pi:"\($store)/pi",plans:{codex:"Business"}}' "$TMP_ROOT/accounts-original" > "$ACCOUNTS"
+cat > "$RULES" <<'JSON'
+{"rules":[{"when":"Any work","use":[
+   {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","reasoning_class":3}]}],
+ "pipeline_rows":[
+  {"steps":["review","test","ci","rebase","fixes"],"never_providers":["zai"],"use":[
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude1","pool":1,"seat_tier":1,"reasoning_class":4},
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude2","pool":1,"seat_tier":1,"reasoning_class":4},
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude3","pool":2,"seat_tier":2,"reasoning_class":4,"weekly_floor_percent":20},
+    {"harness":"codex","model":"gpt-6.1-sol","effort":"medium","account":"codex1","pool":2,"seat_tier":3,"reasoning_class":4},
+    {"harness":"codex","model":"gpt-6.1-sol","effort":"medium","account":"codex2","pool":2,"seat_tier":3,"reasoning_class":4}]},
+  {"steps":["document","pr"],"never_providers":["zai"],"use":[
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","pool":1,"seat_tier":1,"reasoning_class":3},
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude2","pool":1,"seat_tier":1,"reasoning_class":3},
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude3","pool":2,"seat_tier":2,"reasoning_class":3,"weekly_floor_percent":20},
+    {"harness":"codex","model":"gpt-6.1-sol","effort":"low","account":"codex1","pool":2,"seat_tier":3,"reasoning_class":3},
+    {"harness":"codex","model":"gpt-6.1-sol","effort":"low","account":"codex2","pool":2,"seat_tier":3,"reasoning_class":3}]}]}
+JSON
+cp "$RULES" "$TMP_ROOT/rules-pipeline"
+pipeline_quota() {
+  reset_quota
+  set_quota claude1 claude 70 1.3
+  set_quota claude2 claude 60 1.2
+  set_quota claude3 claude 80 0.2
+  set_quota codex1 codex 90 0.8
+  set_quota codex2 codex 90 0.7
+}
+# tweak <key> <jq filter over the provider's single row and windows>
+tweak() { jq ".providers[0] |= ($2)" "$QDIR/$1.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/$1.json"; }
+# A live five-hour window: projected out of room in <seconds>, row bound by five_hour.
+short_seat() { tweak "$1" ".quotaSemantics.effectiveAvailability[0].runway = {status:\"projected_exhaustion\",usableRunwaySeconds:$2,limitingWindowId:\"five_hour\"}"; }
+# The five-hour window is empty, the weekly window still has room.
+five_hour_out() { tweak "$1" ".windows[0].percentRemaining = 0 | .windows[0].resetsAt = \"$2\" | .quotaSemantics.effectiveAvailability[0].effectivePercentRemaining = 0 | .quotaSemantics.effectiveAvailability[0].runway = {status:\"exhausted_now\",limitingWindowId:\"five_hour\"}"; }
+rate_limited() { tweak "$1" '.state = {status:"rate_limited", error:"quota endpoint rate limited"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]}'; }
+# One attempt means no retry wait; the bound must still outlast five reads on a slow host.
+pipe() { code=0; pout=$(FM_DISPATCH_QUOTA_WAIT_SECONDS=30 "$TOOL" pipeline --step "$1" 2>"$TMP_ROOT/pipe-err") || code=$?; perr=$(cat "$TMP_ROOT/pipe-err"); }
+pfield() { jq -r "$1" <<<"$pout"; }
+receipts() { find "$HOME_DIR/state/dispatch-receipt" -name 'dispatch-*.json' 2>/dev/null | wc -l | tr -d ' '; }
+
+pipeline_quota
+before_requests=$(wc -l < "$LOG"); before_receipts=$(receipts)
+pipe review
+expect_code 0 "$code" "a pipeline step resolves: $pout $perr"
+assert_equals 'ok claude1 claude opus medium 1' "$(pfield '"\(.status) \(.seat) \(.harness) \(.model) \(.effort) \(.pool)"')" 'pool 1 best spendPriority wins with its row profile'
+assert_contains "$(pfield .reason)" 'pool 1 tier 1' 'the reason names the pool'
+assert_equals '5' "$(pfield '.candidates | length')" 'every seat of the row is reported'
+assert_equals "$before_requests" "$(wc -l < "$LOG")" 'pipeline mode makes no model call'
+assert_equals "$before_receipts" "$(receipts)" 'pipeline mode writes no receipt'
+pipe document
+assert_equals 'claude1 sonnet high 3' "$(pfield '"\(.seat) \(.model) \(.effort) \(.reasoning_class)"')" 'each step takes its own row'
+write_response rule_1 0.95 '{"rule_1":0.95,"default":0.05}'
+run "$BRIEF" --task six-p
+assert_not_contains "$(tail -1 "$LOG")" 'gpt-6.1-sol' 'worker requests never show the pipeline rows to Jev'
+assert_contains "$out" "--account 'claude1'" 'worker resolution ignores the pipeline rows'
+pass 'P: a step resolves from its fixed row with no model call and no receipt'
+
+# Tie-break: the shared rule, soonest reset and then the round-robin.
+pipeline_quota
+set_quota claude1 claude 70 1.3 through_reset 2030-01-05T00:00:00Z
+set_quota claude2 claude 70 1.3 through_reset 2030-01-03T00:00:00Z
+tweak claude1 '.quotaSemantics.effectiveAvailability[0].boundedBy = ["seven_day"]'
+tweak claude2 '.quotaSemantics.effectiveAvailability[0].boundedBy = ["seven_day"]'
+pipe review
+assert_equals claude2 "$(pfield .seat)" 'an exact tie goes to the sooner binding reset'
+assert_contains "$(pfield .tie_break)" 'sooner binding reset' 'the tie-break is logged'
+set_quota claude1 claude 70 1.3
+set_quota claude2 claude 70 1.3
+pipe review; first_tied=$(pfield .seat)
+pipe review; second_tied=$(pfield .seat)
+assert_not_contains "$first_tied" "$second_tied" 'a full tie rotates between the seats'
+pass 'P: ties use the shared reset and round-robin rule'
+
+# Five-hour window: counts for the pipeline, never opens pool 2 while a seat has room.
+pipeline_quota
+set_quota claude2 claude 60 5
+pipe review
+assert_equals claude2 "$(pfield .seat)" 'divergence check: claude2 outranks claude1 on spendPriority'
+short_seat claude2 3808
+pipe review
+assert_equals claude1 "$(pfield .seat)" 'a seat that will not last to reset loses to one that does'
+assert_contains "$(pfield .reason)" 'claude2 will not last to reset' 'the reason names the seat that lost'
+pipeline_quota
+set_quota claude2 claude 60 5
+short_seat claude2 5400
+pipe review
+assert_equals claude2 "$(pfield .seat)" 'a runway of 90 minutes is not short'
+pipeline_quota
+set_quota claude2 claude 60 5
+short_seat claude2 3808
+tweak claude2 'del(.windows[0].resetsAt)'
+pipe review
+assert_equals claude2 "$(pfield .seat)" 'an idle five-hour window with no reset stays noise'
+pipeline_quota
+short_seat claude1 600
+short_seat claude2 700
+pipe review
+assert_equals '1 claude1' "$(pfield '"\(.pool) \(.seat)"')" 'short runways alone keep pool 1, ranked as usual'
+assert_contains "$(pfield .reason)" 'no open seat lasts to reset' 'that is stated'
+pass 'P: a live five-hour window decides inside a tier and does not open pool 2'
+
+# Pool 2 opens only when pool 1 has no room, and claude3 comes first inside it.
+pipeline_quota
+five_hour_out claude1 2030-01-01T05:00:00Z
+pipe review
+assert_equals '1 claude2' "$(pfield '"\(.pool) \(.seat)"')" 'one pool 1 seat with room keeps pool 1'
+five_hour_out claude2 2030-01-01T06:00:00Z
+pipe review
+assert_equals '2 claude3 opus medium' "$(pfield '"\(.pool) \(.seat) \(.model) \(.effort)"')" 'claude3 above its floor beats Codex despite a lower spendPriority'
+assert_contains "$(pfield .reason)" 'pool 1 has no seat with room' 'opening pool 2 is stated'
+pass 'P: pool 2 opens on an empty pool 1, even on five-hour limits, claude3 first'
+
+# The claude3 weekly floor: weekly room decides, and a low five-hour row does not trip it.
+pipeline_quota
+five_hour_out claude1 2030-01-01T05:00:00Z
+five_hour_out claude2 2030-01-01T06:00:00Z
+set_quota claude3 claude 21 0.2
+pipe review
+assert_equals claude3 "$(pfield .seat)" 'above the floor claude3 still runs'
+set_quota claude3 claude 20 0.2
+pipe review
+assert_equals '2 codex1 codex gpt-6.1-sol medium' "$(pfield '"\(.pool) \(.seat) \(.harness) \(.model) \(.effort)"')" 'at the floor claude3 stops and Codex runs at the class effort'
+assert_contains "$(pfield '.candidates[] | select(.seat == "claude3") | .reason')" 'weekly floor: 20% left, stops at 20%' 'the floor stop is named'
+set_quota claude3 claude 80 0.2
+tweak claude3 '.windows[0].percentRemaining = 15 | .quotaSemantics.effectiveAvailability[0].effectivePercentRemaining = 15'
+pipe review
+assert_equals claude3 "$(pfield .seat)" 'a low five-hour row never trips the weekly floor'
+set_quota claude3 claude 20 0.2
+pipe document
+assert_equals 'codex1 low 3' "$(pfield '"\(.seat) \(.effort) \(.reasoning_class)"')" 'Codex takes the step class of its row'
+pass 'P: claude3 stops at its weekly floor, on the weekly window only'
+
+# Both pools empty: one line per seat with its reset, no downgrade, no GLM.
+pipeline_quota
+five_hour_out claude1 2030-01-01T05:00:00Z
+five_hour_out claude2 2030-01-01T06:00:00Z
+set_quota claude3 claude 10 0.2 through_reset 2030-01-07T00:00:00Z
+set_quota codex1 codex 0 0.8 through_reset 2030-01-08T00:00:00Z
+set_quota codex2 codex 0 0.7 through_reset 2030-01-09T00:00:00Z
+pipe review
+expect_code 3 "$code" "both pools empty exits 3: $pout"
+assert_equals 'exhausted' "$(pfield .status)" 'the outcome is exhausted'
+assert_equals 'null' "$(pfield '.seat // null')" 'no seat is named as chosen'
+assert_contains "$(pfield .reason)" 'quota exhausted' 'the outcome uses the recognised limit text'
+assert_equals '5' "$(printf '%s\n' "$perr" | wc -l | tr -d ' ')" "one line per seat: $perr"
+assert_contains "$perr" 'claude1 (pool 1) has no room, resets 2030-01-01T05:00:00Z' 'a five-hour seat names its five-hour reset'
+assert_contains "$perr" 'claude2 (pool 1) has no room, resets 2030-01-01T06:00:00Z' 'each seat names its own reset'
+assert_contains "$perr" 'claude3 (pool 2) has no room, resets 2030-01-07T00:00:00Z: weekly floor: 10% left' 'a floored seat names its weekly reset'
+assert_contains "$perr" 'codex1 (pool 2) has no room, resets 2030-01-08T00:00:00Z' 'a Codex seat names its reset'
+assert_contains "$perr" 'codex2 (pool 2) has no room, resets 2030-01-09T00:00:00Z' 'every Codex seat is listed'
+assert_not_contains "$pout$perr" 'glm' 'no GLM seat is offered'
+pass 'P: both pools empty fail with one line per seat and its reset, and no GLM'
+
+# Unreadable quota waits within its bound and never opens the next pool.
+pipeline_quota
+rate_limited claude2
+pipe review
+assert_equals 'claude1 true' "$(pfield '"\(.seat) \(.measured)"')" 'a measured seat of the open tier wins over an unreadable one'
+pipeline_quota
+rate_limited claude1
+rate_limited claude2
+pipe review
+expect_code 0 "$code" "both unreadable still resolve: $perr"
+assert_equals '1 claude1 false' "$(pfield '"\(.pool) \(.seat) \(.measured)"')" 'both unreadable: the first seat of the tier, marked unmeasured, pool 2 stays shut'
+assert_contains "$(pfield .reason)" 'quota unreadable' 'the reason says so'
+pipeline_quota
+five_hour_out claude1 2030-01-01T05:00:00Z
+five_hour_out claude2 2030-01-01T06:00:00Z
+rate_limited claude3
+pipe review
+assert_equals 'codex1' "$(pfield .seat)" 'an unreadable weekly floor never lets claude3 fail open'
+assert_contains "$(pfield '.candidates[] | select(.seat == "claude3") | .reason')" 'weekly floor 20% is unverifiable' 'that is named'
+pipeline_quota
+cat > "$FAKEBIN/quota-axi-hung" <<'SH'
+#!/usr/bin/env bash
+sleep 300
+SH
+chmod +x "$FAKEBIN/quota-axi-hung"
+cp "$FAKEBIN/quota-axi" "$FAKEBIN/quota-axi-real"
+cp "$FAKEBIN/quota-axi-hung" "$FAKEBIN/quota-axi"
+started=$(date +%s)
+code=0; pout=$(FM_DISPATCH_QUOTA_WAIT_SECONDS=900 FM_DISPATCH_QUOTA_ATTEMPTS=1000 "$TOOL" pipeline --step review 2>/dev/null) || code=$?
+elapsed=$(( $(date +%s) - started ))
+cp "$FAKEBIN/quota-axi-real" "$FAKEBIN/quota-axi"
+expect_code 0 "$code" 'a hung quota read still resolves'
+[ "$elapsed" -le 40 ] || fail "the quota wait is bounded to 30 seconds, took $elapsed"
+assert_equals '1 claude1 false' "$(pfield '"\(.pool) \(.seat) \(.measured)"')" 'a hung read gives the first seat of pool 1 within the bound'
+pass 'P: unreadable quota is bounded to 30 seconds and never opens the next pool'
+
+# Shared-quota homes keep the declared order.
+pipeline_quota
+jq '.shared_quota = true' "$TMP_ROOT/rules-pipeline" > "$RULES"
+pipe review
+assert_equals 'claude1 true' "$(pfield '"\(.seat) \(.measured)"')" 'a shared-quota home takes the declared order'
+cp "$TMP_ROOT/rules-pipeline" "$RULES"
+pass 'P: a shared-quota home takes the declared order'
+
+# Usage and configuration errors exit 2 and name the fault.
+pipe nosuchstep
+expect_code 2 "$code" 'a step with no row is a configuration error'
+assert_contains "$perr" 'no pipeline_rows row names step nosuchstep' 'the step is named'
+run pipeline
+expect_code 2 "$code" 'pipeline needs a step'
+run pipeline --step review "$BRIEF"
+expect_code 2 "$code" 'pipeline takes no brief'
+run "$BRIEF" --step review
+expect_code 2 "$code" '--step belongs to pipeline mode'
+bad_rows() {  # <jq edit> <expected text> <what>
+  jq "$1" "$TMP_ROOT/rules-pipeline" > "$RULES"
+  pipe review
+  expect_code 2 "$code" "$3 is a configuration error: $pout"
+  assert_contains "$perr" "$2" "$3 is named"
+  cp "$TMP_ROOT/rules-pipeline" "$RULES"
+}
+bad_rows '.pipeline_rows[0].use += [{"harness":"pi","provider":"zai","model":"zai/glm-5.3","effort":"high","account":"glm","pool":2,"seat_tier":4,"reasoning_class":4}]' 'spends provider zai, which never_providers bans' 'a GLM seat in a row'
+bad_rows 'del(.pipeline_rows[0].never_providers)' 'needs never_providers' 'a row without never_providers'
+bad_rows '.pipeline_rows[0].use[3].reasoning_class = 3' 'share one reasoning_class' 'a fallback that lowers the class'
+bad_rows '.pipeline_rows[0].use[2].seat_tier = 1' 'pool 2 seat_tier values must all follow pool 1' 'a pool 2 seat inside the pool 1 tier'
+bad_rows '.pipeline_rows[0].use[2].fallback_only = true' 'must not set fallback_only' 'fallback_only in a row'
+bad_rows '.pipeline_rows[0].use[2].weekly_floor_percent = "20"' 'weekly_floor_percent must be a number' 'a malformed floor'
+bad_rows '.pipeline_rows[1].steps = ["review"]' 'pipeline step review is named by more than one row' 'a step in two rows'
+bad_rows '.pipeline_rows[0].use[0].account = "nobody"' 'names unregistered account nobody' 'an unregistered seat'
+bad_rows 'del(.pipeline_rows[0].use[0].account)' 'must name an account' 'a seat without an account'
+bad_rows '.pipeline_rows[0].use[0].effort = "ultra"' 'effort must be supported' 'an unsupported effort'
+assert_contains "$(acct fm_account_pipeline_problems "$TMP_ROOT/rules-pipeline")$(jq '.pipeline_rows = {}' "$TMP_ROOT/rules-pipeline" > "$RULES"; acct fm_account_pipeline_problems "$RULES")" 'pipeline_rows must be a non-empty array' 'a malformed rows value is named'
+cp "$TMP_ROOT/rules-pipeline" "$RULES"
+"$ROOT/bin/fm-account-routing.sh" off >/dev/null
+pipe review
+expect_code 2 "$code" 'routing off is not quota exhaustion'
+assert_contains "$perr" 'pipeline seat not routable' 'routing off is named'
+"$ROOT/bin/fm-account-routing.sh" on >/dev/null
+cp "$TMP_ROOT/accounts-original" "$ACCOUNTS"
+cp "$TMP_ROOT/rules-original" "$RULES"
+pipeline_quota
+reset_quota
+pass 'P: malformed rows, unknown steps and unroutable seats are configuration errors'
 
 # ---- A: seat lookup and migration ------------------------------------------------
 ln -s "$STORES/claude3" "$STORES/claude3-alias"
