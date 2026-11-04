@@ -69,6 +69,17 @@
 #   boolean; anything else is a configuration error.
 #   docs/configuration.md "Crew dispatch profiles" owns the declared field.
 #
+# Seat tiers: an optional per-profile positive integer "seat_tier" declares a
+#   strict order within a row, lower first, and an absent one sorts after every
+#   declared tier. Only the lowest tier still holding a candidate that is not
+#   ineligible and not at its weekly limit (the fallback_only test above) stays
+#   in the choice; every later tier is held and never makes the choice
+#   incomplete. Keep-strongest and spendPriority then decide inside that tier.
+#   An optional top-level "seat_tiers_by_delivery" maps a brief's "Delivery
+#   contract: mode=" value to {account: tier} entries that replace "seat_tier"
+#   for those accounts. With no tier declared, behavior is unchanged.
+#   docs/configuration.md "Crew dispatch profiles" owns the declared fields.
+#
 # Never-send check: when the optional $FM_HOME/config/dispatch-never-send list
 #   exists, every string value of the built request is checked against it
 #   before the socket request. Each non-blank, non-# line is a literal matched
@@ -223,6 +234,7 @@ done
 # ---- inputs --------------------------------------------------------------------
 [ -n "$BRIEF" ] || die "brief file required (see --help)"
 [ -r "$BRIEF" ] || die "brief file not readable: $BRIEF"
+BRIEF_DELIVERY=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
 [ -e "$RULES_PATH" ] || [ -L "$RULES_PATH" ] || no_rules
 [ -r "$RULES_PATH" ] || die "rules file not readable: $RULES_PATH"
 command -v jq >/dev/null 2>&1 || die "jq required"
@@ -251,6 +263,7 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
     elif $h == "opencode" or $h == "kimi" or $h == "cursor" then false
     else true end;
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
+  def seat_tier_ok($t): ($t | type) == "number" and $t >= 1 and ($t | floor) == $t;
   def floor_bad($f; $need_provider):
     ($f | type) != "object"
     or (($f.scope | type) != "string") or (($f.scope | length) == 0)
@@ -290,6 +303,8 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   elif any((.rules // [])[]; has("floor") and floor_bad(.floor; true)) then "rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\\z"
   elif any((.rules // [])[] | profiles(.use)[]; type == "object" and has("quota_scope") and ((.quota_scope | type) != "string" or (.quota_scope | length) == 0)) then "each use profile quota_scope must be a non-empty string when present"
   elif any((.rules // [])[] | profiles(.use)[]; type == "object" and has("fallback_only") and ((.fallback_only | type) != "boolean")) then "each use profile fallback_only must be true or false when present"
+  elif any((.rules // [])[] | profiles(.use)[]; type == "object" and has("seat_tier") and (seat_tier_ok(.seat_tier) | not)) then "each use profile seat_tier must be a positive integer when present"
+  elif has("seat_tiers_by_delivery") and ((.seat_tiers_by_delivery | type) != "object" or any(.seat_tiers_by_delivery[]; type != "object" or any(.[]; seat_tier_ok(.) | not))) then "seat_tiers_by_delivery must map each delivery mode to account seat tiers that are positive integers"
   elif any((.rules // [])[] | profiles(.use)[]; profile_bad(.)) then "each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
   elif any((.rules // [])[]; duplicate_profiles(profiles(.use))) then "each rule use must not contain duplicate harness, model, and effort profiles"
   elif any((.rules // [])[] | profiles(.use)[]; (verified(.harness) | not)) then "each use profile must name a verified harness"
@@ -297,6 +312,7 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   elif has("default") and (profiles(.default) | length) == 0 then "default must be a profile object or non-empty profile array"
   elif has("default") and any(profiles(.default)[]; type == "object" and has("quota_scope") and ((.quota_scope | type) != "string" or (.quota_scope | length) == 0)) then "each default profile quota_scope must be a non-empty string when present"
   elif has("default") and any(profiles(.default)[]; type == "object" and has("fallback_only") and ((.fallback_only | type) != "boolean")) then "each default profile fallback_only must be true or false when present"
+  elif has("default") and any(profiles(.default)[]; type == "object" and has("seat_tier") and (seat_tier_ok(.seat_tier) | not)) then "each default profile seat_tier must be a positive integer when present"
   elif has("default") and any(profiles(.default)[]; profile_bad(.)) then "each default profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\\z when present"
   elif has("default") and duplicate_profiles(profiles(.default)) then "default must not contain duplicate harness, model, and effort profiles"
   elif has("default") and any(profiles(.default)[]; (verified(.harness) | not)) then "each default profile must name a verified harness"
@@ -626,7 +642,7 @@ case "$TIE_RR" in '' | *[!0-9]*) TIE_RR=0 ;; esac
 # ---- resolution: declared gates + quota evidence + argmax, all in jq ----------
 fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
-    --argjson final "${3:-false}" --arg jev_failed "$JEV_FAILED_REASON" --argjson force_pick "$FORCE_PICK" \
+    --argjson final "${3:-false}" --arg jev_failed "$JEV_FAILED_REASON" --argjson force_pick "$FORCE_PICK" --arg delivery "$BRIEF_DELIVERY" \
     --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
@@ -832,6 +848,21 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
         reason: ("reserve pick: every non-fallback " + $cand.provider + " seat is at its limit (weekly window at or above 100% used or runway exhausted_now)")}
       end
     end);
+  # Seat tiers over one candidate set (see the header). An absent tier sorts last.
+  def seat_rank($c): ((($cfg.seat_tiers_by_delivery // {})[$delivery] // {})[$c.account // ""] // $c.seat_tier // 1e9);
+  def seat_label: "\(.profile.harness):\(.profile.model // "default")" + (if .profile.account then "@\(.profile.account)" else "" end);
+  def seat_tier_hold:
+    if all(.[]; seat_rank(.profile) == 1e9) then .
+    else map(. + {at_limit: (((.banned // false) | not) and seat_at_limit(.profile))}) |
+      ([.[] | select(.at_limit | not) | select(.eligible or (.incomplete // false))]) as $live |
+      ([$live[] | seat_rank(.profile)] | min) as $open |
+      map(seat_rank(.profile) as $rank | if .at_limit then
+          del(.incomplete, .windows_missing, .unranked) + {eligible: false, reason: "seat_tier \($rank): at its weekly limit"}
+        elif $open != null and $rank > $open and (.eligible or (.incomplete // false)) then
+          del(.incomplete, .windows_missing, .unranked) + {eligible: false, reason:
+            ("seat_tier held: an earlier seat still has capacity (" + ([$live[] | select(seat_rank(.profile) == $open) | seat_label] | join(", ")) + ")")}
+        else . end | del(.at_limit))
+    end;
   def row_ids: [(($cfg.rules // []) | to_entries[] | "rule_\(.key + 1)"), (if $cfg | has("default") then "default" else empty end)];
   def row_use($id): if $id == "default" then profiles($cfg.default // null) else profiles(rule_at($id).use) end;
   def row_floor($id): (rule_at($id).floor // null) as $f | if $sq or $f == null then "none" else ($q | floor_state($f; $f.provider; "")) end;
@@ -840,7 +871,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       (row_floor($id)) as $rf |
       ([row_use($id)[] | . as $c | (provider_of($c)) as $p |
         (if $rf == "below" then {profile: $c, provider: $p, eligible: false, reason: "row floor \(rule_at($id).floor.scope) below \(rule_at($id).floor.min_percent)%"}
-         else evaluate($c) end) + plan_for($c; $p)] | reserve_tier) as $cs |
+         else evaluate($c) end) + plan_for($c; $p)] | reserve_tier | seat_tier_hold) as $cs |
       ([$cs[] | select(.eligible and ((.unranked // false) | not) and ((.incomplete // false) | not)) | .profile.reasoning_class | select(type == "number")] | max // null) as $strongest |
       {id: $id, order: $order, when: (if $id == "default" then $none_criterion else rule_at($id).when end),
        approval: (rule_at($id).approval // null), row_floor: $rf,
@@ -893,7 +924,10 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   # Equal row probabilities keep table order, with default after explicit rules.
   (row_ids | to_entries | map(select(.value as $id | $union_ids | index($id)))
     | sort_by([-$a.probabilities[.value], .key]) | first | .value) as $anchor_id |
-  (if $anchor_id == null then [] else row_use($anchor_id) end) as $anchor_use |
+  # With seat tiers the class comes from the first tier of that row, so a stronger
+  # fallback seat cannot drop the default seat of the row out of the union.
+  (if $anchor_id == null then [] else row_use($anchor_id) end
+    | (map(seat_rank(.)) | min) as $first | map(select(seat_rank(.) == $first))) as $anchor_use |
   (if $ambiguous and ($missing_class | not) then ($anchor_use | map(.reasoning_class) | max) as $strongest | [$union[] | select(.reasoning_class == $strongest)] | unique else $raw_use end) as $decision_use |
   ($ambiguous and any($union_ids[]; rule_at(.).approval == "captain")) as $union_approval |
   ([$union_ids[] | . as $id | rule_at($id) | select(.floor != null) | .floor as $f |
@@ -913,7 +947,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   # every non-fallback candidate of the same provider family is at its limit
   # under the weekly-window seat test above; it then ranks below every
   # non-fallback candidate at selection.
-  ($unbanned | reserve_tier) as $cands |
+  ($unbanned | reserve_tier | seat_tier_hold) as $cands |
   ([$cands[] | select(.incomplete)]) as $incomplete |
   def when_of($c): (if rule_at($c) == null then $none_criterion else rule_at($c).when end | .[0:60]);
   ({

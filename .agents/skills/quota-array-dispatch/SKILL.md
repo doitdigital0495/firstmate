@@ -178,6 +178,7 @@ When no matched profile belongs to the preferred family, preserve the rule's can
 With the field absent, keep the existing candidate set unchanged.
 Print the preferred-family decision, including the reason for any fallback.
 A profile declared `fallback_only` is a reserve tier ranked below every non-fallback candidate; [Crew dispatch profiles](../../../docs/configuration.md#crew-dispatch-profiles-configcrew-dispatchjson) owns its eligibility contract.
+A declared `seat_tier` is a strict order the resolver applies before these steps, and the same section owns it; review the resolver's `seat_tier held` lines rather than ranking across tiers by hand.
 
 Within the resulting candidate set, compare the known `spendPriority` values first, then assess their runway feasibility in descending rank order.
 A higher known scalar is better: positive means paid allowance is on track to reach reset unused, `0` is exact utilization, and negative means overdrawn against the reset clock.
@@ -203,7 +204,7 @@ Unknown or unmeasurable runway cannot prove feasibility: it must already have be
 Do not invent a generic percentage floor, and honor an explicit captain floor for a candidate when one exists.
 
 Firstmate itself spends Claude quota while orchestrating.
-In a six-account home the orchestration login (claude3) is protected in code: its worker profiles carry `"fallback_only": true`, which the resolver holds while any other Claude seat in the choice has weekly capacity and ranks below every other candidate once released, and a measured `floor` caps that reserve; the estimate below is evidence for sizing that floor, not a reason to refuse a Claude worker on claude1 or claude2.
+In a six-account home the orchestration login (claude3) is protected in code: its worker profiles carry `"fallback_only": true`, which the resolver holds while any other Claude seat in the choice has weekly capacity and ranks below every other candidate of its seat tier once released, and a measured `floor` caps that reserve; the estimate below is evidence for sizing that floor, not a reason to refuse a Claude worker on claude1 or claude2.
 For a Claude worker, estimate Firstmate's Claude orchestration demand through each applicable reset from observed usage and already committed supervision work, then include the proposed worker task or slice on every shared credential store.
 If the worker uses a different store, establish the worker's task-inclusive runway on its store and the orchestration runway on Firstmate's store separately; do not debit one store for another's demand.
 Choose Claude only when the task-inclusive worker runway and Firstmate's orchestration runway still reach their respective resets; `through_reset` on a point-in-time reading alone is not proof that adding the worker preserves this reserve.
