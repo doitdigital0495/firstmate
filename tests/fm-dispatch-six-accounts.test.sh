@@ -8,6 +8,7 @@
 #   C3  an unreadable five-hour window is ignored, never incomplete
 #   R11 a rate-limited read reuses that store's last good reading under 30 min
 #   S4  a credential failure is named as such, never as unknown quota
+#   T   seat_tier strict order, per-delivery tiers, and their reserve and class rules
 #   A   provider-aware, symlink-canonical seat lookup and the one-shot migration
 set -u
 # shellcheck source=tests/lib.sh
@@ -174,6 +175,119 @@ assert_contains "$out" 'status: clear' "a held reserve with unknown quota does n
 assert_contains "$(chosen)" "--account 'claude2'" 'the worker seats still decide'
 reset_quota
 pass 'C2 and S9: the claude3 reserve opens only when claude1 and claude2 are both at limit, never with routing off, and never stalls while held'
+
+# ---- T: seat tiers ---------------------------------------------------------------
+# The worker order: claude1, claude2, claude3 reserve, then other families. A
+# stronger or better-funded candidate of a later tier never wins while an
+# earlier seat has capacity.
+cat > "$RULES" <<'JSON'
+{"model_notes":{"claude":"claude line","codex":"codex line","zai":"glm line"},
+ "seat_tiers_by_delivery":{"no-mistakes":{"claude2":1,"claude1":2,"claude3":3}},
+ "rules":[
+  {"when":"Multi-file implementation","use":[
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","seat_tier":1,"reasoning_class":3},
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude1","seat_tier":1,"reasoning_class":4},
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude2","seat_tier":2,"reasoning_class":4},
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude3","seat_tier":3,"fallback_only":true,"reasoning_class":4},
+    {"harness":"pi","provider":"codex","model":"openai-codex/gpt-6.1-sol","effort":"xhigh","account":"codex1","seat_tier":4,"reasoning_class":5},
+    {"harness":"pi","provider":"zai","model":"zai/glm-5.3","effort":"high","account":"glm","seat_tier":4,"reasoning_class":3}]},
+  {"when":"Orchestration","use":[
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude3","seat_tier":1,"reasoning_class":3},
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","seat_tier":2,"reasoning_class":3},
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude2","seat_tier":3,"reasoning_class":3}]},
+  {"when":"Read-only investigation","use":[
+    {"harness":"claude","model":"haiku","effort":"low","account":"claude1","seat_tier":1,"reasoning_class":1},
+    {"harness":"claude","model":"haiku","effort":"low","account":"claude2","seat_tier":2,"reasoning_class":1},
+    {"harness":"claude","model":"haiku","effort":"low","account":"claude3","seat_tier":3,"fallback_only":true,"reasoning_class":1},
+    {"harness":"pi","provider":"codex","model":"openai-codex/gpt-6-luna","effort":"xhigh","account":"codex1","seat_tier":4,"reasoning_class":5}]}]}
+JSON
+reset_quota
+worker='{"rule_1":0.95,"rule_2":0.02,"rule_3":0.02,"default":0.01}'
+write_response rule_1 0.95 "$worker"
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--model 'opus'" "keep-strongest decides inside the open tier: $out"
+assert_contains "$(chosen)" "--account 'claude1'" 'the first tier wins although claude2 has the higher spendPriority'
+assert_contains "$out" 'not eligible: seat_tier held: an earlier seat still has capacity (claude:sonnet@claude1, claude:opus@claude1)' 'a held candidate names the open tier'
+assert_not_contains "$(tail -1 "$LOG")" 'seat_tier' 'Jev never sees a seat tier'
+set_quota claude3 claude 95 9
+jq '.providers[0] |= (.state = {status:"rate_limited", error:"limited"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$QDIR/claude2.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/claude2.json"
+run "$BRIEF" --task six
+assert_contains "$out" 'status: clear' "a held later tier with unknown quota does not stall the choice: $out"
+assert_contains "$(chosen)" "--account 'claude1'" 'the open tier still decides'
+reset_quota
+jq '.providers[0] |= (.state = {status:"rate_limited", error:"limited"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$QDIR/claude1.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/claude1.json"
+run "$BRIEF" --task six
+assert_not_contains "$out" 'status: clear' "an unmeasured default seat is never routed around: $out"
+reset_quota
+set_quota claude1 claude 0 1 exhausted_now
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude2'" "claude2 is the first fallback: $out"
+set_quota claude2 claude 0 2 exhausted_now
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude3'" "claude3 comes before another family, unlike a tierless reserve: $out"
+assert_contains "$out" 'reserve pick: every non-fallback claude seat is at its limit' 'the reserve decision stays visible'
+set_quota claude3 claude 0 9 exhausted_now
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--harness 'pi'" "another family is the last fallback: $out"
+assert_contains "$(chosen)" "--model 'openai-codex/gpt-6.1-sol'" 'keep-strongest and spendPriority still decide inside a shared tier'
+reset_quota
+# Delivery tiers change the order for a no-mistakes ship and nothing else.
+{ cat "$BRIEF"; printf '\n# Definition of done\nDelivery contract: mode=no-mistakes\n'; } > "$TMP_ROOT/nm-brief.md"
+{ cat "$BRIEF"; printf '\n# Definition of done\nDelivery contract: mode=direct-PR\n'; } > "$TMP_ROOT/pr-brief.md"
+run "$TMP_ROOT/nm-brief.md" --task six
+assert_contains "$(chosen)" "--account 'claude2'" "a no-mistakes ship defaults to claude2: $out"
+assert_not_contains "$(tail -1 "$LOG")" 'no-mistakes' 'Jev never sees the delivery mode'
+run "$TMP_ROOT/pr-brief.md" --task six
+assert_contains "$(chosen)" "--account 'claude1'" 'a direct-PR ship keeps the worker order'
+set_quota claude2 claude 0 2 exhausted_now
+run "$TMP_ROOT/nm-brief.md" --task six
+assert_contains "$(chosen)" "--account 'claude1'" "a no-mistakes ship falls back to claude1: $out"
+set_quota claude1 claude 0 1 exhausted_now
+run "$TMP_ROOT/nm-brief.md" --task six
+assert_contains "$(chosen)" "--account 'claude3'" "and then to the claude3 reserve: $out"
+reset_quota
+# The orchestration row defaults to the supervisor seat, then the worker seats.
+write_response rule_2 0.95 '{"rule_1":0.02,"rule_2":0.95,"rule_3":0.02,"default":0.01}'
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude3'" "orchestration defaults to claude3: $out"
+set_quota claude3 claude 0 9 exhausted_now
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude1'" 'orchestration falls back to claude1'
+set_quota claude1 claude 0 1 exhausted_now
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude2'" 'and then to claude2'
+reset_quota
+# A stronger later tier does not outbid the default seat, also in an ambiguous union.
+write_response rule_3 0.95 '{"rule_1":0.02,"rule_2":0.02,"rule_3":0.95,"default":0.01}'
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude1'" "a class-5 fallback does not outbid the class-1 default seat: $out"
+jq '.default = [.rules[2].use[]]' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+write_response rule_3 0.4 '{"rule_1":0.3,"rule_2":0.05,"rule_3":0.4,"default":0.25}'
+run "$BRIEF" --task six
+assert_contains "$out" 'status: clear' "an ambiguous union clears: $out"
+assert_contains "$(chosen)" "--model 'haiku'" 'the union takes its class from the anchor row first tier'
+assert_contains "$(chosen)" "--account 'claude1'" 'and keeps the seat order'
+# Under the shared-quota opt-out the declared tiers still order the row.
+jq '.shared_quota = true | del(.default)' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+jq '.rules[0].use |= reverse' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+write_response rule_1 0.95 "$worker"
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude1'" "shared quota honors the tier over declared order: $out"
+# Malformed declarations are configuration errors.
+jq '.rules[0].use[0].seat_tier = 0' "$TMP_ROOT/rules-original" > "$RULES"
+run "$BRIEF" --task six
+expect_code 2 "$code" 'a non-positive seat_tier is a configuration error'
+assert_contains "$out" 'seat_tier must be a positive integer' 'the seat_tier error is actionable'
+jq '.default[0].seat_tier = 1.5' "$TMP_ROOT/rules-original" > "$RULES"
+run "$BRIEF" --task six
+expect_code 2 "$code" 'a fractional default seat_tier is a configuration error'
+jq '.seat_tiers_by_delivery = {"no-mistakes":{"claude2":"first"}}' "$TMP_ROOT/rules-original" > "$RULES"
+run "$BRIEF" --task six
+expect_code 2 "$code" 'a malformed delivery tier is a configuration error'
+assert_contains "$out" 'seat_tiers_by_delivery must map' 'the delivery tier error is actionable'
+cp "$TMP_ROOT/rules-original" "$RULES"
+write_response rule_3 0.95 '{"rule_1":0.01,"rule_2":0.02,"rule_3":0.95,"default":0.02}'
+pass 'T: seat tiers hold later candidates, follow per-delivery tiers, and keep the reserve and class rules'
 
 # ---- S3 -------------------------------------------------------------------------
 write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.02,"rule_3":0.01,"default":0.02}'

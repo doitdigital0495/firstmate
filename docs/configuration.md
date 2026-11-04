@@ -1786,7 +1786,7 @@ Firstmate cannot see which part of a worker's life uses the resource, so the num
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
 Jev chooses the best matching natural-language rule through [typed dispatch resolution](#typed-dispatch-resolution-jevd-socket); code applies deterministic quota and eligibility gates.
-The resolver selects the rule's eligible profile by spendPriority; firstmate reviews it under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only the receipted concrete profile flags to `fm-spawn.sh`.
+The resolver selects the rule's eligible profile by any declared seat tier, then spendPriority; firstmate reviews it under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only the receipted concrete profile flags to `fm-spawn.sh`.
 
 **Spawn requirements**
 
@@ -1804,6 +1804,7 @@ This section is the single owner of the canonical schema and its per-field seman
 {
   "preferred_provider": "<optional quota-axi provider family to spend first>",
   "shared_quota": false,
+  "seat_tiers_by_delivery": { "<delivery mode>": { "<registry account id>": 1 } },
   "rules": [
     {
       "when": "<natural-language condition describing a kind of task>",
@@ -1812,7 +1813,7 @@ This section is the single owner of the canonical schema and its per-field seman
       "floor": { "scope": "<quota-axi scope>", "min_percent": 20, "provider": "<quota-axi provider>" },
       "never_providers": ["<optional provider ID this rule may never run on>"],
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "account": "<optional registry account id>", "provider": "<optional quota-axi provider>", "quota_scope": "<optional quota-axi scope>", "fallback_only": false, "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
+        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "account": "<optional registry account id>", "provider": "<optional quota-axi provider>", "quota_scope": "<optional quota-axi scope>", "fallback_only": false, "seat_tier": 1, "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
       ],
       "why": "<optional rationale for firstmate's routing review; never sent to Jev>"
     }
@@ -1835,6 +1836,7 @@ This section is the single owner of the canonical schema and its per-field seman
 | Top-level `preferred_provider` | Optional provider-family preference, applied after eligibility checks under `quota-array-dispatch`. |
 | Top-level `shared_quota` | Optional; see "Shared-quota opt-out" below. |
 | Profile `fallback_only` | Optional boolean reserve-tier flag; see "Fallback-only reserve tier" below. |
+| Profile `seat_tier` and top-level `seat_tiers_by_delivery` | Optional strict seat order; see "Seat tiers" below. |
 
 An absent `account` keeps the home seat only in a home without `config/accounts.json`; once that registry exists every profile must name a registered account that owns the store its harness launches from and, when the account declares `provider`, spends that provider, or the resolver exits 2 and bootstrap prints `CREW_DISPATCH: invalid config/crew-dispatch.json - <profile> names no account` (or the unregistered account, missing store, or provider mismatch), so no profile falls quietly onto the home's own login. A named account must be allowlisted in the enabled home registry and is passed as `--account`. A configured worker pin is authoritative; disagreeing explicit or relaunch bindings refuse.
 
@@ -1873,9 +1875,24 @@ Under the shared-quota opt-out no seat can be shown at its limit, so a reserve c
 Without the field, or with `"fallback_only": false`, behavior is unchanged.
 The declared value must be a boolean; anything else is an actionable configuration error reported like any other malformed profile field.
 
+**Seat tiers**
+
+An optional per-profile positive integer `"seat_tier"` declares a strict default-then-fallback order within a row, lower first; a profile without one sorts after every declared tier.
+Only the lowest tier that still holds a candidate which is not ineligible and not at its weekly limit stays in the choice, using the same weekly test as the reserve tier above.
+Every later tier reads `seat_tier held` and is out of the choice, so its own quota, known or not, never makes the choice incomplete.
+A candidate of the open tier whose quota is unmeasured or unrankable still holds that tier, so the choice waits or goes to the captain rather than selecting around it.
+Inside the open tier the existing rules decide: `fallback_only`, keep-strongest `reasoning_class`, `preferred_provider`, then `spendPriority`, so seats that share a tier still compete on quota.
+A released `fallback_only` candidate competes in its own tier, so a later tier of another family waits for it, unlike a reserve with no tier.
+An ambiguous union takes its class from the first declared tier of its most probable row, so a stronger fallback seat cannot drop that row's default seat out of the union.
+The optional top-level `"seat_tiers_by_delivery"` maps a delivery mode, read from the brief's `Delivery contract: mode=` line, to `{account: tier}` entries that replace `seat_tier` for those accounts on that delivery.
+This orders only the worker that drives the delivery: a no-mistakes pipeline's own agent seat is chosen by no-mistakes `agent` and `agent_path_override` configuration, outside this table.
+A firstmate or secondmate does not launch through `--account`: its seat is the home identity or a per-secondmate pin, so its row's order names the seat for a [deliberate subscription switch](#deliberate-claude-subscription-switch-and-clean-exit) when the current seat reaches its limit.
+Without either field, behavior is unchanged.
+A value of any other shape is an actionable configuration error reported like any other malformed profile field.
+
 **Fields applied only by typed resolution**
 
-Rule `approval`, `min_confidence`, and `floor`, and profile `provider`, `quota_scope`, `fallback_only`, `floor`, and numeric `reasoning_class` are optional declarations applied in code by [typed dispatch resolution](#typed-dispatch-resolution-jevd-socket).
+Rule `approval`, `min_confidence`, and `floor`, top-level `seat_tiers_by_delivery`, and profile `provider`, `quota_scope`, `fallback_only`, `seat_tier`, `floor`, and numeric `reasoning_class` are optional declarations applied in code by [typed dispatch resolution](#typed-dispatch-resolution-jevd-socket).
 The resolver supplies the fixed neutral Choice option `No listed rule applies to this task.` for work that matches no listed rule.
 
 - `approval` accepts only `"captain"` and means a task the rule matches is never dispatched from the tool's answer alone.
@@ -1935,7 +1952,7 @@ See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a star
 
 - When the file exists, bootstrap validates it with `jq`.
 - Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
-- Malformed JSON, malformed rules, an empty or malformed profile array, a malformed `preferred_provider`, a malformed `fallback_only`, an unverified harness, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
+- Malformed JSON, malformed rules, an empty or malformed profile array, a malformed `preferred_provider`, a malformed `fallback_only` or seat tier, an unverified harness, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
 - With `config/accounts.json` present, a profile that names no account, an unregistered account, an account without the profile's harness store, or an account declaring another provider is also reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`, and a registry problem as `ACCOUNTS: invalid config/accounts.json - ...`.
 - Bootstrap enables resolver-only checks for `approval`, `min_confidence`, `floor`, and present `provider` declarations when the route's key is non-empty in the environment or the home's `.env`: `OPENROUTER_API_KEY` by default, or `TYPESAFE_API_KEY` with `FM_DISPATCH_ROUTE=direct`.
   Without a typesafe key or a declared typesafe source, bootstrap retains its pre-existing verified-harness baseline.
@@ -2201,7 +2218,7 @@ No qualifying option, or two equally probable qualifying options, triggers an am
 Code unions rows whose probability is at least 0.25, retains only candidates at the highest numeric `reasoning_class` of the most probable row, then applies eligibility and spendPriority.
 Equal row probabilities use table order, with the default row after explicit rules.
 `reasoning_class` is an optional finite JSON number on each candidate, higher meaning stronger; every candidate in an ambiguous union must declare it or routing stops for captain review rather than guessing from names.
-A single matched rule and the default row get the same keep-strongest semantics within the pickable tier (`fallback_only` reserves enter only when no non-fallback candidate is rankable): when every eligible candidate declares a numeric `reasoning_class`, only the highest declared class reaches the `spendPriority` argmax, so an unused weaker pool cannot win on quota headroom alone, while candidates at an equal class still compete on `spendPriority`.
+A single matched rule and the default row get the same keep-strongest semantics within the pickable tier (`fallback_only` reserves enter only when no non-fallback candidate is rankable, and only the open seat tier competes): when every eligible candidate declares a numeric `reasoning_class`, only the highest declared class reaches the `spendPriority` argmax, so an unused weaker pool cannot win on quota headroom alone, while candidates at an equal class still compete on `spendPriority`.
 When any eligible candidate lacks a class, ranking stays plain `spendPriority` with no silent guessing.
 The restriction applies after eligibility, so an ineligible strongest-class candidate never blocks a weaker eligible one.
 An approval-gated union stops for the captain, and rule floors are never silently waived.

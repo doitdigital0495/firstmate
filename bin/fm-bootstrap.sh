@@ -1227,6 +1227,9 @@ crew_dispatch_validate() {
       ($items | any(has("quota_scope") and (((.quota_scope | type) != "string") or (.quota_scope | length) == 0)));
     def malformed_fallback_only($items):
       ($items | any(has("fallback_only") and ((.fallback_only | type) != "boolean")));
+    def seat_tier_ok($t): ($t | type) == "number" and $t >= 1 and ($t | floor) == $t;
+    def malformed_seat_tier($items):
+      ($items | any(has("seat_tier") and (seat_tier_ok(.seat_tier) | not)));
     def bad_efforts:
       configured_profiles
       | map({h: .harness, m: .model, e: .effort})
@@ -1250,6 +1253,8 @@ crew_dispatch_validate() {
       end
     elif $typed and malformed_quota_scopes([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile quota_scope must be a non-empty string when present"
     elif $typed and malformed_fallback_only([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile fallback_only must be true or false when present"
+    elif $typed and malformed_seat_tier([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile seat_tier must be a positive integer when present"
+    elif $typed and has("seat_tiers_by_delivery") and ((.seat_tiers_by_delivery | type) != "object" or any(.seat_tiers_by_delivery[]; type != "object" or any(.[]; seat_tier_ok(.) | not))) then "seat_tiers_by_delivery must map each delivery mode to account seat tiers that are positive integers"
     elif $typed and malformed_profile_floors([(.rules // [])[]? | profiles(.use?)[]?]) then "use profile floor needs scope and min_percent 0..100"
     elif $typed and ([(.rules // [])[]? | select(has("approval") and .approval != "captain")] | length > 0) then "approval must be \"captain\" when present"
     elif $typed and ([(.rules // [])[]? | select(has("floor") and floor_bad(.floor; true))] | length > 0) then "rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\\z"
@@ -1268,6 +1273,7 @@ crew_dispatch_validate() {
       end
     elif $typed and has("default") and malformed_quota_scopes([profiles(.default)[]?]) then "default profile quota_scope must be a non-empty string when present"
     elif $typed and has("default") and malformed_fallback_only([profiles(.default)[]?]) then "default profile fallback_only must be true or false when present"
+    elif $typed and has("default") and malformed_seat_tier([profiles(.default)[]?]) then "default profile seat_tier must be a positive integer when present"
     elif $typed and has("default") and malformed_profile_floors([profiles(.default)[]?]) then "default profile floor needs scope and min_percent 0..100"
     else
       (configured_profiles
