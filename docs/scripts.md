@@ -145,7 +145,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-dispatch-pick-lib.sh` | Own the captain route pick: the pick request written when Jev cannot route, the card, and the bound-to-words verification that turns the captain's answer into a receipt |
 | `fm-jevd-dispatch.py`, `fm-dispatch-bounded.py` | Private resolver helpers for the jevd socket and deadline-bound quota subprocesses; see [typed dispatch resolution](configuration.md#typed-dispatch-resolution-jevd-socket) |
 | `fm-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
-| `fm-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, divergence, supervision-host outcome, recovery, and supervision checks |
+| `fm-wake-drain.sh`       | Present and acknowledge the current actor's claimed wake rows alongside status, outcome-backstop, decision, divergence, deadline-default, supervision-host outcome, recovery, and supervision checks |
 | `fm-wake-grant.sh`       | Serialize Pi supervision-branch wake-row claim activation, publication, release, and deactivation |
 | `fm-wake-lib.sh`         | Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers |
 | `fm-path-lib.sh`         | Fork-free `dirname`/`basename` equivalents with no source-time side effects             |

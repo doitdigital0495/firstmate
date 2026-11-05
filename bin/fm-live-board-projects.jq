@@ -2,6 +2,8 @@
 # public contract and the config/live-board-projects.json schema. Input is one
 # fm-live-board.v1 snapshot; $map is the parsed project map or null.
 
+include "fm-captain-question-context";
+
 def lb_text($max): type == "string" and length > 0 and length <= $max
   and test("[^[:space:]]") and (test("[\\x00-\\x1f\\x7f]") | not);
 
@@ -468,6 +470,7 @@ def lb_view($map):
              elif ($q.integrity | length) > 0 then "ambiguous" else $q.context_status end),
            close:($ctx.close // null),lifecycle:($ctx.lifecycle // null),
            recommendation:($ctx.recommendation // null),
+           deadline_default:(if $ctx == null then null else ($ctx | fm_question_default_pending) end),
            options:[($ctx.options // [])[] | {value:.value,label:.label,detail:(.detail // null)}]}],
       timeline:{
         status:(if $board.pull_requests.status == "collected" then "ok"

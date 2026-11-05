@@ -603,6 +603,30 @@ check "$out" '(.projects[1].questions[] | select(.id == "data-window")
   "a question stored without its explanation did not stay answerable under a visible marker"
 pass "each card leads with project, what it is about and what it is for; an unexplained one says so and still answers"
 
+# --- A pending deadline default is on the card ---------------------------------
+default_home=$(make_home deadline-default)
+cat > "$default_home/ctx-default.json" <<'JSON'
+{"schema":"fm-captain-question.v1","close":"done",
+ "about":"The new sign-up page needs its button wording.",
+ "purpose":"Your pick lets the page go out. Until you pick, the page keeps the old wording.",
+ "options":[{"value":"join","label":"Join now","detail":"Short and friendly, which is why it is recommended."},
+  {"value":"start","label":"Start here","detail":"Plainer, and it can be swapped later."}],
+ "recommendation":"join","scope":["copy"],"default_eligible":"small-reversible","default_date":"2099-01-31"}
+JSON
+in_home "$default_home" "$ROOT/bin/fm-captain-hold.sh" hold ws-button --title "Button wording" --repo web-shop \
+  --reason "Pick the wording." --context-file "$default_home/ctx-default.json" >/dev/null || fail "could not hold the default question"
+printf '%s\n' "$ENABLED" > "$default_home/config/live-board.json"
+in_home "$default_home" "$LIVE" build >/dev/null || fail "the default board did not build"
+out=$(render "$default_home" "$(date +%s)")
+check "$out" '(.projects[0].questions[0]
+    | .parts == ["project","about","purpose","deadline-default","question","options"]
+    and (.deadlineDefault | test("If you do not answer"))
+    and (.deadlineDefault | test("not answered by the end of 2099-01-31 UTC, Firstmate will proceed on its recommendation: Join now\\."))
+    and (.deadlineDefault | test("Your own answer before then always wins"))
+    and .answerable)' \
+  "the card did not state the pending default and its date in plain words"
+pass "a question with a deadline default states the answer and date and stays answerable"
+
 # --- The captain's named projects ----------------------------------------------
 cat > "$home/config/live-board-projects.json" <<'JSON'
 {"schema":"fm-live-board-projects.v1","projects":[

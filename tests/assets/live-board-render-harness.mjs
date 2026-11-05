@@ -348,6 +348,7 @@ const projects = root.children.filter((c) => c.getAttribute("data-project") !== 
         about: say(q, "about", "P"),
         purpose: say(q, "purpose", "P"),
         needsExplanation: say(q, "needs-explanation"),
+        deadlineDefault: say(q, "deadline-default"),
         urgent: q.hasClass("q-urgent"),
         badges: badges(q.children[0]),
         answerable: Boolean(form),

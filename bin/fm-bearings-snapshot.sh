@@ -152,7 +152,7 @@ remote homes under one shared snapshot budget and may refresh the parent-side ca
 Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,doing},
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
-  decisions_open{id,key,verb,summary,owner}, landed{id,what,artifact,owner},
+  decisions_open{id,key,verb,summary,owner,pending_default?}, landed{id,what,artifact,owner},
   suggested{count,oldest_age_days,line}, gates{id,title,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
 Default gates are selected newest filed first before their bound; undated gates
@@ -358,7 +358,7 @@ esac
 SUGGESTED=$("$SCRIPT_DIR/fm-suggestions.sh" summary --json 2>/dev/null) \
   || SUGGESTED='{"count":null,"oldest_age_days":null,"line":"","unavailable":true}'
 
-MODEL=$(printf '%s' "$SNAP" | jq \
+MODEL=$(printf '%s' "$SNAP" | jq -L "$SCRIPT_DIR" \
   --arg home "$HOME_LABEL" \
   --argjson suggested "$SUGGESTED" \
   --arg now "$NOW" \
@@ -388,7 +388,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson pr_rows_capped "$PR_ROWS_CAPPED" \
   --argjson pr_rows_min_total "$PR_ROWS_MIN_TOTAL" \
   --argjson return_catchup "$RETURN_CATCHUP" \
-  --argjson candidate_prs "$CANDIDATE_PRS" "$FM_LANDED_JQ_DEFS"'
+  --argjson candidate_prs "$CANDIDATE_PRS" 'include "fm-captain-question-context";'"$FM_LANDED_JQ_DEFS"'
   def trunc($n): if . == null then null else
     (tostring | gsub("\\s+"; " ") | if (length > $n) then (.[:$n] + "…") else . end) end;
   def fit($n):
@@ -414,12 +414,23 @@ MODEL=$(printf '%s' "$SNAP" | jq \
       else ("blocked-by " + ($shown | join(","))
             + (if $remaining > 0 then " +\($remaining) more" else "" end))
       end;
-  def hold_note:
-    if .hold_bucket == "blocked" then bounded_blocker_note(70)
-    elif .hold_bucket == "dated" then ("until " + (.hold_until // "-"))
-    elif .hold_bucket == "aged" and .hold_age_days != null then
-      ("held " + (.hold_age_days | tostring) + "d")
+  def pending_default:
+    if .question_context.status == "ready" then
+      (.question_context.context | fm_question_default_pending)
     else null end;
+  def pending_default_field:
+    pending_default as $default
+    | if $default == null then {} else {pending_default:$default} end;
+  def hold_note:
+    (if .hold_bucket == "blocked" then bounded_blocker_note(70)
+     elif .hold_bucket == "dated" then ("until " + (.hold_until // "-"))
+     elif .hold_bucket == "aged" and .hold_age_days != null then
+       ("held " + (.hold_age_days | tostring) + "d")
+     else null end) as $note
+    | pending_default as $default
+    | if $default == null then $note
+      else ("proceeds on default after " + $default.date
+            + (if $note == null then "" else ", " + $note end)) end;
   def hold_gate_reason:
     (.hold_reason // .blocked_reason // "-") as $base
     | (hold_note) as $note
@@ -535,14 +546,14 @@ MODEL=$(printf '%s' "$SNAP" | jq \
          | select(.structured and .hold_bucket != null)
          | select(($all_decisions == 1) or live_captain_call)
          | {id,key:.id,verb:"captain-hold",
-            summary:hold_summary(.title; .hold_reason),owner:"(main)"} ]
+            summary:hold_summary(.title; .hold_reason),owner:"(main)"} + pending_default_field ]
      + [ (.secondmate_current.records // [])[] as $m
          | ([ $m.decisions_open[]?
               | select(.source == "backlog" and .verb == "captain-hold")
               | select(($all_decisions == 1) or live_captain_call)
               | {id:($m.id + "/" + .id),key,verb,
                  summary:hold_summary((.summary // .id);
-                                      (.reason // "captain decision pending")),owner:$m.id} ]
+                                      (.reason // "captain decision pending")),owner:$m.id} + pending_default_field ]
             + [ $m.queued[]?
                 | select($all_decisions == 1 and .hold_kind == "captain")
                 | select(.id as $id
@@ -552,7 +563,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
                          | index($id) | not)
                 | {id:($m.id + "/" + .id),key:.id,verb:"captain-hold",
                    summary:hold_summary((.title // .id);
-                                        (.hold_reason // "captain decision pending")),owner:$m.id} ])[] ]) as $decisions_all
+                                        (.hold_reason // "captain decision pending")),owner:$m.id} + pending_default_field ])[] ]) as $decisions_all
   | ([ .backlog.records[]
          | . as $record
          | select(.structured and projected_deferred_hold) ]

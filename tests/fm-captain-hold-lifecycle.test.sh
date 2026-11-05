@@ -5355,6 +5355,217 @@ test_reholding_expired_context_preserves_history_not_authority() {
   pass "expired re-holds archive prior context and never duplicate or borrow active authority"
 }
 
+# Writes a context offering go/wait with go recommended, plus the jq patch.
+default_context() {  # <home> <jq-patch> [<close>]
+  printf '{"schema":"fm-captain-question.v1","close":"%s",%s,"options":[{"value":"go","label":"Go live","detail":"Ships the wording, which is why it is recommended."},{"value":"wait","label":"Wait","detail":"Keeps today wording."}],"recommendation":"go"}\n' \
+    "${3:-done}" "$PLAIN" | jq "$2" > "$1/context.json"
+}
+DEFAULT_OK='. + {scope:["copy"],default_eligible:"small-reversible",default_date:"2026-08-01"}'
+hold_default() {  # <home> <id> [<extra hold args...>]
+  local home=$1 id=$2
+  shift 2
+  FM_CAPTAIN_HOLD_NOW=2026-07-20T12:00:00Z run_captain "$home" hold "$id" --title "Pick the wording" \
+    --reason "Choose go or wait" --repo sample --context-file "$home/context.json" "$@" >/dev/null
+}
+
+test_deadline_default_refuses_ineligible_calls() {
+  (
+    local home patch expected
+    home=$(make_home default-refused)
+    while IFS='|' read -r patch expected; do
+      default_context "$home" "$patch"
+      cp "$home/data/backlog.md" "$home/before"
+      if hold_default "$home" sample-refused 2>"$home/err"; then fail "ineligible default accepted: $patch"; fi
+      assert_grep "$expected" "$home/err" "wrong refusal for: $patch"
+      cmp "$home/before" "$home/data/backlog.md" || fail "refused default changed the backlog: $patch"
+    done <<'CASES'
+. + {scope:["outward-facing"],default_eligible:"small-reversible",default_date:"2026-08-01"}|can never carry a deadline default
+. + {scope:["irreversible"],default_eligible:"small-reversible",default_date:"2026-08-01"}|can never carry a deadline default
+. + {scope:["money"],default_eligible:"small-reversible",default_date:"2026-08-01"}|can never carry a deadline default
+. + {scope:["security"],default_eligible:"small-reversible",default_date:"2026-08-01"}|can never carry a deadline default
+. + {scope:["copy","money"],default_eligible:"small-reversible",default_date:"2026-08-01"}|can never carry a deadline default
+. + {default_eligible:"small-reversible",default_date:"2026-08-01"}|needs all of recommendation, default_date and scope
+. + {scope:["copy"],default_eligible:"small-reversible"}|needs all of recommendation, default_date and scope
+. + {scope:["copy"],default_eligible:"small-reversible",default_date:"2026-08-01",recommendation:null}|needs all of recommendation, default_date and scope
+. + {scope:["copy"],default_date:"2026-08-01"}|set to exactly
+. + {scope:["copy"],default_eligible:true,default_date:"2026-08-01"}|set to exactly
+. + {scope:["copy"],default_eligible:"small-reversible",default_date:"2026-02-31"}|real YYYY-MM-DD date
+. + {scope:["legal"],default_eligible:"small-reversible",default_date:"2026-08-01"}|may name only product or copy
+. + {scope:["copy"],default_eligible:"small-reversible",default_date:"2026-07-20"}|later than today
+CASES
+    # A declared scope alone is a call that simply keeps waiting.
+    default_context "$home" '. + {scope:["money"]}'
+    hold_default "$home" sample-money || fail "a scoped call without a default was refused"
+    [ -z "$(FM_CAPTAIN_HOLD_NOW=2030-01-01T00:00:00Z run_captain "$home" defaults-due)" ] \
+      || fail "a call with no default came due"
+    if FM_CAPTAIN_HOLD_NOW=2030-01-01T00:00:00Z run_captain "$home" answer sample-money --deadline-default >/dev/null 2>&1; then
+      fail "a default was applied to a call without one"
+    fi
+    pass "deadline default refuses every ineligible or incomplete call before mutation"
+  ) || exit 1
+}
+
+test_deadline_default_due_and_applied_as_not_the_captains_words() {
+  (
+    local home due drain show bearings
+    home=$(make_home default-due)
+    default_context "$home" "$DEFAULT_OK"
+    hold_default "$home" sample-due || fail "eligible default refused"
+    # The stated date is the captain's last day: nothing is due until it passed.
+    due=$(FM_CAPTAIN_HOLD_NOW=2026-08-01T23:59:59Z run_captain "$home" defaults-due) || fail "defaults-due failed"
+    [ -z "$due" ] || fail "default came due on its own date: $due"
+    if FM_CAPTAIN_HOLD_NOW=2026-08-01T23:59:59Z run_captain "$home" answer sample-due --deadline-default >/dev/null 2>&1; then
+      fail "default applied before its date passed"
+    fi
+    assert_grep 'Captain question context:' "$home/data/backlog.md" "context missing after refused default"
+    # Every surface states the date while the call is pending.
+    bearings=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+      FM_CONFIG_OVERRIDE="$home/config" FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS=100000 "$BEARINGS" --json) || fail "Bearings failed"
+    printf '%s' "$bearings" | jq -e 'any(.decisions_open[]; .id == "sample-due"
+        and (.summary | test("proceeds on default after 2026-08-01"))
+        and .pending_default.date == "2026-08-01" and .pending_default.label == "Go live"
+        and (.pending_default.notice | test("by the end of 2026-08-01 UTC.*Go live.*always wins")))' >/dev/null \
+      || fail "Bearings did not show the pending default: $bearings"
+    # A call that aged out of Captain's Call still says it is about to proceed.
+    bearings=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+      FM_CONFIG_OVERRIDE="$home/config" FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS=1 "$BEARINGS" --json) || fail "Bearings failed"
+    printf '%s' "$bearings" | jq -e 'any(.gates[]; .id == "sample-due"
+        and ((.reason // "") | test("proceeds on default after 2026-08-01")))' >/dev/null \
+      || fail "an aged call hid its pending default: $bearings"
+
+    due=$(FM_CAPTAIN_HOLD_NOW=2026-08-02T00:00:00Z run_captain "$home" defaults-due) || fail "defaults-due failed"
+    [ "$due" = "$(printf 'sample-due\t2026-08-01\tgo\tGo live\tdone\tPick the wording')" ] \
+      || fail "due listing is wrong: $due"
+    # Listing and presenting apply nothing.
+    drain=$(FM_CAPTAIN_HOLD_NOW=2026-08-02T00:00:00Z run_drain "$home") || fail "drain failed"
+    assert_contains "$drain" 'sample-due due to proceed on default "Go live"' "drain did not surface the due default"
+    assert_contains "$drain" 'nothing was applied automatically' "drain did not state nothing was applied"
+    FM_CAPTAIN_HOLD_NOW=2026-08-02T00:00:00Z run_captain "$home" open sample-due >/dev/null \
+      || fail "surfacing a due default closed the call"
+
+    FM_CAPTAIN_HOLD_NOW=2026-08-02T00:00:00Z run_captain "$home" answer sample-due --deadline-default >/dev/null \
+      || fail "due default could not be applied"
+    show=$(tasks_in "$home" show sample-due --full)
+    assert_contains "$show" "Deadline default (not the captain's words):" "record is not labeled a deadline default"
+    assert_contains "$show" 'proceeded on its recommendation: Go live (go)' "record does not state the default"
+    if printf '%s' "$show" | grep -F 'Captain decision:' >/dev/null; then fail "default was presented as the captain's decision"; fi
+    assert_contains "$show" 'state: done' "default did not close the call"
+    run_captain "$home" verify sample-due >/dev/null 2>&1 || true
+    if FM_CAPTAIN_HOLD_NOW=2026-08-02T00:00:00Z run_captain "$home" answer sample-due --deadline-default >/dev/null 2>&1; then
+      fail "a closed call accepted the default again"
+    fi
+    [ -z "$(FM_CAPTAIN_HOLD_NOW=2026-08-02T00:00:00Z run_captain "$home" defaults-due)" ] || fail "applied default stayed due"
+    if FM_CAPTAIN_HOLD_NOW=2026-08-02T00:00:00Z run_captain "$home" answer sample-due --deadline-default --decision-file "$home/context.json" >/dev/null 2>&1; then
+      fail "--deadline-default accepted caller-supplied words"
+    fi
+    pass "deadline default comes due after its date and records words that are not the captain's"
+  ) || exit 1
+}
+
+test_captain_answer_wins_over_deadline_default() {
+  (
+    local home id show when
+    home=$(make_home default-answer-wins)
+    default_context "$home" "$DEFAULT_OK"
+    printf 'Wait, the legal team wants another look.\n' > "$home/decision"
+    # Before the deadline, and after it while the default has not been applied.
+    for when in 2026-07-25T12:00:00Z 2026-08-05T12:00:00Z; do
+      id=sample-wins-${when%%T*}
+      hold_default "$home" "$id" || fail "eligible default refused"
+      FM_CAPTAIN_HOLD_NOW=$when run_captain "$home" answer "$id" --decision-file "$home/decision" >/dev/null \
+        || fail "the captain's answer was refused at $when"
+      [ -z "$(FM_CAPTAIN_HOLD_NOW=2026-09-01T00:00:00Z run_captain "$home" defaults-due)" ] \
+        || fail "an answered call stayed due"
+      if FM_CAPTAIN_HOLD_NOW=2026-09-01T00:00:00Z run_captain "$home" answer "$id" --deadline-default >/dev/null 2>&1; then
+        fail "default applied over the captain's answer"
+      fi
+      show=$(tasks_in "$home" show "$id" --full)
+      assert_contains "$show" 'Captain decision:' "captain's answer lost its label"
+      assert_contains "$show" 'the legal team wants another look' "captain's words were lost"
+      if printf '%s' "$show" | grep -F 'Deadline default (not' >/dev/null; then fail "default overwrote the captain's answer"; fi
+    done
+    # A released call is answered too, even though its task stays open.
+    default_context "$home" "$DEFAULT_OK" release
+    hold_default "$home" sample-wins-release || fail "eligible release default refused"
+    run_captain "$home" answer sample-wins-release --decision-file "$home/decision" --release >/dev/null \
+      || fail "the captain's release was refused"
+    [ -z "$(FM_CAPTAIN_HOLD_NOW=2026-09-01T00:00:00Z run_captain "$home" defaults-due)" ] || fail "a released call stayed due"
+    if FM_CAPTAIN_HOLD_NOW=2026-09-01T00:00:00Z run_captain "$home" answer sample-wins-release --deadline-default >/dev/null 2>&1; then
+      fail "default applied over the captain's release"
+    fi
+    pass "a captain answer always wins over a deadline default"
+  ) || exit 1
+}
+
+test_deadline_default_respects_deferral_release_and_stored_rules() {
+  (
+    local home stored
+    home=$(make_home default-guards)
+    default_context "$home" "$DEFAULT_OK"
+    hold_default "$home" sample-deferred --until 2026-09-01 || fail "deferred default refused"
+    [ -z "$(FM_CAPTAIN_HOLD_NOW=2026-08-15T00:00:00Z run_captain "$home" defaults-due)" ] \
+      || fail "a call the captain deferred came due"
+    [ -n "$(FM_CAPTAIN_HOLD_NOW=2026-09-02T00:00:00Z run_captain "$home" defaults-due)" ] \
+      || fail "a call whose deferral expired never came due"
+    FM_CAPTAIN_HOLD_NOW=2026-09-02T00:00:00Z run_captain "$home" answer sample-deferred --deadline-default >/dev/null \
+      || fail "expired deferral default could not be applied"
+
+    # A release default frees held work, which stays attended-only.
+    default_context "$home" "$DEFAULT_OK" release
+    hold_default "$home" sample-release || fail "release default refused"
+    : > "$home/state/.afk"
+    if FM_CAPTAIN_HOLD_NOW=2026-08-02T00:00:00Z run_captain "$home" answer sample-release --deadline-default >/dev/null 2>"$home/err"; then
+      fail "a release default ran while the captain was away"
+    fi
+    assert_grep 'stays held' "$home/err" "away refusal did not explain itself"
+    FM_CAPTAIN_HOLD_NOW=2026-08-02T00:00:00Z run_captain "$home" open sample-release >/dev/null || fail "away refusal changed the call"
+    rm -f "$home/state/.afk"
+    FM_CAPTAIN_HOLD_NOW=2026-08-02T00:00:00Z run_captain "$home" answer sample-release --deadline-default >/dev/null \
+      || fail "attended release default refused"
+    assert_contains "$(tasks_in "$home" show sample-release --full)" 'held: no' "release default did not lift the hold"
+
+    # A record edited past the writer's refusal is invalid, never due.
+    stored=$(jq -cS '. + {scope:["money"],default_eligible:"small-reversible",default_date:"2026-08-01",lifecycle:"2026-07-14T12:00:00Z#0"}' "$home/context.json")
+    {
+      printf '## In flight\n\n## Queued\n- [ ] sample-forged - Forged (repo: sample) (hold: choose) (hold-kind: captain)\n'
+      printf '  Captain hold set: 2026-07-14T12:00:00Z\n  Captain question context: %s\n\n## Done\n' "$stored"
+    } > "$home/data/backlog.md"
+    run_captain "$home" open sample-forged >/dev/null || fail "forged fixture is not an open call"
+    [ -z "$(FM_CAPTAIN_HOLD_NOW=2026-08-02T00:00:00Z run_captain "$home" defaults-due)" ] || fail "a forged money default came due"
+    if FM_CAPTAIN_HOLD_NOW=2026-08-02T00:00:00Z run_captain "$home" answer sample-forged --deadline-default >/dev/null 2>&1; then
+      fail "a forged money default was applied"
+    fi
+    pass "deadline default honors a deferral, attended release and the stored eligibility rule"
+  ) || exit 1
+}
+
+test_active_call_may_gain_but_not_change_a_deadline_default() {
+  (
+    local home identity
+    home=$(make_home default-backfill)
+    default_context "$home" 'del(.recommendation)'
+    hold_default "$home" sample-backfill || fail "plain hold refused"
+    identity=$(run_captain "$home" open sample-backfill --identity)
+    default_context "$home" "$DEFAULT_OK"
+    FM_CAPTAIN_HOLD_NOW=2026-07-21T12:00:00Z run_captain "$home" hold sample-backfill --reason "Choose go or wait" \
+      --context-file "$home/context.json" >/dev/null || fail "an active call could not gain a default"
+    [ "$(run_captain "$home" open sample-backfill --identity)" = "$identity" ] || fail "gaining a default changed the lifecycle"
+    # An identical repeat stays idempotent even after the published date passed.
+    FM_CAPTAIN_HOLD_NOW=2026-08-03T12:00:00Z run_captain "$home" hold sample-backfill --reason "Choose go or wait" \
+      --context-file "$home/context.json" >/dev/null || fail "an identical repeat was refused after the date"
+    jq '.default_date = "2026-08-20"' "$home/context.json" > "$home/moved.json"
+    if FM_CAPTAIN_HOLD_NOW=2026-07-21T12:00:00Z run_captain "$home" hold sample-backfill --reason "Choose go or wait" \
+      --context-file "$home/moved.json" >/dev/null 2>&1; then fail "a published default date was changed"; fi
+    jq '.recommendation = "wait"' "$home/context.json" > "$home/moved.json"
+    if FM_CAPTAIN_HOLD_NOW=2026-07-21T12:00:00Z run_captain "$home" hold sample-backfill --reason "Choose go or wait" \
+      --context-file "$home/moved.json" >/dev/null 2>&1; then fail "a published default answer was changed"; fi
+    jq '.options[0].label = "Changed"' "$home/context.json" > "$home/moved.json"
+    if FM_CAPTAIN_HOLD_NOW=2026-07-21T12:00:00Z run_captain "$home" hold sample-backfill --reason "Choose go or wait" \
+      --context-file "$home/moved.json" >/dev/null 2>&1; then fail "adding a default also changed the options"; fi
+    pass "an active call may gain a deadline default but never change a published one"
+  ) || exit 1
+}
+
 test_structured_context_keeps_origin_and_encoded_reason() {
   local home identity board reason=$'Choose (go)\nfor café'
   home=$(make_home context-origin-union)
@@ -5376,6 +5587,11 @@ test_structured_context_keeps_origin_and_encoded_reason() {
   pass "structured question headers, inventory origins and encoded reasons coexist"
 }
 
+test_deadline_default_refuses_ineligible_calls
+test_deadline_default_due_and_applied_as_not_the_captains_words
+test_captain_answer_wins_over_deadline_default
+test_deadline_default_respects_deferral_release_and_stored_rules
+test_active_call_may_gain_but_not_change_a_deadline_default
 test_structured_context_keeps_origin_and_encoded_reason
 test_reholding_expired_context_preserves_history_not_authority
 test_structured_context_and_guarded_answers
