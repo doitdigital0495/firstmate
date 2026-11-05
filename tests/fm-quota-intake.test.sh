@@ -5,37 +5,32 @@
 # rule "read every window, every reset time, and every plan size before
 # choosing a worker": record captures quota-axi --full for the default store
 # and every enabled account store into one private timestamped record and
-# prints the full table, and gate refuses any launch unless that record is
-# fresh, covers the chosen account/store/provider, and carries the whole
-# table content for that provider: plan size, the 5h and 7d windows (plus
-# every model-specific one) each as a USED percent with its reset time, and a
-# non-empty Notes entry. These tests pin both halves hermetically (a fake
+# prints the full table, and gate stops a launch only on what is known - an
+# exhausted window or a bad login - while an unknown quota starts and is logged.
+# These tests pin both halves hermetically (a fake
 # quota-axi on PATH, no real credential store):
 #   1. record shape: every window with its used percent and reset time,
 #      spendPriority, runway, the plan size from every source, and the Notes
 #      column joined from accounts.json notes and crew-dispatch.json
 #      model_notes.
 #   2. the record is private (0600) and retention keeps the newest 50.
-#   3. a failed store read is recorded as failed and still fails the run.
-#   4. gate refusals: no record, stale record, uncovered account, uncovered
-#      store (a symlink onto the recorded store counts as covered; only a
-#      store resolving elsewhere refuses), an exhausted account (window and
-#      reset time named), a 100%-used
-#      (0% remaining) window, a model-scoped window without evidence, an
-#      unmappable harness/model provider family, a missing 7d window (a 5h
-#      window is required only when the provider publishes one, and an idle
-#      Claude 5h window with 0% used and no reset passes), and a
-#      provider with no Notes entry.
+#   3. a failed store read is recorded as failed and is an unknown quota.
+#   4. gate verdicts: no record, stale record, uncovered account, or uncovered
+#      store ask for a fresh read (a symlink onto the recorded store counts as
+#      covered); an exhausted account (window and reset time named), a 100%-used
+#      (0% remaining) window, an unmappable harness/model provider family, and a
+#      provider with no Notes entry stop; a missing 7d or model-scoped window is
+#      an unknown quota (an idle Claude 5h window with 0% used and no reset passes).
 #   5. gate passes print the chosen candidate's full window table (zai).
 #   6. the test bypass is explicit and prints that it bypassed.
-#   7. the recent-reading fallback: a rate-limited read reuses the store's
-#      last good reading under 30 minutes with its age; an older one or a
-#      credential failure refuses; a seat that declares a provider carries
+#   7. the last good reading: a rate-limited read reuses the store's last good
+#      reading for 24 hours with its age, an exhausted one only until its reset;
+#      a credential failure refuses; a seat that declares a provider carries
 #      only that provider's rows.
 #   8. the real bin/fm-spawn.sh heals a missing or spent record with its own
-#      intake and still refuses a limit verdict, and the real bin/fm-control.sh relaunch
-#      gate refuses BEFORE the running agent is stopped and passes on a real
-#      record.
+#      intake, starts on an unknown quota, and still refuses a limit verdict or a
+#      bad login, and the real bin/fm-control.sh relaunch gate refuses a limit
+#      verdict BEFORE the running agent is stopped and passes on an unknown quota.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -396,7 +391,7 @@ test_record_private_and_retention() {
   pass "record: private (0600) timestamped records with retention of the newest 50"
 }
 
-# --- 3. a failed store read is recorded and fails the run -------------------
+# --- 3. a failed store read is recorded as an unknown quota ------------------
 
 test_record_failed_store() {
   local home fakebin out rc rec
@@ -406,12 +401,12 @@ test_record_failed_store() {
   printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/quota-axi"
   chmod +x "$fakebin/quota-axi"
   out=$(run_record "$home" "$fakebin"); rc=$?
-  [ "$rc" -ne 0 ] || fail "a failed store read must exit nonzero"
+  expect_code 0 "$rc" "a failed store read is an unknown quota, never a failed intake: $out"
   rec=$(newest_record "$home") || fail "a failed read must still write a record"
   jq -e '.accounts[0].readStatus == "failed" and (.accounts[0].providers | length) == 0' \
     "$rec" >/dev/null || fail "the failed entry must be recorded as readStatus=failed"
   assert_contains "$out" "read failed:" "the table must name the failed read"
-  pass "record: a failed store read is recorded as failed, printed, and exits nonzero"
+  pass "record: a failed store read is recorded as failed, printed, and exits 0"
 }
 
 # --- 4-6. gate refusals and passes -------------------------------------------
@@ -468,7 +463,7 @@ test_gate_refusals() {
   out=$(run_gate "$home" --harness claude --consume); rc=$?
   expect_code 0 "$rc" "gate: a new intake must admit the next launch"
 
-  pass "gate: refuses on no record, stale record, uncovered account or store, an unmappable provider family, and a record already spent on a launch"
+  pass "gate: asks for a fresh read on no record, stale record, uncovered account or store, or a spent record, and refuses an unmappable provider family"
 }
 
 test_gate_exhausted_account() {
@@ -508,10 +503,10 @@ test_gate_model_scoped_window() {
   home=$(make_home modelscope)
   seed_record "$home" "$TMP_ROOT/snap-modelscope.json"
   out=$(run_gate "$home" --harness claude --model opus-special); rc=$?
-  expect_code 3 "$rc" "gate: a model-scoped window without evidence must refuse"
-  assert_contains "$out" "windows without a known used percent or reset time: opus_weekly" \
-    "gate: the refusal must name the missing model-scoped window"
-  pass "gate: a model-scoped window without percent or reset evidence is refused"
+  expect_code 0 "$rc" "gate: a model-scoped window without evidence is an unknown quota: $out"
+  assert_contains "$out" "quota unknown: windows without a known used percent or reset time: opus_weekly" \
+    "gate: the pass must name the missing model-scoped window"
+  pass "gate: a model-scoped window without percent or reset evidence is an unknown quota"
 }
 
 test_gate_zai_pass_prints_table() {
@@ -568,21 +563,21 @@ test_gate_table_content() {
   assert_contains "$out" "window=weekly used=44% resets=2026-10-04T05:00:38.000Z source=live" \
     "gate: the ProLite pass must show the weekly used percent and reset"
 
-  # A provider publishing no windows at all is still refused.
+  # A provider publishing no windows at all is an unknown quota.
   home=$(make_home nowindows)
   seed_record "$home" "$TMP_ROOT/snap-nowindows.json"
   out=$(run_gate "$home" --harness codex); rc=$?
-  expect_code 3 "$rc" "gate: a provider with no windows must refuse"
-  assert_contains "$out" "the seven-day usage window (used percent and reset time) is missing for provider codex" \
-    "gate: the no-windows refusal must name the missing seven-day window"
+  expect_code 0 "$rc" "gate: a provider with no windows is an unknown quota: $out"
+  assert_contains "$out" "quota unknown: no seven-day window for provider codex" \
+    "gate: the pass must name the missing seven-day window"
 
-  # A claude provider without its seven-day window: same refusal, 7d named.
+  # A claude provider without its seven-day window: the same, 7d named.
   home=$(make_home noseven)
   seed_record "$home" "$TMP_ROOT/snap-noseven.json"
   out=$(run_gate "$home" --harness claude); rc=$?
-  expect_code 3 "$rc" "gate: a provider missing its 7d window must refuse"
-  assert_contains "$out" "the seven-day usage window (used percent and reset time) is missing for provider claude on account default" \
-    "gate: the 7d refusal must name the provider and the missing window"
+  expect_code 0 "$rc" "gate: a provider missing its 7d window is an unknown quota: $out"
+  assert_contains "$out" "quota unknown: no seven-day window for provider claude on account default" \
+    "gate: the pass must name the provider and the missing window"
 
   # No notes anywhere: both notes sources absent, so the Notes column would
   # be empty and the gate refuses; declaring the note in accounts.json and
@@ -616,7 +611,7 @@ test_gate_table_content() {
   expect_code 0 "$rc" "gate: a bare model string must find its harness-scoped note: $out"
   assert_contains "$out" "notes=luna line" "gate: the suffix-matched pass must print the model note"
 
-  pass "gate: an unpublished 5h window passes as not published; a missing 7d window or Notes entry is refused"
+  pass "gate: an unpublished 5h window passes as not published; a missing 7d window is unknown; a missing Notes entry is refused"
 }
 
 test_gate_idle_claude_five_hour() {
@@ -694,26 +689,27 @@ test_recent_reading_fresh() {
     ([.accounts[0].providers[] | select(.provider == "claude") | .windows[] | .percentUsed] == [10, 7]) and
     ([.accounts[0].providers[] | select(.provider == "claude") | .readingAgeSeconds | type] == ["number"])' \
     "$rec" >/dev/null || fail "the reused claude row must keep its last good windows and state its age"
-  assert_contains "$out" "provider=claude status=cached" "the table must mark the reused read"
+  assert_contains "$out" "provider=claude status=cached age=" "the table must mark the reused read"
+  assert_contains "$out" "lastRead=rate limited" "the table must say what the current read returned"
+  [ "$(jq -r '.accounts[0].readStatus' "$rec")" = rate_limited ] || fail "the account must not read ok under a rate limit"
   assert_contains "$out" "source=cached age=" "the table must state the reading age"
   out=$(run_gate "$home" --harness claude); rc=$?
   expect_code 0 "$rc" "gate: a recent reading keeps the decision going: $out"
   assert_contains "$out" "source=cached age=" "gate: the pass must state the reading age"
-  pass "recent reading: a rate-limited read reuses the store's last good reading under 30 minutes, with its age"
+  pass "last good reading: a rate-limited read reuses the store's last good reading, with its age"
 }
 
 test_recent_reading_stale_and_auth() {
   local home out rc cache
   home=$(make_home recentstale)
   seed_record "$home" "$TMP_ROOT/snap-prolite.json"
-  for cache in "$home"/state/quota-last-good/intake*.json; do
-    jq '.rows |= map_values(.at -= 4000)' "$cache" > "$cache.tmp" && mv "$cache.tmp" "$cache"
-  done
+  cache=$home/state/quota-last-good/shared.json
+  jq '.rows |= map_values(.at -= 90000)' "$cache" > "$cache.tmp" && mv "$cache.tmp" "$cache"
   rate_limited_claude "$TMP_ROOT/snap-prolite.json" "$TMP_ROOT/snap-ratelimited.json"
   out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake-rl" "$TMP_ROOT/snap-ratelimited.json")"); rc=$?
   out=$(run_gate "$home" --harness claude); rc=$?
-  expect_code 3 "$rc" "gate: a reading older than 30 minutes is not evidence"
-  assert_contains "$out" "no quota evidence rows for provider claude" "gate: the refusal names the unmeasured provider"
+  expect_code 0 "$rc" "gate: with no reading under 24 hours the quota is unknown, never a refusal: $out"
+  assert_contains "$out" "quota unknown: rate limited: no quota evidence rows for provider claude" "gate: the pass names the unmeasured provider and why"
 
   home=$(make_home recentauth)
   seed_record "$home" "$TMP_ROOT/snap-prolite.json"
@@ -723,7 +719,7 @@ test_recent_reading_stale_and_auth() {
   out=$(run_gate "$home" --harness claude); rc=$?
   expect_code 3 "$rc" "gate: a credential failure is never papered over by a recent reading"
   assert_contains "$out" "credential on account default is unusable" "gate: the refusal names the credential failure"
-  pass "recent reading: nothing older than 30 minutes is reused, and a credential failure stays a credential failure"
+  pass "last good reading: nothing older than 24 hours is reused, and a credential failure stays a credential failure"
 }
 
 test_provider_row_filter() {
@@ -742,6 +738,200 @@ test_provider_row_filter() {
   [ "$rc" -ne 0 ] || fail "gate: a codex seat never passes on another provider's rows: $out"
   assert_contains "$out" "refusing" "gate: the other provider is refused"
   pass "provider filter: a seat that declares a provider is recorded and gated on that provider's rows only"
+}
+
+# --- the fail-open contract, one test per behavior ----------------------------
+
+# <dir>: a PATH holding this script's tools as links, with no quota-axi at all.
+quota_axi_free_path() {
+  local tool
+  for tool in bash env jq date sed sort tr cat cksum wc head tail basename dirname mktemp mkdir mv rm chmod realpath awk readlink perl grep cut timeout; do
+    ln -sf "$(command -v "$tool")" "$1/$tool"
+  done
+  printf '%s\n' "$1"
+}
+
+unverified_lines() { # <home> -> number of logged unverified starts
+  local log=$1/state/quota-unverified-starts.log
+  if [ -f "$log" ]; then wc -l < "$log" | tr -d ' '; else printf '0\n'; fi
+}
+
+# A store whose read is rate limited, times out, errors, or returns no data.
+test_unknown_quota_never_refuses() {
+  local home fakebin out rc rec log
+  rate_limited_claude "$TMP_ROOT/snap-prolite.json" "$TMP_ROOT/snap-ratelimited.json"
+
+  # Rate limited, with nothing cached. A preview passes and logs nothing.
+  home=$(make_home unknown-rl)
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-ratelimited.json")"); rc=$?
+  expect_code 0 "$rc" "record: a rate limited read must not fail the intake: $out"
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 0 "$rc" "gate: a rate limited read must not refuse: $out"
+  assert_contains "$out" "PASS (quota unknown: rate limited" "gate: the pass must say the quota is unknown and why"
+  [ "$(unverified_lines "$home")" = 0 ] || fail "a preview is not a start and must log nothing"
+
+  # The launch itself logs exactly one line and spends the record.
+  rec=$(newest_record "$home")
+  out=$(run_gate "$home" --harness claude --consume --task t-rl); rc=$?
+  expect_code 0 "$rc" "gate: a consuming launch on an unknown quota must pass: $out"
+  assert_contains "$out" "started on unverified quota provider=claude" "gate: the launch must print the log line"
+  assert_present "$rec.spent" "gate: the unknown-quota launch must spend its record"
+  [ "$(unverified_lines "$home")" = 1 ] || fail "one launch must log exactly one line"
+  log=$(cat "$home/state/quota-unverified-starts.log")
+  assert_contains "$log" "started on unverified quota provider=claude account=default" "log: provider and account"
+  assert_contains "$log" "task=t-rl age=none reason=rate limited" "log: task, no cached age, and the reason"
+
+  # The whole read failed: same pass, with no second read demanded.
+  home=$(make_home unknown-failed)
+  fakebin=$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-base.json")
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/quota-axi"
+  run_record "$home" "$fakebin" >/dev/null
+  out=$(run_gate "$home" --harness codex --consume); rc=$?
+  expect_code 0 "$rc" "gate: a failed read must not refuse or ask for another read: $out"
+  assert_contains "$out" "quota unknown: the read for account default failed" "gate: the pass must name the failed read"
+
+  # quota-axi not installed at all is the same unknown.
+  home=$(make_home unknown-missing-tool)
+  mkdir -p "$home/emptybin"
+  out=$(env HOME="$home/user-home" CLAUDE_CONFIG_DIR= PI_CODING_AGENT_DIR= CODEX_HOME= \
+    FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_STATE_OVERRIDE="$home/state" FM_CONFIG_OVERRIDE="$home/config" \
+    PATH="$(quota_axi_free_path "$home/emptybin")" "$INTAKE" record 2>&1); rc=$?
+  expect_code 0 "$rc" "record: a host without quota-axi records an unknown quota: $out"
+  out=$(run_gate "$home" --harness codex); rc=$?
+  expect_code 0 "$rc" "gate: a host without quota-axi must not refuse: $out"
+
+  # Exit 4 is still the request for one fresh read, and --refreshed ends it.
+  home=$(make_home unknown-refreshed)
+  out=$(run_gate "$home" --harness codex --consume); rc=$?
+  expect_code 4 "$rc" "gate: no record still asks for a fresh read first"
+  out=$(run_gate "$home" --harness codex --consume --refreshed --task t-none); rc=$?
+  expect_code 0 "$rc" "gate: after the fresh read, no record is an unknown quota: $out"
+  assert_contains "$out" "quota unknown: no intake record could be written" "gate: the pass names the missing record"
+  seed_record "$home" "$TMP_ROOT/snap-base.json"
+  : > "$(newest_record "$home").spent"
+  out=$(run_gate "$home" --harness codex --consume --refreshed); rc=$?
+  expect_code 0 "$rc" "gate: a record a parallel launch spent never refuses after the fresh read: $out"
+  assert_contains "$out" "already spent by a parallel launch" "gate: the pass names the race"
+  [ "$(unverified_lines "$home")" = 2 ] || fail "each of the two launches must log one line"
+  pass "unknown quota: rate limited, failed, tool-less, and record-less reads all start, each launch logging one line"
+}
+
+test_known_stops_still_stop() {
+  local home fakebin out rc
+  # A fully signed-out store: quota-axi exits 1 AND prints the report naming it.
+  home=$(make_home stop-login)
+  jq '(.providers[]) |= (.state = {status: "auth_required", error: "credentials_missing"} | .windows = [] | .quotaSemantics = {status: "unknown", effectiveAvailability: []})' \
+    "$TMP_ROOT/snap-base.json" > "$TMP_ROOT/snap-signedout.json"
+  fakebin=$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-signedout.json")
+  printf '#!/usr/bin/env bash\ncat -- %q\nexit 1\n' "$TMP_ROOT/snap-signedout.json" > "$fakebin/quota-axi"
+  run_record "$home" "$fakebin" >/dev/null
+  out=$(run_gate "$home" --harness claude --consume --refreshed); rc=$?
+  expect_code 3 "$rc" "gate: a missing login must stop the start even though quota-axi exited 1: $out"
+  assert_contains "$out" "credential on account default is unusable (credentials_missing)" "gate: the stop names the login"
+  [ "$(unverified_lines "$home")" = 0 ] || fail "a stopped start must log nothing"
+
+  # A known exhausted window stops even when another scope is unknown.
+  home=$(make_home stop-mixed)
+  jq '(.providers[] | select(.provider == "codex")) |= (
+        (.windows[] | select(.id == "weekly")) |= (.percentUsed = 100 | .percentRemaining = 0)
+        | .quotaSemantics.effectiveAvailability[0] |= {scope, status: "unknown"})' \
+    "$TMP_ROOT/snap-base.json" > "$TMP_ROOT/snap-mixed.json"
+  seed_record "$home" "$TMP_ROOT/snap-mixed.json"
+  out=$(run_gate "$home" --harness codex --consume --refreshed); rc=$?
+  expect_code 3 "$rc" "gate: a known exhausted window beside an unknown scope must stop: $out"
+  assert_contains "$out" "window weekly is at 100% used" "gate: the stop names the window"
+  pass "known stops: a missing login reported with exit 1 and a known exhausted window still stop the start"
+}
+
+# <source> <dest> <reset>: claude exhausted on its seven-day window until <reset>.
+exhausted_claude_until() {
+  jq --arg reset "$3" '(.providers[] | select(.provider == "claude")) |= (
+      (.windows[] | select(.id == "seven_day")) |= (.percentUsed = 100 | .percentRemaining = 0 | .resetsAt = $reset)
+      | .quotaSemantics.effectiveAvailability[0] |= (.effectivePercentRemaining = 0 | .limitingWindowIds = ["seven_day"] | .runway.status = "exhausted_now"))' \
+    "$1" > "$2"
+}
+
+test_last_good_reading_ages() {
+  local home out rc cache log
+  rate_limited_claude "$TMP_ROOT/snap-prolite.json" "$TMP_ROOT/snap-ratelimited.json"
+
+  # 23 hours old still answers, with its age on the table, the gate and the log.
+  home=$(make_home lastgood-23h)
+  seed_record "$home" "$TMP_ROOT/snap-prolite.json"
+  cache=$home/state/quota-last-good/shared.json
+  assert_present "$cache" "the reading must land in the one shared cache"
+  jq '.rows |= map_values(.at -= 82800)' "$cache" > "$cache.tmp" && mv "$cache.tmp" "$cache"
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake-rl" "$TMP_ROOT/snap-ratelimited.json")"); rc=$?
+  expect_code 0 "$rc" "record: a 23 hour old reading keeps the record green: $out"
+  assert_contains "$out" "provider=claude status=cached age=828" "the table must state the age of a 23 hour old reading"
+  out=$(run_gate "$home" --harness claude --consume --task t-cached); rc=$?
+  expect_code 0 "$rc" "gate: a 23 hour old reading must pass: $out"
+  assert_contains "$out" "source=cached age=828" "gate: the pass must state the reading age"
+  log=$(cat "$home/state/quota-unverified-starts.log")
+  assert_contains "$log" "task=t-cached age=828" "log: a start on a cached reading is unverified and states its age"
+  assert_contains "$log" "current read: rate limited" "log: the reason is what the read returned"
+
+  # A cached exhausted window stops until its reset...
+  home=$(make_home lastgood-exhausted)
+  exhausted_claude_until "$TMP_ROOT/snap-prolite.json" "$TMP_ROOT/snap-spent-future.json" "2099-01-01T00:00:00.000Z"
+  seed_record "$home" "$TMP_ROOT/snap-spent-future.json"
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake-rl" "$TMP_ROOT/snap-ratelimited.json")")
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 3 "$rc" "gate: a cached exhausted window must stop before its reset: $out"
+  assert_contains "$out" "resetting at 2099-01-01T00:00:00.000Z" "gate: the stop names the reset"
+
+  # ...and expires at that reset, though the reading is minutes old.
+  home=$(make_home lastgood-expired)
+  exhausted_claude_until "$TMP_ROOT/snap-prolite.json" "$TMP_ROOT/snap-spent-past.json" "2020-01-01T00:00:00.000Z"
+  seed_record "$home" "$TMP_ROOT/snap-spent-past.json"
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake-rl" "$TMP_ROOT/snap-ratelimited.json")")
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 0 "$rc" "gate: an exhausted window past its reset must not stop the start: $out"
+  assert_contains "$out" "quota unknown: rate limited" "gate: past its reset the reading is gone, so the quota is unknown"
+
+  # The same expiry holds when the whole read failed.
+  home=$(make_home lastgood-expired-failed)
+  seed_record "$home" "$TMP_ROOT/snap-spent-past.json"
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake-x" /nonexistent/snap.json)")
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 0 "$rc" "gate: a failed read must not revive an expired exhausted window: $out"
+  pass "last good reading: reused up to 24 hours with its age, an exhausted window only until its own reset"
+}
+
+test_honest_status() {
+  local home out rec
+  home=$(make_home honest)
+  rate_limited_claude "$TMP_ROOT/snap-prolite.json" "$TMP_ROOT/snap-ratelimited.json"
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-ratelimited.json")")
+  rec=$(newest_record "$home")
+  assert_contains "$out" "provider=claude status=rate limited" "the table must say rate limited"
+  assert_contains "$out" "account=default status=rate limited" "the account line must say rate limited"
+  assert_not_contains "$out" "provider=claude status=ok" "a rate limited read is never ok"
+  jq -e '.accounts[0].readStatus == "rate_limited" and
+    ([.accounts[0].providers[] | select(.provider == "claude") | .readStatus] == ["rate_limited"])' "$rec" >/dev/null ||
+    fail "the record must store rate_limited, never ok"
+  pass "honest status: a rate limited read is recorded and printed as rate limited, never ok"
+}
+
+test_read_deadline() {
+  local home fakebin out rc started rec
+  home=$(make_home deadline)
+  mkdir -p "$home/second/claude" "$home/second/pi" "$home/second/codex"
+  printf '%s\n' '{"crossAccount":{"enabled":true},"accounts":{"second":{"claude":"'"$home"'/second/claude","pi":"'"$home"'/second/pi","codex":"'"$home"'/second/codex"}}}' \
+    > "$home/config/accounts.json"
+  fakebin=$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-base.json")
+  printf '#!/usr/bin/env bash\nsleep 30\n' > "$fakebin/quota-axi"
+  started=$SECONDS
+  out=$(run_record "$home" "$fakebin" FM_QUOTA_READ_DEADLINE=1); rc=$?
+  expect_code 0 "$rc" "record: a read past the deadline is an unknown quota: $out"
+  [ "$((SECONDS - started))" -lt 15 ] || fail "two hanging stores must share one deadline, took $((SECONDS - started))s"
+  assert_contains "$out" "the 1s quota read deadline expired" "the table must name the expired deadline"
+  rec=$(newest_record "$home")
+  jq -e '[.accounts[].readStatus] == ["failed", "failed"]' "$rec" >/dev/null || fail "both stores must be recorded unread"
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 0 "$rc" "gate: an expired deadline must not refuse: $out"
+  assert_contains "$out" "quota unknown" "gate: an expired deadline is an unknown quota"
+  pass "read deadline: hanging stores share one deadline over the whole read and then count as unknown"
 }
 
 # --- 8. the real spawn and relaunch gates ------------------------------------
@@ -794,7 +984,7 @@ test_real_spawn_gate() {
   cp "$(make_fake_quota_axi "$TMP_ROOT/spawn-quota-spent" "$TMP_ROOT/snap-codex-spent.json")/quota-axi" "$fakebin/quota-axi"
   fm_test_spawn_brief "$home" spawn-refused "quota gate refusal intent"
   out=$( unset FM_QUOTA_INTAKE_TEST_BYPASS
-    # shellcheck disable=SC2031 # The pin is deliberately local to this spawn run's subshell.
+    # shellcheck disable=SC2030,SC2031 # The pin is deliberately local to this spawn run's subshell.
     export CODEX_HOME=
     fm_test_run_spawn "$home" "$wt" "$fakebin" spawn-refused "$proj" codex --mode no-mistakes --yolo off ); rc=$?
   [ "$rc" -ne 0 ] || fail "fm-spawn must refuse a launch whose fresh read shows a spent window"
@@ -802,7 +992,46 @@ test_real_spawn_gate() {
   assert_contains "$out" "spawn-refused was not launched; the quota intake gate refused it and nothing was created" \
     "fm-spawn: the refusal must state nothing was created"
   assert_absent "$home/state/spawn-refused.meta" "fm-spawn: a refused launch must record no meta"
-  pass "fm-spawn: runs the intake itself when the record is missing or spent, launches on that fresh read, and still refuses a limit verdict"
+
+  # A rate limited read with nothing cached starts anyway and logs that start.
+  rm -rf -- "$home/state/quota-last-good" "$home/state/quota-intake"
+  rate_limited_codex() { jq '(.providers[] | select(.provider == "codex")) |= (.state = {status: "rate_limited", error: "limited"} | .windows = [] | .quotaSemantics = {status: "unknown", effectiveAvailability: []})' "$TMP_ROOT/snap-base.json"; }
+  rate_limited_codex > "$TMP_ROOT/snap-codex-rl.json"
+  cp "$(make_fake_quota_axi "$TMP_ROOT/spawn-quota-rl" "$TMP_ROOT/snap-codex-rl.json")/quota-axi" "$fakebin/quota-axi"
+  fm_test_spawn_brief "$home" spawn-unknown "quota unknown intent"
+  out=$( unset FM_QUOTA_INTAKE_TEST_BYPASS
+    # shellcheck disable=SC2030,SC2031 # The pin is deliberately local to this spawn run's subshell.
+    export CODEX_HOME=
+    fm_test_run_spawn "$home" "$wt" "$fakebin" spawn-unknown "$proj" codex --mode no-mistakes --yolo off ); rc=$?
+  expect_code 0 "$rc" "fm-spawn: an unknown quota must never refuse a start"$'\n'"$out"
+  assert_contains "$out" "PASS (quota unknown: rate limited" "fm-spawn: the gate says why it could not verify"
+  assert_contains "$out" "spawned spawn-unknown" "fm-spawn: the launch must complete"
+  assert_contains "$(cat "$home/state/quota-unverified-starts.log")" "task=spawn-unknown" "fm-spawn: the start is logged under its task"
+  [ "$(unverified_lines "$home")" = 1 ] || fail "fm-spawn: one launch must log exactly one line"
+
+  # A read that fails outright starts the same way.
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/quota-axi"
+  fm_test_spawn_brief "$home" spawn-failed "failed read intent"
+  out=$( unset FM_QUOTA_INTAKE_TEST_BYPASS
+    # shellcheck disable=SC2030,SC2031 # The pin is deliberately local to this spawn run's subshell.
+    export CODEX_HOME=
+    fm_test_run_spawn "$home" "$wt" "$fakebin" spawn-failed "$proj" codex --mode no-mistakes --yolo off ); rc=$?
+  expect_code 0 "$rc" "fm-spawn: a failed read must never refuse a start"$'\n'"$out"
+  assert_contains "$out" "spawned spawn-failed" "fm-spawn: the launch must complete on a failed read"
+
+  # A bad login still stops, reported the way quota-axi really reports it.
+  jq '(.providers[] | select(.provider == "codex")) |= (.state = {status: "auth_required", error: "Codex sign-in required"} | .windows = [] | .quotaSemantics = {status: "unknown", effectiveAvailability: []})' \
+    "$TMP_ROOT/snap-base.json" > "$TMP_ROOT/snap-codex-auth.json"
+  printf '#!/usr/bin/env bash\ncat -- %q\nexit 1\n' "$TMP_ROOT/snap-codex-auth.json" > "$fakebin/quota-axi"
+  fm_test_spawn_brief "$home" spawn-noauth "bad login intent"
+  out=$( unset FM_QUOTA_INTAKE_TEST_BYPASS
+    # shellcheck disable=SC2030,SC2031 # The pin is deliberately local to this spawn run's subshell.
+    export CODEX_HOME=
+    fm_test_run_spawn "$home" "$wt" "$fakebin" spawn-noauth "$proj" codex --mode no-mistakes --yolo off ); rc=$?
+  [ "$rc" -ne 0 ] || fail "fm-spawn must refuse a launch on a bad login"
+  assert_contains "$out" "Codex sign-in required" "fm-spawn: the refusal must name the login"
+  assert_absent "$home/state/spawn-noauth.meta" "fm-spawn: a refused launch must record no meta"
+  pass "fm-spawn: heals a missing or spent record, starts on an unknown quota and logs it, and still refuses a limit verdict or a bad login"
 }
 
 test_worker_pin_record_covers_the_pinned_store() {
@@ -1041,11 +1270,15 @@ run_relaunch_control() {
 
 test_relaunch_pre_stop_gate() {
   local dir out rc rec
-  # Refusal: no record, and the running agent must stay exactly as it was.
+  # Refusal: a spent window, and the running agent must stay exactly as it was.
   dir=$(new_relaunch_case relaunch-refused q1)
   cp "$dir/home/state/q1.meta" "$dir/meta.before"
+  jq '(.providers[] | select(.provider == "codex") | .windows[] | select(.id == "weekly"))
+        |= (.percentUsed = 100 | .percentRemaining = 0)' "$TMP_ROOT/snap-base.json" > "$TMP_ROOT/snap-relaunch-spent.json"
+  rec=$(make_fake_quota_axi "$dir/quota-fake" "$TMP_ROOT/snap-relaunch-spent.json")
+  run_record "$dir/home" "$rec" >/dev/null || fail "seeding the spent relaunch record failed"
   out=$(run_relaunch_control "$dir" q1 relaunch --note "quota gate check"); rc=$?
-  [ "$rc" -ne 0 ] || fail "relaunch must refuse without an intake record"
+  [ "$rc" -ne 0 ] || fail "relaunch must refuse on a spent window"
   assert_contains "$out" "not released onto its quota windows yet; the running agent was left untouched and nothing changed" \
     "relaunch: the refusal must name the quota gate and the untouched agent"
   [ "$(cat "$dir/fake/command")" = codex ] \
@@ -1054,6 +1287,16 @@ test_relaunch_pre_stop_gate() {
   [ ! -e "$dir/home/state/q1.control-relaunch" ] || fail "a refused relaunch must not create a journal"
   cmp -s "$dir/home/state/q1.meta" "$dir/meta.before" \
     || fail "a refused relaunch must leave the record untouched"
+
+  # No record and no readable quota: an unknown quota never withholds a relaunch.
+  dir=$(new_relaunch_case relaunch-unknown q4)
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$dir/fakebin/quota-axi"
+  chmod +x "$dir/fakebin/quota-axi"
+  out=$(run_relaunch_control "$dir" q4 relaunch --note "quota unreadable"); rc=$?
+  expect_code 0 "$rc" "relaunch: an unreadable quota must not withhold the relaunch"$'\n'"$out"
+  assert_contains "$out" "quota unknown" "relaunch: the gate says the quota is unknown"
+  assert_contains "$out" "relaunched q4 harness=codex" "relaunch: the transaction should complete"
+  [ "$(unverified_lines "$dir/home")" = 1 ] || fail "relaunch: the preview and the launch together must log one line"
 
   # Pass: the real recorder seeds the home's record, and the whole
   # transaction - pre-stop gate, stop, replacement launch - runs on it.
@@ -1086,7 +1329,7 @@ test_relaunch_pre_stop_gate() {
   expect_code 0 "$rc" "relaunch: a named-account task must relaunch on a covering record"$'\n'"$out"
   assert_contains "$out" "account=second provider=codex" "relaunch: the gate must check the recorded account"
   assert_contains "$out" "relaunched q3 harness=codex" "relaunch: the named-account transaction should complete"
-  pass "fm-control relaunch: the quota gate refuses before the agent is stopped and passes on a real record, named accounts included"
+  pass "fm-control relaunch: a limit verdict refuses before the agent is stopped; a real record or an unknown quota passes, named accounts included"
 }
 
 test_record_shape
@@ -1102,6 +1345,11 @@ test_gate_zai_pass_prints_table
 test_gate_test_bypass
 test_recent_reading_fresh
 test_recent_reading_stale_and_auth
+test_unknown_quota_never_refuses
+test_known_stops_still_stop
+test_last_good_reading_ages
+test_honest_status
+test_read_deadline
 test_provider_row_filter
 test_real_spawn_gate
 test_worker_pin_record_covers_the_pinned_store

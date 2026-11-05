@@ -1419,9 +1419,22 @@ do_relaunch() {
   [ -z "$relaunch_claude_store" ] || quota_gate_args+=(--claude-store "$relaunch_claude_store")
   [ -z "$relaunch_pi_store" ] || quota_gate_args+=(--pi-store "$relaunch_pi_store")
   [ -z "$relaunch_codex_store" ] || quota_gate_args+=(--codex-store "$relaunch_codex_store")
-  if ! quota_gate_out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
-    FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
-    "$SCRIPT_DIR/fm-quota-intake.sh" gate "${quota_gate_args[@]}"); then
+  relaunch_quota_intake() { # <subcommand> [args...]
+    FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" \
+      FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+      "$SCRIPT_DIR/fm-quota-intake.sh" "$@"
+  }
+  quota_gate_status=0
+  quota_gate_out=$(relaunch_quota_intake gate "${quota_gate_args[@]}") || quota_gate_status=$?
+  # Exit 4 asks for one fresh read, exactly as fm-spawn answers it; a read that
+  # settles nothing is an unknown quota, which never withholds a relaunch.
+  if [ "$quota_gate_status" -eq 4 ]; then
+    printf '%s\n' "$quota_gate_out" >&2
+    relaunch_quota_intake record >&2 || true
+    quota_gate_status=0
+    quota_gate_out=$(relaunch_quota_intake gate "${quota_gate_args[@]}" --refreshed) || quota_gate_status=$?
+  fi
+  if [ "$quota_gate_status" -ne 0 ]; then
     printf '%s\n' "$quota_gate_out" >&2
     die "relaunch of $ID is not released onto its quota windows yet; the running agent was left untouched and nothing changed"
   fi

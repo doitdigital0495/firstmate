@@ -2230,22 +2230,21 @@ Everything after the answer runs in code: the confidence floor, the matched rule
 A candidate is rankable only with complete limit information: every window its applicable rows are bounded by - the weekly limit, a session limit where the plan has one, and named model windows - must carry a known remaining percent and reset time.
 A five-hour window counts whenever it can be read; one that is missing or has no readable percent or reset time is ignored on every account and never makes a candidate incomplete (captain 2026-11-02), and a row unknown only because of such a window ranks on its other windows.
 A provider whose state is `auth_required` makes only that candidate ineligible as `credential unusable ... not an unknown quota`; it never makes the whole choice incomplete.
-A provider row that a read could not measure for any other reason (rate limited, stale, unavailable, or the read failed outright) reuses that provider's last good reading of the same canonical store while it is at most `FM_QUOTA_RECENT_MAX_AGE` (1800) seconds old; the candidate line then shows `reading_age=<s>s (recent reading reused)`, a reused exhausted reading still excludes, and nothing older is used. The readings live privately under `state/quota-last-good/`.
+A provider row that a read could not measure for any other reason (rate limited, stale, unavailable, or the read failed outright) reuses that provider's last good reading of the same canonical store from the cache intake and the resolver share (`state/quota-last-good/shared.json`) while it is at most `FM_QUOTA_RECENT_MAX_AGE` (86400) seconds old; the candidate line then shows `reading_age=<s>s (recent reading reused)`, a reused exhausted reading excludes only until that window's own reset time, and nothing older is used. The readings live privately under `state/quota-last-good/`.
 A row whose own status is not known, an unmeasured provider, a profile floor whose scope row is unmeasured, a candidate with no applicable row, or a window without a percent or reset makes that candidate unreadable; it is never ranked, selected, or treated as healthy because its limits are unknown.
 While any candidate of the choice is rankable, an unreadable candidate prints `not eligible: quota unreadable, skipped: <reason>` with its missing windows, and the receipt rationale names it.
-When no candidate is rankable, an unreadable candidate makes the whole choice `incomplete`.
+When no candidate is rankable, an unknown quota never blocks the start: the first declared seat of the open tier and strongest reasoning class resolves `clear` with `eligible, quota unknown: <reason>` on its line, and its receipt is written as usual.
 A profile's `quota_scope` binds the candidate to that named quota-axi row in addition to its account-wide and model rows; a declared scope with no row beside otherwise complete evidence leaves the candidate eligible but unranked.
 The resolver prints its preferred-family decision while retaining evidence for every candidate.
 If preferred candidates remain eligible but none is rankable, it escalates instead of selecting another family, and it never introduces candidates outside the matched rule or its existing default fallback.
 With the home's `shared_quota: true` declaration ("Crew dispatch profiles"), the quota snapshots, floors, completeness gate, runway gates, and `spendPriority` argmax are skipped entirely; resolution is the matched rule's declared profile order (`preferred_provider` still narrows the pool; declared order then picks within it), and cross-account registration still applies.
-An incomplete choice runs the named Z.ai warm-up once where applicable and re-reads only incomplete stores with doubling backoff capped at 30 seconds.
-A skipped Z.ai candidate gets that same warm-up and one re-read of its store before a clear result, without the wait.
+A choice with an unreadable Z.ai candidate runs the named Z.ai warm-up once and one re-read of its store, without any wait.
 A failed re-read preserves the previous snapshot.
-The wait stops after 15 minutes and, still incomplete, becomes a captain pick with every unmeasured candidate marked; `FM_DISPATCH_QUOTA_WAIT_SECONDS` can only shorten that deadline (1..900).
-Quota reads and warm-ups are bounded subprocess groups sharing that deadline; initial reads have a 180-second bound.
-The resolver records a fresh per-launch quota intake only after resolution becomes dispatchable, so a long wait never leaves the launch bound to an expired intake.
-`FM_DISPATCH_QUOTA_ATTEMPTS` (default 1000, clamped 1..1000) can further bound attempts and `FM_DISPATCH_QUOTA_BACKOFF_MS` (default 1500, clamped 250..30000) sets the initial backoff.
-The `incomplete` block names each candidate's missing windows and retry times, and its note is the standing instruction: gather first, wait for the named measurements, and re-run; never pick by hand.
+All of a worker choice's quota reads and warm-ups are bounded subprocess groups sharing one `FM_QUOTA_READ_DEADLINE` (45 second) deadline, and a read still unfinished at it counts as unknown; `FM_DISPATCH_QUOTA_WAIT_SECONDS` can only shorten that deadline.
+A rate limited read is never retried inside a choice, because retrying inside a lockout only re-news it.
+A report quota-axi prints with exit 1 is still a read: exit 1 means every provider failed, and that report is what names a signed-out login.
+The resolver records a fresh per-launch quota intake only after resolution becomes dispatchable.
+`FM_DISPATCH_QUOTA_ATTEMPTS` (default 1000, clamped 1..1000) set to 1 skips that re-read.
 Any applicable `exhausted_now` row or known zero bound makes that candidate ineligible, and a known profile-floor shortfall does the same before unrelated quota uncertainty is considered.
 Missing or nonnumeric `spendPriority` evidence is never ranked, and every candidate prints its plan and evidence source (or unknown uncertainty) beside its window evidence (`windows=` with each id, remaining percent, and reset) or the reason it was not rankable, including on ambiguous and approval-gated outcomes that emit no profile.
 Duplicate concrete profiles with the same account, harness, model, and effort inside one rule or the default array are configuration errors rather than ties.
@@ -2279,7 +2278,7 @@ An approval-gated union stops for the captain, and rule floors are never silentl
 No route is ever guessed and no model is hardcoded as a fallback.
 A missing socket first gets `FM_JEVD_SOCKET_WAIT_SECONDS` (default 15, 0..60) to come back, because jevd's service manager owns its restart; the resolver never starts jevd.
 Jev error, outage, or invalid answer then gets exactly one retry, and a still-failing Jev makes the result a captain pick.
-So does an answer code cannot dispatch: an approval row, nothing rankable, an ambiguous union with a missing class, an unverifiable rule floor, a row that is not in the table, or quota evidence still incomplete at the deadline.
+So does an answer code cannot dispatch: an approval row, nothing rankable, an ambiguous union with a missing class, an unverifiable rule floor, or a row that is not in the table.
 An exact spendPriority tie keeps the candidates whose binding window (the windows bounding the limiting row) resets soonest, then takes the next slot of a fixed round-robin over a stable account, harness, model and effort order kept in `state/dispatch-tie-round-robin`; the result prints a `tie_break:` line naming the tie, the reset and the slot (captain 2026-11-02).
 
 A captain pick writes a private request under `state/dispatch-pick/` and launches nothing.
@@ -2290,6 +2289,9 @@ Pi, Codex, Grok and OpenCode primaries require the Lavish channel: they have no 
 Retry the broker with `--pick <code>` to have `bin/fm-dispatch-resolve.sh pick <code>` turn that answer into a `captain` receipt only after verifying the captain's own captured words; `bin/fm-dispatch-pick-lib.sh`'s header owns the request format and that verification.
 `--captain-pick` on a resolution asks for the same request even when Jev's answer is dispatchable, which is how a per-task captain override is made: the request shows what Jev and code would take, and only the captain's words decide.
 The resolver does not replace launch-time catalog, authentication, account, quota-intake, or harness validation.
+At launch, `bin/fm-quota-intake.sh` stops a start only on a known exhausted window, a bad or missing login, or an undeclared plan size or Notes entry on a readable row; its header owns the exact verdicts.
+An unknown quota starts, and every start on an unverified reading appends one `started on unverified quota` line with the provider, reason, and cached reading age to `state/quota-unverified-starts.log`.
+A rate limited read shows as `rate limited` in the intake record and table, never `ok`, and one `FM_QUOTA_READ_DEADLINE` (45 second) deadline bounds a whole record run.
 Firstmate can stop a route it judges unsafe, but cannot select another profile, mint a receipt, or answer a pick.
 The historical direct-HTTP canary is not evidence for this socket route.
 
@@ -3698,8 +3700,10 @@ FMX_ENV_FILE=           # optional alternate .env file for direct Relay client i
 FMX_DRY_RUN=            # truthy previews Relay replies and dismissals to state/x-outbox/ without posting or requiring a token
 FMX_X_REPLY_MAX_CHARS=280   # X reply per-message split budget; values below 50 clamp to 50
 # Dispatch resolution uses the private jevd socket, never a key in this file.
-FM_DISPATCH_QUOTA_ATTEMPTS=3   # resolve attempts for the resolver's incomplete-quota gather loop; clamped 1..10
-FM_DISPATCH_QUOTA_BACKOFF_MS=1500   # first backoff in milliseconds for that loop's doubling waits; clamped 250..30000
+FM_DISPATCH_QUOTA_ATTEMPTS=1000   # quota gathers for one resolution; clamped 1..1000; a worker choice uses at most two
+FM_DISPATCH_QUOTA_BACKOFF_MS=1500   # first backoff in milliseconds for pipeline mode's doubling waits; clamped 250..30000
+FM_QUOTA_RECENT_MAX_AGE=86400   # seconds a last good quota reading stays reusable
+FM_QUOTA_READ_DEADLINE=45   # seconds allowed for one whole quota read; anything unread by then counts as unknown
 FMX_DISCORD_REPLY_MAX_CHARS=1900   # Discord reply per-message split budget; values below 50 clamp to 50, values above 2000 reset to 1900
 FMX_X_THREAD_MAX=25     # maximum messages in one auto-split reply thread
 FMX_FOLLOWUP_MAX_AGE_SECS=604800   # local window for posting Relay completion follow-ups (7 days)

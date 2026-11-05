@@ -20,52 +20,51 @@
 #     column joined from config/accounts.json top-level notes (keyed by
 #     provider) and config/crew-dispatch.json model_notes (provider- or
 #     harness/model-keyed, e.g. claude/opus). The full table is printed so it lands in the transcript.
-#     A store read that fails is recorded as readStatus=failed, still printed,
-#     and the script exits nonzero. The newest 50 records are kept.
+#     A store read that fails or misses the deadline is recorded as
+#     readStatus=failed and printed; that is an unknown quota, so the script
+#     still exits 0. A rate limited row says "rate limited", never "ok". The
+#     whole record run has one FM_QUOTA_READ_DEADLINE (45 second) deadline; a
+#     store it does not reach is unknown. The newest 50 records are kept.
 #
 #   fm-quota-intake.sh gate --harness <harness> [--model <model>]
-#       [--account <id>] [--claude-store <path>] [--pi-store <path>]
-#       [--codex-store <path>] [--consume]
-#     Refuses (exit 3, nothing else touched) unless the newest record is at
-#     most FM_QUOTA_INTAKE_MAX_AGE (default 600) seconds old, has not already
-#     been spent on a launch, covers the chosen account entry and store (store
-#     equality judged on resolved real paths, so a store pinned through a
-#     symlink onto the recorded store counts as covered), maps
-#     the harness to a provider family present in that entry, and carries the
-#     whole table content for that provider: plan size known, the 7d (or
-#     weekly) window, the 5h window when the provider publishes one, plus
-#     every model-specific window binding the chosen model, each with a USED
-#     percent and reset time, and a non-empty Notes entry.
-#     Any exhausted_now runway or 100%-used (0% remaining) window is refused
-#     naming the window and its reset time, as is any unknown or missing
-#     piece. A refusal that only a fresh `record` run cures - no record, a
-#     spent, stale, or unreadable one, or one that does not cover the chosen
-#     account or store, or whose read of that account failed - exits 4
-#     instead of 3, so a launcher can run the intake once and gate again;
-#     every limit verdict stays exit 3. On pass (exit 0) the chosen
-#     candidate's full window table with used percents and notes is printed;
-#     an unpublished 5h window shows as "not published by provider", never a
-#     number. An idle Claude 5h window
-#     (0% used, no reset time because no window has been opened) cannot be
-#     exhausted, so it passes and shows as "not started (idle window)"; any
-#     other unreadable 5h window is ignored (see "Five-hour windows" below).
-#     A provider whose credential is unusable (auth_required) is refused as a
-#     credential failure, never as unknown quota.
-#     --consume (the launch itself,
-#     bin/fm-spawn.sh) atomically marks the record spent on pass, so every
-#     launch needs its own fresh intake; without it the gate is a preview
-#     that marks nothing. The gate reads only the record; it never re-queries
-#     quota-axi, which is exactly what forces the dispatching agent to re-run
-#     the intake instead of leaning on stale numbers.
+#       [--account <id>] [--task <id>] [--claude-store <path>] [--pi-store <path>]
+#       [--codex-store <path>] [--consume] [--refreshed]
+#     Judges one launch from the newest record and never re-queries quota-axi.
+#     Stops (exit 3, nothing else touched) only on something known: an
+#     exhausted_now runway or 100%-used (0% remaining) window, naming the window
+#     and its reset time; an unusable or missing login (auth_required); a harness
+#     with no provider family, or an account declared for another provider; an
+#     unresolvable worker pin; or, on a readable row, an undeclared plan size or
+#     Notes entry.
+#     An unknown quota never stops a start (captain 2026-11-05). A read that
+#     failed or was rate limited, a provider with no rows, or a window with no
+#     used percent or reset time passes as "PASS (quota unknown: <reason>)".
+#     Exit 4 asks the launcher to run one fresh `record` and gate again with
+#     --refreshed: no record, or a spent, stale, or unreadable one, or one that
+#     does not cover the chosen account or store. With --refreshed the launcher
+#     has already done that, so those cases also pass as quota unknown.
+#     On a measured pass (exit 0) the chosen candidate's full window table with
+#     used percents and notes is printed; an unpublished 5h window shows as "not
+#     published by provider", never a number. An idle Claude 5h window (0% used,
+#     no reset time because no window has been opened) cannot be exhausted, so it
+#     passes and shows as "not started (idle window)"; any other unreadable 5h
+#     window is ignored (see "Five-hour windows" below).
+#     --consume (the launch itself, bin/fm-spawn.sh) atomically marks the record
+#     spent, so every launch needs its own read; without it the gate is a preview
+#     that marks nothing. A consuming pass on an unverified reading (quota
+#     unknown, or a reused or stale row) appends one "started on unverified
+#     quota" line to state/quota-unverified-starts.log with the provider, reason,
+#     and age of the cached reading; --task names the launch on that line.
 #
-# Recent-reading fallback (R11): a provider row that a read could not measure
-#   for a transient reason (rate limited, stale, unavailable, or the whole read
-#   failed) reuses that store's last good row when it is at most
-#   FM_QUOTA_RECENT_MAX_AGE (default 1800) seconds old; see
-#   fm_quota_recent_merge in bin/fm-quota-axi-lib.sh. Such a provider is
-#   recorded readStatus=cached with its reading age, and every window shows
-#   source=cached age=<s>. A credential failure (auth_required) is never
-#   reused. Nothing older is evidence, and the gate then fails closed.
+# Last good reading (R11): a provider row that a read could not measure for a
+#   transient reason (rate limited, stale, unavailable, or the whole read failed)
+#   reuses that store's last good row from the shared cache for up to
+#   FM_QUOTA_RECENT_MAX_AGE (default 86400) seconds; see fm_quota_recent_merge in
+#   bin/fm-quota-axi-lib.sh. Such a provider is recorded readStatus=cached with
+#   its reading age and lastRead (what the current read really returned), and
+#   every window shows source=cached age=<s>. A reused exhausted row still stops
+#   a start until its reset time. A credential failure (auth_required) is never
+#   reused.
 #
 # Provider row filter: a registered account that declares `provider` in
 #   config/accounts.json is recorded with that provider's rows only, so a store
@@ -96,8 +95,8 @@
 #   FM_HOME / FM_ROOT_OVERRIDE / FM_STATE_OVERRIDE / FM_CONFIG_OVERRIDE - home
 #     resolution, same defaults as bin/fm-spawn.sh.
 #   FM_QUOTA_INTAKE_MAX_AGE seconds (600) - record freshness for the gate.
-#   FM_QUOTA_RECENT_MAX_AGE seconds (1800) - recent-reading reuse bound.
-#   FM_QUOTA_INTAKE_TIMEOUT seconds (180) - one quota-axi read deadline.
+#   FM_QUOTA_RECENT_MAX_AGE seconds (86400) - last good reading reuse bound.
+#   FM_QUOTA_READ_DEADLINE seconds (45) - deadline on one whole record run.
 #   FM_QUOTA_INTAKE_KEEP records (50) - record retention count.
 #   FM_QUOTA_INTAKE_TEST_BYPASS=1 - see above.
 #
@@ -122,7 +121,7 @@ STATE=${FM_STATE_OVERRIDE:-$FM_HOME/state}
 CONFIG=${FM_CONFIG_OVERRIDE:-$FM_HOME/config}
 INTAKE_DIR=$STATE/quota-intake
 MAX_AGE=${FM_QUOTA_INTAKE_MAX_AGE:-600}
-READ_TIMEOUT=${FM_QUOTA_INTAKE_TIMEOUT:-180}
+UNVERIFIED_LOG=$STATE/quota-unverified-starts.log
 KEEP=${FM_QUOTA_INTAKE_KEEP:-50}
 SCHEMA_VERSION=2
 
@@ -131,8 +130,38 @@ refuse() { printf '%s\n' "$1"; exit 3; }
 # The record itself is missing, spent, stale, unreadable, or does not cover the
 # chosen account or store: a fresh `record` run is what cures it, so the gate
 # says so with its own exit status and bin/fm-spawn.sh can run that intake once
-# and gate again. Every limit verdict stays a plain refusal (exit 3).
-refresh() { printf '%s\n' "$1"; exit 4; }
+# and gate again. Once that has happened (--refreshed) nothing more can be
+# learned, which makes it an unknown quota, never a refusal.
+GATE_REFRESHED=0 GATE_CONSUME=0 GATE_RECORD='' GATE_PROVIDER='' GATE_ACCOUNT='' GATE_MODEL='' GATE_TASK=''
+refresh() { # <message> <short reason>
+  [ "$GATE_REFRESHED" -eq 0 ] || gate_pass_unknown "$2"
+  printf '%s\n' "$1"
+  exit 4
+}
+
+# The one "started on unverified quota" line per launch: printed, and appended
+# to the log only by the consuming gate, so a preview never counts as a start.
+gate_log_unverified() { # <reason> [cached-reading-age-seconds]
+  local reason age_text=none line
+  [ "$GATE_CONSUME" -eq 1 ] || return 0
+  reason=$(printf '%s' "$1" | tr -s '\t\r\n' ' ')
+  [ -z "${2:-}" ] || age_text=${2}s
+  line="started on unverified quota provider=$GATE_PROVIDER account=$GATE_ACCOUNT model=$GATE_MODEL task=${GATE_TASK:-unknown} age=$age_text reason=$reason"
+  printf '%s\n' "$line"
+  mkdir -p -- "$STATE" 2>/dev/null || true
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$line" >> "$UNVERIFIED_LOG" 2>/dev/null ||
+    printf 'warning: could not append to %s\n' "$UNVERIFIED_LOG" >&2
+}
+
+gate_pass_unknown() { # <reason> [cached-reading-age-seconds]
+  printf 'quota-intake gate: PASS (quota unknown: %s; starting anyway) account=%s provider=%s model=%s\n' \
+    "$1" "$GATE_ACCOUNT" "$GATE_PROVIDER" "$GATE_MODEL"
+  if [ "$GATE_CONSUME" -eq 1 ] && [ -n "$GATE_RECORD" ]; then
+    ( set -C; : > "$GATE_RECORD.spent" ) 2>/dev/null || true
+  fi
+  gate_log_unverified "$1" "${2:-}"
+  exit 0
+}
 
 intake_list_records() { # one path per line, oldest first
   local f
@@ -144,14 +173,10 @@ intake_list_records() { # one path per line, oldest first
 
 usage() { sed -n '2,80p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
-# jq parses the record in every mode; quota-axi is only the live reader the
-# record mode drives. The gate is a pure record consumer - demanding the live
-# tool there would refuse launches on hosts that hold a fresh record but no
-# installed quota-axi, and the cleared-environment remote second-mate launch
-# is exactly such a host.
+# jq parses the record in every mode. quota-axi is only the live reader the
+# record mode drives, and a host without it simply records failed reads.
 command -v jq >/dev/null 2>&1 || die "jq not installed"
 [ -n "${HOME:-}" ] || die "HOME must be set"
-[ "${1:-record}" = record ] && { command -v quota-axi >/dev/null 2>&1 || die "quota-axi not installed"; }
 
 # The store a harness's gate checks when the caller passed no explicit store:
 # exactly the resolution the launching scripts use, kept in one place so the
@@ -185,10 +210,12 @@ intake_store_real() { # <path> - stdout: resolved real path, or the input
   realpath -- "$1" 2>/dev/null || printf '%s\n' "$1"
 }
 
-quota_axi_full_json() { # stdout: raw --full --json snapshot; rc nonzero on failure
-  local stores=$1 runner=()
+quota_axi_full_json() { # <stores> <seconds> - stdout: raw --full --json snapshot
+  local stores=$1 seconds=$2 runner=()
   if command -v timeout >/dev/null 2>&1; then
-    runner=(timeout "$READ_TIMEOUT")
+    runner=(timeout -k 2 "$seconds")
+  elif command -v python3 >/dev/null 2>&1; then
+    runner=(python3 "$SCRIPT_DIR/fm-dispatch-bounded.py" "$(( $(date +%s) + seconds ))")
   fi
   CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "$(printf '%s\n' "$stores" | sed -n 1p)") \
   PI_CODING_AGENT_DIR=$(fm_account_read_store pi "$(printf '%s\n' "$stores" | sed -n 2p)") \
@@ -268,9 +295,12 @@ intake_build_entry() { # <account> <claude> <pi> <codex> <snapshot-file> <plan-l
         (plan_label($p.plan)) as $qp |
         {
           provider: $p.provider,
-          readStatus: (if $p.reusedReading != null then "cached" else "ok" end),
+          readStatus: (if $p.reusedReading != null then "cached"
+                       elif (["rate_limited", "stale", "unavailable", "error", "auth_required"] | index($p.state.status // "")) != null then $p.state.status
+                       else "ok" end),
           readingAgeSeconds: ($p.reusedReading.ageSeconds // null),
-          state: {status: ($p.state.status // $p.quotaSemantics.status // null),
+          lastRead: ($p.reusedReading.lastRead // null),
+          state: {status: ($p.reusedReading.lastRead // $p.state.status // $p.quotaSemantics.status // null),
                   error: ($p.state.error // null), retryAfter: ($p.state.retryAfter // null)},
           plan: (if $declared != null then $declared elif $qp != null then $qp else "unknown" end),
           planSource: (if $declared != null then $planarg[$p.provider].source elif $qp != null then "quota-axi" else "unknown" end),
@@ -296,7 +326,7 @@ intake_build_entry() { # <account> <claude> <pi> <codex> <snapshot-file> <plan-l
              resetsAt: (.resetsAt // null)}]
         }
       ]
-    }'
+    } | .readStatus = (if any(.providers[]; .readStatus == "rate_limited" or .lastRead == "rate_limited") then "rate_limited" else "ok" end)'
 }
 
 # Per-provider declared plans for one account, resolved from the plan map.
@@ -313,13 +343,14 @@ intake_print_record() { # <record-json> - full table to stdout
   jq -r '
     def pct($v): if ($v | type) == "number" then "\($v)%" else "unknown" end;
     def used($v): if ($v | type) == "number" then "\($v)%" else "unknown" end;
+    def words: gsub("_"; " ");
     "quota-intake recordedAt=\(.recordedAt) record=\(.record)",
     (.accounts[] | . as $a |
-      "account=\(.account) status=\(.readStatus) claude=\(.stores.claude) pi=\(.stores.pi) codex=\(.stores.codex)",
+      "account=\(.account) status=\(.readStatus | words) claude=\(.stores.claude) pi=\(.stores.pi) codex=\(.stores.codex)",
       (.providers[]? | . as $p | ($p.readStatus) as $ps |
         ($p.spendPriority // "unknown") as $sp |
         ($p.runway // "unknown") as $rw |
-        "  provider=\($p.provider) status=\($ps) plan=\($p.plan) (\($p.planSource)) quota-axi=\($p.quotaAxiPlan) spendPriority=\($sp) runway=\($rw) notes=\($p.notes // "")",
+        "  provider=\($p.provider) status=\($ps | words)\(if $ps == "cached" then " age=\($p.readingAgeSeconds // "unknown")s lastRead=\(($p.lastRead // "unknown") | words)" else "" end) plan=\($p.plan) (\($p.planSource)) quota-axi=\($p.quotaAxiPlan) spendPriority=\($sp) runway=\($rw) notes=\($p.notes // "")",
         (($p.modelNotes // {}) | to_entries[] | "    model=\(.key) notes=\(.value)"),
         ($p.windows[]? | . as $w | ($w.resetsAt // "unknown") as $rs |
           (if $ps == "cached" then "cached age=\($p.readingAgeSeconds // "unknown")s" else "live" end) as $src |
@@ -333,8 +364,8 @@ cmd_record() {
   # tmp stays a global: the EXIT trap must still see it after this function
   # returns, and set -u would otherwise trip on the lost local.
   tmp=$(mktemp -d) || die "mktemp failed"
-  local entries default_stores plan_map account stores key snap entry failed=0 now ns name file
-  local total sc sp sx recent only
+  local entries default_stores plan_map account stores key snap entry now ns name file
+  local total sc sp sx recent only read_deadline left read_ok read_error
   local -a canon=()
   local -a accounts=()
   trap 'rm -rf -- "$tmp"' EXIT
@@ -355,6 +386,7 @@ cmd_record() {
     done < <(jq -r '.accounts | keys[]' "$CONFIG/accounts.json" 2>/dev/null | sort)
   fi
 
+  read_deadline=$(( $(intake_epoch_now) + FM_QUOTA_READ_DEADLINE ))
   entries='[]'
   for account in "${accounts[@]}"; do
     if [ "$account" = default ]; then
@@ -370,11 +402,20 @@ cmd_record() {
       if [ "$one" = "$FM_ACCOUNT_NO_STORE" ]; then printf '%s\n' "$one"; else fm_account_canonical_store "$one"; fi
     done)
     mapfile -t canon <<< "$key"
-    recent=$(fm_quota_recent_file "$STATE" intake)
+    recent=$(fm_quota_recent_file "$STATE")
     key=$(printf '%s\n' "$key" | cksum | tr -d ' ')
     snap="$tmp/snap-$key.json"
     if [ ! -f "$snap" ]; then
-      if quota_axi_full_json "$stores" > "$snap.raw" 2>/dev/null && fm_quota_json_valid < "$snap.raw"; then
+      # Judge the report, not the exit status: quota-axi exits 1 with a full
+      # report when every provider failed, and that report is what names a
+      # signed-out login. Calling it a failed read would start on a bad login.
+      read_ok=0
+      left=$(( read_deadline - $(intake_epoch_now) ))
+      if [ "$left" -gt 0 ]; then
+        quota_axi_full_json "$stores" "$left" > "$snap.raw" 2>/dev/null
+        fm_quota_json_valid < "$snap.raw" && read_ok=1
+      fi
+      if [ "$read_ok" -eq 1 ]; then
         fm_quota_recent_save "$recent" "$snap.raw" "${canon[0]}" "${canon[1]}" "${canon[2]}"
         if fm_quota_recent_merge "$recent" "$snap.raw" "${canon[0]}" "${canon[1]}" "${canon[2]}" > "$snap.merged" 2>/dev/null && fm_quota_json_valid < "$snap.merged"; then
           mv -- "$snap.merged" "$snap"
@@ -391,15 +432,16 @@ cmd_record() {
       fi
     fi
     if [ -z "$snap" ]; then
+      read_error="quota-axi --full --json failed or invalid for this store"
+      [ "$(intake_epoch_now)" -lt "$read_deadline" ] || read_error="the ${FM_QUOTA_READ_DEADLINE}s quota read deadline expired"
       sc=$(printf '%s\n' "$stores" | sed -n 1p)
       sp=$(printf '%s\n' "$stores" | sed -n 2p)
       sx=$(printf '%s\n' "$stores" | sed -n 3p)
       entry=$(jq -cn --arg account "$account" \
           --arg claude "$sc" --arg pi "$sp" --arg codex "$sx" \
-          --arg error "quota-axi --full --json failed or invalid for this store" '{
+          --arg error "$read_error" '{
           account: $account, readStatus: "failed",
           stores: {claude: $claude, pi: $pi, codex: $codex}, error: $error, providers: []}')
-      failed=1
       entries=$(jq -cn --argjson all "$entries" --argjson one "$entry" '$all + [$one]')
       continue
     fi
@@ -431,7 +473,6 @@ cmd_record() {
   fi
 
   intake_print_record < "$file"
-  [ "$failed" -eq 0 ] || exit 1
 }
 
 # Gate -------------------------------------------------------------------------
@@ -469,6 +510,8 @@ cmd_gate() {
     shift
     case "$arg" in
       --consume) consume=1 ;;
+      --refreshed) GATE_REFRESHED=1 ;;
+      --task) [ $# -gt 0 ] || die "--task needs a value"; GATE_TASK=$1; shift ;;
       --harness) [ $# -gt 0 ] || die "--harness needs a value"; harness=$1; shift ;;
       --model) [ $# -gt 0 ] || die "--model needs a value"; model=${1:-default}; shift ;;
       --account) [ $# -gt 0 ] || die "--account needs a value"; account=$1; shift ;;
@@ -487,28 +530,32 @@ cmd_gate() {
     exit 0
   fi
 
-  local provider record now age covered entry store_field chosen expected recorded spent_msg
+  local provider record now age covered entry store_field chosen expected recorded spent_msg declared=''
   provider=$(gate_provider_for_harness "$harness" "$model") ||
     refuse "quota intake gate: refusing - no quota provider family can be established for harness '$harness' with model '$model'; declare the provider family in the dispatch profile or dispatch a measurable harness"
+  GATE_CONSUME=$consume GATE_PROVIDER=$provider GATE_ACCOUNT=$account GATE_MODEL=$model
   record=$(intake_list_records | tail -n 1)
-  [ -n "$record" ] || refresh "quota intake gate: refusing - no intake record exists under $INTAKE_DIR; run bin/fm-quota-intake.sh first and re-check every usage limit"
+  [ -n "$record" ] || refresh "quota intake gate: refusing - no intake record exists under $INTAKE_DIR; run bin/fm-quota-intake.sh first and re-check every usage limit" "no intake record could be written"
   spent_msg="quota intake gate: refusing - the newest intake record $(basename -- "$record") was already spent on a launch; every launch needs its own read, so run bin/fm-quota-intake.sh now and re-check every usage limit"
-  [ ! -e "$record.spent" ] || refresh "$spent_msg"
+  [ ! -e "$record.spent" ] || refresh "$spent_msg" "the newest intake record was already spent by a parallel launch"
   now=$(intake_epoch_now)
   age=$(jq -r --argjson now "$now" '$now - (.recordedAtEpoch // 0)' "$record" 2>/dev/null)
   case "$age" in
-    ''|*[!0-9-]*) refresh "quota intake gate: refusing - the newest record is unreadable; run bin/fm-quota-intake.sh again" ;;
+    ''|*[!0-9-]*) refresh "quota intake gate: refusing - the newest record is unreadable; run bin/fm-quota-intake.sh again" "the newest intake record is unreadable" ;;
   esac
   [ "$age" -le "$MAX_AGE" ] ||
-    refresh "quota intake gate: refusing - the newest intake record is ${age}s old (max ${MAX_AGE}s); run bin/fm-quota-intake.sh now and re-check every usage limit"
+    refresh "quota intake gate: refusing - the newest intake record is ${age}s old (max ${MAX_AGE}s); run bin/fm-quota-intake.sh now and re-check every usage limit" "the newest intake record is ${age}s old"
 
   entry=$(jq -c --arg a "$account" '[.accounts[] | select(.account == $a)] | first // empty' "$record")
   [ -n "$entry" ] || {
     covered=$(jq -r '[.accounts[].account] | join(",")' "$record")
-    refresh "quota intake gate: refusing - the record does not cover account '$account' (covered: ${covered:-none}); run bin/fm-quota-intake.sh for that account's stores"
+    refresh "quota intake gate: refusing - the record does not cover account '$account' (covered: ${covered:-none}); run bin/fm-quota-intake.sh for that account's stores" "the intake record does not cover account $account"
   }
-  [ "$(jq -r '.readStatus' <<< "$entry")" = ok ] ||
-    refresh "quota intake gate: refusing - the record's read for account '$account' failed ($(jq -r '.error // "unknown error"' <<< "$entry")); re-run bin/fm-quota-intake.sh"
+  GATE_RECORD=$record
+  # The read already failed: another read inside the same lockout only re-news
+  # it, so this is an unknown quota now rather than a request for a fresh read.
+  [ "$(jq -r '.readStatus' <<< "$entry")" != failed ] ||
+    gate_pass_unknown "the read for account $account failed: $(jq -r '.error // "unknown error"' <<< "$entry")"
 
   case "$harness" in
     claude) store_field=claude ;;
@@ -530,19 +577,24 @@ cmd_gate() {
     fi
     recorded=$(jq -r --arg f "$store_field" '.stores[$f]' <<< "$entry")
     [ "$(intake_store_real "$recorded")" = "$(intake_store_real "$expected")" ] ||
-      refresh "quota intake gate: refusing - the record's $store_field store $recorded does not cover the chosen store $expected; run bin/fm-quota-intake.sh against the store this launch will use"
+      refresh "quota intake gate: refusing - the record's $store_field store $recorded does not cover the chosen store $expected; run bin/fm-quota-intake.sh against the store this launch will use" "the intake record does not cover the $store_field store $expected"
   fi
 
+  [ "$account" = default ] || declared=$(fm_account_provider "$CONFIG/accounts.json" "$account")
   local verdict
-  verdict=$(jq -c --arg provider "$provider" --arg model "$model" --arg account "$account" '
+  verdict=$(jq -c --arg provider "$provider" --arg model "$model" --arg account "$account" --arg declared "$declared" '
     def bare($m): ($m | split("/") | last);
     ([.providers[] | select(.provider == $provider)] | first // null) as $p |
+    (($p.state.status // "") | gsub("_"; " ")) as $read |
+    def unknown($why):
+      {verdict: "unknown", age: ($p.readingAgeSeconds // null),
+       reason: (if (["", "fresh"] | index($read)) != null then $why else "\($read): \($why)" end)};
     if $p == null then
-      {verdict: "refuse",
-       reason: ("no \($provider) quota evidence in the intake record for account \($account); run bin/fm-quota-intake.sh and re-check every usage limit")}
-    elif $p.readStatus == "failed" then
-      ($p.state.error // "unknown error") as $err |
-      {verdict: "refuse", reason: ("the \($provider) read failed in the intake record: \($err)")}
+      if $declared != "" and $declared != $provider then
+        {verdict: "refuse", reason: ("account \($account) is declared for provider \($declared), not \($provider); dispatch a seat of that provider")}
+      else
+        {verdict: "unknown", age: null, reason: ("no \($provider) row in the intake record for account \($account)")}
+      end
     elif ($p.state.status // "") == "auth_required" then
       {verdict: "refuse",
        reason: ("the \($provider) credential on account \($account) is unusable (\($p.state.error // "auth_required")); sign that store in again or dispatch another account - this is not an unknown quota")}
@@ -581,12 +633,12 @@ cmd_gate() {
         ($w5 != null and ($r.effectivePercentRemaining | type) == "number" and
          (($r.unmeasurableWindowIds // []) | length) > 0 and
          all(($r.unmeasurableWindowIds // [])[]; . == $w5.id));
-      if ($rows | length) == 0 then
-        {verdict: "refuse", reason: ("no quota evidence rows for provider \($provider) with model \($model); dispatch a candidate the intake can measure")}
-      elif $w7 == null then
-        {verdict: "refuse",
-         reason: ("the seven-day usage window (used percent and reset time) is missing for provider \($provider) on account \($account); the intake must read it before any launch; re-run bin/fm-quota-intake.sh")}
-      elif any($rows[]; (.runway // "") == "exhausted_now") then
+      [($req[] | select((idle5(.) | not) and (unread5(.) | not) and (win(.) == null or ((used(.) // "x") | type) != "number" or ((win(.).resetsAt // "") | length) == 0)))] as $unknown_ids |
+      (($p.modelNotes // {}) as $mn |
+       ($mn[$model] // $mn[($model | split("/") | .[0:2] | join("/"))]
+        // ([$mn | to_entries[] | select(.key | endswith("/" + $model)) | .value] | first) // "")) as $mnote |
+      # Anything known to be exhausted stops first, however little else is known.
+      if any($rows[]; (.runway // "") == "exhausted_now") then
         ([$rows[] | select((.runway // "") == "exhausted_now")] | first) as $bad |
         ($bad.limitingWindowIds // []) as $lims |
         (if ($lims | length) > 0 then $lims[0] else "" end) as $wname |
@@ -595,27 +647,24 @@ cmd_gate() {
          reason: ("\($provider) runway is exhausted_now at \($bad.scope)" +
                   (if $wname != "" then " (window \($wname))" else "" end) +
                   " resetting at \($rst)")}
+      elif any($req[]; (unread5(.) | not) and (used(.) >= 100 or win(.).percentRemaining == 0)) then
+        ([$req[] | select((unread5(.) | not) and (used(.) >= 100 or win(.).percentRemaining == 0))] | first) as $wid |
+        (reset($wid) // "an unknown time") as $rst |
+        {verdict: "refuse", window: $wid,
+         reason: ("window \($wid) is at 100% used (0% remaining) and resets at \($rst); wait for the reset or dispatch another candidate")}
+      # Not known to be exhausted, and not measurable: an unknown quota.
+      elif ($rows | length) == 0 then
+        unknown("no quota evidence rows for provider \($provider) with model \($model)")
+      elif $w7 == null then
+        unknown("no seven-day window for provider \($provider) on account \($account)")
       elif any($rows[]; .status != "known" and (only5_unknown(.) | not)) then
         ([$rows[] | select(.status != "known" and (only5_unknown(.) | not))] | first) as $bad |
-        {verdict: "refuse", scope: $bad.scope,
-         reason: ("quota evidence is unknown at \($bad.scope) for provider \($provider); wait for the measurement or re-run bin/fm-quota-intake.sh")}
+        unknown("quota evidence is unknown at \($bad.scope) for provider \($provider)")
       elif ($req | length) == 0 then
-        {verdict: "refuse", reason: ("no window reset evidence for provider \($provider); re-run bin/fm-quota-intake.sh")}
-      else
-        [($req[] | select((idle5(.) | not) and (unread5(.) | not) and (win(.) == null or ((used(.) // "x") | type) != "number" or ((win(.).resetsAt // "") | length) == 0)))] as $unknown_ids |
-        (if ($unknown_ids | length) > 0 then ($unknown_ids | join(", ")) else "" end) as $miss |
-        (($p.modelNotes // {}) as $mn |
-         ($mn[$model] // $mn[($model | split("/") | .[0:2] | join("/"))]
-          // ([$mn | to_entries[] | select(.key | endswith("/" + $model)) | .value] | first) // "")) as $mnote |
-        if ($miss != "") then
-          {verdict: "refuse",
-           reason: ("windows without a known used percent or reset time: \($miss)")}
-        elif any($req[]; (unread5(.) | not) and (used(.) >= 100 or win(.).percentRemaining == 0)) then
-          ([$req[] | select((unread5(.) | not) and (used(.) >= 100 or win(.).percentRemaining == 0))] | first) as $wid |
-          (reset($wid) // "an unknown time") as $rst |
-          {verdict: "refuse", window: $wid,
-           reason: ("window \($wid) is at 100% used (0% remaining) and resets at \($rst); wait for the reset or dispatch another candidate")}
-        elif ($p.plan // "unknown") == "unknown" then
+        unknown("no window reset evidence for provider \($provider)")
+      elif ($unknown_ids | length) > 0 then
+        unknown("windows without a known used percent or reset time: \($unknown_ids | join(", "))")
+      elif ($p.plan // "unknown") == "unknown" then
           {verdict: "refuse",
            reason: ("the plan size for provider \($provider) on account \($account) is unknown; declare it in config/accounts.json plans and re-run bin/fm-quota-intake.sh")}
         elif (($p.notes // "") == "" and $mnote == "") then
@@ -624,6 +673,9 @@ cmd_gate() {
         else
           {verdict: "pass", account: $account, provider: $provider, model: $model,
            plan: $p.plan, planSource: $p.planSource,
+           unverified: (if $p.readStatus == "cached" then "reused last good reading, current read: \(($p.lastRead // "unknown") | gsub("_"; " "))"
+                        elif $p.readStatus != "ok" then $read else null end),
+           readingAge: ($p.readingAgeSeconds // null),
            notes: ($p.notes // ""), modelNote: $mnote,
            spendPriority: ($p.spendPriority // "unknown"), runway: ($p.runway // "unknown"),
            fiveHourPublished: ($w5 != null),
@@ -632,13 +684,15 @@ cmd_gate() {
            windows: [$req[] | {id: ., used: (if unread5(.) then "unreadable, ignored" else used(.) end),
                                resetsAt: (if idle5(.) then "not started (idle window)" elif unread5(.) then "unreadable, ignored" else win(.).resetsAt end),
                                source: (if $p.readStatus == "cached" then "cached age=\($p.readingAgeSeconds // "unknown")s" else "live" end)}]}
-        end
       end
     end' <<< "$entry")
 
+  if [ "$(jq -r '.verdict' <<< "$verdict")" = unknown ]; then
+    gate_pass_unknown "$(jq -r '.reason' <<< "$verdict")" "$(jq -r '.age // ""' <<< "$verdict")"
+  fi
   if [ "$(jq -r '.verdict' <<< "$verdict")" = pass ]; then
     if [ "$consume" -eq 1 ]; then
-      ( set -C; : > "$record.spent" ) 2>/dev/null || refresh "$spent_msg"
+      ( set -C; : > "$record.spent" ) 2>/dev/null || refresh "$spent_msg" "the newest intake record was already spent by a parallel launch"
     fi
     printf 'quota-intake gate: PASS record=%s age=%ss account=%s provider=%s model=%s plan=%s (%s) spendPriority=%s runway=%s\n' \
       "$(basename -- "$record")" "$age" \
@@ -654,6 +708,9 @@ cmd_gate() {
       (.windows[]? | "    window=\(.id) used=\(pct(.used)) resets=\(.resetsAt) source=\(.source)"),
       (select((.notes // "") != "" or (.modelNote // "") != "") |
         "  notes=" + ([.notes, .modelNote] | map(select(. != null and . != "")) | join(" | ")))' <<< "$verdict"
+    if [ -n "$(jq -r '.unverified // ""' <<< "$verdict")" ]; then
+      gate_log_unverified "$(jq -r '.unverified' <<< "$verdict")" "$(jq -r '.readingAge // ""' <<< "$verdict")"
+    fi
     exit 0
   fi
   refuse "quota intake gate: refusing - $(jq -r '.reason' <<< "$verdict")"

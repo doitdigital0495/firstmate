@@ -9,7 +9,7 @@
 #   R11 a rate-limited read reuses that store's last good reading under 30 min
 #   S4  a credential failure is named as such, never as unknown quota
 #   T   seat_tier strict order, per-delivery tiers, and their reserve and class rules
-#   U   an unreadable candidate is skipped while another is readable; none readable stays incomplete
+#   U   an unreadable candidate is skipped while another is readable; with none readable the first seat starts quota unknown
 #   P   pipeline mode: fixed row per step, pools, weekly floor, live five-hour window
 #   A   provider-aware, symlink-canonical seat lookup and the one-shot migration
 set -u
@@ -106,7 +106,7 @@ cp "$RULES" "$TMP_ROOT/rules-original"
 export PATH="$FAKEBIN:$PATH" QUOTA_DIR="$QDIR"
 unset FM_QUOTA_INTAKE_TEST_BYPASS
 export FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE="$HOME_DIR/state" FM_CONFIG_OVERRIDE="$HOME_DIR/config" FM_DATA_OVERRIDE="$HOME_DIR/data" FM_JEVD_SOCKET="$SOCKET"
-export FM_DISPATCH_QUOTA_ATTEMPTS=1 FM_DISPATCH_QUOTA_BACKOFF_MS=250 FM_DISPATCH_QUOTA_WAIT_SECONDS=1
+export FM_DISPATCH_QUOTA_ATTEMPTS=1 FM_DISPATCH_QUOTA_BACKOFF_MS=250 FM_DISPATCH_QUOTA_WAIT_SECONDS=20
 # The supervisor's own login is the home pin store, as on a real home.
 export CLAUDE_CONFIG_DIR="$STORES/claude3" PI_CODING_AGENT_DIR="$STORES/pi" CODEX_HOME="$STORES/codex1"
 write_response() {
@@ -254,11 +254,22 @@ assert_contains "$out" 'fallback_only reserve held' 'a later unreadable reserve 
 reset_quota
 for seat in claude1 claude2 claude3 codex1 pi; do unreadable "$seat"; done
 run "$BRIEF" --task six
-assert_contains "$out" 'status: captain-pick' "nothing readable still goes to the captain: $out"
-assert_contains "$out" 'jev: incomplete' 'the pick names the incomplete evidence'
-assert_contains "$out" '-> incomplete: provider claude unmeasured' 'every seat stays listed as unmeasured'
-assert_contains "$out" 'receipt: none' 'nothing launches'
-assert_not_contains "$out" 'seat_tier held' 'no unreadable tier hides a later one from the gather'
+assert_contains "$out" 'status: clear' "nothing readable still starts: $out"
+assert_contains "$out" 'eligible, quota unknown: provider codex unmeasured (unknown, rate limited)' 'the seat says quota unknown and why'
+assert_contains "$out" '-> incomplete: provider claude unmeasured' 'every other seat stays listed as unmeasured'
+assert_contains "$out" 'receipt: dispatch-' 'the start gets its receipt'
+assert_contains "$(chosen)" "--account 'codex1'" "the first seat of the strongest class starts, as a measured choice would: $out"
+assert_not_contains "$out" 'seat_tier held' 'no unreadable tier hides a later one'
+# Every login bad is known, not unknown: nothing starts.
+reset_quota
+for seat in claude1 claude2 claude3 codex1 pi; do
+  jq '.providers[0] |= (.state = {status:"auth_required", error:"signed out"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$QDIR/$seat.json" > "$TMP_ROOT/seat-auth.json"
+  cp "$TMP_ROOT/seat-auth.json" "$QDIR/$seat.json"
+done
+rm -rf "$HOME_DIR/state/quota-last-good"
+run "$BRIEF" --task six
+assert_contains "$out" 'status: captain-pick' "every login bad is not an unknown quota: $out"
+assert_contains "$out" 'receipt: none' 'nothing starts on a bad login'
 # A skipped pool with a named warm-up still gets it once, and can join the choice.
 cat > "$FAKEBIN/zai-window-warm" <<SH
 #!/usr/bin/env bash
@@ -285,7 +296,7 @@ FM_DISPATCH_QUOTA_ATTEMPTS=3 FM_DISPATCH_QUOTA_WAIT_SECONDS=60 run "$BRIEF" --ta
 assert_contains "$(chosen)" "--account 'claude2'" "an absent warm-up never stalls the choice: $out"
 cp "$TMP_ROOT/tier-rules" "$RULES"
 write_response rule_1 0.95 "$worker"
-pass 'U: an unreadable candidate is skipped while another is readable; none readable stays incomplete'
+pass 'U: an unreadable candidate is skipped while another is readable; none readable starts the first seat; bad logins do not'
 reset_quota
 set_quota claude1 claude 0 1 exhausted_now
 run "$BRIEF" --task six
@@ -387,11 +398,11 @@ run "$BRIEF" --task six
 assert_contains "$out" 'status: clear' "a rate-limited read with a recent reading keeps the decision going: $out"
 assert_contains "$out" 'reading_age=' 'the reused reading states its age'
 assert_contains "$(chosen)" "--account 'claude2'" 'the recent reading still ranks claude2'
-for cache in "$HOME_DIR"/state/quota-last-good/resolve*.json; do
-  jq '.rows |= map_values(.at -= 4000)' "$cache" > "$cache.tmp" && mv "$cache.tmp" "$cache"
-done
+assert_equals shared.json "$(find "$HOME_DIR/state/quota-last-good" -type f -printf '%f\n')" 'intake and the resolver share one last-good cache'
+cache=$HOME_DIR/state/quota-last-good/shared.json
+jq '.rows |= map_values(.at -= 90000)' "$cache" > "$cache.tmp" && mv "$cache.tmp" "$cache"
 run "$BRIEF" --task six
-assert_contains "$out" 'status: clear' "a reading older than 30 minutes only takes that seat out: $out"
+assert_contains "$out" 'status: clear' "a reading older than 24 hours only takes that seat out: $out"
 assert_contains "$(chosen)" "--account 'claude1'" 'the readable seat takes the choice'
 assert_contains "$out" 'not eligible: quota unreadable, skipped: provider claude unmeasured' 'the expired reading is marked on its line'
 reset_quota
@@ -401,7 +412,7 @@ assert_contains "$out" 'status: clear' "a credential failure does not stall the 
 assert_contains "$out" 'credential unusable for provider claude on account claude2' 'the credential failure is named as such'
 assert_contains "$(chosen)" "--account 'claude1'" 'the remaining worker seat runs the work'
 reset_quota
-pass 'C3, R11 and S4: unreadable five-hour windows are ignored, recent readings reused under 30 minutes, credential failures named'
+pass 'C3, R11 and S4: unreadable five-hour windows are ignored, recent readings reused under 24 hours, credential failures named'
 
 # ---- P: pipeline seat rows -------------------------------------------------------
 # The fixed row per no-mistakes step: pool 1 is claude1 and claude2, pool 2 is

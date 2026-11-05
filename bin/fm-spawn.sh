@@ -4882,20 +4882,20 @@ fi
 spawn_dispatch_receipt_gate || exit 1
 
 # Phase 1.9: bin/fm-quota-intake.sh gate. Every worker, scout, and local
-# second-mate launch stops here until a fresh quota intake record proves this
-# exact harness, model, account, and credential store still has every usage
-# window known - no exhausted_now runway, no 0% window, nothing unknown - so no
-# dispatch can lean on numbers older than the last intake. The refusal leaves
-# nothing behind: no worktree, no meta, no pane. Remote second mates run this
+# second-mate launch passes here. It stops only on what is known to block this
+# exact harness, model, account, and credential store - an exhausted_now runway,
+# a 0% window, a bad login; an unknown quota starts anyway and is logged. The
+# refusal leaves nothing behind: no worktree, no meta, no pane. Remote second mates run this
 # same gate on their own host inside their own fm-spawn, which is where their
 # credential stores live.
 # A refusal the gate marks as curable by a fresh read (exit 4: no record, or a
 # spent, stale, or uncovering one - the routine case when two launches race
 # for the newest record) is not handed back to the dispatcher: this script
 # runs that intake itself, prints its full table here, and gates once more, so
-# the launch still passes only on numbers read moments ago. Every limit
-# verdict (exit 3) refuses as before.
-QUOTA_GATE_ARGS=(--harness "$HARNESS" --consume)
+# the launch judges numbers read moments ago, and with --refreshed anything
+# that fresh read could not settle is an unknown quota rather than a refusal.
+# Every limit verdict (exit 3) refuses as before.
+QUOTA_GATE_ARGS=(--harness "$HARNESS" --consume --task "$ID")
 [ -z "$MODEL" ] || QUOTA_GATE_ARGS+=(--model "$MODEL")
 [ -z "$ACCOUNT_ARG" ] || QUOTA_GATE_ARGS+=(--account "$ACCOUNT_ARG")
 [ -z "$SPAWN_CLAUDE_STORE" ] || QUOTA_GATE_ARGS+=(--claude-store "$SPAWN_CLAUDE_STORE")
@@ -4911,11 +4911,11 @@ QUOTA_GATE_OUT=$(spawn_quota_intake gate "${QUOTA_GATE_ARGS[@]}") || QUOTA_GATE_
 if [ "$QUOTA_GATE_STATUS" -eq 4 ]; then
   printf '%s\n' "$QUOTA_GATE_OUT" >&2
   echo "notice: $ID: the quota intake record needs a fresh read; running bin/fm-quota-intake.sh now and gating again" >&2
-  # The record run prints the whole table and exits nonzero when a store read
-  # fails; its record still lands, and the gate below judges it.
+  # The record run prints the whole table; whatever it could not read, its
+  # record lands, and the gate below judges it.
   spawn_quota_intake record >&2 || true
   QUOTA_GATE_STATUS=0
-  QUOTA_GATE_OUT=$(spawn_quota_intake gate "${QUOTA_GATE_ARGS[@]}") || QUOTA_GATE_STATUS=$?
+  QUOTA_GATE_OUT=$(spawn_quota_intake gate "${QUOTA_GATE_ARGS[@]}" --refreshed) || QUOTA_GATE_STATUS=$?
 fi
 if [ "$QUOTA_GATE_STATUS" -ne 0 ]; then
   printf '%s\n' "$QUOTA_GATE_OUT" >&2

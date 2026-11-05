@@ -62,7 +62,7 @@ When the captain asks for a specific route on one task, invoke the broker with `
 ## Read the default TOON
 
 When the home declares the [shared-quota opt-out](#shared-quota-opt-out), skip this section's dispatch quota reading and every quota-derived check built on it (quota rows, completeness, floors, runway, and `spendPriority`); catalog eligibility and reasoning-class fit still apply, and the launch gate below still requires its fresh intake record.
-Every spawn and every relaunch or model-or-account move runs through `bin/fm-quota-intake.sh`: its gate refuses the launch unless a fresh record re-read every usage limit, reset time, plan size, and Notes entry, with each window (5h, 7d, model-specific) shown as a used percent, so on a refusal run `bin/fm-quota-intake.sh` and use that record's table as this intake's evidence instead of re-querying quota-axi ad hoc.
+Every spawn and every relaunch or model-or-account move runs through `bin/fm-quota-intake.sh`: its record re-reads every usage limit, reset time, plan size, and Notes entry, with each window (5h, 7d, model-specific) shown as a used percent, and its gate stops a launch only on a known exhausted window or a bad login, while an unknown quota starts and is logged, so on a refusal run `bin/fm-quota-intake.sh` and use that record's table as this intake's evidence instead of re-querying quota-axi ad hoc.
 Start each intake by running `quota-axi` with no `--json` for the home's default account.
 For each distinct named-account store triple referenced by a candidate, read that home's `config/accounts.json` and require `crossAccount.enabled == true` plus an allowlisted account; otherwise mark that candidate `not eligible: cross-account routing disabled` without probing its store.
 Read one additional `quota-axi` snapshot per eligible distinct store triple with `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, and `CODEX_HOME` pinned to that entry; use only that store's snapshot for its candidates, then rank the union with the same spendPriority procedure.
@@ -158,13 +158,13 @@ When every remaining candidate is tight, dispatch inside the strongest-reasoning
 After catalog, authentication, and reasoning-class checks, identify every eligible candidate whose applicable pool is unknown in headroom, `spendPriority`, runway, or quota applicability; missing model-specific quota alone is not unknown when a known provider-wide bound applies.
 A candidate is readable only with complete limit information - every applicable window's remaining percent and reset time, weekly and session alike.
 While any candidate is readable, an unreadable one stays listed as unreadable, is out of the comparison, and holds back no later seat; only the warm-up below still applies to its pool.
-When none is readable, the whole choice is incomplete and the re-read below decides.
+When none is readable, the re-read below decides.
 For each distinct unknown pool with a known warm-up, invoke that pool's warm-up once on demand, not on a timer; today the only known warm-up is `zai-window-warm` for Z.ai, which pings glm-5.3-flash once to open its rolling window.
 This is an approved pool warm-up, not a candidate authentication probe or permission to launch another harness's CLI for model discovery; do not substitute an arbitrary vendor command when the helper is absent or fails.
 After attempting the available warm-ups, re-read `quota-axi` once for the choice, including pools without a warm-up, and re-evaluate all candidates against the new snapshot.
 Use default TOON first and the narrow `--json` fallback only if needed to disambiguate that retry; do not loop or repeatedly ping to force a number.
-If no candidate is readable after that one retry, the whole choice is incomplete: record the attempted or unavailable warm-up and both readings, name each candidate's missing windows, wait for the published retry time or the next reset, and re-run the choice; never pick by hand or treat the unknown as healthy.
-An unavailable warm-up does not stall the choice forever: its missing measurement keeps that candidate unreadable now, and the report names the unavailable warm-up rather than guessing or silently switching reasoning class.
+If no candidate is readable after that one retry, an unknown quota never blocks the start: the first declared seat of the open tier and strongest reasoning class starts marked quota unknown, without waiting, and the report records the attempted or unavailable warm-up and names each candidate's missing windows.
+An unavailable warm-up never stalls the choice: its missing measurement keeps that candidate unreadable now, and the report names the unavailable warm-up rather than guessing or silently switching reasoning class.
 An absent auth source remains disclosed uncertainty rather than proof of failed login, but never fabricates quota evidence for an unmodeled pool.
 
 ### 4. Rank by spendPriority
