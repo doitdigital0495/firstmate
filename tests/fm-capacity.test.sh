@@ -59,8 +59,8 @@ SH
   printf '%s\n' "$fakebin"
 }
 
-run_capacity() {  # <home> <fakebin>
-  PATH="$2:$BASE_PATH" FM_HOME="$1" "$CAPACITY" 2>&1
+run_capacity() {  # <home> <fakebin> [mode]
+  PATH="$2:$BASE_PATH" FM_HOME="$1" "$CAPACITY" "${@:3}" 2>&1
 }
 
 test_no_target_prints_counts_only() {
@@ -401,6 +401,39 @@ CFG
   pass "limits close lanes with named reasons, and --admit exits 0, 75, or 1"
 }
 
+test_load_guard() {
+  local home fakebin out rc
+  home=$(make_home load-guard 0 0)
+  fakebin=$(make_probes "$TMP_ROOT/p-guard" 40.01 60 20 20971520)
+  out=$(FM_LOAD1_OVERRIDE='' run_capacity "$home" "$fakebin" --load-guard); rc=$?
+  expect_code 75 "$rc" "load guard above the limit, no config file"
+  assert_equals 'deferred: load 40.01 on 20 cores is above the limit of 2 per core (40)' "$out" "the hold must name the load, the cores and the limit"
+  assert_absent "$home/config/lane-capacity" "the guard must not create a lane capacity file"
+  fakebin=$(make_probes "$TMP_ROOT/p-guard" 40.00 60 20 20971520)
+  out=$(FM_LOAD1_OVERRIDE='' run_capacity "$home" "$fakebin" --load-guard); rc=$?
+  expect_code 0 "$rc" "load guard at exactly the limit"
+  assert_equals '' "$out" "an admit prints nothing"
+  fakebin=$(make_probes "$TMP_ROOT/p-guard" '' 60 20 20971520)
+  FM_LOAD1_OVERRIDE='' run_capacity "$home" "$fakebin" --load-guard >/dev/null; rc=$?
+  expect_code 0 "$rc" "load guard with an unknown load"
+  fakebin=$(make_probes "$TMP_ROOT/p-guard" 99 60 '' 20971520)
+  FM_LOAD1_OVERRIDE='' run_capacity "$home" "$fakebin" --load-guard >/dev/null; rc=$?
+  expect_code 0 "$rc" "load guard with unknown cores"
+  printf '1\nmax-load1 99\n' > "$home/config/lane-capacity"
+  out=$(FM_LOAD1_OVERRIDE='' run_capacity "$home" "$fakebin" --load-guard); rc=$?
+  expect_code 75 "$rc" "max-load1 needs no core count"
+  assert_contains "$out" 'load 99 on unknown cores is at or over max-load1 99' "the hold must name max-load1"
+  printf 'bogus\n' > "$home/config/lane-capacity"
+  fakebin=$(make_probes "$TMP_ROOT/p-guard" 41 60 20 20971520)
+  FM_LOAD1_OVERRIDE='' run_capacity "$home" "$fakebin" --load-guard >/dev/null; rc=$?
+  expect_code 75 "$rc" "an invalid config keeps the default"
+  printf '0\n' > "$home/config/lane-capacity"
+  fakebin=$(make_probes "$TMP_ROOT/p-guard" 0.5 60 20 20971520)
+  FM_LOAD1_OVERRIDE='' run_capacity "$home" "$fakebin" --load-guard >/dev/null; rc=$?
+  expect_code 0 "$rc" "the lane cap does not affect the guard"
+  pass "--load-guard holds above 2 per core, honours max-load1, and admits on unknown probes"
+}
+
 test_publish_document() {
   local home fakebin rc doc mode i
   home=$(make_home publish 2 1)
@@ -537,6 +570,7 @@ test_several_pressure_files
 test_beat_with_missing_fields
 test_cap_only_memory_rule_unchanged
 test_limits_and_admit
+test_load_guard
 test_publish_document
 test_captain_and_quota
 test_watcher_publishes_only_when_opted_in

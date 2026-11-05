@@ -413,6 +413,24 @@ $brief"
   pass "launch preserves literal ampersands, quotes and spaces in home and brief paths"
 }
 
+# The machine load guard holds fresh worker starts only. The secondmate launch
+# and the full relaunch transaction above must both still succeed at a load the
+# guard demonstrably holds.
+test_load_guard_holds_no_secondmate_or_relaunch() {
+  local under_load="$TMP_ROOT/under-load" rc=0
+  mkdir -p "$under_load"
+  (
+    export FM_LOAD1_OVERRIDE=999999
+    FM_HOME="$under_load" "$ROOT/bin/fm-capacity.sh" --load-guard >/dev/null 2>&1
+    expect_code 75 "$?" "the load under test must be one the guard holds"
+    TMP_ROOT=$under_load
+    test_secondmate_launch
+    test_relaunch_rebuilds_the_switch
+  ) || rc=$?
+  expect_code 0 "$rc" "a secondmate launch or relaunch failed under machine load"
+  pass "machine load holds no secondmate launch or relaunch"
+}
+
 test_launch_preserves_literal_home_and_brief_paths
 test_ship_allowlist_absent
 test_ship_allowlist_enabled
@@ -421,3 +439,4 @@ test_secondmate_launch
 test_launch_exports_task_inbox
 test_relaunch_rebuilds_the_switch
 test_raw_compound_launch_command_carries_the_switch
+test_load_guard_holds_no_secondmate_or_relaunch

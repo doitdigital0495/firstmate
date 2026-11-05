@@ -152,6 +152,10 @@
 # individual tests/ files explicitly.
 set -eu
 
+# A suite's spawns must not depend on how busy its machine is, including a suite
+# that does not source tests/lib.sh (bin/fm-capacity.sh --load-guard owns this seam).
+export FM_LOAD1_OVERRIDE=0
+
 now_ms() {
   if command -v python3 >/dev/null 2>&1; then
     python3 -c 'import time; print(int(time.time() * 1000))'
