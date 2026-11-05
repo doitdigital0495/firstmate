@@ -861,7 +861,7 @@ pressure-file ~/.cache/lookout-beat/beat.json      # repeatable; a lookout.beat 
 reserve-flag /var/run/fm-reserved.flag host reserved by the captain   # repeatable; admit nothing while the file exists
 captain-idle 300       # opt-in, macOS: the captain counts as present when input was idle under 300 s
 quota-provider claude  # opt-in: publish that provider's quota runway
-max-load1 20           # keep a raw 1-minute load rule while beats replace it
+max-load1 20           # raw 1-minute load limit; also replaces the spawn load guard's default
 ```
 
 `pressure-file` and `reserve-flag` may repeat and take an absolute or `~/` path; a `reserve-flag` path may be followed by the label it is reported by.
@@ -876,6 +876,14 @@ While the file exists, the watcher runs `bin/fm-capacity.sh --publish` detached 
 Publishing is best-effort and never changes what the watcher does; no spawn reads the verdict.
 `bin/fm-capacity.sh --admit` is an advisory check of the same verdict: it exits 0 when the verdict admits or the file is absent, and reports the reasons on stderr with exit 75 when it does not.
 No Firstmate script calls it.
+
+### Spawn load guard
+
+`bin/fm-spawn.sh` holds a fresh ship or scout start while this machine's 1-minute load is above 2 per logical core, whether or not this file exists.
+A held spawn launches nothing, creates no record, leaves the backlog item queued, prints one `deferred:` line naming the load, the cores and the limit, and exits 75, so Firstmate dispatches the item again once the load drops.
+A relaunch, a restart of a task that already has a record, and a secondmate launch are not held, and an unknown load admits.
+A `max-load1` line in this file replaces the default with its raw limit, holding at or over that value on this machine's own load; the cap and the other limits do not affect the guard.
+
 The script's header owns the report line, the published document's fields, the verdict, the beat freshness rules, the host-constraint thresholds, and the probe fallbacks.
 
 ## PR-ready line after green (config/ready-after-green)

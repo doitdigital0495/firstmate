@@ -270,6 +270,11 @@
 #   A batch reports such a pair as `batch: DEFERRED` and exits 75 when nothing
 #   else failed. A relaunch and a --secondmate spawn are never counted against
 #   capacity.
+#   Load guard: a fresh ship or scout spawn is deferred the same way, one
+#   `deferred:` line and exit 75 with nothing created, while bin/fm-capacity.sh
+#   --load-guard holds new starts (its header owns the threshold). A relaunch, a
+#   --secondmate spawn, and a restart of a task that already has a record are not
+#   held.
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
 #   spawns require an explicit harness so firstmate cannot silently skip dispatch
@@ -2187,7 +2192,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
     pair_rc=0
     FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "${pair_args[@]}" || pair_rc=$?
     if [ "$pair_rc" -eq "$FM_PROJECT_CAPACITY_DEFER_EXIT" ]; then
-      echo "batch: DEFERRED ${pair%%=*} (${pair#*=}) - its project is at capacity, so it stays queued" >&2
+      echo "batch: DEFERRED ${pair%%=*} (${pair#*=}) - the deferred: line above says why, and it stays queued" >&2
       [ "$rc" -ne 0 ] || rc=$FM_PROJECT_CAPACITY_DEFER_EXIT
     elif [ "$pair_rc" -ne 0 ]; then
       echo "batch: FAILED to spawn ${pair%%=*} (${pair#*=})" >&2
@@ -4368,6 +4373,20 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] &&
   ! git -C "$PROJ_ABS" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
   echo "error: spawn refused: project $PROJ_ABS has no commit yet (unborn HEAD), so there is nothing to branch a worktree from; make one commit in the project, for example 'git -C $PROJ_ABS commit --allow-empty -m \"chore: initial commit\"', then spawn again" >&2
   exit 1
+fi
+# Load guard (bin/fm-capacity.sh --load-guard owns the verdict). It runs before
+# any lock or mutation, so a hold leaves the task exactly as queued as it was. A
+# guard that cannot answer warns and admits, as an unknown probe does.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ ! -e "$STATE/$ID.meta" ]; then
+  SPAWN_LOAD_RC=0
+  SPAWN_LOAD_HOLD=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+    "$SCRIPT_DIR/fm-capacity.sh" --load-guard 2>&1) || SPAWN_LOAD_RC=$?
+  if [ "$SPAWN_LOAD_RC" -eq "$FM_PROJECT_CAPACITY_DEFER_EXIT" ]; then
+    echo "$SPAWN_LOAD_HOLD; task $ID was not launched and its backlog item stays queued - dispatch it again once the load drops" >&2
+    exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
+  elif [ "$SPAWN_LOAD_RC" -ne 0 ]; then
+    echo "warning: the load guard could not run (exit $SPAWN_LOAD_RC), so task $ID was not checked against machine load: $SPAWN_LOAD_HOLD" >&2
+  fi
 fi
 # Project capacity admission (bin/fm-project-capacity-lib.sh owns the
 # declaration, what holds a place, and why this is race-safe). A fresh worker

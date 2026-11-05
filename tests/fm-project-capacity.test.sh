@@ -575,10 +575,85 @@ test_batch_reports_a_deferred_pair() {
   write_live "$home" live-a "$case_dir/project"
   out=$(run_spawn "$case_dir" "$home" "$case_dir/unused" "task-c=$case_dir/project" --mode no-mistakes --yolo off) || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "a batch whose only pair was deferred did not exit with the deferral status: $out"
-  assert_contains "$out" "batch: DEFERRED task-c ($case_dir/project) - its project is at capacity, so it stays queued" \
+  assert_contains "$out" "batch: DEFERRED task-c ($case_dir/project) - the deferred: line above says why, and it stays queued" \
     "the batch did not report the deferral"
   assert_not_contains "$out" "batch: FAILED" "the batch reported a deferral as a failure"
   pass "a batch reports a capacity deferral as deferred, not failed"
+}
+
+# The machine load guard holds a fresh worker exactly as a full project does. The
+# fake getconf fixes the cores, so 40 is this case's limit.
+fake_cores() {  # <case-dir> <cores>
+  printf '#!/usr/bin/env bash\necho %s\n' "$2" > "$1/fakebin/getconf"
+  chmod +x "$1/fakebin/getconf"
+}
+
+test_load_above_limit_holds_without_leaving_anything_behind() {
+  local case_dir home out rc=0 before worktrees
+  case_dir=$(make_case load-held task-c)
+  home="$case_dir/home"
+  fake_cores "$case_dir" 20
+  before=$(call_count "$case_dir")
+  worktrees=$(worktree_list "$case_dir")
+  out=$(FM_LOAD1_OVERRIDE=40.01 spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
+  expect_code "$DEFER_EXIT" "$rc" "a spawn above the load limit was not held: $out"
+  assert_contains "$out" "deferred: load 40.01 on 20 cores is above the limit of 2 per core (40); task task-c was not launched and its backlog item stays queued" \
+    "the hold did not name the load, the cores, the limit, and the queued item"
+  assert_nothing_created "$case_dir" "$home" task-c "$before" "$worktrees"
+  assert_absent "$home/config/lane-capacity" "the load guard created a lane capacity file"
+  rc=0
+  out=$(FM_LOAD1_OVERRIDE=40.01 run_spawn "$case_dir" "$home" "$case_dir/unused" "task-c=$case_dir/project" --mode no-mistakes --yolo off) || rc=$?
+  expect_code "$DEFER_EXIT" "$rc" "a batch held by load did not exit with the deferral status: $out"
+  assert_contains "$out" "batch: DEFERRED task-c" "the batch did not report the load hold"
+  assert_not_contains "$out" "batch: FAILED" "the batch reported a load hold as a failure"
+  pass "a spawn above the load limit is held before anything exists, and its item stays queued"
+}
+
+test_load_at_limit_admits_and_held_item_starts_when_it_drops() {
+  local case_dir home out rc=0
+  case_dir=$(make_case load-at-limit task-c)
+  home="$case_dir/home"
+  fake_cores "$case_dir" 20
+  out=$(FM_LOAD1_OVERRIDE=41 spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
+  expect_code "$DEFER_EXIT" "$rc" "the first attempt was not held: $out"
+  rc=0
+  out=$(FM_LOAD1_OVERRIDE=40 spawn_ship "$case_dir" task-c) || rc=$?
+  expect_code 0 "$rc" "a spawn at exactly the limit was refused: $out"
+  assert_contains "$out" "spawned task-c" "the held item did not launch once the load dropped"
+  pass "a load at the limit admits, and a held item starts on the next dispatch"
+}
+
+test_restart_is_not_held_by_load() {
+  local case_dir home out rc=0
+  case_dir=$(make_case load-restart task-c)
+  home="$case_dir/home"
+  fake_cores "$case_dir" 20
+  fm_write_meta "$home/state/task-c.meta" \
+    "window=firstmate:fm-task-c" \
+    "project=$case_dir/project" \
+    "kind=ship"
+  out=$(FM_LOAD1_OVERRIDE=99 spawn_ship "$case_dir" task-c) || rc=$?
+  assert_not_contains "$out" "deferred:" "a restart was held by load"
+  [ "$rc" -ne "$DEFER_EXIT" ] || fail "a restart exited with the deferral code: $out"
+  pass "a restart of a task that already has a record is not held by load"
+}
+
+test_max_load1_replaces_the_load_default() {
+  local case_dir home out rc=0
+  case_dir=$(make_case load-max task-c)
+  home="$case_dir/home"
+  fake_cores "$case_dir" 20
+  printf '4\nmax-load1 30\n' > "$home/config/lane-capacity"
+  out=$(FM_LOAD1_OVERRIDE=30 spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
+  expect_code "$DEFER_EXIT" "$rc" "a load at a lower max-load1 was not held: $out"
+  assert_contains "$out" "deferred: load 30 on 20 cores is at or over max-load1 30 from config/lane-capacity" \
+    "the hold did not name max-load1"
+  printf '4\nmax-load1 100\n' > "$home/config/lane-capacity"
+  rc=0
+  out=$(FM_LOAD1_OVERRIDE=99 spawn_ship "$case_dir" task-c) || rc=$?
+  expect_code 0 "$rc" "a load under a higher max-load1 was refused: $out"
+  assert_contains "$out" "spawned task-c" "a higher max-load1 did not admit the spawn"
+  pass "max-load1 replaces the default load limit in both directions"
 }
 
 # Orca owns its own worktrees and never takes the Treehouse allocation lock, so
@@ -664,4 +739,8 @@ test_concurrent_spawns_cannot_both_take_the_last_place
 test_failed_spawn_after_admission_holds_no_place
 test_unreadable_declaration_refuses_every_spawn
 test_batch_reports_a_deferred_pair
+test_load_above_limit_holds_without_leaving_anything_behind
+test_load_at_limit_admits_and_held_item_starts_when_it_drops
+test_restart_is_not_held_by_load
+test_max_load1_replaces_the_load_default
 test_orca_spawn_is_admitted_under_the_shared_project_lock

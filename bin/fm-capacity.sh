@@ -7,6 +7,7 @@
 #   fm-capacity.sh --json     the fm-lane-capacity.v1 document on stdout
 #   fm-capacity.sh --publish  write that document to state/lane-capacity.json
 #   fm-capacity.sh --admit    this home's own admission verdict as an exit status
+#   fm-capacity.sh --load-guard  whether machine load holds a fresh worker start
 #
 # It reads this home's state/*.meta, the optional config/lane-capacity, the
 # pressure files and reserve flags that file names, and the host's own probes.
@@ -110,6 +111,16 @@
 # --admit exits 0 when config/lane-capacity is absent or the verdict admits,
 # and 75 with one `deferred:` line on stderr when it does not.
 #
+# --load-guard is the check bin/fm-spawn.sh enforces on a fresh worker start. It
+# exits 75 with one `deferred:` line on stderr while this host's own load1 is
+# above 2 per logical core, and 0 otherwise. A max-load1 in config/lane-capacity
+# replaces that default with its raw limit and its at-or-over rule. It needs no
+# config file and ignores every other limit and the lane cap; an invalid file
+# gives no max-load1, so the default stands. An unknown load1, or unknown cores
+# under the default, admits. FM_LOAD1_OVERRIDE supplies load1 to this mode only,
+# for tests: bin/fm-test-run.sh and tests/lib.sh set it so a suite's verdict does
+# not depend on how busy its machine is.
+#
 # Environment: FM_HOME, FM_STATE_OVERRIDE, FM_CONFIG_OVERRIDE, and
 # FM_PROJECTS_OVERRIDE resolve the home exactly as the other bin/ scripts do.
 #
@@ -133,6 +144,7 @@ DISK_FREE_MIN_MB=5120
 LANE_FOOTPRINT_GB=1
 QUOTA_TIMEOUT=5
 BOOTS_KEPT=10
+LOAD_GUARD_PER_CORE=2
 
 mode=report
 case "${1:-}" in
@@ -141,9 +153,10 @@ case "${1:-}" in
   --json) mode=json ;;
   --publish) mode=publish ;;
   --admit) mode=admit ;;
-  *) echo "usage: fm-capacity.sh [--json|--publish|--admit|--help]" >&2; exit 2 ;;
+  --load-guard) mode=load-guard ;;
+  *) echo "usage: fm-capacity.sh [--json|--publish|--admit|--load-guard|--help]" >&2; exit 2 ;;
 esac
-[ "$#" -le 1 ] || { echo "usage: fm-capacity.sh [--json|--publish|--admit|--help]" >&2; exit 2; }
+[ "$#" -le 1 ] || { echo "usage: fm-capacity.sh [--json|--publish|--admit|--load-guard|--help]" >&2; exit 2; }
 
 is_uint() {
   case "$1" in ''|*[!0-9]*) return 1 ;; esac
@@ -308,6 +321,21 @@ case "$v" in [0-9]*) load1=$v ;; esac
 cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null) || cores=
 is_uint "$cores" || cores=$(sysctl -n hw.logicalcpu 2>/dev/null) || cores=
 is_uint "$cores" && [ "$cores" -gt 0 ] || cores=unknown
+
+if [ "$mode" = load-guard ]; then
+  ! is_num "${FM_LOAD1_OVERRIDE:-}" || load1=$FM_LOAD1_OVERRIDE
+  [ "$load1" != unknown ] || exit 0
+  if [ -n "$max_load1" ]; then
+    ! num_lt "$load1" "$max_load1" || exit 0
+    echo "deferred: load $load1 on $cores cores is at or over max-load1 $max_load1 from config/lane-capacity" >&2
+    exit 75
+  fi
+  [ "$cores" != unknown ] || exit 0
+  load_limit=$((cores * LOAD_GUARD_PER_CORE))
+  num_lt "$load_limit" "$load1" || exit 0
+  echo "deferred: load $load1 on $cores cores is above the limit of $LOAD_GUARD_PER_CORE per core ($load_limit)" >&2
+  exit 75
+fi
 
 mem_free_pct=unknown
 probe_avail_gb=

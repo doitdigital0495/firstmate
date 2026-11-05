@@ -215,7 +215,7 @@ Name the exact context-doc section or file range to read in the brief, not a who
 Split large multi-part changes, such as report data, visuals, and validation, into sequential tasks with a fresh worker session for each.
 
 Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
-A project's declared machine capacity (`config/project-capacity`) still bounds that dispatch: a spawn beyond it exits 75 without launching, and its item stays queued rather than blocked.
+A project's declared machine capacity (`config/project-capacity`) and the machine [load guard](docs/configuration.md#spawn-load-guard) still bound that dispatch: a spawn beyond either exits 75 without launching, and its item stays queued rather than blocked.
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
 Write the task-specific brief under section 11 before spawning.
 Fill the task subsections according to section 11.
