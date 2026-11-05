@@ -1936,6 +1936,7 @@ Unreadable quota never opens a later pool, and a seat whose weekly floor cannot 
 | 2 | Empty | Usage or configuration error, including a step with no row, a malformed row, and a seat that cannot be routed because cross-account routing is off. |
 
 `fm-bootstrap.sh`, `fm-account-routing.sh audit`, and the resolver all report malformed rows, and the resolver refuses both modes while any row is malformed.
+The `P` cases of `tests/fm-dispatch-six-accounts.test.sh` verify seat selection, the pools and weekly floor, the 30-second quota bound, the 90-minute runway filter, and the configuration errors through the resolver's public interface, and `tests/fm-bootstrap.test.sh` verifies the bootstrap report.
 
 **Fields applied only by typed resolution**
 
