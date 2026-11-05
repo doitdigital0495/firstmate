@@ -9,6 +9,11 @@
 #   fm-reap.sh arm     write state/reaper.check.sh and bind it with
 #                      bin/fm-check-register.sh (bootstrap arms it every start
 #                      while config/reaper exists)
+#   fm-reap.sh sweep-state [--apply] [--verbose]
+#                      remove provably stale runtime leftovers from this home's
+#                      top-level state folder. Without --apply it is a read-only
+#                      dry run that prints the same counts by kind; --verbose
+#                      also prints one line per entry. It never runs on its own.
 #
 # Due: a ship or scout task recorded in state/<id>.meta whose newest lifecycle
 #   status (working, needs-decision, blocked, paused, done, failed) is done,
@@ -29,6 +34,30 @@
 #   and a task the captain still holds keeps its backlog call; each kept
 #   worker is named with teardown's own reason. FM_REAP_TEARDOWN replaces the
 #   teardown command for tests only.
+#
+# sweep-state considers only the three families below; anything else in state/,
+#   including task records, wake queues, .seen-* dedup records, inboxes and
+#   handled records, teardown and landing protection records, and lock links, is
+#   never a candidate. Any doubt keeps the entry.
+#   lock-owner-*: a state/*.lock[.steal].owner.* directory minted by
+#     bin/fm-wake-lib.sh that no state/ symlink names, older than
+#     FM_REAP_LOCK_AGE_SECS (default 86400), holding only that lock's known
+#     record files plus stray links whose targets are gone. Its recorded pid
+#     must be dead by fm_lock_holder_alive (lock-owner-dead-pid), or the record
+#     must be gone (lock-owner-released): an acquirer writes it before publishing
+#     and a release deletes it, so a directory without one has been released. A
+#     released owner survives when a losing acquirer's `ln -s` followed the lock
+#     link and left a stray link inside it, which fails the holder's rmdir.
+#   window-marker: a watcher per-window marker (bin/fm-watch.sh window_key) older
+#     than FM_REAP_MARKER_AGE_SECS (default 604800) whose window, terminal, or
+#     thread no state/*.meta or *.meta-prior record names and no state/.wake-queue
+#     row mentions. Teardown deletes a closed task's record and the watcher only
+#     reads markers of recorded windows, so no process can read such a marker;
+#     pane existence is not probed because an unrecorded pane has no reader. An
+#     unreadable record or queue refuses the whole sweep before anything changes.
+#   home-summary-temp: a state/.home-summary{.json,-error}.XXXXXX scratch file a
+#     killed refresh left, older than FM_REAP_MARKER_AGE_SECS, far past the
+#     refresh's own bounded deadline.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,10 +69,14 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 DONE_SECS=${FM_REAP_DONE_SECS:-7200}
 BOARD_SECS=${FM_REAP_BOARD_SECS:-86400}
 TEARDOWN=${FM_REAP_TEARDOWN:-$SCRIPT_DIR/fm-teardown.sh}
+SWEEP_LOCK_AGE=${FM_REAP_LOCK_AGE_SECS:-86400}
+SWEEP_MARKER_AGE=${FM_REAP_MARKER_AGE_SECS:-604800}
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 fail() { printf 'fm-reap: %s\n' "$1" >&2; exit 2; }
 case "$DONE_SECS$BOARD_SECS" in *[!0-9]*) fail 'FM_REAP_DONE_SECS and FM_REAP_BOARD_SECS must be whole seconds' ;; esac
+case "$SWEEP_LOCK_AGE" in '' | *[!0-9]*) fail 'FM_REAP_LOCK_AGE_SECS must be whole seconds' ;; esac
+case "$SWEEP_MARKER_AGE" in '' | *[!0-9]*) fail 'FM_REAP_MARKER_AGE_SECS must be whole seconds' ;; esac
 
 mode() {
   local m=off
@@ -170,11 +203,202 @@ cmd_arm() {
   "$SCRIPT_DIR/fm-check-register.sh" reaper
 }
 
+# True when <path> is provably at least <min-age> seconds old. fm_path_age reads
+# an unreadable path as very old, so this reads the mtime itself and fails closed.
+sweep_old_enough() {  # <path> <min-age>
+  local mtime
+  mtime=$(fm_path_mtime "$1") || return 1
+  case "$mtime" in '' | *[!0-9]*) return 1 ;; esac
+  [ $(( SWEEP_NOW - mtime )) -ge "$2" ]
+}
+
+# Every record's endpoint names, in marker-key form, between spaces. Reading
+# every backend's endpoint field keeps this a superset of the watcher's windows.
+sweep_recorded_keys() {
+  local meta field value
+  for meta in "$STATE"/*.meta "$STATE"/*.meta-prior; do
+    [ -e "$meta" ] || [ -L "$meta" ] || continue
+    [ -f "$meta" ] && [ -r "$meta" ] || fail "unreadable task record $meta; nothing changed"
+    for field in window terminal t3_thread_id; do
+      value=$(meta_get "$meta" "$field")
+      [ -z "$value" ] || printf ' %s ' "$(printf '%s' "$value" | tr ':/.' '___')"
+    done
+  done
+}
+
+# The names every top-level state symlink targets, between spaces. A lock link or
+# steal link naming an owner keeps it; fm_lock_reap_dead_link owns that takeover.
+sweep_linked_names() {
+  local entry target
+  for entry in "$STATE"/.* "$STATE"/*; do
+    [ -L "$entry" ] || continue
+    target=$(readlink "$entry") || continue
+    printf ' %s ' "${target##*/}"
+  done
+}
+
+# True when an owner directory holds only what its lock protocol writes, and each
+# stray link names a target that is gone. Anything else is not provably ours.
+sweep_owner_contents_known() {  # <owner-dir>
+  local owner=$1 entry name
+  for entry in "$owner"/* "$owner"/.[!.]* "$owner"/..?*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    name=${entry##*/}
+    if [ -L "$entry" ]; then
+      case "$name" in *.owner.*) ;; *) return 1 ;; esac
+      [ ! -e "$entry" ] || return 1
+      continue
+    fi
+    [ -f "$entry" ] || return 1
+    case "$name" in
+      pid | pid.tmp.* | fm-home | pid-identity | pid-start | role | watcher-path) ;;
+      *) return 1 ;;
+    esac
+  done
+}
+
+# <owner-dir> -> "<removable|kept> <kind>".
+sweep_owner_verdict() {
+  local owner=$1 name=${1##*/} pid
+  case "$name" in *.reaped.*) printf 'kept lock-owner-reap-election\n'; return ;; esac
+  case "$SWEEP_LINKED" in *" $name "*) printf 'kept lock-owner-linked\n'; return ;; esac
+  if ! sweep_old_enough "$owner" "$SWEEP_LOCK_AGE"; then
+    printf 'kept lock-owner-young\n'
+    return
+  fi
+  if ! sweep_owner_contents_known "$owner"; then
+    printf 'kept lock-owner-unknown-contents\n'
+    return
+  fi
+  if [ ! -e "$owner/pid" ]; then
+    printf 'removable lock-owner-released\n'
+    return
+  fi
+  pid=$(cat "$owner/pid" 2>/dev/null) || pid=
+  case "$pid" in
+    '' | *[!0-9]*) printf 'kept lock-owner-unknown-contents\n' ;;
+    *)
+      if fm_lock_holder_alive "$owner" "$pid"; then
+        printf 'kept lock-owner-live-pid\n'
+      else
+        printf 'removable lock-owner-dead-pid\n'
+      fi
+      ;;
+  esac
+}
+
+# Longest prefix first, so .stale-since-<key> never reads as .stale-<since-key>.
+sweep_window_key() {  # <marker-name>
+  local family
+  for family in wedge-terminal-queued wedge-rollback-failed model-stream-episode \
+    wedge-escalations validating-resurfaced paused-resurfaced paused-rechecked \
+    writing-resurfaced waiting-resurfaced wedge-permanent validating-since \
+    guard-deferrals dead-reported writing-since churn-since stale-since \
+    paused stale count hash; do
+    case "$1" in
+      ".$family-"?*) printf '%s' "${1#".$family-"}"; return 0 ;;
+    esac
+  done
+  return 1
+}
+
+sweep_marker_verdict() {  # <path> <key>
+  case "$SWEEP_RECORDED" in *" $2 "*) printf 'kept window-marker-recorded-task\n'; return ;; esac
+  case "$SWEEP_QUEUE" in *"$2"*) printf 'kept window-marker-queued-wake\n'; return ;; esac
+  if sweep_old_enough "$1" "$SWEEP_MARKER_AGE"; then
+    printf 'removable window-marker\n'
+  else
+    printf 'kept window-marker-young\n'
+  fi
+}
+
+# One line per candidate: <removable|kept> <kind> <path>.
+sweep_candidates() {
+  local entry name key
+  for entry in "$STATE"/.*.lock.owner.* "$STATE"/.*.lock.steal.owner.* "$STATE"/*.lock.owner.* "$STATE"/*.lock.steal.owner.*; do
+    [ -d "$entry" ] && [ ! -L "$entry" ] || continue
+    printf '%s %s\n' "$(sweep_owner_verdict "$entry")" "$entry"
+  done
+  for entry in "$STATE"/.*; do
+    [ -f "$entry" ] && [ ! -L "$entry" ] || continue
+    name=${entry##*/}
+    case "$name" in
+      .home-summary.json.?????? | .home-summary-error.??????)
+        if sweep_old_enough "$entry" "$SWEEP_MARKER_AGE"; then
+          printf 'removable home-summary-temp %s\n' "$entry"
+        else
+          printf 'kept home-summary-temp-young %s\n' "$entry"
+        fi
+        continue
+        ;;
+    esac
+    key=$(sweep_window_key "$name") || continue
+    printf '%s %s\n' "$(sweep_marker_verdict "$entry" "$key")" "$entry"
+  done
+}
+
+sweep_remove() {  # <kind> <path>
+  local link
+  case "$1" in
+    lock-owner-*)
+      for link in "$2"/.*.owner.* "$2"/*.owner.*; do
+        [ ! -L "$link" ] || rm -f -- "$link" || return 1
+      done
+      fm_lock_clean_known_files "$2"
+      rmdir -- "$2" 2>/dev/null
+      ;;
+    *) rm -f -- "$2" ;;
+  esac
+}
+
+cmd_sweep_state() {
+  local apply=0 verbose=0 arg verdict kind path
+  for arg in "$@"; do
+    case "$arg" in
+      --apply) apply=1 ;;
+      --verbose) verbose=1 ;;
+      *) fail "sweep-state: unknown argument $arg; nothing changed" ;;
+    esac
+  done
+  [ -d "$STATE" ] && [ ! -L "$STATE" ] || fail 'state directory unavailable'
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  SWEEP_NOW=$(date +%s)
+  SWEEP_RECORDED=$(sweep_recorded_keys) || exit 2
+  SWEEP_LINKED=$(sweep_linked_names)
+  SWEEP_QUEUE=
+  if [ -e "$STATE/.wake-queue" ] || [ -L "$STATE/.wake-queue" ]; then
+    SWEEP_QUEUE=$(tr ':/.' '___' < "$STATE/.wake-queue") || fail 'unreadable state/.wake-queue; nothing changed'
+  fi
+  printf 'sweep-state: %s state=%s lock-age=%ss marker-age=%ss\n' \
+    "$([ "$apply" -eq 1 ] && printf apply || printf dry-run)" "$STATE" "$SWEEP_LOCK_AGE" "$SWEEP_MARKER_AGE"
+  while read -r verdict kind path; do
+    if [ "$verdict" = removable ]; then
+      verdict=would-remove
+      if [ "$apply" -eq 1 ]; then
+        if sweep_remove "$kind" "$path"; then verdict=removed; else verdict=failed; fi
+      fi
+    fi
+    printf '%s %s %s\n' "$verdict" "$kind" "$path"
+  done < <(sweep_candidates) | awk -v verbose="$verbose" '
+    verbose { print }
+    { n[$1 " " $2]++; t[$1]++ }
+    END {
+      fflush()
+      cmd = "LC_ALL=C sort"
+      for (k in n) print k, n[k] | cmd
+      close(cmd)
+      printf "total would-remove=%d removed=%d failed=%d kept=%d\n", t["would-remove"], t["removed"], t["failed"], t["kept"]
+      exit t["failed"] > 0
+    }'
+}
+
 case "${1:-}" in
   list) verdicts ;;
   check) cmd_check ;;
   run) cmd_run ;;
   arm) cmd_arm ;;
+  sweep-state) shift; cmd_sweep_state "$@" ;;
   -h | --help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

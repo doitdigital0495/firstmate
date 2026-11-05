@@ -85,6 +85,10 @@
 #                   sinks that block finalization are explicitly out of scope.
 #   -h, --help      print this header
 #
+# Every suite runs at low priority so a heavy walk does not starve workers sharing
+# the host: under `nice -n 10`, plus best-effort `ionice -c 2 -n 7` where that works.
+# Selection and results do not change. FM_TEST_LOW_PRIORITY=0 runs at normal priority.
+#
 # Per-script machine-parseable markers (stdout):
 #   FM_TEST_BEGIN <iso8601> <script> family=<family> expected_gate_skip=<class>
 #   FM_TEST_END <iso8601> <script> exit=<code> duration_ms=<n> gate_skip=<true|false>
@@ -2730,6 +2734,18 @@ record_script_result() {
   TOTAL=$((TOTAL + 1))
 }
 
+# The prefix every suite runs under. Each tool must actually run here: a host where
+# ionice exists but is refused must not turn every suite into a failure.
+SUITE_PRIORITY=()
+if [ "${FM_TEST_LOW_PRIORITY:-1}" != 0 ]; then
+  if nice -n 10 true 2>/dev/null; then
+    SUITE_PRIORITY+=(nice -n 10)
+  fi
+  if command -v ionice >/dev/null 2>&1 && ionice -c 2 -n 7 true 2>/dev/null; then
+    SUITE_PRIORITY+=(ionice -c 2 -n 7)
+  fi
+fi
+
 # Run <script>, capturing output to <out>. <stream> 1 also echoes it live.
 # <id> only has to be unique within this run. When PER_SCRIPT_TIMEOUT_SECS is
 # positive, a script that outruns it is terminated and reported as exit 124: a
@@ -2750,18 +2766,18 @@ run_script_bounded() {  # <script> <out> <stream> <id>
     if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ]; then
       # Expansion is intentionally deferred to the child bash passed to -c.
       # shellcheck disable=SC2016
-      fm_run_timed "$PER_SCRIPT_TIMEOUT_SECS" bash -c \
+      fm_run_timed "$PER_SCRIPT_TIMEOUT_SECS" ${SUITE_PRIORITY[@]+"${SUITE_PRIORITY[@]}"} bash -c \
         'bash "$1" 2>&1 | tee "$2"; exit "${PIPESTATUS[0]}"' _ "$script" "$out"
       rc=$?
     else
-      bash "$script" 2>&1 | tee "$out"
+      ${SUITE_PRIORITY[@]+"${SUITE_PRIORITY[@]}"} bash "$script" 2>&1 | tee "$out"
       rc=${PIPESTATUS[0]}
     fi
   elif [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ]; then
-    fm_run_timed "$PER_SCRIPT_TIMEOUT_SECS" bash "$script" >"$out" 2>&1
+    fm_run_timed "$PER_SCRIPT_TIMEOUT_SECS" ${SUITE_PRIORITY[@]+"${SUITE_PRIORITY[@]}"} bash "$script" >"$out" 2>&1
     rc=$?
   else
-    bash "$script" >"$out" 2>&1
+    ${SUITE_PRIORITY[@]+"${SUITE_PRIORITY[@]}"} bash "$script" >"$out" 2>&1
     rc=$?
   fi
   if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ] && [ "$rc" -eq 124 ]; then

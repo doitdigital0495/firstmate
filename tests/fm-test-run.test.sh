@@ -710,6 +710,85 @@ PY
   pass "family proofs run concurrently only within separate family phases"
 }
 
+test_suites_run_at_low_priority_with_an_off_switch() {
+  local tmp repo shim base expected probe seen
+  # The default is under test, whatever the caller of this suite chose.
+  unset FM_TEST_LOW_PRIORITY
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-priority.XXXXXX")
+  repo="$tmp/repo"
+  shim="$tmp/shim"
+  init_changed_fixture_repo "$repo"
+  mkdir -p "$shim"
+  # The suites report the priority they actually received. These two names are
+  # individually proven isolated, so a plain list runs them through a worker.
+  for probe in fm-cd-pretool-check fm-pr-merge; do
+    cat >"$repo/tests/$probe.test.sh" <<SH
+#!/usr/bin/env bash
+nice >"$tmp/$probe.nice"
+echo "ok - priority probe"
+SH
+    chmod +x "$repo/tests/$probe.test.sh"
+  done
+  base=$(nice)
+  expected=$((base + 10))
+  [ "$expected" -le 19 ] || expected=19
+
+  # A logging ionice proves the prefix without depending on the host having one.
+  cat >"$shim/ionice" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >>"$tmp/ionice.log"
+shift 4
+exec "\$@"
+SH
+  chmod +x "$shim/ionice"
+
+  (cd "$repo" && PATH="$shim:$PATH" bin/fm-test-run.sh tests/fm-cd-pretool-check.test.sh --jobs 1) \
+    >"$tmp/serial.out" 2>&1 || fail "a serial low-priority run failed: $(cat "$tmp/serial.out")"
+  seen=$(cat "$tmp/fm-cd-pretool-check.nice")
+  [ "$seen" = "$expected" ] || fail "a serial suite ran at nice $seen, wanted $expected"
+  grep -q -- "-c 2 -n 7 bash tests/fm-cd-pretool-check.test.sh" "$tmp/ionice.log" \
+    || fail "the suite did not run under ionice: $(cat "$tmp/ionice.log")"
+
+  rm -f "$tmp"/*.nice
+  cp "$ROOT/bin/fm-timeout-lib.sh" "$repo/bin/fm-timeout-lib.sh"
+  (cd "$repo" && bin/fm-test-run.sh tests/fm-cd-pretool-check.test.sh tests/fm-pr-merge.test.sh \
+      --per-script-timeout-secs 60) >"$tmp/workers.out" 2>&1 \
+    || fail "a concurrent low-priority run failed: $(cat "$tmp/workers.out")"
+  for probe in fm-cd-pretool-check fm-pr-merge; do
+    seen=$(cat "$tmp/$probe.nice")
+    [ "$seen" = "$expected" ] || fail "concurrent $probe ran at nice $seen, wanted $expected"
+  done
+
+  # A host whose ionice exists but is refused still runs its suites.
+  cat >"$shim/ionice" <<'SH'
+#!/usr/bin/env bash
+echo "ionice: ioprio_set failed: Operation not permitted" >&2
+exit 1
+SH
+  rm -f "$tmp"/*.nice
+  (cd "$repo" && PATH="$shim:$PATH" bin/fm-test-run.sh tests/fm-cd-pretool-check.test.sh --jobs 1) \
+    >"$tmp/refused.out" 2>&1 || fail "a refused ionice failed the suite: $(cat "$tmp/refused.out")"
+  seen=$(cat "$tmp/fm-cd-pretool-check.nice")
+  [ "$seen" = "$expected" ] || fail "a refused ionice also dropped nice: $seen, wanted $expected"
+
+  : >"$tmp/ionice.log"
+  cat >"$shim/ionice" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >>"$tmp/ionice.log"
+shift 4
+exec "\$@"
+SH
+  rm -f "$tmp"/*.nice
+  (cd "$repo" && FM_TEST_LOW_PRIORITY=0 PATH="$shim:$PATH" bin/fm-test-run.sh tests/fm-cd-pretool-check.test.sh --jobs 1) \
+    >"$tmp/off.out" 2>&1 || fail "an opted-out run failed: $(cat "$tmp/off.out")"
+  seen=$(cat "$tmp/fm-cd-pretool-check.nice")
+  [ "$seen" = "$base" ] || fail "FM_TEST_LOW_PRIORITY=0 ran at nice $seen, wanted $base"
+  [ ! -s "$tmp/ionice.log" ] || fail "FM_TEST_LOW_PRIORITY=0 still used ionice: $(cat "$tmp/ionice.log")"
+
+  rm -rf "$tmp"
+  pass "suites run at low priority by default, tolerate a refused ionice, and honour the off switch"
+}
+
 test_empty_selection_emits_summary() {
   local tmp repo out json rc fake_bin real_git
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-empty.XXXXXX")
@@ -1908,6 +1987,7 @@ test_changed_uses_bounded_automatic_concurrency
 test_windows_posix_mode_emulation_does_not_fail_parallel_runs
 test_script_list_uses_bounded_automatic_concurrency
 test_family_proofs_run_in_separate_concurrent_phases
+test_suites_run_at_low_priority_with_an_off_switch
 test_empty_selection_emits_summary
 test_timing_markers_and_json
 test_aggregate_exit_behavior
