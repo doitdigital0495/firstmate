@@ -1923,6 +1923,32 @@ move_case_to_pool_slot() {
   printf '%s\n' "$dest"
 }
 
+test_unrecorded_follow_ups_refuse_teardown_until_each_has_an_outcome() {
+  local case_dir rc
+  case_dir=$(make_case followups-gate)
+  write_meta "$case_dir" no-mistakes scout
+  prepare_scout_teardown "$case_dir"
+  printf '## Follow-ups\n1. An unrecorded lead\n' >> "$case_dir/data/task-x1/report.md"
+  add_treehouse_clean_fd "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "followups-gate: teardown passed an unrecorded follow-up"
+  assert_grep "without a recorded outcome: 1" "$case_dir/stderr" "followups-gate: refusal did not name the item"
+  assert_present "$case_dir/state/task-x1.meta" "followups-gate: the refusal removed the task record"
+
+  printf '%s\n' '{"id":"sg-00000001","origin":"task-x1","item":1,"title":"An unrecorded lead","outcome":"suggested","filed_at":'"$(date +%s)"'}' \
+    > "$case_dir/data/suggestions.jsonl"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "followups-gate: teardown should pass once the follow-up is recorded"
+  pass "teardown refuses a follow-up with no recorded outcome and passes once it has one"
+}
+
 test_scout_nested_clone_returns_with_no_untracked_entries() {
   local case_dir wt rc
   case_dir=$(make_case scout-nested-clean)
@@ -6246,6 +6272,7 @@ test_content_fallback_uses_recorded_base_branch
 test_untracked_only_refusal_diagnostic
 test_tracked_edit_refusal_diagnostic
 test_mixed_refusal_diagnostic
+test_unrecorded_follow_ups_refuse_teardown_until_each_has_an_outcome
 test_scout_nested_clone_returns_with_no_untracked_entries
 test_ship_nested_clone_is_refused_and_bytes_stay
 test_dirty_return_warns_which_slot_was_lost

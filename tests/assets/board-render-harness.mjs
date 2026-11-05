@@ -121,6 +121,7 @@ const errorText = [...byId.entries()]
   .join(" ");
 const empty = ch.children.filter((c) => c.className.includes("bb-empty")).map((c) => c.textContent);
 const more = ch.children.filter((c) => c.className.includes("bb-morechip")).map((c) => c.textContent);
+const suggestedLine = ch.children.filter((c) => c.className.includes("bb-suggested")).map((c) => c.textContent);
 
 process.stdout.write(
-  JSON.stringify({ stats, underway, charted, empty, more, error: errorText }) + "\n");
+  JSON.stringify({ stats, underway, charted, empty, more, suggestedLine, error: errorText }) + "\n");

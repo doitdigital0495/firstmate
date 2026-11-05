@@ -73,6 +73,10 @@
 # waste capacity, and --all-landed switches back to the complete global newest-first
 # order. Which closed rows either side contributes is bin/fm-landed-lib.sh's rule.
 #
+# The suggested object is bin/fm-suggestions.sh's read-only summary. Suggested
+# tasks are not queued work, so they never enter gates; a store it cannot read
+# reports as {unavailable:true} instead of as an empty list.
+#
 # Flags:
 #   (default)        compact projection with bounded remote-ledger collection, TOON
 #   --json           the same projected model as JSON (machine/debug; parity form)
@@ -149,7 +153,7 @@ Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,
   secondmates{id,state,doing,provenance,freshness,age_seconds,contradiction,reason},
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
   decisions_open{id,key,verb,summary,owner}, landed{id,what,artifact,owner},
-  gates{id,title,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
+  suggested{count,oldest_age_days,line}, gates{id,title,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
 Default gates are selected newest filed first before their bound; undated gates
   retain input order after dated gates.
@@ -351,8 +355,12 @@ case "$BEARINGS_TODAY" in
   [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) : ;;
   *) BEARINGS_TODAY=$(date -u +%Y-%m-%d) ;;
 esac
+SUGGESTED=$("$SCRIPT_DIR/fm-suggestions.sh" summary --json 2>/dev/null) \
+  || SUGGESTED='{"count":null,"oldest_age_days":null,"line":"","unavailable":true}'
+
 MODEL=$(printf '%s' "$SNAP" | jq \
   --arg home "$HOME_LABEL" \
+  --argjson suggested "$SUGGESTED" \
   --arg now "$NOW" \
   --arg today "$BEARINGS_TODAY" \
   --arg prs "$PR_STATUS" \
@@ -643,6 +651,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
       decisions_open: (if $all_decisions == 1 then $decisions_all else $decisions_all[:$decisions_n] end),
       landed: ($done | map({id, what:(.title | trunc(70)),
                             artifact:(landed_artifact // "-"),owner:.home_id})),
+      suggested: $suggested,
       gates: ($return_catchup_gate
               + ($gates_all | newest_filed_first
                  | if $all_queued == 1 then . else .[:$gates_n] end)),

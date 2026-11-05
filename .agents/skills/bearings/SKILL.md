@@ -51,6 +51,7 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
    Use `--all-decisions` to reveal every captain hold available within the bounded snapshot and remove each revealed gate from Charted Next so the buckets remain exclusive.
    Aging is only a presentation safety net, and re-holding with `--until` remains the durable deferral.
    Do not scrape reports, visual-review artifacts, raw status-event tails, or visible conversation history to supplement current state.
+   The snapshot's `suggested` object is the suggested-tasks summary; only a digest reads further, through `bin/fm-suggestions.sh digest`.
    A queued item under `gates` only becomes "next work" when its blocker is gone and its time/date gate has arrived.
    Until then it stays queued with the reason.
    The `(main-inventory)` gate is an action-free integrity warning rather than queued work.
@@ -104,6 +105,7 @@ Compose the payload from the same snapshot with the same ranking judgment as the
 - Card `type` (decision, merge, credential) is your composing judgment from the row's content; no backlog field types a card for you.
 - When the card's task is a captain-gated WORK item (the answer should free it to proceed rather than complete it), set the card's `close: "release"` so the answer lifts the hold instead of closing the task; question-shaped items omit it.
 - A Charted Next row's optional `kind` separates work from alarms: omit it (or set `"queued"`) for real queued work, and set `"warning"` on every action-free fleet-integrity notice - the `(main-inventory)` gate, the `(return-catchup)` gate, an unavailable secondmate home, and an inventory-mismatch repair notice. The board badges a warning row `needs repair` instead of `waiting` and leaves it out of the Charted Next count, so those rows never read as dispatchable queued work.
+- Copy the snapshot's `suggested.line` into the payload's `suggested` object, with up to ten `bin/fm-suggestions.sh digest --json` rows as its `items`, oldest first, and the remainder as `more`, so every board is also the periodic digest. The board renders one line plus pickable digest rows and never counts them as Charted Next; `bin/fm-bearings-board.sh` owns the fields.
 - `charted_more` counts omitted queued rows only, while `charted_warning_more` counts omitted warning rows only; keep both counts separate whenever the board payload truncates Charted Next.
 - Every Underway row copies the task-identifying `in_flight.name` from the snapshot into an explicit `name` field, which the board leads with while keeping the run status on its second line.
   The snapshot command's header owns its durable-title-or-id normalization; never replace the projected label with run status or invent another label.
@@ -130,7 +132,7 @@ A remote-secondmate card whose task is absent from the main backlog remains on t
 Route the non-decision keys yourself:
 
 - `merge.<task-id>` is the captain's explicit merge order; follow the merge ruling below.
-- `dispatch.charted` carries comma-separated task ids the captain picked to start now; verify each id against the current backlog - still queued, blocker and time gate actually clear - then dispatch through the normal lifecycle, and report any id that no longer qualifies instead of forcing it.
+- `dispatch.charted` carries comma-separated task ids the captain picked to start now; first turn any `sg-` suggestion id into its row with `bin/fm-suggestions.sh pick`, then verify each id against the current backlog - still queued, blocker and time gate actually clear - then dispatch through the normal lifecycle, and report any id that no longer qualifies instead of forcing it.
 
 After handling, rebuild the board from a fresh snapshot so acted-on items leave Captain's Call, and echo every action taken in chat so the board and chat never diverge silently.
 
@@ -157,6 +159,8 @@ Every `/bearings` chat response renders EXACTLY these four sections, in THIS ord
    Empty-state: "Nothing is underway."
 4. **Charted Next** - queued or gated work waiting on the fleet or a date, deferred or aged captain-hold safety gates, plus action-free fleet-integrity warnings.
    Empty-state: "Nothing is queued."
+   When the snapshot's `suggested.line` is nonempty, end the section with that one line, for example "3 suggested tasks, oldest 12d"; it is not queued work, so never count or list it as Charted Next work.
+   When the captain asks for the digest, render `bin/fm-suggestions.sh digest` beneath that line; a chat pick runs `bin/fm-suggestions.sh pick`, which files the row without starting it.
 
 Rules that keep the contract unambiguous:
 

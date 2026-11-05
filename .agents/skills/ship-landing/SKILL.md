@@ -9,7 +9,7 @@ metadata:
 # Ship landing
 
 For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done [at=<epoch>]: PR <url> checks green` after CI is green, while `direct-PR` reports `done [at=<epoch>]: PR <url>` after opening the PR, each only for a non-draft PR; a lane that deliberately holds a draft declares a wait instead, and `bin/fm-pr-check.sh` refuses to arm merge monitoring on a draft.
-When a worker's report at `data/<id>/report.md` lists follow-ups, mention them to the captain in chat; file nothing automatically.
+When a worker's report at `data/<id>/report.md` lists numbered follow-ups (unfixed findings, deferred or out-of-scope work), record each one through `scout-completion`'s follow-up intake before teardown, so it has an outcome of suggested, picked, bundled, repeat of, expired, or escalated; a follow-up with no recorded outcome is a dropped finding, and teardown refuses it.
 Run `bin/fm-pr-check.sh <id> <PR url>` with the URL copied from that ready signal or the resolved checks-green `fm-crew-state.sh` line - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
 `bin/fm-dod-lib.sh` owns the named-head gate on that ready signal: a ship `done:` whose named head exists only in the worker's disposable copy is not ready (`bin/fm-crew-state.sh` reports blocked, `bin/fm-pr-check.sh` refuses to register, and a secondmate does not publish that done upstream).
 That blocked reading is the gate working, not a stuck worker, so steer the worker on the commit the refusal names rather than waiting.
