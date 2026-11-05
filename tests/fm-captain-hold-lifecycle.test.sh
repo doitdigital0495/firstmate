@@ -4971,6 +4971,31 @@ SH
 # tasks-axi no longer shows it; the completion gate must still count the
 # archived answer as durable, and must still refuse an archived close that
 # carries no captain answer or an attested call found nowhere.
+# A key already on the origin's record that no longer verifies refuses, because
+# a call nobody can prove answered must not fall off the inventory. The refusal
+# has to say the entry came from the record, since the command never named it.
+test_stale_recorded_decision_key_explains_itself() {
+  local home id before
+  home=$(make_home stale-recorded-key)
+  id=sample-stale-key-review
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Review with a stale key" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create the stale-key origin"
+  write_origin_meta "$home" "$id"
+  printf 'decisions_reviewed=1\ndecision_keys=sample-vanished-call\n' >> "$home/state/$id.meta"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  before=$(cat "$home/state/$id.meta")
+  if run_captain "$home" complete "$id" --none >/dev/null 2> "$home/stale.err"; then
+    fail "complete dropped a recorded key it could not verify"
+  fi
+  assert_contains "$(cat "$home/stale.err")" "sample-vanished-call came from the decision_keys= line" \
+    "the refusal did not say where the entry came from: $(cat "$home/stale.err")"
+  assert_contains "$(cat "$home/stale.err")" "$home/state/$id.meta" \
+    "the refusal did not name the record holding the entry"
+  [ "$(cat "$home/state/$id.meta")" = "$before" ] || fail "the refused complete changed the record"
+  pass "a stale recorded decision key still refuses and explains itself"
+}
+
 test_archived_answered_hold_still_satisfies_the_gate() {
   local home id archive
   home=$(make_home archived-answer)
@@ -5449,4 +5474,5 @@ test_verify_resolves_a_pre_collapse_key_through_its_derived_marker
 test_captain_hold_mutations_address_the_beads_backend
 test_hold_creates_a_captain_row_when_beads_requires_due_without_custom_type
 test_archived_answered_hold_still_satisfies_the_gate
+test_stale_recorded_decision_key_explains_itself
 test_archived_answer_in_a_user_configured_archive_satisfies_the_gate

@@ -12,6 +12,7 @@
 #   fm-dispatch-resolve.sh audit [--days <n>] [--problems]
 #   fm-dispatch-resolve.sh overrides [--recent]   (historical log)
 #   fm-dispatch-resolve.sh gate ...     (called by fm-spawn.sh and fm-control.sh)
+#   fm-dispatch-resolve.sh refund --token <token>   (called by fm-spawn.sh)
 #   choose, degraded, degraded-recent, and override are retired (exit 2).
 #
 # Dispatch receipts: every launch in a home whose config/crew-dispatch.json has
@@ -199,6 +200,7 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # Inspection and launch admission never contact Jev.
 case "${1:-}" in
   gate) shift; fm_dr_cmd_gate "$@"; exit $? ;;
+  refund) shift; fm_dr_cmd_refund "$@"; exit $? ;;
   choose|degraded|override|degraded-recent) fm_dr_die "self-service and degraded receipts are retired; run the resolver with the brief (Jev, or the captain's pick when Jev cannot route)" ;;
   rows) shift; fm_dr_cmd_rows "$@"; exit $? ;;
   overrides) shift; fm_dr_cmd_overrides "$@"; exit $? ;;

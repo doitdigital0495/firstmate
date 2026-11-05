@@ -247,11 +247,14 @@
 #   could later be released out from under its successor. A spawn that aborts
 #   while it still holds the allocation lock drops its own claim; an abort after
 #   metadata publication has released that lock leaves the claim in place, and
-#   the next spawn's claim replaces it. A fresh polytoken spawn that fails and
-#   leaves no task record restores the pool as it found it: it retakes that lock
-#   once to drop its claim after metadata publication too, and before its launch
-#   is delivered it closes the endpoint whose `treehouse get` shell leases the
-#   slot and removes the wiring, task temp root, and staged launch file it wrote.
+#   the next spawn's claim replaces it. A fresh spawn that fails and leaves no
+#   task record restores the pool as it found it: it retakes that lock once to
+#   drop its claim after metadata publication too, and before its launch is
+#   delivered it closes the endpoint whose `treehouse get` shell leases the slot
+#   (unless the slot already holds work) and removes the wiring, task temp root,
+#   and staged launch file it wrote. A spawn that claimed a slot also sweeps
+#   provably empty slot directories from that pool under the same lock
+#   (bin/fm-wake-lib.sh's fm_treehouse_sweep_empty_slot_dirs).
 #   The local root is whatever bin/fm-wake-lib.sh's
 #   fm_firstmate_root_home resolves, so a home seeded from another machine anchors
 #   that lock itself rather than failing to resolve one;
@@ -1749,6 +1752,8 @@ CONFIG_INHERIT_LOCK=
 CONFIG_INHERIT_LOCK_HELD=0
 GIT_HOOKS_DIR=
 SPAWN_LAUNCH_SENT=0
+SPAWN_RECEIPT_CONSUMED=0
+SPAWN_RECEIPT_TOKEN=
 SPAWN_ENDPOINT_CLOSED=0
 SPAWN_STAGED_LAUNCH_FILE=
 
@@ -1794,6 +1799,15 @@ spawn_orca_reclaim_launch_file() {
 
 spawn_abort_cleanup() {
   local status=$?
+  # A start that sent no launch made no launch, so it hands back the receipt it
+  # spent (bin/fm-dispatch-receipt-lib.sh owns the rule).
+  if [ "$status" -ne 0 ] && [ "$SPAWN_RECEIPT_CONSUMED" = 1 ] && [ "$SPAWN_LAUNCH_SENT" = 0 ]; then
+    SPAWN_RECEIPT_CONSUMED=0
+    FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$STATE" \
+      FM_CONFIG_OVERRIDE="$CONFIG" FM_DATA_OVERRIDE="$DATA" \
+      "$SCRIPT_DIR/fm-dispatch-resolve.sh" refund --token "$SPAWN_RECEIPT_TOKEN" >&2 ||
+      echo "warning: could not return the dispatch receipt of $ID; resolve the dispatch again before the next spawn" >&2
+  fi
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] &&
     [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] &&
     [ -n "$SPAWN_META_TMP" ] &&
@@ -1942,19 +1956,20 @@ spawn_abort_cleanup() {
     SPAWN_META_LOCK_HELD=0
     fm_lock_release "$SPAWN_META_LOCK" || true
   fi
-  # A fresh polytoken spawn that fails and leaves no record must leave the pool
-  # as it found it. Before its launch is delivered, the endpoint it opened holds nothing but
+  # A fresh spawn that fails and leaves no record must leave the pool as it found
+  # it. Before its launch is delivered, the endpoint it opened holds nothing but
   # the shell whose `treehouse get` leases the slot, so closing it returns the
   # slot to the pool and leaves no window or tab for a retry to trip over; the
   # Firstmate wiring, task temp root, and staged launch file it wrote go with it.
   # Once a launch was delivered into an endpoint still open, a worker may be
-  # running there, so those stay for the operator, as the refusal says.
-  if [ "$status" -ne 0 ] && [ "${HARNESS:-}" = polytoken ] &&
+  # running there, so those stay for the operator, as the refusal says. A slot
+  # already holding work keeps its endpoint too, because that lease guards it.
+  if [ "$status" -ne 0 ] && [ "${KIND:-}" != secondmate ] &&
     { [ "$SPAWN_FRESH_ENDPOINT_OPENED" = 1 ] || [ "$SPAWN_FRESH_WIRING_PENDING" = 1 ] ||
       [ "$SPAWN_TASK_TMP_CREATED" = 1 ] || [ -n "$SPAWN_STAGED_LAUNCH_FILE" ]; } &&
     [ "$RELAUNCH" -eq 0 ] &&
     [ ! -e "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ]; then
-    if [ "$SPAWN_FRESH_ENDPOINT_OPENED" = 1 ] && [ "$SPAWN_LAUNCH_SENT" = 0 ] && [ -n "${T:-}" ]; then
+    if spawn_endpoint_closes_on_abort && [ -n "${T:-}" ]; then
       SPAWN_FRESH_ENDPOINT_OPENED=0
       local abort_tab_id=
       [ "$BACKEND" != zellij ] || abort_tab_id=${ZELLIJ_TAB_ID:-}
@@ -1996,9 +2011,9 @@ spawn_abort_cleanup() {
   # must not leave a claim naming a task no record describes. The release is a
   # read-then-remove, so it runs only while the project lock that wrote the
   # claim is still held (aborts before metadata publication); a later abort has
-  # already released that lock and leaves the claim for the next spawn's
-  # atomic replacement rather than racing it. A polytoken spawn instead retakes
-  # that lock once for a later failure whose record was rolled back. The
+  # already released that lock, so it retakes that lock once for a failure whose
+  # record was rolled back, and otherwise leaves the claim for the next spawn's
+  # atomic replacement rather than racing it. The
   # release itself never removes another task's claim.
   if [ "$SPAWN_SLOT_CLAIMED" = 1 ] && [ -n "${WT:-}" ] &&
     [ ! -e "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ] &&
@@ -2006,7 +2021,7 @@ spawn_abort_cleanup() {
     SPAWN_SLOT_CLAIMED=0
     if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
       fm_treehouse_slot_owner_release "$WT" "$ID" || true
-    elif [ "${HARNESS:-}" = polytoken ] && [ -n "$SPAWN_TREEHOUSE_PROJECT_LOCK" ] &&
+    elif [ -n "$SPAWN_TREEHOUSE_PROJECT_LOCK" ] &&
       fm_lock_try_acquire "$SPAWN_TREEHOUSE_PROJECT_LOCK"; then
       fm_treehouse_slot_owner_release "$WT" "$ID" || true
       fm_lock_release "$SPAWN_TREEHOUSE_PROJECT_LOCK" || true
@@ -4638,8 +4653,8 @@ brief_task_forbids_delivery() {  # <brief-file>
 # line, with " forge=<forge>" appended on a bound forge. A spawn that disagrees
 # would launch a worker whose instructions and whose recorded task delivery
 # differ, which is the exact drift this contract prevents.
+PROJ_NAME=$(basename "$PROJ_ABS")
 if [ "$KIND" = ship ]; then
-  PROJ_NAME=$(basename "$PROJ_ABS")
   # The parser's own refusal reaches the operator here rather than being
   # discarded: an entry it refuses (an unknown forge token, or a forge on
   # local-only) resolves to no posture at all, and launching on the silent
@@ -4928,7 +4943,9 @@ if [ "$QUOTA_GATE_STATUS" -ne 0 ]; then
   exit 1
 fi
 printf '%s\n' "$QUOTA_GATE_OUT" >&2
-spawn_dispatch_receipt_gate --consume || exit 1
+SPAWN_RECEIPT_TOKEN="$ID.$$.$(date +%s)"
+spawn_dispatch_receipt_gate --consume --consume-token "$SPAWN_RECEIPT_TOKEN" || exit 1
+SPAWN_RECEIPT_CONSUMED=1
 
 # Advisory only (bin/fm-ship-overlap-lib.sh owns what counts as overlap). It runs
 # before admission so a withheld launch is flagged too, and never stops a spawn.
@@ -5134,8 +5151,20 @@ spawn_worktree_isolated() { # <path>
 # spawn_endpoint_hint: the operator pointer for a pre-launch refusal. Only a
 # fresh polytoken spawn closes its endpoint on abort, so only it points away
 # from the window; every other harness keeps the plain inspect pointer.
+# True only when the copy this endpoint leases shows no work: nothing uncommitted
+# and no commit unreachable from a branch, remote, or tag. No copy yet means no
+# work; a read that fails is not proof of none.
+spawn_slot_holds_no_work() {
+  local dirty stray
+  [ -n "${WT:-}" ] && [ -d "$WT" ] || return 0
+  dirty=$(git -C "$WT" status --porcelain 2>/dev/null) || return 1
+  [ -z "$dirty" ] || return 1
+  stray=$(git -C "$WT" rev-list -n 1 HEAD --not --branches --remotes --tags 2>/dev/null) || return 1
+  [ -z "$stray" ]
+}
+
 spawn_endpoint_closes_on_abort() {
-  [ "$SPAWN_FRESH_ENDPOINT_OPENED" = 1 ] && [ "$SPAWN_LAUNCH_SENT" = 0 ]
+  [ "$SPAWN_FRESH_ENDPOINT_OPENED" = 1 ] && [ "$SPAWN_LAUNCH_SENT" = 0 ] && spawn_slot_holds_no_work
 }
 
 spawn_endpoint_hint() {
@@ -5956,10 +5985,12 @@ EOF
     T3CODE_ABORT_CLEANUP=1
     ;;
   esac
-  # Orca and the Herdr projection own their own abort cleanup above; every other
-  # endpoint a fresh polytoken spawn opened is closed by spawn_abort_cleanup when
-  # the spawn ends with no record before its launch is delivered.
-  if [ "$HARNESS" = polytoken ] && [ "$BACKEND" != orca ] && [ "${HERDR_PROJECTED:-0}" -ne 1 ]; then
+  # Orca, T3 Code, and the Herdr projection own their own abort cleanup above, and
+  # a secondmate home is no pool slot; every other endpoint a fresh spawn opened is
+  # closed by spawn_abort_cleanup when the spawn ends with no record before its
+  # launch is delivered.
+  if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ] && [ "$BACKEND" != t3code ] &&
+    [ "${HERDR_PROJECTED:-0}" -ne 1 ]; then
     SPAWN_FRESH_ENDPOINT_OPENED=1
   fi
 fi
@@ -6673,6 +6704,9 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
       exit 1
     fi
     SPAWN_SLOT_CLAIMED=1
+    if [ "$SPAWN_TREEHOUSE_PROJECT_LOCK_HELD" = 1 ]; then
+      fm_treehouse_sweep_empty_slot_dirs "$WT" "$STATE" || true
+    fi
   fi
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != t3code ]; then
