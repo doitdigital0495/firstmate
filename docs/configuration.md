@@ -2399,6 +2399,9 @@ A task is due two hours after its done line (`FM_REAP_DONE_SECS`), or, while a L
 
 Teardown keeps a worker whose work has not landed and retains a backlog item the captain still holds, so enforcing never discards work or a captain call; `bin/fm-reap.sh list` shows every verdict.
 
+`bin/fm-reap.sh sweep-state` is a separate manual cleanup of stale lock folders and old markers in `state/`, independent of `config/reaper`.
+It is a dry run that prints counts by kind unless given `--apply`, and its header owns what counts as stale.
+
 ## Toolchain
 
 On session start the first mate detects what its required toolchain is missing or too old and lists each problem with its exact install or upgrade command, or with manual instructions.

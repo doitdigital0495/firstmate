@@ -8,7 +8,7 @@ set -u
 TMP_ROOT=$(fm_test_tmproot fm-reap)
 HOME_DIR="$TMP_ROOT/home"
 mkdir -p "$HOME_DIR/state/procevent" "$HOME_DIR/state/procevent-inbox" "$HOME_DIR/config" "$HOME_DIR/data"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+trap 'kill "${LIVE_PID:-}" "${HOLDER:-}" 2>/dev/null; rm -rf "$TMP_ROOT"' EXIT
 export FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE="$HOME_DIR/state" FM_CONFIG_OVERRIDE="$HOME_DIR/config" FM_DATA_OVERRIDE="$HOME_DIR/data"
 REAP="$ROOT/bin/fm-reap.sh"
 now=$(date +%s)
@@ -64,4 +64,169 @@ pass 'enforce closes through teardown in the background and keeps what teardown 
 assert_present "$HOME_DIR/state/reaper.check.sh" 'arm writes the watcher check'
 assert_contains "$(<"$HOME_DIR/state/reaper.check.sh")" 'fm-reap.sh check' 'the check runs the reaper'
 pass 'arm writes state/reaper.check.sh'
+
+# sweep-state runs against its own fixture home so the task records above cannot
+# colour its verdicts.
+SWEEP_HOME="$TMP_ROOT/sweep"
+SWEEP_STATE="$SWEEP_HOME/state"
+mkdir -p "$SWEEP_STATE" "$SWEEP_HOME/config" "$SWEEP_HOME/data"
+sweep() {
+  FM_HOME="$SWEEP_HOME" FM_STATE_OVERRIDE="$SWEEP_STATE" FM_CONFIG_OVERRIDE="$SWEEP_HOME/config" \
+    FM_DATA_OVERRIDE="$SWEEP_HOME/data" "$REAP" sweep-state "$@"
+}
+OLD_LOCK=$((now - 2 * 86400))
+OLD_MARKER=$((now - 8 * 86400))
+age() { touch -h -d "@$1" "$2"; }
+owner() {  # <name> <age-epoch> [<file>=<value>...]
+  local dir="$SWEEP_STATE/$1" stamp=$2 pair
+  shift 2
+  mkdir "$dir"
+  for pair in "$@"; do printf '%s\n' "${pair#*=}" > "$dir/${pair%%=*}"; done
+  age "$stamp" "$dir"
+}
+stray() {  # <owner-name> <link-target-name>; the shape a losing `ln -s` leaves
+  ln -s "$SWEEP_STATE/$2" "$SWEEP_STATE/$1/$2"
+  age "$OLD_LOCK" "$SWEEP_STATE/$1"
+}
+sleep 60 &
+LIVE_PID=$!
+sh -c 'exit 0' &
+DEAD_PID=$!
+wait "$DEAD_PID"
+
+owner .wake-queue.lock.owner.released "$OLD_LOCK"
+stray .wake-queue.lock.owner.released .wake-queue.lock.owner.gone1
+stray .wake-queue.lock.owner.released .wake-queue.lock.owner.gone2
+owner .wake-queue.lock.steal.owner.released "$OLD_LOCK"
+stray .wake-queue.lock.steal.owner.released .wake-queue.lock.steal.owner.gone3
+owner .wake-queue.lock.owner.empty "$OLD_LOCK"
+owner .wake-queue.lock.owner.deadpid "$OLD_LOCK" "pid=$DEAD_PID" 'pid-start=proc-starttime=1' 'role=holder'
+owner .wake-queue.lock.owner.reused "$OLD_LOCK" "pid=$LIVE_PID" 'pid-start=not-its-start-time'
+owner .wake-queue.lock.owner.freshrelease "$now"
+owner .wake-queue.lock.owner.freshdead "$now" "pid=$DEAD_PID"
+owner .wake-queue.lock.owner.livepid "$OLD_LOCK" "pid=$LIVE_PID"
+owner .watch.lock.owner.linkeddead "$OLD_LOCK" "pid=$DEAD_PID"
+ln -s "$SWEEP_STATE/.watch.lock.owner.linkeddead" "$SWEEP_STATE/.watch.lock"
+owner .wake-queue.lock.owner.linkedsteal "$OLD_LOCK"
+ln -s "$SWEEP_STATE/.wake-queue.lock.owner.linkedsteal" "$SWEEP_STATE/.wake-queue.lock.steal"
+owner .wake-queue.lock.owner.foreignfile "$OLD_LOCK" 'unexpected=1'
+owner .wake-queue.lock.owner.badpid "$OLD_LOCK" 'pid=not-a-pid'
+owner .wake-queue.lock.owner.livestray "$OLD_LOCK"
+owner .wake-queue.lock.owner.straytarget "$OLD_LOCK" "pid=$LIVE_PID"
+stray .wake-queue.lock.owner.livestray .wake-queue.lock.owner.straytarget
+owner ".wake-queue.lock.owner.tomb.reaped.$DEAD_PID" "$OLD_LOCK"
+mkdir "$SWEEP_STATE/.unrelated.lock" && age "$OLD_LOCK" "$SWEEP_STATE/.unrelated.lock"
+
+printf 'window=personal:w1:p2\nkind=ship\n' > "$SWEEP_STATE/alive.meta"
+printf 'window=personal:w1:p3\n' > "$SWEEP_STATE/prior.meta-prior"
+printf 'backend=orca\nterminal=orca-term.7\n' > "$SWEEP_STATE/orca.meta"
+printf 'stale personal:w9:p9 queued reason\n' > "$SWEEP_STATE/.wake-queue"
+marker() { : > "$SWEEP_STATE/$1"; age "${2:-$OLD_MARKER}" "$SWEEP_STATE/$1"; }
+for name in hash count stale stale-since churn-since dead-reported wedge-escalations paused-resurfaced; do
+  marker ".$name-closed_w0_p1"
+done
+for name in .hash-personal_w1_p2 .stale-since-personal_w1_p2 .hash-personal_w1_p3 .hash-orca-term_7 .hash-personal_w9_p9; do
+  marker "$name"
+done
+marker .hash-closed_w0_p2 "$now"
+marker .home-summary.json.AbC123
+marker .home-summary-error.Xy1234
+marker .home-summary.json.Fresh1 "$now"
+ln -s missing "$SWEEP_STATE/.hash-symlink_w0_p1"
+# Everything else a sweep must never consider, however old.
+marker .seen-procevent-6162
+marker .seen-done-task_status
+marker .home-summary-refresh.log
+marker .backlog-handoff-task.wake-pending
+marker .startup-growth-check
+marker .hashes-not-a-family
+printf 'done [at=1]: x\n' > "$SWEEP_STATE/closed.status"
+age "$OLD_MARKER" "$SWEEP_STATE/closed.status"
+mkdir -p "$SWEEP_STATE/closed.inbox/handled" "$SWEEP_STATE/terminal-outcomes"
+: > "$SWEEP_STATE/closed.inbox/handled/1.msg"
+age "$OLD_MARKER" "$SWEEP_STATE/.wake-queue"
+
+snapshot() { (cd "$SWEEP_STATE" && find . | LC_ALL=C sort && ls -lAR --time-style=+%s .); }
+before=$(snapshot)
+out=$(sweep) || fail 'a dry run must succeed'
+assert_equals "$before" "$(snapshot)" 'a default sweep changes nothing in the state folder'
+assert_contains "$out" 'sweep-state: dry-run' 'the default mode is a dry run'
+assert_contains "$out" 'would-remove lock-owner-released 3' 'a dry run counts released owners'
+assert_contains "$out" 'would-remove lock-owner-dead-pid 2' 'a dry run counts dead and reused pids'
+assert_contains "$out" 'would-remove window-marker 8' 'a dry run counts markers of closed windows'
+assert_contains "$out" 'would-remove home-summary-temp 2' 'a dry run counts abandoned summary scratch'
+assert_contains "$out" 'kept lock-owner-young 2' 'a recent owner may still be mid-acquire'
+assert_contains "$out" 'kept lock-owner-live-pid 2' 'a live holder is kept'
+assert_contains "$out" 'kept lock-owner-linked 2' 'an owner a lock or steal link names is kept even when dead'
+assert_contains "$out" 'kept lock-owner-unknown-contents 3' 'unexplained contents and live stray targets are kept'
+assert_contains "$out" 'kept lock-owner-reap-election 1' 'a reap election tomb is kept'
+assert_contains "$out" 'kept window-marker-recorded-task 4' 'markers of recorded windows, including prior and orca records, are kept'
+assert_contains "$out" 'kept window-marker-queued-wake 1' 'a marker with an unacknowledged wake is kept'
+assert_contains "$out" 'kept window-marker-young 1' 'a recent marker is kept'
+assert_contains "$out" 'kept home-summary-temp-young 1' 'recent summary scratch is kept'
+assert_contains "$out" 'total would-remove=15 removed=0 failed=0 kept=17' 'the dry run totals every kind'
+assert_not_contains "$out" "$SWEEP_STATE/.hash-" 'plain output is counts, not entries'
+assert_contains "$(sweep --verbose)" "would-remove window-marker $SWEEP_STATE/.hash-closed_w0_p1" 'verbose names each entry'
+pass 'sweep-state: a default dry run counts by kind and changes nothing'
+
+err=$(sweep --force 2>&1) && fail 'an unknown flag must refuse'
+assert_contains "$err" 'unknown argument --force; nothing changed' 'an unknown flag refuses rather than running'
+mkdir "$SWEEP_STATE/broken.meta"
+err=$(sweep --apply 2>&1) && fail 'an unreadable record must refuse the sweep'
+assert_contains "$err" 'unreadable task record' 'an unreadable record names itself'
+rmdir "$SWEEP_STATE/broken.meta"
+assert_equals "$before" "$(snapshot)" 'a refused sweep changes nothing'
+pass 'sweep-state: an unknown flag or an unreadable task record refuses before any change'
+
+out=$(sweep --apply) || fail "an apply run must succeed: $out"
+assert_contains "$out" 'total would-remove=0 removed=15 failed=0 kept=17' 'apply removes what the dry run listed'
+for gone in .wake-queue.lock.owner.released .wake-queue.lock.steal.owner.released .wake-queue.lock.owner.empty \
+  .wake-queue.lock.owner.deadpid .wake-queue.lock.owner.reused .hash-closed_w0_p1 .count-closed_w0_p1 \
+  .stale-closed_w0_p1 .stale-since-closed_w0_p1 .dead-reported-closed_w0_p1 .home-summary.json.AbC123 .home-summary-error.Xy1234; do
+  [ ! -e "$SWEEP_STATE/$gone" ] || fail "$gone should be removed"
+done
+for kept in .wake-queue.lock.owner.freshrelease .wake-queue.lock.owner.freshdead .wake-queue.lock.owner.livepid \
+  .watch.lock.owner.linkeddead .watch.lock .wake-queue.lock.owner.linkedsteal .wake-queue.lock.steal \
+  .wake-queue.lock.owner.foreignfile/unexpected .wake-queue.lock.owner.badpid/pid .wake-queue.lock.owner.livestray \
+  .wake-queue.lock.owner.straytarget/pid ".wake-queue.lock.owner.tomb.reaped.$DEAD_PID" .unrelated.lock \
+  .hash-personal_w1_p2 .stale-since-personal_w1_p2 .hash-personal_w1_p3 .hash-orca-term_7 .hash-personal_w9_p9 .hash-closed_w0_p2 \
+  .home-summary.json.Fresh1 .seen-procevent-6162 .seen-done-task_status .home-summary-refresh.log \
+  .backlog-handoff-task.wake-pending .startup-growth-check .hashes-not-a-family .wake-queue \
+  closed.status closed.inbox/handled/1.msg terminal-outcomes alive.meta prior.meta-prior; do
+  [ -e "$SWEEP_STATE/$kept" ] || [ -L "$SWEEP_STATE/$kept" ] || fail "$kept must survive the sweep"
+done
+[ -L "$SWEEP_STATE/.hash-symlink_w0_p1" ] || fail 'a symlink is never followed or removed as a marker'
+pass 'sweep-state: --apply removes only proven entries and leaves every protected record'
+
+out=$(sweep --apply) || fail "a repeat apply must succeed: $out"
+assert_contains "$out" 'total would-remove=0 removed=0 failed=0 kept=17' 'a repeat sweep converges'
+pass 'sweep-state: a repeat sweep has nothing left to remove'
+
+# A real lock acquired through the library must read as held, and stay protected
+# by its link after its holder dies.
+FM_STATE_OVERRIDE="$SWEEP_STATE" bash -c '. "$1/bin/fm-wake-lib.sh"; fm_lock_try_acquire "$FM_STATE_OVERRIDE/.real.lock" || exit 1; exec 3>&-; : > "$FM_STATE_OVERRIDE/acquired"; sleep 60' _ "$ROOT" &
+HOLDER=$!
+for ((i = 0; i < 100; i++)); do [ -e "$SWEEP_STATE/acquired" ] && break; sleep 0.05; done
+assert_present "$SWEEP_STATE/acquired" 'the fixture lock was acquired'
+real_owner=$(readlink "$SWEEP_STATE/.real.lock")
+age "$OLD_LOCK" "$real_owner"
+assert_contains "$(sweep --verbose)" "kept lock-owner-linked $real_owner" 'a real held lock is kept'
+kill "$HOLDER" 2>/dev/null
+wait "$HOLDER" 2>/dev/null
+age "$OLD_LOCK" "$real_owner"
+out=$(sweep --apply --verbose)
+assert_contains "$out" "kept lock-owner-linked $real_owner" 'a dead holder still linked is left to the lock takeover path'
+rm -f "$SWEEP_STATE/.real.lock"
+age "$OLD_LOCK" "$real_owner"
+assert_contains "$(sweep --apply --verbose)" "removed lock-owner-dead-pid $real_owner" 'the real owner format is understood once nothing links it'
+pass 'sweep-state: a real library lock is protected while linked and removable once abandoned'
+
+err=$(FM_REAP_LOCK_AGE_SECS=soon "$REAP" sweep-state 2>&1) && fail 'a bad threshold must refuse'
+assert_contains "$err" 'FM_REAP_LOCK_AGE_SECS must be whole seconds' 'a bad threshold names itself'
+ln -s "$SWEEP_STATE" "$TMP_ROOT/state-link"
+err=$(FM_STATE_OVERRIDE="$TMP_ROOT/state-link" "$REAP" sweep-state 2>&1) && fail 'a symlinked state must refuse'
+assert_contains "$err" 'state directory unavailable' 'a symlinked state refuses'
+pass 'sweep-state: bad thresholds and a symlinked state refuse'
+kill "$LIVE_PID" 2>/dev/null
+wait "$LIVE_PID" 2>/dev/null
 echo '# all fm-reap tests passed'
