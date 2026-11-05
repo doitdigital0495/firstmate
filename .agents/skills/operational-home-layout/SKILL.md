@@ -132,6 +132,7 @@ state/               runtime records and signals; gitignored
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/fm-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
   claude-admission.check.sh  bound release-shaping poll; bin/fm-claude-admission.sh owns it and the per-store state/claude-admission/ queues
   quota-intake/      private complete quota-intake records and consumed markers; bin/fm-quota-intake.sh owns their schema and gates
+  quota-unverified-starts.log  one line per start made on an unverified quota reading; written by bin/fm-quota-intake.sh
   dispatch-receipt/  private dispatch receipts and their consumed markers; bin/fm-dispatch-receipt-lib.sh owns their schema and the launch gate
   mail.check.sh      generated received-mail poll shim and its .check-trust binding; present only after bin/fm-mail-check.sh arm; report record .mail-check (mail schema: docs/configuration.md "Mail plane")
   usage-warner.check.sh  generated Claude usage threshold poll shim and its .check-trust binding; present only after bin/fm-usage-warner.sh arm; its de-dupe record .usage-warner is what keeps one threshold crossing from warning on every poll, and .usage-warner.lock serializes overlapping checks

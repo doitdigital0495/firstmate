@@ -48,7 +48,7 @@ export PATH="$FAKEBIN:$PATH" QUOTA_FIXTURE="$QUOTA" QUOTA_CALL_LOG="$TMP_ROOT/qu
 # The intake is real even though other suites default to a gate bypass.
 unset FM_QUOTA_INTAKE_TEST_BYPASS
 export FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE="$HOME_DIR/state" FM_CONFIG_OVERRIDE="$HOME_DIR/config" FM_DATA_OVERRIDE="$HOME_DIR/data" FM_JEVD_SOCKET="$SOCKET"
-export FM_DISPATCH_QUOTA_ATTEMPTS=2 FM_DISPATCH_QUOTA_BACKOFF_MS=250 FM_DISPATCH_QUOTA_WAIT_SECONDS=1 FM_JEVD_SOCKET_WAIT_SECONDS=0
+export FM_DISPATCH_QUOTA_ATTEMPTS=2 FM_DISPATCH_QUOTA_BACKOFF_MS=250 FM_DISPATCH_QUOTA_WAIT_SECONDS=20 FM_JEVD_SOCKET_WAIT_SECONDS=0
 # Captain words come only from these two records; the tests own both.
 export FM_LAVISH_STATE="$TMP_ROOT/lavish-state.json" FM_JEVD_AUDIT_JOURNAL=0 FM_JEVD_AUDIT_LOG="$TMP_ROOT/jevd.log"
 MIRROR="$HOME_DIR/state/.host-mirror.jsonl"
@@ -166,15 +166,28 @@ jq '.providers[0].quotaSemantics = {status:"unknown", effectiveAvailability:[]}'
 # No recent good reading exists, so the R11 reuse cannot answer for it.
 rm -rf "$HOME_DIR/state/quota-last-good"
 run "$BRIEF" --task pager
-assert_contains "$out" 'status: captain-pick' "unknown quota after the deadline goes to the captain: $out"
-assert_contains "$out" 'jev: incomplete' 'the pick names the incomplete evidence'
-assert_contains "$out" '-> incomplete: provider claude unmeasured' 'unmeasured candidates stay listed, marked'
+assert_contains "$out" 'status: clear' "an unknown quota starts without the captain: $out"
+assert_contains "$out" 'eligible, quota unknown: provider claude unmeasured' 'the chosen seat is marked quota unknown'
+assert_contains "$out" 'first declared seat of its tier and strongest class, without waiting' 'the note says why this seat'
+assert_contains "$out" 'receipt: dispatch-' 'the start gets its receipt'
+rm -f "$TMP_ROOT/unknown-calls"
+FM_DISPATCH_QUOTA_BACKOFF_MS=30000 FM_DISPATCH_QUOTA_WAIT_SECONDS=45 QUOTA_CALL_LOG="$TMP_ROOT/unknown-calls" run "$BRIEF" --task pager
+assert_contains "$out" 'status: clear' "still clear with a long budget: $out"
+assert_equals 1 "$(grep -c '^--json$' "$TMP_ROOT/unknown-calls")" 'an unknown quota is read once for the choice, never retried'
+# Approval still belongs to the captain, whatever the quota says.
+jq '.rules[1].approval="captain"' "$TMP_ROOT/rules-backup" > "$RULES"
+run "$BRIEF" --task pager
+assert_contains "$out" 'status: captain-pick' "approval is not bypassed by an unknown quota: $out"
+assert_contains "$out" 'receipt: none' 'an approval row launches nothing'
+cp "$TMP_ROOT/rules-backup" "$RULES"
+# A read that hangs stops at the deadline, and is then the same unknown.
+printf -- '--json\n--json\n' > "$TMP_ROOT/hang-calls"
 hang_started=$SECONDS
-QUOTA_HANG_READ=1 QUOTA_CALL_LOG="$TMP_ROOT/hang-calls" run "$BRIEF" --task pager
-assert_contains "$out" 'jev: incomplete' 'slow retry remains incomplete'
-[ "$((SECONDS - hang_started))" -lt 12 ] || fail 'slow quota retry escaped the shortened incomplete deadline'
+QUOTA_HANG_READ=1 QUOTA_CALL_LOG="$TMP_ROOT/hang-calls" FM_QUOTA_READ_DEADLINE=1 FM_DISPATCH_QUOTA_WAIT_SECONDS=900 run "$BRIEF" --task pager
+assert_contains "$out" 'status: clear' "a hung read still starts: $out"
+[ "$((SECONDS - hang_started))" -lt 12 ] || fail 'a hung quota read escaped the read deadline'
 cp "$TMP_ROOT/quota-backup" "$QUOTA"
-pass 'escalate and incomplete go to a captain pick without a receipt, including slow reads'
+pass 'escalate goes to a captain pick; an unknown quota starts on the first declared seat without waiting, including slow reads'
 # Exercise quota ranking and fail-closed policies via the socket interface.
 cp "$RULES" "$TMP_ROOT/original-rules"
 cp "$QUOTA" "$TMP_ROOT/original-quota"
@@ -218,7 +231,7 @@ assert_equals opus "$(jq -r .profile.model "$(latest)")" 'limiting model-specifi
 # All unknown candidates remain in the choice, rather than dropping to a known one.
 jq 'del(.providers[0].windows[1].resetsAt)' "$TMP_ROOT/original-quota" > "$QUOTA"
 run "$BRIEF" --task pager
-assert_contains "$out" 'jev: incomplete' 'missing reset evidence blocks ranking'
+assert_contains "$out" 'quota unknown: windows without known percent or reset' 'missing reset evidence is an unknown quota'
 cp "$TMP_ROOT/original-quota" "$QUOTA"
 cp "$TMP_ROOT/original-rules" "$RULES"
 jq '.rules[1].floor={scope:"all_models",provider:"claude",min_percent:10}' "$TMP_ROOT/original-rules" > "$RULES"

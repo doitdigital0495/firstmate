@@ -139,7 +139,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-backlog-transition-lib.sh` | Pair task-record changes with their backlog transitions and replay interrupted closes |
 | `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor and quota snapshot schema validation           |
 | `fm-quota-choose.sh`     | Choose the first candidate with known positive quota from an ordered harness:model list |
-| `fm-quota-intake.sh`     | Record every usage window, reset time, plan size, and Notes entry as used percents, and gate each launch on a fresh unspent record |
+| `fm-quota-intake.sh`     | Record every usage window, reset time, plan size, and Notes entry as used percents, and gate each launch: a known exhausted window or a bad login stops it, an unknown quota starts and is logged |
 | `fm-dispatch-receipt-lib.sh` | Own the dispatch receipt format, the launch gate that refuses a profile not routed from `config/crew-dispatch.json`, and the receipt audit; `fm-dispatch-resolve.sh` is its only writer |
 | `fm-reap.sh` | Close finished crewmates and scouts after their time through teardown (opt-in through `config/reaper`: shadow reports, enforce closes), keeping any worker whose work has not landed |
 | `fm-dispatch-pick-lib.sh` | Own the captain route pick: the pick request written when Jev cannot route, the card, and the bound-to-words verification that turns the captain's answer into a receipt |

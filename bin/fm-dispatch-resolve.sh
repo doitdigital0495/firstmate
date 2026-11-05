@@ -44,9 +44,10 @@
 #   While any candidate is rankable, an unreadable one stays listed as skipped and
 #   is never selected or treated as healthy; a skipped pool with a named warm-up
 #   (zai-window-warm for Z.ai) still gets that warm-up and one re-read first.
-#   With no rankable candidate, bounded quota-axi retries with doubling backoff
-#   plus that warm-up run; anything still unknown yields status incomplete, which
-#   is non-dispatchable: wait and re-run, never pick by hand.
+#   With no rankable candidate the same warm-up and re-read run without any wait,
+#   and anything still unknown starts on the first declared seat of the open tier
+#   and strongest reasoning class, marked quota unknown (captain 2026-11-05: an
+#   unknown quota never blocks a start).
 #
 # Shared-quota opt-out: an optional top-level "shared_quota": true in the
 #   rules file declares this home draws every provider's usage from one single
@@ -133,14 +134,14 @@
 #   ambiguous  -> code unions qualifying rows and keeps strongest reasoning_class;
 #                 a union with a missing class goes to the captain, never hand-picked
 #   incomplete -> no candidate is rankable and quota window evidence is not fully
-#                 known: the bounded gather waits and re-reads; still incomplete at
-#                 its deadline, the captain picks with every unmeasured candidate
-#                 marked
+#                 known. Never waited on in worker mode: it resolves clear on the
+#                 first declared seat with `quota unknown` on its line, and goes to
+#                 the captain only when a rule requires approval or nothing is left
+#                 to start on
 #   captain-pick -> Jev is down or answered unusably after one retry (a missing
 #                 socket first gets FM_JEVD_SOCKET_WAIT_SECONDS, default 15, to
 #                 come back), or code cannot dispatch Jev's answer (captain
-#                 approval, nothing rankable, an invalid row, or
-#                 incomplete at the deadline). It writes a pick request offering
+#                 approval, nothing rankable, or an invalid row). It writes a pick request offering
 #                 every row and candidate with its evidence and launches nothing;
 #                 the captain answers "route <CODE> <n>" and `pick <CODE>` turns
 #                 the verified answer into a receipt. --captain-pick asks for
@@ -156,9 +157,10 @@
 #
 # Environment:
 #   FM_JEVD_SOCKET selects the private socket (default XDG state jev-gate/jevd.sock).
-#   FM_DISPATCH_QUOTA_WAIT_SECONDS shortens the 900-second incomplete deadline.
+#   FM_QUOTA_READ_DEADLINE (45) is the deadline on all of a worker choice's reads.
+#   FM_DISPATCH_QUOTA_WAIT_SECONDS can only shorten that, and pipeline's 30 seconds.
 #   FM_DISPATCH_QUOTA_ATTEMPTS bounds quota gathers (default 1000, 1..1000).
-#   FM_DISPATCH_QUOTA_BACKOFF_MS sets initial backoff (1500, 250..30000 ms).
+#   FM_DISPATCH_QUOTA_BACKOFF_MS sets pipeline's initial backoff (1500, 250..30000 ms).
 #
 # Authority: Jev chooses the row; code applies deterministic quota and approval
 #   gates without replacing fm-spawn.sh validation. It publishes one
@@ -217,8 +219,7 @@ fm_dispatch_clamp_int() {  # <value> <default> <min> <max>
 }
 QUOTA_ATTEMPTS=$(fm_dispatch_clamp_int "${FM_DISPATCH_QUOTA_ATTEMPTS:-}" 1000 1 1000)
 QUOTA_WAIT_SECONDS=$(fm_dispatch_clamp_int "${FM_DISPATCH_QUOTA_WAIT_SECONDS:-}" 900 1 900)
-# The incomplete wait starts only after the first result; each initial read
-# is independently bounded so a wedged quota process cannot hang dispatch.
+# Reads and warm-ups share this deadline so a wedged quota process cannot hang dispatch.
 QUOTA_DEADLINE=0
 fm_dispatch_bounded() {
   python3 "$SCRIPT_DIR/fm-dispatch-bounded.py" "$QUOTA_DEADLINE" "$@"
@@ -571,6 +572,11 @@ if fm_account_registry_valid "$CONFIG/accounts.json"; then
   PLAN_CONFIG=$(jq -c 'def plans: if type == "object" then . else {} end; {default: (.plans | plans), accounts: (.accounts | with_entries(.value = (.value.plans | plans)))}' "$CONFIG/accounts.json")
 fi
 # ---- quota evidence: one snapshot per authorized credential store -------------
+# The whole read has one deadline, set here so a slow Jev answer cannot spend it.
+if [ "$MODE" = worker ]; then
+  [ "$QUOTA_WAIT_SECONDS" -le "$FM_QUOTA_READ_DEADLINE" ] || QUOTA_WAIT_SECONDS=$FM_QUOTA_READ_DEADLINE
+  QUOTA_DEADLINE=$(( $(date +%s) + QUOTA_WAIT_SECONDS ))
+fi
 # Default quota reads must use the same captain-owned pins as launch and intake.
 DEFAULT_CLAUDE_STORE=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 DEFAULT_PI_STORE=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}
@@ -593,13 +599,10 @@ SHARED_QUOTA=$(jq -r '.shared_quota // false' "$RULES" 2>/dev/null) || SHARED_QU
 if [ "$SQ" = true ] || [ "$MODE" = pipeline ]; then
   printf '{"providers":[]}\n' > "$QUOTA"
 fi
-if [ "$SQ" = false ]; then
-  command -v quota-axi >/dev/null 2>&1 || emit_error "quota-axi not installed"
-fi
 # fm_dispatch_recent_read <cache-file> <fresh-file> <read-ok 0|1> <claude> <pi> <codex>: R11. Turns a
 # fresh read into the snapshot to rank on: rows a rate limit or other transient
 # failure left unmeasured reuse that store's last good reading while it is at
-# most FM_QUOTA_RECENT_MAX_AGE (1800) seconds old, and a read that failed
+# most FM_QUOTA_RECENT_MAX_AGE (86400) seconds old, and a read that failed
 # outright is answered from recent readings alone. rc 1 when nothing usable.
 fm_dispatch_recent_read() {
   local cache=$1 fresh=$2 ok=$3 merged
@@ -628,26 +631,26 @@ fm_dispatch_store_key() {  # <claude> <pi> <codex>: canonical store triple
     else fm_account_canonical_store "$one"; fi
   done
 }
+# Validity decides whether a read counted, not its exit status: quota-axi exits 1
+# with a full report when every provider failed, and that report names a bad login.
 gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapshot
   local fresh ok=1 cache
   local -a canon=()
   fresh=$(mktemp) || { printf 'mktemp failed'; return 1; }
-  cache=$(fm_quota_recent_file "$STATE" resolve)
+  cache=$(fm_quota_recent_file "$STATE")
   mapfile -t canon < <(fm_dispatch_store_key "$DEFAULT_CLAUDE_STORE" "$DEFAULT_PI_STORE" "${CODEX_HOME:-$HOME/.codex}")
-  if ! CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "$DEFAULT_CLAUDE_STORE") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "$DEFAULT_PI_STORE") fm_dispatch_bounded quota-axi --json > "$fresh" 2>/dev/null; then
-    ok=0
-  elif ! fm_quota_json_valid < "$fresh"; then
-    ok=0
-  fi
+  CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "$DEFAULT_CLAUDE_STORE") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "$DEFAULT_PI_STORE") fm_dispatch_bounded quota-axi --json > "$fresh" 2>/dev/null
+  fm_quota_json_valid < "$fresh" || ok=0
   if ! fm_dispatch_recent_read "$cache" "$fresh" "$ok" "${canon[@]}"; then
     rm -f "$fresh"
-    printf 'quota-axi --json failed or returned an invalid snapshot, and no reading of this store is under %ss old' "$FM_QUOTA_RECENT_MAX_AGE"
     return 1
   fi
   mv "$fresh" "$QUOTA"
 }
 if [ "$SQ" = false ] && [ "$MODE" = worker ]; then
-  home_quota_error=$(gather_home_quota) || emit_error "$home_quota_error"
+  # Nothing read and nothing cached is an unknown quota: an empty snapshot leaves
+  # every home candidate unmeasured instead of stopping the choice.
+  gather_home_quota || printf '{"providers":[]}\n' > "$QUOTA"
 fi
 gather_account_snapshot() {  # <account>: refresh ACCOUNT_QUOTAS[account] from its pinned store
   local account=$1 stores account_quota store_key
@@ -659,11 +662,10 @@ gather_account_snapshot() {  # <account>: refresh ACCOUNT_QUOTAS[account] from i
   account_quota=$(mktemp) || emit_error "mktemp failed"
   local read_ok=1 recent_cache
   local -a canon=()
-  recent_cache=$(fm_quota_recent_file "$STATE" resolve)
+  recent_cache=$(fm_quota_recent_file "$STATE")
   mapfile -t canon < <(fm_dispatch_store_key "${stores[0]}" "${stores[1]}" "${stores[2]}")
-  if ! CODEX_HOME=$(fm_account_read_store codex "${stores[2]}") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "${stores[1]}") CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "${stores[0]}") fm_dispatch_bounded quota-axi --json > "$account_quota" 2>/dev/null || ! fm_quota_json_valid < "$account_quota"; then
-    read_ok=0
-  fi
+  CODEX_HOME=$(fm_account_read_store codex "${stores[2]}") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "${stores[1]}") CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "${stores[0]}") fm_dispatch_bounded quota-axi --json > "$account_quota" 2>/dev/null
+  fm_quota_json_valid < "$account_quota" || read_ok=0
   if ! fm_dispatch_recent_read "$recent_cache" "$account_quota" "$read_ok" "${canon[@]}"; then
     ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" '. + {($a): {key: $key, failed: true}}' <<<"$ACCOUNT_QUOTAS")
   else
@@ -795,7 +797,7 @@ FM_DR_SEAT_JQ='
        else "provider \($p) absent from the quota snapshot" end)}
     elif (measured($p; $lane) | not) then
       {complete: false, missing: (unmeasured_ids($p; $lane)),
-       reason: "provider \($p) unmeasured (\(prov($p; $lane).quotaSemantics.status))",
+       reason: "provider \($p) unmeasured (\(prov($p; $lane).quotaSemantics.status)\(if (prov($p; $lane).state.status // "") == "rate_limited" then ", rate limited" else "" end))",
        state_error: $state_error, retry_after: $retry_after}
     else
       (applicable($p; $lane; ($c.model // ""); ($c.quota_scope // null))) as $rows |
@@ -1162,7 +1164,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
           (if ($sel.rule_floor_incomplete // false)
            then ["rule floor \($rule.floor.provider)/\($rule.floor.scope) unmeasured"]
            else [] end)) | join("; "))),
-      note: "gather first: \($quota_attempts) quota-axi attempt(s) with backoff and named warm-ups; no candidate is rankable yet, so wait for the named measurements and re-run; never pick by hand",
+      note: "\($quota_attempts) quota-axi attempt(s) and named warm-ups; no candidate is rankable",
       candidates: $cands,
       incomplete: (([$incomplete[] | {account: (.profile.account // null), provider: (.provider // null), missing: (.windows_missing // []), retry_after: (.retry_after // null)}]) +
         (if ($sel.rule_floor_incomplete // false)
@@ -1218,6 +1220,27 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       end
     end
   end) as $out |
+  # An unknown quota never blocks a start: the first declared seat of the open
+  # tier starts marked quota unknown, and fm-quota-intake.sh logs that start.
+  # Only a known stop or a rule that requires approval reaches the captain.
+  (if $out.status == "incomplete" and $final and (($sel.escalate // null) == null) then
+    ([$out.candidates[]? | select((.incomplete // false) or (.eligible // false))]) as $open |
+    ([$open[] | select(.provider == $cfg.preferred_provider)]) as $family |
+    (if ($family | length) > 0 then $family else $open end) as $pool |
+    (if ($pool | length) > 0 and ($pool | all((.profile.reasoning_class | type) == "number"))
+     then ($pool | map(.profile.reasoning_class) | max) as $top | [$pool[] | select(.profile.reasoning_class == $top)]
+     else $pool end
+     | sort_by((.reserve // false), seat_rank(.profile)) | first) as $seat |
+    if $seat == null then $out
+    else
+      ($seat | del(.incomplete, .windows_missing) + {eligible: true, quota_unknown: true, reason: "quota unknown: \(.reason)"}) as $started |
+      (if $ambiguous then ([$union_ids[] | . as $id | (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | select(index($seat.profile)) | $id] | first) else $sel.source end) as $seat_row |
+      ($out | del(.reason, .incomplete, .quota_attempts, .warmups)) + {
+        status: "clear", quota_unknown: true, chosen: $started, row: $seat_row,
+        note: "quota unknown on every candidate: starting on \($seat | seat_label), the first declared seat of its tier and strongest class, without waiting",
+        candidates: [$out.candidates[] | if .profile == $seat.profile then $started else . end]}
+    end
+   else $out end) as $out |
   # Jev answered but code cannot dispatch it: the captain picks from the table.
   if $out.status == "escalate" or $out.status == "error" or ($out.status == "incomplete" and $final) then
     $out + {status: "captain-pick", jev_status: $out.status, pick: pick_rows($a.probabilities)}
@@ -1229,7 +1252,6 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   end'
 }
 RESULT=$(fm_dispatch_resolve_json 1 0) || emit_error "resolution failed"
-[ "$MODE" = pipeline ] || QUOTA_DEADLINE=$(( $(date +%s) + QUOTA_WAIT_SECONDS ))
 quota_attempts=1
 warmups_run=0
 fm_dispatch_epoch_ms_of() {  # <iso8601>: epoch milliseconds, or nothing when unparsable
@@ -1244,25 +1266,25 @@ fm_dispatch_warm_zai() {  # the named Z.ai warm-up, at most once per resolution
     fm_dispatch_bounded zai-window-warm >/dev/null 2>&1 || true
   fi
 }
-# A rankable candidate settles the choice without waiting, but a skipped pool with
-# a named warm-up still gets it and one re-read, so a cold window can join the choice.
-if [ "$quota_attempts" -lt "$QUOTA_ATTEMPTS" ] && [ "$(date +%s)" -lt "$QUOTA_DEADLINE" ] \
-  && jq -e '.status == "clear" and any(.candidates[]?; (.unreadable // false) and .provider == "zai")' <<<"$RESULT" >/dev/null 2>&1; then
+# A worker choice never waits on quota, but a pool with a named warm-up still gets
+# it and one re-read, so a cold window can join the choice.
+if [ "$MODE" = worker ] && [ "$quota_attempts" -lt "$QUOTA_ATTEMPTS" ] && [ "$(date +%s)" -lt "$QUOTA_DEADLINE" ] \
+  && jq -e '(.status == "clear" or .status == "incomplete") and any(.candidates[]?; ((.unreadable // false) or (.incomplete // false)) and .provider == "zai")' <<<"$RESULT" >/dev/null 2>&1; then
   fm_dispatch_warm_zai
-  if jq -e 'any(.candidates[]?; (.unreadable // false) and .provider == "zai" and .profile.account == null)' <<<"$RESULT" >/dev/null 2>&1; then
+  if jq -e 'any(.candidates[]?; ((.unreadable // false) or (.incomplete // false)) and .provider == "zai" and .profile.account == null)' <<<"$RESULT" >/dev/null 2>&1; then
     gather_home_quota >/dev/null || true
   fi
   while IFS= read -r account; do
     [ -n "$account" ] || continue
     gather_account_snapshot "$account"
-  done < <(jq -r '.candidates[]? | select((.unreadable // false) and .provider == "zai") | .profile.account // empty' <<<"$RESULT" | sort -u)
+  done < <(jq -r '.candidates[]? | select(((.unreadable // false) or (.incomplete // false)) and .provider == "zai") | .profile.account // empty' <<<"$RESULT" | sort -u)
   quota_attempts=$(( quota_attempts + 1 ))
   RESULT=$(fm_dispatch_resolve_json "$quota_attempts" "$warmups_run") || emit_error "resolution failed"
 fi
-# Bounded gather loop: an incomplete resolution runs the named warm-up once,
-# re-reads only the named stores with doubling backoff up to the deadline.
+# Pipeline's bounded gather loop: an incomplete resolution runs the named warm-up
+# once, re-reads only the named stores with doubling backoff up to the deadline.
 # Slow reads and warm-ups share that deadline, including their subprocesses.
-while [ "$(jq -r '.status // ""' <<<"$RESULT" 2>/dev/null)" = "incomplete" ] && [ "$quota_attempts" -lt "$QUOTA_ATTEMPTS" ] && [ "$(date +%s)" -lt "$QUOTA_DEADLINE" ]; do
+while [ "$MODE" = pipeline ] && [ "$(jq -r '.status // ""' <<<"$RESULT" 2>/dev/null)" = "incomplete" ] && [ "$quota_attempts" -lt "$QUOTA_ATTEMPTS" ] && [ "$(date +%s)" -lt "$QUOTA_DEADLINE" ]; do
   if [ "$warmups_run" -eq 0 ] && jq -e 'any(.incomplete[]?; .provider == "zai")' <<<"$RESULT" >/dev/null 2>&1; then
     fm_dispatch_warm_zai
   fi
@@ -1294,8 +1316,8 @@ while [ "$(jq -r '.status // ""' <<<"$RESULT" 2>/dev/null)" = "incomplete" ] && 
   quota_attempts=$(( quota_attempts + 1 ))
   RESULT=$(fm_dispatch_resolve_json "$quota_attempts" "$warmups_run") || emit_error "resolution failed"
 done
-# Evidence still incomplete when the bounded gather ends: the captain picks,
-# with every unmeasured candidate marked rather than dropped.
+# Evidence still incomplete: worker mode starts quota unknown and pipeline mode
+# takes its first seat unmeasured, with every unmeasured candidate marked.
 if [ "$(jq -r '.status // ""' <<<"$RESULT")" = incomplete ]; then
   RESULT=$(fm_dispatch_resolve_json "$quota_attempts" "$warmups_run" true) || emit_error "resolution failed"
 fi
@@ -1353,7 +1375,7 @@ TEXT=$(jq -r '
       + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))  runway=\(show(.runway))" else "" end)
       + (if (.bounds // [] | length) > 1 then "  bounds=" + ([.bounds[] | "\(.scope | flat):\(show(.pct))%/\((.runway // .status) | flat)"] | join(",")) else "" end)
       + (if .reading_age != null then "  reading_age=\(.reading_age | flat)s (recent reading reused)" else "" end)
-      + "  -> " + (if .incomplete then "incomplete: \(.reason | flat): gather first, wait and re-run" elif .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .sq then "eligible (quota ranking off: home declares a single shared quota)" elif .eligible and (.reserve_active // false) then "eligible, \(.reason | flat)" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)
+      + "  -> " + (if .quota_unknown then "eligible, \(.reason | flat)" elif .incomplete then "incomplete: \(.reason | flat)" elif .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .sq then "eligible (quota ranking off: home declares a single shared quota)" elif .eligible and (.reserve_active // false) then "eligible, \(.reason | flat)" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)
       + "  plan=\(.plan | flat) (\(.plan_source | flat))"),
   (if .chosen then "  profile: --harness \(.chosen.profile.harness | shell_arg)"
       + (if .chosen.profile.model then " --model \(.chosen.profile.model | shell_arg)" else "" end)
@@ -1371,8 +1393,7 @@ FM_DR_JEV=$(jq -c --argjson latency "$LAT_MS" 'if .requestId then {model, reques
 case "$(jq -r '.status // ""' <<<"$RESULT")" in
   clear)
     # A clear answer is the routing decision, so it leaves the receipt the
-    # launch gate will ask for. The per-launch intake is recorded here so even
-    # a long incomplete wait produces fresh intake evidence.
+    # launch gate will ask for. The per-launch intake is recorded here.
     fm_dr_record_intake || emit_error "quota intake failed; stop and report"
     if RECEIPT_NAME=$(fm_dr_write_clear "$BRIEF" "$TASK_ID" "$RESULT"); then
       printf '  source: jev\n'
