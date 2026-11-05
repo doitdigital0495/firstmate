@@ -1843,7 +1843,7 @@ An absent `account` keeps the home seat only in a home without `config/accounts.
 
 **Supervisor reserve and provider bans**
 
-- In a six-account home the supervisor's own login (claude3) sits on worker rows as a `fallback_only` reserve (see the field above): it is held while claude1 or claude2 still has weekly capacity and picked only when no other candidate is rankable. A held reserve is out of the choice, so its own quota, known or not, never makes the choice incomplete. Add a profile `floor` on the seven-day scope to cap how far the reserve may drain that login.
+- In a six-account home the supervisor's own login (claude3) sits on worker rows as a `fallback_only` reserve (see the field above): it is held while claude1 or claude2 still has weekly capacity and picked only when no other candidate is rankable; a seat whose quota is unreadable or whose credential failed does not count as capacity. A held reserve is out of the choice, so its own quota, known or not, never makes the choice incomplete. Add a profile `floor` on the seven-day scope to cap how far the reserve may drain that login.
 - A rule `never_providers` is a non-empty array of provider IDs that rule's work may never run on, such as `["zai"]` on front-end design. A rule that lists a profile of a provider it bans is a configuration error, and when an ambiguous union pulls profiles of a banned provider in from another rule, those candidates read `provider <id> is banned for this work (never_providers)` and are never chosen.
 - `bin/fm-account-routing.sh audit` reports any rung that lists fewer accounts of a provider than the registry declares for it, and notes a provider served by a single account.
 
@@ -1881,7 +1881,8 @@ The declared value must be a boolean; anything else is an actionable configurati
 An optional per-profile positive integer `"seat_tier"` declares a strict default-then-fallback order within a row, lower first; a profile without one sorts after every declared tier.
 Only the lowest tier that still holds a candidate which is not ineligible and not at its weekly limit stays in the choice, using the same weekly test as the reserve tier above.
 Every later tier reads `seat_tier held` and is out of the choice, so its own quota, known or not, never makes the choice incomplete.
-A candidate of the open tier whose quota is unmeasured or unrankable still holds that tier, so the choice waits or goes to the captain rather than selecting around it.
+A candidate whose quota is unreadable holds no tier, so a later tier with a readable seat opens instead (see the unreadable rule under "Typed dispatch resolution").
+An eligible but unrankable candidate of the open tier still holds that tier, so the choice goes to the captain rather than selecting around it.
 Inside the open tier the existing rules decide: `fallback_only`, keep-strongest `reasoning_class`, `preferred_provider`, then `spendPriority`, so seats that share a tier still compete on quota.
 A released `fallback_only` candidate competes in its own tier, so a later tier of another family waits for it, unlike a reserve with no tier.
 An ambiguous union takes its class from the first declared tier of its most probable row, so a stronger fallback seat cannot drop that row's default seat out of the union.
@@ -2222,18 +2223,21 @@ A candidate is rankable only with complete limit information: every window its a
 A five-hour window counts whenever it can be read; one that is missing or has no readable percent or reset time is ignored on every account and never makes a candidate incomplete (captain 2026-11-02), and a row unknown only because of such a window ranks on its other windows.
 A provider whose state is `auth_required` makes only that candidate ineligible as `credential unusable ... not an unknown quota`; it never makes the whole choice incomplete.
 A provider row that a read could not measure for any other reason (rate limited, stale, unavailable, or the read failed outright) reuses that provider's last good reading of the same canonical store while it is at most `FM_QUOTA_RECENT_MAX_AGE` (1800) seconds old; the candidate line then shows `reading_age=<s>s (recent reading reused)`, a reused exhausted reading still excludes, and nothing older is used. The readings live privately under `state/quota-last-good/`.
-A row whose own status is not known, an unmeasured provider, a profile floor whose scope row is unmeasured, a candidate with no applicable row, or a window without a percent or reset makes that candidate incomplete and the whole choice `incomplete` before any ranking or hand-picking; a candidate is never left merely unranked, dropped, or treated as healthy because its limits are unknown.
+A row whose own status is not known, an unmeasured provider, a profile floor whose scope row is unmeasured, a candidate with no applicable row, or a window without a percent or reset makes that candidate unreadable; it is never ranked, selected, or treated as healthy because its limits are unknown.
+While any candidate of the choice is rankable, an unreadable candidate prints `not eligible: quota unreadable, skipped: <reason>` with its missing windows, and the receipt rationale names it.
+When no candidate is rankable, an unreadable candidate makes the whole choice `incomplete`.
 A profile's `quota_scope` binds the candidate to that named quota-axi row in addition to its account-wide and model rows; a declared scope with no row beside otherwise complete evidence leaves the candidate eligible but unranked.
 The resolver prints its preferred-family decision while retaining evidence for every candidate.
 If preferred candidates remain eligible but none is rankable, it escalates instead of selecting another family, and it never introduces candidates outside the matched rule or its existing default fallback.
 With the home's `shared_quota: true` declaration ("Crew dispatch profiles"), the quota snapshots, floors, completeness gate, runway gates, and `spendPriority` argmax are skipped entirely; resolution is the matched rule's declared profile order (`preferred_provider` still narrows the pool; declared order then picks within it), and cross-account registration still applies.
 An incomplete choice runs the named Z.ai warm-up once where applicable and re-reads only incomplete stores with doubling backoff capped at 30 seconds.
+A skipped Z.ai candidate gets that same warm-up and one re-read of its store before a clear result, without the wait.
 A failed re-read preserves the previous snapshot.
 The wait stops after 15 minutes and, still incomplete, becomes a captain pick with every unmeasured candidate marked; `FM_DISPATCH_QUOTA_WAIT_SECONDS` can only shorten that deadline (1..900).
 Quota reads and warm-ups are bounded subprocess groups sharing that deadline; initial reads have a 180-second bound.
 The resolver records a fresh per-launch quota intake only after resolution becomes dispatchable, so a long wait never leaves the launch bound to an expired intake.
 `FM_DISPATCH_QUOTA_ATTEMPTS` (default 1000, clamped 1..1000) can further bound attempts and `FM_DISPATCH_QUOTA_BACKOFF_MS` (default 1500, clamped 250..30000) sets the initial backoff.
-The `incomplete` block names each candidate's missing windows and retry times, and its note is the standing instruction: gather first, wait for the named measurements, and re-run; never pick by hand or drop a candidate.
+The `incomplete` block names each candidate's missing windows and retry times, and its note is the standing instruction: gather first, wait for the named measurements, and re-run; never pick by hand.
 Any applicable `exhausted_now` row or known zero bound makes that candidate ineligible, and a known profile-floor shortfall does the same before unrelated quota uncertainty is considered.
 Missing or nonnumeric `spendPriority` evidence is never ranked, and every candidate prints its plan and evidence source (or unknown uncertainty) beside its window evidence (`windows=` with each id, remaining percent, and reset) or the reason it was not rankable, including on ambiguous and approval-gated outcomes that emit no profile.
 Duplicate concrete profiles with the same account, harness, model, and effort inside one rule or the default array are configuration errors rather than ties.
