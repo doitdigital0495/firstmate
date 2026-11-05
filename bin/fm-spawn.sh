@@ -275,6 +275,9 @@
 #   --load-guard holds new starts (its header owns the threshold). A relaunch, a
 #   --secondmate spawn, and a restart of a task that already has a record are not
 #   held.
+#   Ship overlap: a fresh ship naming the same project files as a queued or
+#   in-flight ship prints an advisory `warning: ship overlap:` line and still
+#   launches (bin/fm-ship-overlap-lib.sh owns the rule).
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
 #   spawns require an explicit harness so firstmate cannot silently skip dispatch
@@ -1048,6 +1051,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-project-capacity-lib.sh
 . "$SCRIPT_DIR/fm-project-capacity-lib.sh"
+# shellcheck source=bin/fm-ship-overlap-lib.sh
+. "$SCRIPT_DIR/fm-ship-overlap-lib.sh"
 # shellcheck source=bin/fm-worker-account-lib.sh
 . "$SCRIPT_DIR/fm-worker-account-lib.sh"
 # shellcheck source=bin/fm-omp-profile-lib.sh
@@ -4924,6 +4929,12 @@ if [ "$QUOTA_GATE_STATUS" -ne 0 ]; then
 fi
 printf '%s\n' "$QUOTA_GATE_OUT" >&2
 spawn_dispatch_receipt_gate --consume || exit 1
+
+# Advisory only (bin/fm-ship-overlap-lib.sh owns what counts as overlap). It runs
+# before admission so a withheld launch is flagged too, and never stops a spawn.
+if [ "$KIND" = ship ] && [ "$RELAUNCH" -eq 0 ]; then
+  fm_ship_overlap_warn "$ID" "$PROJ_ABS" "${SOURCE_BRIEF:-$BRIEF}" "$STATE" "$DATA" "$CONFIG" >&2 || true
+fi
 
 # Phase 2. bin/fm-claude-admission.sh owns the whole decision, including which
 # stores this home shapes at all - a store the home does not shape takes no
