@@ -9,6 +9,7 @@
 #   R11 a rate-limited read reuses that store's last good reading under 30 min
 #   S4  a credential failure is named as such, never as unknown quota
 #   T   seat_tier strict order, per-delivery tiers, and their reserve and class rules
+#   U   an unreadable candidate is skipped while another is readable; none readable stays incomplete
 #   P   pipeline mode: fixed row per step, pools, weekly floor, live five-hour window
 #   A   provider-aware, symlink-canonical seat lookup and the one-shot migration
 set -u
@@ -215,10 +216,76 @@ jq '.providers[0] |= (.state = {status:"rate_limited", error:"limited"} | .windo
 run "$BRIEF" --task six
 assert_contains "$out" 'status: clear' "a held later tier with unknown quota does not stall the choice: $out"
 assert_contains "$(chosen)" "--account 'claude1'" 'the open tier still decides'
+# ---- U: an unreadable seat never blocks a readable one ---------------------------
+unreadable() { jq '.providers[0] |= (.state = {status:"rate_limited", error:"limited"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$QDIR/$1.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/$1.json"; }
 reset_quota
-jq '.providers[0] |= (.state = {status:"rate_limited", error:"limited"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$QDIR/claude1.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/claude1.json"
+unreadable claude1
 run "$BRIEF" --task six
-assert_not_contains "$out" 'status: clear' "an unmeasured default seat is never routed around: $out"
+assert_contains "$out" 'status: clear' "an unreadable first seat does not stop the dispatch: $out"
+assert_contains "$(chosen)" "--account 'claude2'" 'the next readable seat is chosen'
+assert_contains "$out" 'not eligible: quota unreadable, skipped: provider claude unmeasured' 'the unreadable seat is marked on its line'
+assert_contains "$out" 'windows_missing=' 'the skipped seat still names what is missing'
+assert_contains "$out" 'seat_tier held: an earlier seat still has capacity (claude:opus@claude2)' 'only a readable seat holds the later tiers'
+assert_contains "$(jq -r .rationale "$(latest)")" 'quota unreadable, skipped: claude:sonnet@claude1, claude:opus@claude1' 'the receipt names the skipped seats'
+# Inside one tier the readable seat wins although the unreadable one comes first.
+cp "$RULES" "$TMP_ROOT/tier-rules"
+jq '(.rules[0].use[] | select(.account == "claude2")).seat_tier = 1' "$TMP_ROOT/tier-rules" > "$RULES"
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude2'" "a readable seat of the same tier is chosen: $out"
+cp "$TMP_ROOT/tier-rules" "$RULES"
+# An unreadable seat is no capacity for a reserve to protect.
+set_quota claude2 claude 0 2 exhausted_now
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude3'" "the reserve opens past an unreadable and a full seat: $out"
+assert_contains "$out" 'seat is at its limit (weekly window at or above 100% used or runway exhausted_now) or unreadable' 'the reserve says why it opened'
+# So is an expired login.
+reset_quota
+jq '.providers[0] |= (.state = {status:"auth_required", error:"claude_credential_unavailable"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$QDIR/claude1.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/claude1.json"
+set_quota claude2 claude 0 2 exhausted_now
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude3'" "the reserve opens past an expired login and a full seat: $out"
+# A later unreadable tier stays held, and nothing readable stays incomplete.
+reset_quota
+unreadable claude1
+unreadable claude3
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude2'" "the open tier decides: $out"
+assert_contains "$out" 'fallback_only reserve held' 'a later unreadable reserve stays held'
+reset_quota
+for seat in claude1 claude2 claude3 codex1 pi; do unreadable "$seat"; done
+run "$BRIEF" --task six
+assert_contains "$out" 'status: captain-pick' "nothing readable still goes to the captain: $out"
+assert_contains "$out" 'jev: incomplete' 'the pick names the incomplete evidence'
+assert_contains "$out" '-> incomplete: provider claude unmeasured' 'every seat stays listed as unmeasured'
+assert_contains "$out" 'receipt: none' 'nothing launches'
+assert_not_contains "$out" 'seat_tier held' 'no unreadable tier hides a later one from the gather'
+# A skipped pool with a named warm-up still gets it once, and can join the choice.
+cat > "$FAKEBIN/zai-window-warm" <<SH
+#!/usr/bin/env bash
+printf 'warm\n' >> "$TMP_ROOT/warm-calls"
+cp "$TMP_ROOT/pi-warm.json" "$QDIR/pi.json"
+SH
+chmod +x "$FAKEBIN/zai-window-warm"
+cp "$RULES" "$TMP_ROOT/tier-rules"
+cp "$TMP_ROOT/rules-original" "$RULES"
+write_response rule_1 0.95 "$worker"
+reset_quota
+cp "$QDIR/pi.json" "$TMP_ROOT/pi-warm.json"
+unreadable pi
+FM_DISPATCH_QUOTA_ATTEMPTS=1 run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude2'" "the attempt bound stops the warm-up, not the dispatch: $out"
+[ ! -e "$TMP_ROOT/warm-calls" ] || fail 'the warm-up ran past the attempt bound'
+FM_DISPATCH_QUOTA_ATTEMPTS=3 run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'glm'" "the warmed pool joins this choice: $out"
+assert_equals 1 "$(wc -l < "$TMP_ROOT/warm-calls" | tr -d ' ')" 'the warm-up runs exactly once'
+rm -f "$FAKEBIN/zai-window-warm"
+reset_quota
+unreadable pi
+FM_DISPATCH_QUOTA_ATTEMPTS=3 run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude2'" "an absent warm-up never stalls the choice: $out"
+cp "$TMP_ROOT/tier-rules" "$RULES"
+write_response rule_1 0.95 "$worker"
+pass 'U: an unreadable candidate is skipped while another is readable; none readable stays incomplete'
 reset_quota
 set_quota claude1 claude 0 1 exhausted_now
 run "$BRIEF" --task six
@@ -324,7 +391,9 @@ for cache in "$HOME_DIR"/state/quota-last-good/resolve*.json; do
   jq '.rows |= map_values(.at -= 4000)' "$cache" > "$cache.tmp" && mv "$cache.tmp" "$cache"
 done
 run "$BRIEF" --task six
-assert_contains "$out" 'jev: incomplete' 'a reading older than 30 minutes leaves the choice incomplete, for the captain to pick'
+assert_contains "$out" 'status: clear' "a reading older than 30 minutes only takes that seat out: $out"
+assert_contains "$(chosen)" "--account 'claude1'" 'the readable seat takes the choice'
+assert_contains "$out" 'not eligible: quota unreadable, skipped: provider claude unmeasured' 'the expired reading is marked on its line'
 reset_quota
 jq '.providers[0] |= (.state = {status:"auth_required", error:"claude_credential_unavailable"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$QDIR/claude2.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/claude2.json"
 run "$BRIEF" --task six

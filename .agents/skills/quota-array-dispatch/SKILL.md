@@ -156,13 +156,15 @@ When every remaining candidate is tight, dispatch inside the strongest-reasoning
 ### 3. Resolve unknown pools before ranking
 
 After catalog, authentication, and reasoning-class checks, identify every eligible candidate whose applicable pool is unknown in headroom, `spendPriority`, runway, or quota applicability; missing model-specific quota alone is not unknown when a known provider-wide bound applies.
-Do not compare known candidates or pick one until every candidate still in this choice has complete limit information - every applicable window's remaining percent and reset time, weekly and session alike - or the whole choice is incomplete; never resolve an unknown by dropping a candidate.
+A candidate is readable only with complete limit information - every applicable window's remaining percent and reset time, weekly and session alike.
+While any candidate is readable, an unreadable one stays listed as unreadable, is out of the comparison, and holds back no later seat; only the warm-up below still applies to its pool.
+When none is readable, the whole choice is incomplete and the re-read below decides.
 For each distinct unknown pool with a known warm-up, invoke that pool's warm-up once on demand, not on a timer; today the only known warm-up is `zai-window-warm` for Z.ai, which pings glm-5.3-flash once to open its rolling window.
 This is an approved pool warm-up, not a candidate authentication probe or permission to launch another harness's CLI for model discovery; do not substitute an arbitrary vendor command when the helper is absent or fails.
 After attempting the available warm-ups, re-read `quota-axi` once for the choice, including pools without a warm-up, and re-evaluate all candidates against the new snapshot.
 Use default TOON first and the narrow `--json` fallback only if needed to disambiguate that retry; do not loop or repeatedly ping to force a number.
-If an applicable pool is still unknown after that one retry, the whole choice is incomplete: record the attempted or unavailable warm-up and both readings, name each candidate's missing windows, wait for the published retry time or the next reset, and re-run the choice; never pick by hand, drop a candidate, or treat the unknown as healthy.
-An unavailable warm-up does not stall the choice forever: its missing measurement still makes this choice incomplete now, and the report names the unavailable warm-up rather than guessing or silently switching reasoning class.
+If no candidate is readable after that one retry, the whole choice is incomplete: record the attempted or unavailable warm-up and both readings, name each candidate's missing windows, wait for the published retry time or the next reset, and re-run the choice; never pick by hand or treat the unknown as healthy.
+An unavailable warm-up does not stall the choice forever: its missing measurement keeps that candidate unreadable now, and the report names the unavailable warm-up rather than guessing or silently switching reasoning class.
 An absent auth source remains disclosed uncertainty rather than proof of failed login, but never fabricates quota evidence for an unmodeled pool.
 
 ### 4. Rank by spendPriority
@@ -200,7 +202,7 @@ Establish an inspectable likely-completion horizon for the work before accepting
 Read `runway` from every applicable `quota[]` bound: `through_reset` passes the generic feasibility check because the window refills without exhausting; never compare its `resetsAt` with the completion horizon as though reset were an exhaustion deadline.
 `exhausted_now` is zero, and `projected_exhaustion` uses the matching `exhaustion[]` row's `usableRunwaySeconds`.
 Captain rule: a projected exhaustion never ranks a candidate down or refuses it; only `exhausted_now` excludes. When known runway is shorter than the full-task horizon, plan checkpoints in the brief instead of refusing, so a worker that hits the limit can move to another account of the same class.
-Unknown or unmeasurable runway cannot prove feasibility: it must already have been resolved by the bounded warm-up and retry above, or the whole choice stays incomplete.
+Unknown or unmeasurable runway cannot prove feasibility: it must already have been resolved by the bounded warm-up and retry above, or that candidate stays out as unreadable.
 Do not invent a generic percentage floor, and honor an explicit captain floor for a candidate when one exists.
 
 Firstmate itself spends Claude quota while orchestrating.

@@ -36,15 +36,17 @@
 #   unrankable preferred family escalates rather than authorizing another
 #   family. The model never sees quota, catalogs, approvals, preferred_provider,
 #   `why`, account labels, or credential paths.
-#   Before any selection, a completeness gate requires every candidate in the
-#   choice set to have every applicable quota window - session, weekly, and
-#   model-scoped - known with its remaining percent and reset time, or positively
-#   established absent for that plan, so a measured weekly-only plan is complete
-#   while an unmeasured or rate-limited provider is never selected around.
-#   An incomplete gather triggers bounded quota-axi retries with doubling backoff
-#   plus the named pool warm-up (zai-window-warm for Z.ai); anything still unknown
-#   yields status incomplete, which is non-dispatchable: wait and re-run, never
-#   pick by hand or drop the unknown candidate.
+#   Before any selection, a completeness gate makes a candidate readable only with
+#   every applicable quota window - session, weekly, and model-scoped - known with
+#   its remaining percent and reset time, or positively established absent for that
+#   plan, so a measured weekly-only plan is complete while an unmeasured or
+#   rate-limited provider is unreadable.
+#   While any candidate is rankable, an unreadable one stays listed as skipped and
+#   is never selected or treated as healthy; a skipped pool with a named warm-up
+#   (zai-window-warm for Z.ai) still gets that warm-up and one re-read first.
+#   With no rankable candidate, bounded quota-axi retries with doubling backoff
+#   plus that warm-up run; anything still unknown yields status incomplete, which
+#   is non-dispatchable: wait and re-run, never pick by hand.
 #
 # Shared-quota opt-out: an optional top-level "shared_quota": true in the
 #   rules file declares this home draws every provider's usage from one single
@@ -75,7 +77,9 @@
 #   declared tier. Only the lowest tier still holding a candidate that is not
 #   ineligible and not at its weekly limit (the fallback_only test above) stays
 #   in the choice; every later tier is held and never makes the choice
-#   incomplete. Keep-strongest and spendPriority then decide inside that tier.
+#   incomplete. An unreadable candidate holds no tier in dispatch, except in
+#   pipeline mode below. Keep-strongest and spendPriority then decide inside that
+#   tier.
 #   An optional top-level "seat_tiers_by_delivery" maps a brief's "Delivery
 #   contract: mode=" value to {account: tier} entries that replace "seat_tier"
 #   for those accounts. With no tier declared, behavior is unchanged.
@@ -117,7 +121,7 @@
 #     fallback: <runner-up rule taken when the picked rule missed its own floor>
 #     reason: <why the status is not clear>
 #     preferred_provider: <family and preference or fallback decision, when applied>
-#     candidate: <harness>:<model> provider=.. windows=<id>:<pct>%@<reset>,.. [account=..] scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | eligible, reserve pick: <why the tier fired> | not eligible: <reason> | incomplete: <reason>
+#     candidate: <harness>:<model> provider=.. windows=<id>:<pct>%@<reset>,.. [account=..] scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | eligible, reserve pick: <why the tier fired> | not eligible: <reason> | not eligible: quota unreadable, skipped: <reason> | incomplete: <reason>
 #     profile: --harness <h> [--model <m>] [--effort <e>]     (status clear only)
 #     pick: <CODE> ...; row <id> ...; option <n>: <profile> ... (captain-pick only)
 #     receipt: <name> (one launch, valid <n>s) | none - ... | not written (...)
@@ -128,9 +132,10 @@
 #                 row alike); any missing class keeps plain spendPriority ranking
 #   ambiguous  -> code unions qualifying rows and keeps strongest reasoning_class;
 #                 a union with a missing class goes to the captain, never hand-picked
-#   incomplete -> quota window evidence is not fully known: the bounded gather
-#                 waits and re-reads; still incomplete at its deadline, the
-#                 captain picks with every unmeasured candidate marked
+#   incomplete -> no candidate is rankable and quota window evidence is not fully
+#                 known: the bounded gather waits and re-reads; still incomplete at
+#                 its deadline, the captain picks with every unmeasured candidate
+#                 marked
 #   captain-pick -> Jev is down or answered unusably after one retry (a missing
 #                 socket first gets FM_JEVD_SOCKET_WAIT_SECONDS, default 15, to
 #                 come back), or code cannot dispatch Jev's answer (captain
@@ -884,7 +889,9 @@ FM_DR_SEAT_JQ='
   def reserve_tier: . as $cands | map(. as $cand |
     if (($cand.profile.fallback_only // false) | not) or $cand.provider == null then $cand
     else
-      ([$cands[] | select((.profile.fallback_only // false) | not) | select(.provider == $cand.provider) | select((.banned // false) | not)]) as $kin |
+      ([$cands[] | select((.profile.fallback_only // false) | not) | select(.provider == $cand.provider) | select((.banned // false) | not)]) as $kin_all |
+      # A seat that cannot be read or signed in to has no known capacity to protect.
+      ([$kin_all[] | select((.incomplete // false) or (.credential // false) | not)]) as $kin |
       if any($kin[]; seat_at_limit(.profile) | not) then
         # A held reserve is out of this choice, so its own quota, known or
         # not, never makes the choice incomplete.
@@ -895,16 +902,19 @@ FM_DR_SEAT_JQ='
               (if .profile.account then "@\(.profile.account)" else "" end)] | join(", ")) + ")")}
       elif ($cand.sq // false) or (($cand.eligible // false) | not) or ($cand.unranked // false) then $cand + {reserve: true}
       else $cand + {reserve: true, reserve_active: true,
-        reason: ("reserve pick: every non-fallback " + $cand.provider + " seat is at its limit (weekly window at or above 100% used or runway exhausted_now)")}
+        reason: ("reserve pick: every non-fallback " + $cand.provider + " seat is at its limit (weekly window at or above 100% used or runway exhausted_now)" +
+          (if ($kin_all | length) > ($kin | length) then " or unreadable" else "" end))}
       end
     end);
   # Seat tiers over one candidate set (see the header). An absent tier sorts last.
   def seat_rank($c): ((($cfg.seat_tiers_by_delivery // {})[$delivery] // {})[$c.account // ""] // $c.seat_tier // 1e9);
   def seat_label: "\(.profile.harness):\(.profile.model // "default")" + (if .profile.account then "@\(.profile.account)" else "" end);
-  def seat_tier_hold:
+  # $unreadable_holds: pipeline pools stay shut on unreadable quota; dispatch
+  # never lets an unreadable seat hold a later tier.
+  def seat_tier_hold($unreadable_holds):
     if all(.[]; seat_rank(.profile) == 1e9) then .
     else map(. + {at_limit: (((.banned // false) | not) and seat_at_limit(.profile))}) |
-      ([.[] | select(.at_limit | not) | select(.eligible or (.incomplete // false))]) as $live |
+      ([.[] | select(.at_limit | not) | select(.eligible or ($unreadable_holds and (.incomplete // false)))]) as $live |
       ([$live[] | seat_rank(.profile)] | min) as $open |
       map(seat_rank(.profile) as $rank | if .at_limit then
           del(.incomplete, .windows_missing, .unranked) + {eligible: false, reason: "seat_tier \($rank): at its weekly limit"}
@@ -913,6 +923,11 @@ FM_DR_SEAT_JQ='
             ("seat_tier held: an earlier seat still has capacity (" + ([$live[] | select(seat_rank(.profile) == $open) | seat_label] | join(", ")) + ")")}
         else . end | del(.at_limit))
     end;
+  # While a candidate is rankable, an unreadable one is listed but out of the choice.
+  def skip_unreadable:
+    if any(.[]; .eligible and ((.unranked // false) | not)) then
+      map(if .incomplete then del(.incomplete) + {unreadable: true, reason: "quota unreadable, skipped: \(.reason)"} else . end)
+    else . end;
   # Spend-priority argmax over a ranked candidate set. C5: an exact tie goes to
   # the sooner reset of the binding window, then to a fixed round-robin over a
   # stable order; both are logged.
@@ -985,7 +1000,7 @@ fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
     elif ($weekly | type) == "string" then clean_reset($weekly)
     else $emptied end;
   ([($cfg.pipeline_rows // [])[] | select(.steps | index($step))] | first) as $row |
-  ($row.use | map(. as $c | evaluate($c) | apply_weekly_floor | . + {out_reason: .reason}) | seat_tier_hold) as $cands |
+  ($row.use | map(. as $c | evaluate($c) | apply_weekly_floor | . + {out_reason: .reason}) | seat_tier_hold(true)) as $cands |
   def seat_view: {seat: .profile.account, pool: .profile.pool, tier: .profile.seat_tier, eligible: (.eligible // false), reason: .reason,
     remaining: (.pct // null), spendPriority: (.spendPriority // null), runway: (.runway // null)};
   ([$cands[] | select(.incomplete)]) as $incomplete |
@@ -1043,7 +1058,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       (row_floor($id)) as $rf |
       ([row_use($id)[] | . as $c | (provider_of($c)) as $p |
         (if $rf == "below" then {profile: $c, provider: $p, eligible: false, reason: "row floor \(rule_at($id).floor.scope) below \(rule_at($id).floor.min_percent)%"}
-         else evaluate($c) end) + plan_for($c; $p)] | reserve_tier | seat_tier_hold) as $cs |
+         else evaluate($c) end) + plan_for($c; $p)] | reserve_tier | seat_tier_hold(false) | skip_unreadable) as $cs |
       ([$cs[] | select(.eligible and ((.unranked // false) | not) and ((.incomplete // false) | not)) | .profile.reasoning_class | select(type == "number")] | max // null) as $strongest |
       {id: $id, order: $order, when: (if $id == "default" then $none_criterion else rule_at($id).when end),
        approval: (rule_at($id).approval // null), row_floor: $rf,
@@ -1119,7 +1134,9 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   # every non-fallback candidate of the same provider family is at its limit
   # under the weekly-window seat test above; it then ranks below every
   # non-fallback candidate at selection.
-  ($unbanned | reserve_tier | seat_tier_hold) as $cands |
+  # An unmeasured rule floor gates the whole row, so its candidates stay as gathered.
+  ($unbanned | reserve_tier | seat_tier_hold(false)
+    | if ($sel.rule_floor_incomplete // false) or ($ambiguous and any($union_floors[]; .state == "unmeasured")) then . else skip_unreadable end) as $cands |
   ([$cands[] | select(.incomplete)]) as $incomplete |
   def when_of($c): (if rule_at($c) == null then $none_criterion else rule_at($c).when end | .[0:60]);
   ({
@@ -1145,7 +1162,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
           (if ($sel.rule_floor_incomplete // false)
            then ["rule floor \($rule.floor.provider)/\($rule.floor.scope) unmeasured"]
            else [] end)) | join("; "))),
-      note: "gather first: \($quota_attempts) quota-axi attempt(s) with backoff and named warm-ups; wait for the named measurements and re-run; never pick by hand or drop a candidate",
+      note: "gather first: \($quota_attempts) quota-axi attempt(s) with backoff and named warm-ups; no candidate is rankable yet, so wait for the named measurements and re-run; never pick by hand",
       candidates: $cands,
       incomplete: (([$incomplete[] | {account: (.profile.account // null), provider: (.provider // null), missing: (.windows_missing // []), retry_after: (.retry_after // null)}]) +
         (if ($sel.rule_floor_incomplete // false)
@@ -1192,7 +1209,8 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
         $ev + {status: "clear", note: ((if $ambiguous then "ambiguous union >= 0.25; strongest reasoning class of most probable row \($anchor_id)"
           elif ($ranked | length) < ($pickable | length) then "\($sel.note); strongest reasoning class \($strongest), \(($pickable | length) - ($ranked | length)) weaker eligible candidate(s) outranked"
           else $sel.note end)
-               + (if ($winner.reserve_active // false) then "; \($winner.reason)" else "" end)), candidates: $cands, chosen: $winner, row: $winner_row}
+               + (if ($winner.reserve_active // false) then "; \($winner.reason)" else "" end)
+               + ([$cands[] | select(.unreadable) | seat_label] as $skipped | if ($skipped | length) > 0 then "; quota unreadable, skipped: \($skipped | join(", "))" else "" end)), candidates: $cands, chosen: $winner, row: $winner_row}
         + (if $tb.tie_break then {tie_break: $tb.tie_break, tie_round_robin: ($tb.round_robin // false)} else {} end)
         + (if ($unranked | length) > 0 then
              {unranked_note: "\($unranked | length) eligible candidate(s) unranked (\([$unranked[].provider] | unique | join(", ")))"}
@@ -1220,15 +1238,33 @@ fm_dispatch_epoch_ms_of() {  # <iso8601>: epoch milliseconds, or nothing when un
   case "$out" in '' | *[!0-9]*) return 1 ;; esac
   printf '%s' "$out"
 }
+fm_dispatch_warm_zai() {  # the named Z.ai warm-up, at most once per resolution
+  warmups_run=1
+  if command -v zai-window-warm >/dev/null 2>&1; then
+    fm_dispatch_bounded zai-window-warm >/dev/null 2>&1 || true
+  fi
+}
+# A rankable candidate settles the choice without waiting, but a skipped pool with
+# a named warm-up still gets it and one re-read, so a cold window can join the choice.
+if [ "$quota_attempts" -lt "$QUOTA_ATTEMPTS" ] && [ "$(date +%s)" -lt "$QUOTA_DEADLINE" ] \
+  && jq -e '.status == "clear" and any(.candidates[]?; (.unreadable // false) and .provider == "zai")' <<<"$RESULT" >/dev/null 2>&1; then
+  fm_dispatch_warm_zai
+  if jq -e 'any(.candidates[]?; (.unreadable // false) and .provider == "zai" and .profile.account == null)' <<<"$RESULT" >/dev/null 2>&1; then
+    gather_home_quota >/dev/null || true
+  fi
+  while IFS= read -r account; do
+    [ -n "$account" ] || continue
+    gather_account_snapshot "$account"
+  done < <(jq -r '.candidates[]? | select((.unreadable // false) and .provider == "zai") | .profile.account // empty' <<<"$RESULT" | sort -u)
+  quota_attempts=$(( quota_attempts + 1 ))
+  RESULT=$(fm_dispatch_resolve_json "$quota_attempts" "$warmups_run") || emit_error "resolution failed"
+fi
 # Bounded gather loop: an incomplete resolution runs the named warm-up once,
 # re-reads only the named stores with doubling backoff up to the deadline.
 # Slow reads and warm-ups share that deadline, including their subprocesses.
 while [ "$(jq -r '.status // ""' <<<"$RESULT" 2>/dev/null)" = "incomplete" ] && [ "$quota_attempts" -lt "$QUOTA_ATTEMPTS" ] && [ "$(date +%s)" -lt "$QUOTA_DEADLINE" ]; do
   if [ "$warmups_run" -eq 0 ] && jq -e 'any(.incomplete[]?; .provider == "zai")' <<<"$RESULT" >/dev/null 2>&1; then
-    warmups_run=1
-    if command -v zai-window-warm >/dev/null 2>&1; then
-      fm_dispatch_bounded zai-window-warm >/dev/null 2>&1 || true
-    fi
+    fm_dispatch_warm_zai
   fi
   budget_ms=$(( (QUOTA_DEADLINE - $(date +%s)) * 1000 ))
   [ "$budget_ms" -gt 0 ] || break
@@ -1309,7 +1345,7 @@ TEXT=$(jq -r '
   (.candidates[]? | "  candidate: \(.profile.harness | flat):\(show(.profile.model))"
       + (if .profile.account then "  account=\(.profile.account | flat)" else "" end)
       + (if .provider then "  provider=\(.provider | flat)" else "" end)
-      + (if .incomplete then "  windows_missing=\((.windows_missing // []) | map(flat) | join(","))"
+      + (if .incomplete or .unreadable then "  windows_missing=\((.windows_missing // []) | map(flat) | join(","))"
           + (if .state_error or .retry_after
              then " (" + ([.state_error // empty] + (if .retry_after then [("retry after " + (.retry_after | flat))] else [] end) | join("; ")) + ")"
              else "" end)
