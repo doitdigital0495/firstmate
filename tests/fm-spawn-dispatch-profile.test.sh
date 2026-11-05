@@ -2371,6 +2371,44 @@ test_dispatch_receipt_refuses_a_hand_picked_spawn() {
   pass "dispatch receipt gate refuses a hand-picked ship and scout profile, and launches only the receipt's own profile"
 }
 
+# A launch that dies before anything was sent to a worker made no launch, so its
+# receipt stays usable and a plain re-run of the same spawn goes through; a
+# launch that was sent still spends the receipt for good.
+test_failed_start_refunds_the_receipt_only_before_launch() {
+  local rec id out status receipts
+  id=receipt-refund-z40
+  rec=$(make_spawn_case receipt-refund claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  receipts="$HOME_DIR/state/dispatch-receipt"
+  fm_test_dispatch_choose "$HOME_DIR" "$id" "$HOME_DIR/data/$id/brief.md" default codex gpt-5 medium \
+    || fail "could not record the routed choice"
+
+  # A refused start after the consume point: the backlog cannot be read.
+  mv "$HOME_DIR/data/backlog.md" "$HOME_DIR/data/backlog.md.away" 2>/dev/null || true
+  mkdir -p "$HOME_DIR/data/backlog.md"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --scout --harness codex --model gpt-5 --effort medium)
+  status=$?
+  [ "$status" -ne 0 ] || fail "the scout should fail while its backlog cannot be read"$'\n'"$out"
+  assert_contains "$out" "receipt consumed" "the fixture must fail after the consume point"$'\n'"$out"
+  assert_contains "$out" "receipt returned" "the failed start must say its receipt came back"$'\n'"$out"
+  [ ! -s "$LAUNCH_LOG" ] || fail "the fixture must fail before any launch was sent"
+  [ -z "$(find "$receipts" -name '*.spent')" ] \
+    || fail "a start that launched nothing left its receipt spent"
+  rmdir "$HOME_DIR/data/backlog.md"
+  mv "$HOME_DIR/data/backlog.md.away" "$HOME_DIR/data/backlog.md" 2>/dev/null || true
+
+  # The re-run needs no new receipt, and this time it spends the receipt.
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --scout --harness codex --model gpt-5 --effort medium)
+  status=$?
+  expect_code 0 "$status" "the re-run should launch on the returned receipt"$'\n'"$out"
+  assert_contains "$out" "spawned $id harness=codex" "the re-run did not launch"
+  [ -n "$(find "$receipts" -name '*.spent')" ] || fail "a delivered launch must spend its receipt"
+  pass "a start that fails before launch returns its receipt and a re-run launches; a delivered launch spends it"
+}
+
 test_dispatch_receipt_binds_one_brief_and_one_launch() {
   local rec a b c d out status
   a=receipt-bind-a-z22
@@ -3262,6 +3300,7 @@ test_claude_secondmate_launch_carries_the_attribution_policy
 test_active_dispatch_profile_does_not_block_secondmate_launch
 test_dispatch_receipt_refuses_a_hand_picked_spawn
 test_dispatch_receipt_binds_one_brief_and_one_launch
+test_failed_start_refunds_the_receipt_only_before_launch
 test_dispatch_receipt_admits_scout_and_secondmate_from_the_table
 test_dispatch_receipt_raw_command_needs_a_captain_override
 

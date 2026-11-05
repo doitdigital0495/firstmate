@@ -1303,6 +1303,23 @@ test_dispatch_files_a_missing_item_before_dispatching() {
   pass "a fresh dispatch by main files the missing backlog item, titled from the brief, and launches"
 }
 
+# A scout spawn used to die on an unset project name here, after its dispatch
+# receipt was already spent, because only a ship spawn had set that name.
+test_scout_dispatch_files_a_missing_item_before_dispatching() {
+  local case_dir id out rc=0
+  id=atomic-scout-no-item-b2
+  case_dir=$(make_home scout-no-item "$id")
+
+  out=$(run_spawn "$case_dir" "$id" "$case_dir/project" --scout) || rc=$?
+  expect_code 0 "$rc" "a fresh scout with no backlog item should file it and launch"$'\n'"$out"
+  assert_contains "$out" "had no backlog item in this home; filed it Queued" \
+    "the scout did not report filing the missing item"$'\n'"$out"
+  assert_contains "$out" "repo project" "the filed scout item must name its project"$'\n'"$out"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "the filed scout item was not moved to In flight with the launch"
+  pass "a fresh scout files the missing backlog item under its project and launches"
+}
+
 test_unfileable_missing_item_still_refuses_with_the_exact_command() {
   local case_dir id out rc=0
   id=atomic-dispatch-unfileable-b2
@@ -3152,6 +3169,7 @@ test_automatic_backend_refuses_incompatible_tasks_axi_before_mutation
 test_dispatch_refuses_an_unresolvable_data_directory
 test_completion_refuses_an_unresolvable_data_directory
 test_dispatch_files_a_missing_item_before_dispatching
+test_scout_dispatch_files_a_missing_item_before_dispatching
 test_unfileable_missing_item_still_refuses_with_the_exact_command
 test_dispatch_reports_a_backlog_read_failure
 test_dispatch_refuses_a_closed_item

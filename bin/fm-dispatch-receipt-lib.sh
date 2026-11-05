@@ -11,6 +11,12 @@
 #   one private (0600) timestamped JSON file per receipt under
 #   state/dispatch-receipt/, a freshness window, a `<receipt>.spent` marker
 #   created with noclobber when a launch consumes it, and a retention count.
+#   A launch that passes --consume-token writes that token into the marker, and
+#   `refund --token` removes only the marker holding that exact token.
+#   bin/fm-spawn.sh refunds when it fails before sending a launch, because such a
+#   start launched nothing and the receipt still owes its one launch. A start
+#   whose launch was sent, even if its outcome is unknown, never refunds, and a
+#   marker with no token (a remote second mate's) cannot be refunded.
 #   Receipts are unsigned exactly like quota-intake records; the gate instead
 #   re-derives every binding it can from the brief, the launch, and the current
 #   table, so a receipt is only ever as good as what it still matches.
@@ -485,18 +491,32 @@ fm_dr_gate_captain() {  # <receipt> <name>
     || fm_dr_refuse "captain receipt $name does not match the answered option of pick $code (row, profile, brief, override, or evidence); route again"
 }
 
+fm_dr_cmd_refund() {  # --token <token>: undo only the consume that wrote this token
+  local token='' marker
+  [ "${1:-}" = --token ] && [ -n "${2:-}" ] || fm_dr_die "refund needs --token <token>"
+  token=$2
+  for marker in "$(fm_dr_dir)"/*.spent; do
+    [ -f "$marker" ] && [ ! -L "$marker" ] || continue
+    [ "$(cat -- "$marker" 2>/dev/null)" = "$token" ] || continue
+    rm -f -- "$marker" || return 1
+    printf 'dispatch receipt gate: receipt returned - %s launched nothing, so it can launch once more\n' "$(basename "$marker" .spent)"
+    return 0
+  done
+}
+
 fm_dr_cmd_gate() {
-  local brief='' task='' harness='' model='' effort='' account='' raw=0 consume=0 meta=''
+  local brief='' task='' harness='' model='' effort='' account='' raw=0 consume=0 meta='' consume_token=''
   local resolved_model='' resolved_effort='' resolved_set=0 arg
   while [ $# -gt 0 ]; do
     arg=$1
     shift
     case "$arg" in
-      --brief | --task | --harness | --model | --effort | --account | --recorded-meta | --resolved-model | --resolved-effort)
+      --brief | --task | --harness | --model | --effort | --account | --recorded-meta | --resolved-model | --resolved-effort | --consume-token)
         [ $# -gt 0 ] || fm_dr_die "$arg needs a value" ;;
     esac
     case "$arg" in
       --consume) consume=1 ;;
+      --consume-token) consume_token=$1; shift ;;
       --raw) raw=1 ;;
       --brief) brief=$1; shift ;;
       --task) task=$1; shift ;;
@@ -630,7 +650,7 @@ fm_dr_cmd_gate() {
   done
 
   if [ "$consume" -eq 1 ]; then
-    ( set -C; : > "$receipt.spent" ) 2>/dev/null \
+    ( set -C; printf '%s' "$consume_token" > "$receipt.spent" ) 2>/dev/null \
       || fm_dr_refuse "receipt $name for this brief was already consumed by a launch (marker $name.spent); every launch needs its own receipt: $hint"
   fi
   printf 'dispatch receipt gate: PASS - receipt %s (%s%s) admits %s for %s%s\n' "$name" "$source" \

@@ -728,10 +728,8 @@ test_pool_slot_claim_follows_the_spawn_outcome() {
   [ "$status" -ne 0 ] || fail "spawn launched a worker on a slot it could not claim"
   assert_contains "$out" "could not claim Treehouse pool slot" \
     "spawn did not name the unclaimable slot as the reason"
-  assert_contains "$out" "inspect window" \
-    "a non-polytoken unclaimable-slot refusal must keep its window pointer"
-  assert_not_contains "$out" "is closed on exit" \
-    "a non-polytoken refusal must not claim its window was closed"
+  assert_contains "$out" "is closed on exit" \
+    "an unclaimable-slot refusal must say its window returns the slot"
   [ -d "$SLOT_CLAIM" ] || fail "spawn replaced the directory blocking its slot claim"
   [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "spawn published a record for an unclaimable slot"
   [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$before" ] \
@@ -812,14 +810,16 @@ case "$cmd" in
     rm -f "$world/$w.id" "$world/$w.path"
     ;;
   send-keys)
-    if [ "$text" = "treehouse get Enter" ]; then
-      w=$(window_name "$target")
-      for slot in "$slots"/*/project; do
-        grep -qxF -- "$slot" "$world"/*.path 2>/dev/null && continue
-        printf '%s\n' "$slot" > "$world/$w.path"
-        break
-      done
-    fi
+    case "$text" in
+      "treehouse get"*)
+        w=$(window_name "$target")
+        for slot in "$slots"/*/project; do
+          grep -qxF -- "$slot" "$world"/*.path 2>/dev/null && continue
+          printf '%s\n' "$slot" > "$world/$w.path"
+          break
+        done
+        ;;
+    esac
     ;;
 esac
 exit 0
@@ -951,31 +951,97 @@ SH
   pass "a refused polytoken launch leaves its per-id paths alone while another spawn holds the per-id lock"
 }
 
-# A launch on any harness other than polytoken keeps main's abort behavior: its
-# pre-publication claim is dropped under the allocation lock, but the window
-# it opened, and with it the slot's lease, stays for the operator to inspect.
-test_non_polytoken_refused_launch_keeps_its_window() {
-  local rec id out status slot_root world
+# A failed start on any harness gives its slot back: the window holds nothing
+# but the shell whose `treehouse get` leases the slot, so closing it frees the
+# slot. A slot holding work keeps its window, because that lease is its guard.
+test_refused_launch_returns_its_slot_unless_it_holds_work() {
+  local rec id out status slot_root world wt
   id='pool-refused-codex-r1'
   rec=$(make_originless_case refused-codex "$id")
   read_case_record "$rec"
   slot_root="$CASE_DIR/slots"
   mkdir -p "$slot_root/1"
-  git -C "$PROJECT_DIR" worktree move "$POOL_DIR" "$slot_root/1/project"
-  printf '{"worktrees":[{"name":"1","path":"%s"}]}\n' "$slot_root/1/project" \
+  wt="$slot_root/1/project"
+  git -C "$PROJECT_DIR" worktree move "$POOL_DIR" "$wt"
+  printf '{"worktrees":[{"name":"1","path":"%s"}]}\n' "$wt" \
     > "$slot_root/treehouse-state.json"
-  git -C "$slot_root/1/project" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+  git -C "$wt" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
   world="$CASE_DIR/tmux-world"
   install_pool_world_tmux "$FAKEBIN_DIR" "$world" "$slot_root"
 
+  # An unlanded local commit: the refusal must keep the window and its lease.
+  git -C "$wt" -c user.name=T -c user.email=t@example.invalid commit -q --allow-empty -m unlanded
+  out=$(run_spawn "$id" --harness codex --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a codex launch on a slot with an unusable origin should refuse"
+  [ -e "$world/fm-$id.id" ] || fail "a failed start released a slot holding an unlanded commit"$'\n'"$out"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "the refused codex launch published a task record"
+  rm -f "$world/fm-$id".*
+  git -C "$wt" reset -q --hard HEAD~1
+
+  # Uncommitted work keeps it too.
+  printf 'work\n' > "$wt/uncommitted.txt"
+  out=$(run_spawn "$id" --harness codex --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a codex launch on a dirty slot should refuse"
+  [ -e "$world/fm-$id.id" ] || fail "a failed start released a slot holding uncommitted work"$'\n'"$out"
+  [ -f "$wt/uncommitted.txt" ] || fail "a failed start discarded uncommitted work"
+  rm -f "$world/fm-$id".* "$wt/uncommitted.txt"
+
+  # A slot with no work goes back to the pool.
   out=$(run_spawn "$id" --harness codex --mode no-mistakes --yolo off)
   status=$?
   [ "$status" -ne 0 ] || fail "a codex launch on a slot with an unusable origin should refuse"
   assert_contains "$out" "could not fetch origin" "the codex refusal message changed"$'\n'"$out"
   [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "the refused codex launch published a task record"
-  [ -e "$world/fm-$id.id" ] || fail "a non-polytoken refusal closed its window, unlike main"
+  [ ! -e "$world/fm-$id.id" ] || fail "a failed start kept the window leasing an empty slot"$'\n'"$out"
   [ ! -e "$slot_root/1/.fm-slot-owner" ] || fail "the refused codex launch left its slot claim"
-  pass "a non-polytoken launch refused after its slot claim keeps main's abort behavior"
+  pass "a failed start returns a slot with no work on any harness and keeps one that holds work"
+}
+
+# Slot directories with no checkout hold nothing, but the pool never reuses their
+# numbers. A spawn removes the ones it can prove empty and ownerless, under the
+# allocation lock, and leaves anything that could still belong to someone.
+test_spawn_sweeps_only_provably_empty_slot_directories() {
+  local rec id out status slot_root holder pid husk
+  id='pool-husk-sweep-r1'
+  rec=$(make_case husk-sweep "$id")
+  read_case_record "$rec"
+  command -v lsof >/dev/null 2>&1 || { pass "slot sweep skipped: no lsof to prove a directory unused"; return 0; }
+  lay_out_as_pool_slot
+  slot_root="$CASE_DIR/slots"
+  holder=live-owner-r1
+  printf 'kind=scout\nworktree=/nowhere\n' > "$HOME_DIR/state/$holder.meta"
+  mkdir -p "$slot_root/2" "$slot_root/3" "$slot_root/4" "$slot_root/5/project/.git" \
+    "$slot_root/6" "$slot_root/7" "$slot_root/8" "$slot_root/notaslot"
+  printf 'task=gone-task\nhome=%s\n' "$HOME_DIR" > "$slot_root/3/.fm-slot-owner"
+  printf 'task=%s\nhome=%s\n' "$holder" "$HOME_DIR" > "$slot_root/4/.fm-slot-owner"
+  printf 'work\n' > "$slot_root/5/project/keep.txt"
+  # 6 is named by the pool state, 7 is too fresh to rule out a racing allocation,
+  # 8 has a process sitting in it.
+  printf '{"worktrees":[{"name":"1","path":"%s"},{"name":"6","path":"%s"}]}\n' \
+    "$POOL_DIR" "$slot_root/6/project" > "$slot_root/treehouse-state.json"
+  (cd "$slot_root/8" && exec sleep 60) &
+  pid=$!
+  sleep 0.2
+  for husk in 2 3 4 5 6 8 notaslot; do
+    touch -t 202001010000 "$slot_root/$husk"
+  done
+
+  out=$(run_spawn "$id" --scout)
+  status=$?
+  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  expect_code 0 "$status" "spawn with empty slot directories should launch"$'\n'"$out"
+  [ ! -e "$slot_root/2" ] || fail "an empty slot directory survived the sweep"
+  [ ! -e "$slot_root/3" ] || fail "an empty slot directory with a dead claim survived the sweep"
+  [ -f "$slot_root/4/.fm-slot-owner" ] || fail "the sweep removed a claim naming a task with a record"
+  [ -f "$slot_root/5/project/keep.txt" ] || fail "the sweep touched a slot holding files"
+  [ -d "$slot_root/6" ] || fail "the sweep removed a slot the pool state names"
+  [ -d "$slot_root/7" ] || fail "the sweep removed a just-created slot directory"
+  [ -d "$slot_root/8" ] || fail "the sweep removed a slot directory a process sits in"
+  [ -d "$slot_root/notaslot" ] || fail "the sweep removed a directory that is not a slot"
+  assert_contains "$out" "removed 2 empty Treehouse slot directories" "the sweep must report itself"$'\n'"$out"
+  pass "a spawn sweeps only slot directories provably empty, ownerless, and unused"
 }
 
 # install_isolation_flip_git <fakebin> <worktree>: a git that answers every
@@ -1003,9 +1069,8 @@ SH
 }
 
 # The post-poll treehouse-get isolation refusal points the operator at the
-# window only when that window survives the abort: every harness but polytoken
-# keeps main's `Inspect target <window>`, and a fresh polytoken spawn, whose
-# window is closed on exit, names the worktree and says so instead.
+# window only when that window survives the abort: a fresh spawn on any harness,
+# whose window is closed on exit, names the worktree and says so instead.
 test_treehouse_isolation_refusal_points_at_what_survives() {
   local rec id out status
   id='pool-isolation-codex-r1'
@@ -1018,10 +1083,10 @@ test_treehouse_isolation_refusal_points_at_what_survives() {
   [ "$status" -ne 0 ] || fail "a codex spawn whose slot stopped being isolated should refuse"
   assert_contains "$out" "treehouse get did not yield an isolated worktree" \
     "the codex spawn did not refuse on the post-poll isolation check"$'\n'"$out"
-  assert_contains "$out" "refusing to launch to avoid tangling the primary checkout. Inspect target firstmate:fm-$id" \
-    "a non-polytoken isolation refusal must keep main's window pointer"$'\n'"$out"
-  assert_not_contains "$out" "is closed on exit" \
-    "a non-polytoken isolation refusal must not claim its window was closed"
+  assert_contains "$out" "pool (window firstmate:fm-$id is closed on exit" \
+    "a fresh isolation refusal must name the worktree and the closed window"$'\n'"$out"
+  assert_not_contains "$out" "Inspect target firstmate:fm-$id" \
+    "a fresh isolation refusal must not point at its closed window"
 
   id='pool-isolation-polytoken-r1'
   rec=$(make_case isolation-polytoken "$id")
@@ -1472,7 +1537,8 @@ test_remote_seeded_home_spawns_from_treehouse_pool
 test_pool_slot_claim_follows_the_spawn_outcome
 test_refused_launch_leaves_the_pool_for_a_retry_and_a_second_task
 test_refused_launch_spares_per_id_paths_under_a_contended_spawn_lock
-test_non_polytoken_refused_launch_keeps_its_window
+test_refused_launch_returns_its_slot_unless_it_holds_work
+test_spawn_sweeps_only_provably_empty_slot_directories
 test_treehouse_isolation_refusal_points_at_what_survives
 test_linked_spawning_home_rejects_primary_before_refresh
 test_stale_pool_base_refreshes_before_branching

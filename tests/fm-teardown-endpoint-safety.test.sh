@@ -1688,7 +1688,17 @@ test_superseded_duplicate_slot_record_retires_only_the_older_record() {
     case "$case_name" in
       current-owner|ambiguous-launch|conflicting-claim)
         assert_contains "$(cat "$dir/stderr")" "not even with --force" \
-          "$case_name: the refusal should be the slot-collision refusal" ;;
+          "$case_name: the refusal should be the slot-collision refusal"
+        if [ "$case_name" = current-owner ]; then
+          # The newer launch is refused while the older record lives, so the
+          # refusal has to name the order that clears it.
+          assert_contains "$(cat "$dir/stderr")" "older-task is the older launch on this slot" \
+            "current-owner: the refusal should say which record is the older one"
+          assert_contains "$(cat "$dir/stderr")" "bin/fm-teardown.sh older-task" \
+            "current-owner: the refusal should name the teardown to run first"
+          assert_contains "$(cat "$dir/stderr")" "then re-run teardown of newer-task" \
+            "current-owner: the refusal should say to come back to this task"
+        fi ;;
       live-endpoint)
         assert_contains "$(cat "$dir/stderr")" "bin/fm-control.sh older-task exit" \
           "live-endpoint: the refusal should name how to stop the older worker" ;;

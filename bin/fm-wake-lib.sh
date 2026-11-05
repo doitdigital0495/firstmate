@@ -1958,6 +1958,49 @@ fm_treehouse_slot_owner_marker() {  # <worktree>
   printf '%s/.fm-slot-owner\n' "$(dirname "$slot")"
 }
 
+# Remove slot directories left in a pool with no checkout, which the pool never
+# reuses or forgets by itself. Runs under the Treehouse project lock. A directory
+# goes only when it is provably an orphan: its name is a slot number the pool state
+# does not list, it is an hour old (a racing allocation creates it just before its
+# checkout), it holds nothing but empty directories and a slot claim, no process
+# has it open, and any claim names a task with no record. Every unreadable answer
+# keeps the directory. Reports the count on stderr.
+fm_treehouse_sweep_empty_slot_dirs() {  # <worktree> <first-state-dir>
+  local worktree=$1 first=$2 slot pool names dir name claim task home state lsof_out removed=0
+  command -v lsof >/dev/null 2>&1 || return 0
+  slot=$(CDPATH='' cd -- "$worktree" 2>/dev/null && pwd -P) || return 0
+  pool=$(dirname "$(dirname "$slot")")
+  names=$(jq -r '.worktrees[]?.name' "$pool/treehouse-state.json" 2>/dev/null) || return 0
+  fm_local_firstmate_state_dirs "$first" || return 0
+  for dir in "$pool"/*/; do
+    dir=${dir%/}
+    name=${dir##*/}
+    case "$name" in '' | *[!0-9]*) continue ;; esac
+    [ ! -L "$dir" ] || continue
+    ! printf '%s\n' "$names" | grep -Fxq -- "$name" || continue
+    [ -n "$(find "$dir" -maxdepth 0 -mmin +60 2>/dev/null)" ] || continue
+    [ -z "$(find "$dir" -mindepth 1 ! -type d ! -path "$dir/.fm-slot-owner" 2>/dev/null)" ] || continue
+    claim="$dir/.fm-slot-owner"
+    if [ -e "$claim" ] || [ -L "$claim" ]; then
+      [ -f "$claim" ] && [ ! -L "$claim" ] && [ -r "$claim" ] || continue
+      task=$(sed -n 's/^task=//p' "$claim" | head -1)
+      home=$(sed -n 's/^home=//p' "$claim" | head -1)
+      [ -n "$task" ] || continue
+      [ -z "$home" ] || [ ! -e "$home/state/$task.meta" ] || continue
+      for state in "${FM_LOCAL_FIRSTMATE_STATES[@]}"; do
+        [ ! -e "$state/$task.meta" ] || continue 2
+      done
+    fi
+    # lsof exits 1 with no output when nothing has the directory open.
+    if lsof_out=$(lsof -w +d "$dir" 2>&1); then continue; fi
+    [ -z "$lsof_out" ] || continue
+    rm -f -- "$claim" || continue
+    find "$dir" -depth -type d -empty -delete 2>/dev/null || continue
+    [ -e "$dir" ] || removed=$((removed + 1))
+  done
+  [ "$removed" -eq 0 ] || echo "notice: removed $removed empty Treehouse slot directories from $pool; they held no checkout, no process, and no live claim" >&2
+}
+
 # Claim a pool slot for a task, replacing whatever the previous holder left.
 # The rename is atomic, so a reader either sees the old claim or the new one.
 fm_treehouse_slot_owner_claim() {  # <worktree> <task-id> <home>

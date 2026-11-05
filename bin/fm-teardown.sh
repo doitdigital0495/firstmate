@@ -2706,7 +2706,15 @@ require_exclusive_worktree_slot_record() {  # <meta> <id> <state> <worktree> [al
   echo "REFUSED: task $record_id's recorded worktree $slot is also task $first_id's recorded $first_field." >&2
   echo "Returning that pool slot would kill $first_id's processes and reset its copy, so nothing was changed - not even with --force." >&2
   [ -z "$TEARDOWN_SLOT_SUPERSEDED_WHY" ] || printf '%s\n' "$TEARDOWN_SLOT_SUPERSEDED_WHY" >&2
-  echo "Reconcile whichever record is wrong (bin/fm-crew-state.sh $record_id; bin/fm-crew-state.sh $first_id), then re-run teardown; an older launch whose endpoint is dead or missing retires without touching the slot." >&2
+  local record_epoch first_epoch
+  if record_epoch=$(teardown_record_launch_epoch "$record_meta") \
+     && first_epoch=$(teardown_record_launch_epoch "${colliding[0]}") \
+     && [ "$first_epoch" -lt "$record_epoch" ]; then
+    echo "$first_id is the older launch on this slot, so it goes first: run bin/fm-teardown.sh $first_id, which retires only its record when its endpoint is dead or missing, then re-run teardown of $record_id." >&2
+    echo "If $first_id's own completion gate refuses, follow what it names; a scout with no captain call to list takes bin/fm-captain-hold.sh complete $first_id --none." >&2
+  else
+    echo "Reconcile whichever record is wrong (bin/fm-crew-state.sh $record_id; bin/fm-crew-state.sh $first_id), then re-run teardown; an older launch whose endpoint is dead or missing retires without touching the slot." >&2
+  fi
   return 1
 }
 

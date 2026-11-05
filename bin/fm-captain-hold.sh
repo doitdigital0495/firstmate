@@ -2158,7 +2158,7 @@ reconcile_note() {
 
 command_complete() {
   local origin=${1:-} meta previous='' supplied='' keys='' entry key status_file open has_meta=0 transfer_rc transfers=() resolved
-  local resolved_how attested_by_prefix='' origin_state unrecorded_origin='' tmp
+  local resolved_how attested_by_prefix='' origin_state unrecorded_origin='' tmp verify_status
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   validate_slug origin-id "$origin"
   shift
@@ -2189,7 +2189,16 @@ command_complete() {
   if [ -n "$keys" ]; then
     while IFS= read -r entry; do
       [ -n "$entry" ] || continue
-      resolved=$(verify_entry_durable "$origin" "$entry") || exit $?
+      verify_status=0
+      resolved=$(verify_entry_durable "$origin" "$entry") || verify_status=$?
+      if [ "$verify_status" -ne 0 ]; then
+        # Union with the record means a refused entry may be one this command
+        # never named. It keeps refusing: an unprovable call must not vanish.
+        if list_has_key "$previous" "$entry" && ! printf '%s\n' "$supplied" | tr ' ' '\n' | grep -Fxq -- "$entry"; then
+          printf 'fm-captain-hold: %s came from the decision_keys= line already in %s, not from this command; complete keeps every recorded entry until it verifies. If the task now holding that call has another id, or the call was answered and its row is gone from this backlog, replace or remove only %s on that line once the answer is confirmed, then re-run complete.\n' "$entry" "$meta" "$entry" >&2
+        fi
+        exit "$verify_status"
+      fi
       origin_state=${resolved##* }
       resolved=${resolved% *}
       resolved_how=${resolved##* }
