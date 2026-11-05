@@ -6,29 +6,13 @@
 # receives. Both paths must hand the worker the same contract: a promoted
 # no-mistakes worker that never received the ask-user escalation rule or the
 # `--yes` ban is the exact delivery hole this single owner exists to close.
-# fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> <data-dir> [lane]
-# [preview] [status-dir] prints
-# the block on stdout with no trailing blank line. The caller validates the mode;
-# an unknown mode is refused rather than silently rendered as the pipeline contract.
-# The optional lane is `fast` and is refused for any mode but no-mistakes.
 # Ordinary briefs and scout promotion both carry prompt-dispatch and milestone
 # instructions; state-dir is explicit so data/state overrides cannot misroute
 # the worker's evidence, with the conventional home/state fallback for callers.
 # The block opens with the fixed machine-readable "Delivery contract: mode=<mode>"
-# line that bin/fm-spawn.sh checks a ship brief against; a fast-lane block appends
-# ` lane=fast` to that line, and bin/fm-spawn.sh refuses a spawn whose --fast-lane
-# flag disagrees with the brief's recorded lane.
-# The fast lane is a driver-side rule, not a no-mistakes option: no-mistakes has no
-# per-run setting that caps review rounds (only `--skip <steps>`, which removes a
-# step entirely), so the lane works by instructing the worker to respond
-# `--action approve` at the first review gate and never `--action fix` there,
-# because each fix round starts another review round.
-# Every mode's block also carries the request-checklist accounting contract: the
-# done report at data/<task-id>/report.md walks each `## Request checklist` item
-# with proof, lists out-of-scope findings as numbered follow-ups (never commits),
-# and every done line ends with `asks <done>/<total>` so a lost ask is visible at
-# the first done report. bin/fm-brief.sh scaffolds that subsection and its {ASKS}
-# placeholder; the placeholder/content helpers below enforce that it is filled.
+# line that bin/fm-spawn.sh checks a ship brief against.
+# Every mode's block also tells the worker to leave a done report at
+# data/<task-id>/report.md with what it delivered and the proof.
 # fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> [branch] [<forge>]
 # prints the block on stdout with no trailing blank line. The caller validates the
 # mode; an unknown mode is refused rather than silently rendered as the pipeline
@@ -338,18 +322,12 @@ fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id> [branch] [<
 # Return 0 when a Task subsection still consists only of its scaffold
 # placeholder. A missing file and legacy briefs carry no such placeholders.
 fm_brief_task_placeholders_present() {  # <file>
-  local file=$1 intent spec asks
+  local file=$1 intent spec
   [ -f "$file" ] || return 1
   intent=$(fm_brief_task_heading_body "$file" "## Captain's intent")
   spec=$(fm_brief_task_heading_body "$file" "## Firstmate spec")
   [ "$(printf '%s' "$intent" | tr -d '[:space:]')" = '{TASK}' ] && return 0
   [ "$(printf '%s' "$spec" | tr -d '[:space:]')" = '{FIRSTMATE_SPEC}' ] && return 0
-  # The request checklist is optional scaffolding (briefs predating it are
-  # legacy-valid), so its placeholder is checked only when the heading exists.
-  if fm_brief_task_heading_present "$file" "## Request checklist"; then
-    asks=$(fm_brief_task_heading_body "$file" "## Request checklist")
-    [ "$(printf '%s' "$asks" | tr -d '[:space:]')" = '{ASKS}' ] && return 0
-  fi
   return 1
 }
 
@@ -408,11 +386,8 @@ EOF
 
 # Accept the current two-subsection contract only when both bodies have content;
 # briefs predating that contract remain valid when their # Task body has content.
-# A `## Request checklist` subsection, when its heading is present at all, must
-# carry a nonempty body: a checklist heading with nothing under it silently drops
-# the per-ask accounting the definition of done promises.
 fm_brief_task_content_valid() {  # <file>
-  local file=$1 intent spec task asks has_intent=0 has_spec=0
+  local file=$1 intent spec task has_intent=0 has_spec=0
   [ -f "$file" ] && [ -r "$file" ] || return 1
   fm_brief_task_heading_present "$file" "## Captain's intent" && has_intent=1
   fm_brief_task_heading_present "$file" "## Firstmate spec" && has_spec=1
@@ -422,10 +397,6 @@ fm_brief_task_content_valid() {  # <file>
     spec=$(fm_brief_task_heading_body "$file" "## Firstmate spec")
     [ -n "$(printf '%s' "$intent" | tr -d '[:space:]')" ] || return 1
     [ -n "$(printf '%s' "$spec" | tr -d '[:space:]')" ] || return 1
-    if fm_brief_task_heading_present "$file" "## Request checklist"; then
-      asks=$(fm_brief_task_heading_body "$file" "## Request checklist")
-      [ -n "$(printf '%s' "$asks" | tr -d '[:space:]')" ] || return 1
-    fi
     return 0
   fi
   task=$(fm_brief_heading_body "$file" "# Task")
@@ -460,35 +431,13 @@ fm_ask_user_escalation_block() {  # <data-dir> <task-id>
 EOF
 }
 
-# The request-checklist accounting contract, shared by every ship mode's block
-# (and mirrored by the scout scaffold's report rule). The done report is the
-# one extra durable writable file outside the worktree the ship contract
+# The done-report contract, shared by every ship mode's block. The done report is
+# the one extra durable writable file outside the worktree the ship contract
 # authorizes, like the status file and the no-mistakes findings file.
-fm_request_checklist_contract() {  # <data-dir> <task-id>
+fm_done_report_contract() {  # <data-dir> <task-id>
   local data=$1 id=$2
   cat <<EOF
-Account for the captain's asks in a done report at \`$data/$id/report.md\` (create the file when you first need it); besides the status file and any escalation file this Definition of done names, it is the one file outside the worktree you may write.
-Walk the brief's \`## Request checklist\` items in order in that report: \`[x]\` for each delivered ask together with its proof - a test or command and the output line that proves it, a file:line, or a link - or \`[ ]\` with why it is not done; a brief with no such subsection accounts for each distinct ask under \`## Captain's intent\` the same way.
-End the report with numbered follow-ups: every finding or defect you noticed but did not fix, work deferred, and anything outside the ask, each with a file:line and a one-line description; never fix those in this task - firstmate files them into the backlog from this report, so omitting one silently drops it.
-End every \`done:\` line you append with \`asks <done>/<total>\`, counting checklist items, so a lost ask is visible the moment work first reports done.
-EOF
-}
-
-# The fast-lane addendum, appended to the no-mistakes block only. no-mistakes
-# has no per-run rounds cap; approving at the first review gate is the whole
-# mechanism, so every sentence here exists to keep the worker from starting a
-# second round with `--action fix` or widening scope from findings.
-fm_fast_lane_contract() {  # <task-id>
-  cat <<'EOF'
-
-FAST LANE - this task ships exactly one review round, with scope locked to the request checklist; this addendum supersedes the drive guidance above for review gates only.
-The first time the run parks at a review gate, respond `no-mistakes axi respond --action approve` and let the run continue: approving accepts every finding as-is, and they remain listed as open items in the run (and on the PR where the forge supports one).
-Never respond `--action fix` at a review gate in this task: each fix round starts another review round, and this lane has exactly one - a fix-worthy finding becomes a numbered follow-up in the done report instead.
-Scope lock: this task's scope is exactly its `## Request checklist`, so a finding outside that scope is never fixed here, only recorded as a follow-up.
-Rule 6 and "ask-user findings are never yours to answer" above still own every ask-user finding that is error-severity, or destructive, irreversible, or security-sensitive (access, permissions, credentials, data exposure) at any severity: escalate those exactly as instructed above, naming only those ids, and never approve past them.
-This lane's one exception to those rules: any other warning- or info-severity ask-user finding is a non-gating follow-up, not a decision for you - never escalate it as a decision gate, never answer or fix it, record it verbatim (id, severity, file:line, description) as a numbered follow-up in the done report for firstmate to file and decide through \`ask-user-authority\`, and approve past it once no escalating finding remains open at that gate.
-When a finding shows the delivered work breaks a captain's ask (a wrong change, not merely an imperfect one), append `blocked [at=<epoch>]: review finding <id> contradicts ask <n>: {one line}` instead of approving.
-Every other gate - intent, test exceptions, document, lint, CI - follows the standard drive guidance above unchanged.
+Write a done report at \`$data/$id/report.md\` (create the file when you first need it) with what you delivered and its proof - a test or command and the output line that proves it, a file:line, or a link; besides the status file and any escalation file this Definition of done names, it is the one file outside the worktree you may write.
 EOF
 }
 
@@ -622,55 +571,22 @@ If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the 
 EOF
 }
 
-fm_dod_block() {  # <mode> <task-id> [branch] [forge] [base] [consent] [pr] [data] [lane] [preview] [state]
+fm_dod_block() {  # <mode> <task-id> [branch] [forge] [base] [consent] [pr] [data] [state]
   local mode=$1 id=$2 forge=${4:-none} base=${5:-} consent=${6:-} pr=${7:-auto}
   local branch=${3:-fm/$id} pr_base='' nm_base='' base_q contract_forge='' contract_consent='' forge_cli=gh-axi draft_check adapter
-  local data=${8:-${FM_DATA_OVERRIDE:-${FM_HOME:-.}/data}} lane=${9:-} preview=${10:-} state=${11:-}
-  local checklist fast preview_note milestones helper root
+  local data=${8:-${FM_DATA_OVERRIDE:-${FM_HOME:-.}/data}} state=${9:-}
+  local report milestones helper root
   # Read pre-branch-prefix fork callers without changing their existing contract.
   # Absolute paths cannot be Git branch names, so the old data-dir argument is
   # unambiguous; new callers use the upstream branch/forge/base/consent/pr ordering.
   case "${3:-}" in
-    /*) data=$3; lane=${4:-}; preview=${5:-}; state=${6:-}; branch=fm/$id; forge=none; base=; consent=; pr=auto ;;
+    /*) data=$3; state=${4:-}; branch=fm/$id; forge=none; base=; consent=; pr=auto ;;
   esac
   state=${state:-${FM_STATE_OVERRIDE:-${FM_HOME:-${data%/data}}/state}}
-  case "$lane" in
-    '') ;;
-    fast)
-      if [ "$mode" != no-mistakes ]; then
-        echo "error: fm_dod_block: the fast lane is a no-mistakes-only contract, not available for '$mode'" >&2
-        return 1
-      fi
-      ;;
-    *)
-      echo "error: fm_dod_block: unknown lane '$lane'" >&2
-      return 1 ;;
-  esac
-  case "$preview" in
-    '') ;;
-    on-push)
-      if [ "$mode" != no-mistakes ]; then
-        echo "error: fm_dod_block: preview-on-push is a no-mistakes-only sequencing contract, not available for '$mode' (direct-PR already pushes before anything else)" >&2
-        return 1
-      fi
-      ;;
-    *)
-      echo "error: fm_dod_block: unknown preview contract '$preview'" >&2
-      return 1 ;;
-  esac
-  checklist=$(fm_request_checklist_contract "$data" "$id")
+  report=$(fm_done_report_contract "$data" "$id")
   milestones=$(fm_ship_milestone_contract "$state" "$id")
   root=${FM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
   printf -v helper '%q' "$root/bin/fm-task-milestones.sh"
-  fast=
-  [ -z "$lane" ] || fast=$(fm_fast_lane_contract "$id")
-  preview_note=
-  [ -z "$preview" ] || preview_note="
-PREVIEW-ON-PUSH - this project's CI builds isolated preview environments from every push to your $branch branch; no merge is needed for them.
-Push your $branch branch as soon as your local checks pass, BEFORE you start no-mistakes, so those previews build immediately; previews never gate validation.
-Never open the PR yourself on this task: no-mistakes's pr step opens it after validation, pushing its fix commits on top of your already-pushed branch.
-While previews build, note the push in your status line (working [at=<epoch>]: pushed $branch for previews) and iterate with the captain on the preview links if asked.
-"
   fm_forge_valid_for_mode "$forge" "$mode" fm_dod_block || return 1
   fm_base_branch_valid "$base" "$mode" "$forge" fm_dod_block || return 1
   fm_pr_text_valid "$pr" "$mode" "$forge" fm_dod_block || return 1
@@ -700,7 +616,7 @@ While previews build, note the push in your status line (working [at=<epoch>]: p
 Delivery contract: mode=direct-PR forge=gerrit shape=squash$contract_consent
 Ship branch: $branch
 $milestones
-$checklist
+$report
 This task ships **direct-PR** to a Gerrit review server: you publish the change yourself, without the no-mistakes pipeline.
 Gerrit has no pull requests, so there is nothing to open; publishing creates the change.
 The task is complete only when committed on your branch.
@@ -714,11 +630,11 @@ EOF
     no-mistakes:gerrit)
       cat <<EOF
 # Definition of done
-Delivery contract: mode=no-mistakes forge=gerrit shape=squash${lane:+ lane=$lane}$contract_consent
+Delivery contract: mode=no-mistakes forge=gerrit shape=squash$contract_consent
 Ship branch: $branch
 $milestones
-$checklist
-${nm_base}${preview_note}
+$report
+${nm_base}
 This project's review server is Gerrit: it has no pull requests and no forge CI the pipeline can watch, so **no-mistakes runs here as a review pass that ends at a ready branch**, and you then publish that branch as one change.
 Pass \`--skip push,pr,ci\` on every \`no-mistakes axi run\` for this task, and skip nothing else: \`review\`, \`test\`, \`document\`, and \`lint\` are the whole point of the run.
 Those three are the only steps that reach a forge, and skipping them is a supported outcome, not a degraded one.
@@ -746,9 +662,6 @@ The squashed change carries only the oldest commit's message, so the pipeline's 
 After publishing and immediately before your ready report, append one line \`note [at=<epoch>]: pipeline changes: {finding} - {fix it made}; {finding} - {fix it made}\` to the status file, one short clause per finding the run fixed, taken from the run's \`fixes\` table and the gate findings its drive calls returned (\`no-mistakes axi logs --step <step> --full\` has the detail); write \`note [at=<epoch>]: pipeline changes: none\` when it fixed nothing.
 EOF
       fm_gerrit_publish_block
-      if [ -n "$fast" ]; then
-        printf '%s\n' "$fast"
-      fi
       ;;
     direct-PR:external)
       fm_external_review_backup || return 1
@@ -786,13 +699,13 @@ EOF
 Delivery contract: mode=direct-PR$contract_forge$contract_consent
 Ship branch: $branch
 $milestones
-$checklist
+$report
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with \`$forge_cli\` that is ready for review, not a draft$pr_base.
 Before you report done, read the PR back from the forge and confirm it is not a draft $draft_check
 A draft cannot be merged, so a done report on one leaves the merge unasked.
-Then append \`done [at=<epoch>]: PR {url}; asks <done>/<total>\` to the status file and stop.
+Then append \`done [at=<epoch>]: PR {url}\` to the status file and stop.
 That \`done:\` is accepted only when this copy's HEAD - your latest commit - is pushed to your PR branch; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
@@ -808,8 +721,8 @@ This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`$branch\`. Do NOT push, do NOT open a PR, do NOT merge.
 A \`done:\` is accepted when the named head is on this project's shared local branch, not only on a detached copy; the check tests that head, not merely that a branch moved.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
-$checklist
-When it is implemented and committed, append \`done [at=<epoch>]: ready in branch $branch; asks <done>/<total>\` to the status file and stop.
+$report
+When it is implemented and committed, append \`done [at=<epoch>]: ready in branch $branch\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
       ;;
@@ -817,22 +730,19 @@ EOF
       if [ "$pr" = manual ]; then
         [ -z "$nm_base" ] || nm_base="This task's base branch is \`$base\`, not the repository default: pass \`--base-branch $base_q\` on every \`no-mistakes axi run\` that starts a run, so the pipeline rebases onto that branch, and open the PR against it with \`--base $base_q\`.
 "
-        fm_dod_manual_pr_block "$branch" "$forge_cli" "$draft_check" "$contract_forge${lane:+ lane=$lane}$contract_consent" "$milestones
-$checklist
-${nm_base}${preview_note}" "$pr_base"
-        if [ -n "$fast" ]; then
-          printf '%s\n' "$fast"
-        fi
+        fm_dod_manual_pr_block "$branch" "$forge_cli" "$draft_check" "$contract_forge$contract_consent" "$milestones
+$report
+${nm_base}" "$pr_base"
         return
       fi
       cat <<EOF
 # Definition of done
-Delivery contract: mode=no-mistakes$contract_forge${lane:+ lane=$lane}$contract_consent
+Delivery contract: mode=no-mistakes$contract_forge$contract_consent
 Ship branch: $branch
 $milestones
-$checklist
+$report
 The task is complete only when committed on your branch.
-${nm_base}${preview_note}
+${nm_base}
 After local proof and the implementation commit, start /no-mistakes yourself immediately to validate and ship a PR, targeting dispatch within 15 minutes of local proof; do not stop for an implementation-only done handoff.
 If dispatch cannot meet that target, escalate the reason to Firstmate rather than leaving proved work idle.
 Stamp gate start from the actual run receipt, not an intended launch, and gate end from its real outcome with the observed round count.
@@ -847,13 +757,10 @@ EOF
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), read the PR back from the forge and confirm it is not a draft $draft_check
 A draft cannot be merged, so a done report on one leaves the merge unasked.
-Then append \`done [at=<epoch>]: PR {url} checks green; asks <done>/<total>\` and stop. You are finished.
+Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finished.
 That CI-ready \`done:\` is accepted only when this copy's HEAD - your latest commit - is one the /no-mistakes run pushed, so commit nothing after the run; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.
 EOF
-      if [ -n "$fast" ]; then
-        printf '%s\n' "$fast"
-      fi
       ;;
     *)
       echo "error: fm_dod_block: unknown delivery mode '$mode'" >&2

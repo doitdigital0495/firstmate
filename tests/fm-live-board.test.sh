@@ -191,7 +191,7 @@ for screen in '!screen=wide' '!screen=narrow'; do
     and (.delivery.rows | all(.home == null and .asOf == null))
     and (.delivery.rows[0] | .mode == "No-mistakes" and .approval == "Your approval required to merge")
     and (.delivery.rows[1] | .mode == "Direct PR" and .approval == "Automatic merging when checks pass"
-      and .flags == ["Preview builds when changes are published"] and .registration == "Registered")
+      and (has("flags") | not) and .registration == "Registered")
     and (.delivery.rows[2] | .mode == "No-mistakes" and .registration == "Registered")
     and (.delivery.rows[3].mode == "Local only")
     and (.delivery.rows[4] | .mode == "No-mistakes for product work; Direct PR for internal work"

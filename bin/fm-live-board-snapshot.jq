@@ -107,7 +107,7 @@ def home_tasks($home_key):
 # worker yet; its question cards stay on its own board. A stale home
 # contributes the same from its last good input, whose age is its own
 # collected_at_epoch.
-def project_registration: {name,mode,yolo,recognised,annotation,flags:(.flags // [])};
+def project_registration: {name,mode,yolo,recognised,annotation};
 def registered_home($home_key):
   . as $home
   | ([$home_key,$home.id] | tojson) as $key

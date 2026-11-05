@@ -513,7 +513,7 @@ test_finished_worker_takes_no_new_work() {
   local dir err rc
   dir=$(setup_case finished)
   err="$dir/send.err"
-  printf 'working [at=1]: building\ndone [at=2]: PR https://example.invalid/pr/1; asks 1/1\nresolved [key=x] [at=3]: answered\n' > "$dir/home/state/t1.status"
+  printf 'working [at=1]: building\ndone [at=2]: PR https://example.invalid/pr/1\nresolved [key=x] [at=3]: answered\n' > "$dir/home/state/t1.status"
   run_send "$dir" "$err" -- t1 "now also implement the follow-up"
   rc=$?
   [ "$rc" -ne 0 ] || fail "new work to a finished worker should refuse"

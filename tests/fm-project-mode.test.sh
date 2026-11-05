@@ -23,6 +23,9 @@ cat > "$DATA/projects.md" <<'EOF'
 ## Projects
 - legacy - a project registered before any bracket token existed (added 2026-01-01)
 - flagged [direct-PR +yolo] - mode and yolo, no forge token (added 2026-01-01)
+- previewed [direct-PR +yolo preview-on-push] - retired token after the mode (added 2026-01-01)
+- preview-first [preview-on-push local-only] - retired token before the mode (added 2026-01-01)
+- preview-only [preview-on-push] - retired token with no mode (added 2026-01-01)
 - lab [no-mistakes forge=forgejo] - forge token after mode (added 2026-01-01)
 - lead [forge=forgejo direct-PR +yolo] - forge token first, order must not matter (added 2026-01-01)
 - kept [local-only forge=forgejo] - a forge on a mode that publishes nothing (added 2026-01-01)
@@ -160,5 +163,20 @@ assert_contains "$err" "pr=manual" "the unknown pr value refusal did not name th
 err=$(FM_DATA_OVERRIDE="$DATA" "$PROJECT_MODE" --pr hand-direct 2>&1 >/dev/null)
 assert_contains "$err" "only a no-mistakes ship takes it" "the direct-PR refusal did not say why"
 pass "fm-project-mode: pr=manual refuses another mode, a bound forge, an empty value, and an unknown value, but leaves --forge answerable"
+
+# preview-on-push is retired: a registry line still carrying it keeps its posture
+# wherever the token sits, and the machine listing no longer exposes it.
+[ "$(FM_DATA_OVERRIDE="$DATA" "$PROJECT_MODE" previewed)" = "direct-PR on" ] \
+  || fail "the retired preview-on-push token changed the posture after the mode"
+[ "$(FM_DATA_OVERRIDE="$DATA" "$PROJECT_MODE" preview-first)" = "local-only off" ] \
+  || fail "the retired preview-on-push token was read as the mode"
+[ "$(FM_DATA_OVERRIDE="$DATA" "$PROJECT_MODE" preview-only)" = "no-mistakes off" ] \
+  || fail "a line with only the retired preview-on-push token lost the default posture"
+listing=$(FM_DATA_OVERRIDE="$DATA" "$PROJECT_MODE" --list-json) || fail "--list-json failed on a retired token"
+printf '%s' "$listing" | jq -e '
+  (.projects | all(has("flags") | not))
+  and (.projects | map(select(.name | startswith("preview"))) | all(.recognised))' >/dev/null \
+  || fail "--list-json exposed the retired token or misread its project: $listing"
+pass "fm-project-mode: a retired preview-on-push token is ignored wherever it appears"
 
 echo "# fm-project-mode.test.sh: all assertions passed"

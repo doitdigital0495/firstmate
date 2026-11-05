@@ -40,9 +40,8 @@
 #   left over is the mode. <prefix> must not contain a space; an empty override
 #   ("branch=") resolves to "" for a bare "<task-id>" ship branch instead of the
 #   legacy "fm/<task-id>".
-#   An extra `preview-on-push` token after the mode is read by firstmate at
-#   intake (AGENTS.md section 7); --list-json exposes it in flags, while the
-#   single-project output forms ignore it.
+#   A retired `preview-on-push` token is ignored wherever it appears, so a
+#   registry line still carrying it keeps its registered posture.
 #
 # Registered modes:
 #   no-mistakes            full pipeline -> PR -> configured merge authority (default)
@@ -131,8 +130,8 @@
 # to the forge binding, so it prints even when the forge token is malformed;
 # every path that reads the forge binding (default, --forge, and spawn's
 # forge-agreement check) still refuses.
-# --list-json returns {present,projects:[{name,mode,yolo,recognised,annotation,flags}],
-# duplicates:[]}, with flags containing only a registered preview-on-push token.
+# --list-json returns {present,projects:[{name,mode,yolo,recognised,annotation}],
+# duplicates:[]}.
 # It enumerates names and raw registered posture only, never
 # descriptions or remotes. Unknown modes retain the fail-safe fallback and
 # recognised:false. Duplicate names retain the first posture and are disclosed.
@@ -197,7 +196,7 @@ registered_posture() {
       # spelling), and the first token left over is the mode.
       mode_set = 0
       for (j=1; j<=k; j++) {
-        if (a[j]=="preview-on-push") print "flag", a[j];
+        if (a[j]=="preview-on-push") continue
         if (a[j]=="+yolo") { yolo="on"; continue }
         if (a[j] ~ /^branch=/) { branch = substr(a[j], 8); continue }
         if (a[j] ~ /^forge=/) { forge = a[j]; continue }
@@ -239,15 +238,12 @@ if [ "${1:-}" = --list-json ]; then
     [ -n "$name" ] || continue
     parsed=$(registered_posture "$name")
     posture=$(printf '%s\n' "$parsed" | awk '$1 == "posture" { print $2, $3 }')
-    preview=false
-    if printf '%s\n' "$parsed" | grep -qx 'flag preview-on-push'; then preview=true; fi
     mode=${posture%% *}; yolo=${posture##* }; recognised=true
     annotation=$mode
     if ! known_mode "$mode"; then mode=no-mistakes; yolo=off; recognised=false; fi
     jq -n --arg name "$name" --arg mode "$mode" --arg yolo "$yolo" \
-      --arg annotation "$annotation" --argjson recognised "$recognised" --argjson preview "$preview" \
-      '{name:$name,mode:$mode,yolo:$yolo,recognised:$recognised,annotation:$annotation,
-        flags:(if $preview then ["preview-on-push"] else [] end)}'
+      --arg annotation "$annotation" --argjson recognised "$recognised" \
+      '{name:$name,mode:$mode,yolo:$yolo,recognised:$recognised,annotation:$annotation}'
   done <<EOF | jq -s '{present:true,projects:unique_by(.name),duplicates:[group_by(.name)[] | select(length>1) | .[0].name]}'
 $names
 EOF

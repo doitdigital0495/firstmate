@@ -18,8 +18,8 @@ task() {  # <id> <kind> <status lines...>
   printf 'kind=%s\nharness=claude\n' "$kind" > "$HOME_DIR/state/$id.meta"
   printf '%s\n' "$@" > "$HOME_DIR/state/$id.status"
 }
-task old ship "working [at=$((now - 9000))]: x" "done [at=$((now - 8000))]: PR https://example.invalid/1; asks 1/1" "resolved [key=k] [at=$((now - 10))]: answered"
-task fresh ship "done [at=$((now - 600))]: PR https://example.invalid/2; asks 1/1"
+task old ship "working [at=$((now - 9000))]: x" "done [at=$((now - 8000))]: PR https://example.invalid/1" "resolved [key=k] [at=$((now - 10))]: answered"
+task fresh ship "done [at=$((now - 600))]: PR https://example.invalid/2"
 task busy scout "done [at=$((now - 90000))]: report" "working [at=$((now - 60))]: board round"
 task scoutdone scout "done [at=$((now - 30000))]: report"
 task mate secondmate "done [at=$((now - 900000))]: idle"

@@ -1939,7 +1939,7 @@ test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
     FM_HOME="$home" "$BRIEF" "$id" firstmate --scout >/dev/null \
       || fail "$mode: could not scaffold the scout brief"
     brief="$home/data/$id/brief.md"
-    sed 's/{TASK}/Fix the promotion relaunch contract./; s/{ASKS}/1. [ ] Fix the promotion relaunch contract./; s/{FIRSTMATE_SPEC}/Preserve the current delivery mode./' \
+    sed 's/{TASK}/Fix the promotion relaunch contract./; s/{FIRSTMATE_SPEC}/Preserve the current delivery mode./' \
       "$brief" > "$brief.filled"
     mv "$brief.filled" "$brief"
     {
@@ -1964,9 +1964,13 @@ test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
     assert_grep 'Never push to any remote and never open a PR' "$brief" \
       "$mode: the reproduction fixture lost the stale scout prohibition"
 
+    # A live task's record may predate the fast lane's retirement; the stale key
+    # must stay inert rather than refuse the relaunch.
+    printf 'lane=fast\n' >> "$home/state/$id.meta"
     printf 'zsh' > "$dir/fake/command"
     out=$(run_spawn "$dir" "$id" --relaunch) \
       || fail "$mode: promoted scout relaunch should succeed: $out"
+    assert_not_contains "$out" "lane=fast" "$mode: relaunch reported a retired lane"
     launch="$home/data/$id/launch-brief.md"
     assert_grep "This task is now kind=ship with mode=$mode" "$launch" \
       "$mode: the replacement launch did not receive the promoted task identity"

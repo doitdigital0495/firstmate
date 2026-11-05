@@ -342,8 +342,7 @@ def lb_delivery_row($home; $as_of):
        elif $r.recognised == false then "Unrecognized setting; using defaults" else "Registered" end),
      mode:({"no-mistakes":"No-mistakes","direct-PR":"Direct PR","local-only":"Local only",
             "no-mistakes-prod-only":"No-mistakes for product work; Direct PR for internal work"}[$r.mode // "no-mistakes"] // "No-mistakes"),
-     approval:(if $r.yolo == "on" then "Automatic merging when checks pass" else "Your approval required to merge" end),
-     flags:[($r.flags // [])[] | select(. == "preview-on-push") | "Preview builds when changes are published"]};
+     approval:(if $r.yolo == "on" then "Automatic merging when checks pass" else "Your approval required to merge" end)};
 
 def lb_view($map):
 . as $board

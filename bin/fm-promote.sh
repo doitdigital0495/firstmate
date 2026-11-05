@@ -32,14 +32,7 @@
 # is a project fact rather than a per-task decision, so promotion takes it from
 # there instead of asking firstmate to remember it.
 # no-mistakes-prod-only is a registry policy rather than a task mode and is refused.
-# --fast-lane (optional, --mode no-mistakes only) promotes into the
-# one-review-round lane: the rendered definition of done carries the fast-lane
-# contract, the recorded line becomes "mode=no-mistakes lane=fast", and the meta
-# gains lane=fast so a later --relaunch reuses the lane (bin/fm-spawn.sh).
-# --preview-on-push (optional, --mode no-mistakes only) renders the same
-# push-before-validation Definition of done as fm-brief.sh for projects whose
-# CI builds previews from fm/* pushes; resolve it from data/projects.md.
-# Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--fast-lane] [--preview-on-push]
+# Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off>
 # A scout spawned on a named base records base_branch= in its meta; promotion
 # keeps that base as the ship's starting point and pull-request target, and
 # refuses a mode that cannot carry one (bin/fm-dod-lib.sh fm_base_branch_valid).
@@ -94,8 +87,6 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
 MODE=
 YOLO=
-FAST_LANE=0
-PREVIEW_ON_PUSH=0
 BRANCH_PREFIX=fm/
 MODE_SET=0
 YOLO_SET=0
@@ -124,8 +115,6 @@ for a in "$@"; do
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
     --yolo) want_value=yolo ;;
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
-    --fast-lane) FAST_LANE=1 ;;
-    --preview-on-push) PREVIEW_ON_PUSH=1 ;;
     --branch-prefix) want_value="branch-prefix" ;;
     --branch-prefix=*) BRANCH_PREFIX=${a#--branch-prefix=} ;;
     --upstream-consent) want_value="upstream-consent" ;;
@@ -134,7 +123,7 @@ for a in "$@"; do
   esac
 done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
-[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--fast-lane] [--preview-on-push]" >&2; exit 1; }
+[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off>" >&2; exit 1; }
 [ "$MODE_SET" -eq 1 ] || {
   echo "error: promotion requires --mode <no-mistakes|direct-PR|local-only>; decide it now from the scout's findings and the project's registered posture in data/projects.md" >&2
   exit 1
@@ -154,18 +143,6 @@ case "$YOLO" in
   on|off) ;;
   *) echo "error: --yolo must be on or off (got '$YOLO')" >&2; exit 1 ;;
 esac
-if [ "$FAST_LANE" -eq 1 ] && [ "$MODE" != no-mistakes ]; then
-  echo "error: --fast-lane requires --mode no-mistakes; the one-review-round lane modifies the no-mistakes review drive, so the other modes have nothing for it to modify" >&2
-  exit 1
-fi
-if [ "$PREVIEW_ON_PUSH" -eq 1 ] && [ "$MODE" != no-mistakes ]; then
-  echo "error: --preview-on-push requires --mode no-mistakes; direct-PR pushes before anything else already, so only the pipeline mode delays previews" >&2
-  exit 1
-fi
-LANE=
-[ "$FAST_LANE" -eq 0 ] || LANE=fast
-PREVIEW=
-[ "$PREVIEW_ON_PUSH" -eq 0 ] || PREVIEW=on-push
 if [ "$UPSTREAM_CONSENT_SET" -eq 1 ]; then
   [ -n "$UPSTREAM_CONSENT" ] || { echo "error: --upstream-consent requires a non-empty <host>/<owner>/<repo> value" >&2; exit 1; }
   if [ "$MODE" = local-only ]; then
@@ -310,7 +287,7 @@ PROMOTE_CONSENT_WORDS=
 
 SCOUT_BRIEF="$DATA/$ID/brief.md"
 if fm_brief_task_placeholders_present "$SCOUT_BRIEF"; then
-  echo "error: $SCOUT_BRIEF still contains {TASK}, {ASKS}, or {FIRSTMATE_SPEC}; preserve the original ask in ## Captain's intent, fill ## Request checklist, and fill the scout-time ## Firstmate spec; promotion generates a separate ship-time spec" >&2
+  echo "error: $SCOUT_BRIEF still contains {TASK} or {FIRSTMATE_SPEC}; preserve the original ask in ## Captain's intent and fill the scout-time ## Firstmate spec; promotion generates a separate ship-time spec" >&2
   exit 1
 fi
 if ! fm_brief_task_content_valid "$SCOUT_BRIEF"; then
@@ -373,7 +350,7 @@ EOF
     printf '%s\n' "$PROMOTION_ASK_USER_BLOCK"
   fi
   printf '\n'
-  fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT" "$PR_TEXT" "$DATA" "$LANE" "$PREVIEW" "$STATE"
+  fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT" "$PR_TEXT" "$DATA" "$STATE"
 }
 mkdir -p "$DATA/$ID"
 [ ! -d "$INSTRUCTIONS" ] || { echo "error: ship instructions path is a directory: $INSTRUCTIONS" >&2; exit 1; }
@@ -426,12 +403,11 @@ fi
 BRIEF_REPLACEMENT=
 
 TMP="$STATE/.$ID.meta.promote.${BASHPID:-$$}"
-grep -v -e '^kind=' -e '^mode=' -e '^yolo=' -e '^branch=' -e '^lane=' -e '^upstream_consent=' "$META" > "$TMP"
+grep -v -e '^kind=' -e '^mode=' -e '^yolo=' -e '^branch=' -e '^upstream_consent=' "$META" > "$TMP"
 {
   echo "kind=ship"
   echo "mode=$MODE"
   echo "yolo=$YOLO"
-  [ -z "$LANE" ] || echo "lane=$LANE"
   echo "branch=$BRANCH"
   [ -z "$UPSTREAM_CONSENT" ] || echo "upstream_consent=$UPSTREAM_CONSENT"
 } >> "$TMP"
@@ -449,7 +425,7 @@ META_LOCK_HELD=0
 
 HOME_Q=$(printf '%q' "$FM_HOME")
 INSTRUCTIONS_Q=$(printf '%q' "$INSTRUCTIONS")
-echo "promoted $ID to ship mode=$MODE${LANE:+ lane=$LANE} yolo=$YOLO$PROMOTE_FORGE_WORDS$PROMOTE_PR_WORDS (teardown protection restored)"
+echo "promoted $ID to ship mode=$MODE yolo=$YOLO$PROMOTE_FORGE_WORDS$PROMOTE_PR_WORDS (teardown protection restored)"
 echo "wrote ship instructions for mode=$MODE$PROMOTE_FORGE_WORDS$PROMOTE_PR_WORDS: $INSTRUCTIONS"
 echo "route: FM_HOME=$HOME_Q bin/fm-dispatch-resolve.sh $(printf '%q' "$SCOUT_BRIEF") --task $ID   (a profile that differs from the worker's recorded one relaunches with bin/fm-control.sh $ID relaunch <its profile flags>; otherwise run next:)"
 echo "next: FM_HOME=$HOME_Q bin/fm-send.sh fm-$ID --after-done promote \"\$(cat $INSTRUCTIONS_Q)\""

@@ -211,11 +211,12 @@ test_ship_modes_generate_clean_briefs() {
       || fail "$id: brief did not record its machine-readable delivery contract line"
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
     assert_grep "{FIRSTMATE_SPEC}" "$brief" "$id: brief missing the {FIRSTMATE_SPEC} placeholder"
-    assert_grep "## Request checklist" "$brief" "$id: brief missing the Request checklist subsection"
-    assert_grep "{ASKS}" "$brief" "$id: brief missing the {ASKS} checklist placeholder"
-    assert_grep "asks <done>/<total>" "$brief" "$id: brief missing the asks-count done-line rule"
+    assert_no_grep "Request checklist" "$brief" "$id: brief still carries the retired Request checklist"
+    assert_no_grep "{ASKS}" "$brief" "$id: brief still carries the retired {ASKS} placeholder"
+    assert_no_grep "asks <done>" "$brief" "$id: brief still demands the retired asks count"
+    assert_no_grep "numbered follow-ups" "$brief" "$id: brief still demands the retired follow-up list"
     assert_grep "report.md" "$brief" "$id: brief missing the done-report contract"
-    assert_no_grep "lane=" "$brief" "$id: a standard-lane brief recorded a lane token"
+    assert_no_grep "lane=" "$brief" "$id: brief recorded a retired lane token"
     assert_grep "## Captain's intent" "$brief" "$id: brief missing Captain's intent subsection"
     assert_grep "## Firstmate spec" "$brief" "$id: brief missing Firstmate spec subsection"
     assert_grep 'never a bare number such as "PR 108"' "$brief" "$id: brief missing the full-PR-URL rule"
@@ -287,12 +288,11 @@ test_work_economy_in_all_worker_briefs() {
   local home kind brief
   home="$TMP_ROOT/work-economy-home"
   mkdir -p "$home/data"
-  for kind in no-mistakes direct-PR local-only fast-lane scout herdr-ship herdr-scout; do
+  for kind in no-mistakes direct-PR local-only scout herdr-ship herdr-scout; do
     case "$kind" in
       scout) FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" some-proj --scout >/dev/null || fail "$kind scaffold failed" ;;
       herdr-scout) FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" some-proj --scout --herdr-lab >/dev/null || fail "$kind scaffold failed" ;;
       herdr-ship) FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" some-proj --mode no-mistakes --herdr-lab >/dev/null || fail "$kind scaffold failed" ;;
-      fast-lane) FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" some-proj --mode no-mistakes --fast-lane >/dev/null || fail "$kind scaffold failed" ;;
       *) FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" some-proj --mode "$kind" >/dev/null || fail "$kind scaffold failed" ;;
     esac
     brief="$home/data/$kind/brief.md"
@@ -308,171 +308,56 @@ test_work_economy_in_all_worker_briefs() {
   pass "fm-brief.sh: every ship/scout variant carries harness-neutral work economy; secondmate does not"
 }
 
-# The fast lane is a ship-only, no-mistakes-only delivery contract, so the flag
-# must refuse everywhere else and its scaffold must carry the one-review-round
-# instructions plus the lane token the spawn later checks for agreement.
-test_fast_lane_scaffold_and_refusals() {
-  local home id brief out status id_mode
-  home="$TMP_ROOT/fast-lane-home"
+# The fast lane and preview-on-push are retired. This parser ignores any flag it
+# does not know, so a stale caller gets the standard contract and nothing else.
+test_retired_delivery_flags_render_nothing() {
+  local home flag brief
+  home="$TMP_ROOT/retired-flags-home"
   mkdir -p "$home/data"
-  id="brief-fastlane-f1"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --fast-lane >/dev/null 2>&1; status=$?
-  expect_code 0 "$status" "fm-brief.sh --fast-lane scaffold should exit 0"
-  brief="$home/data/$id/brief.md"
-  grep -qx "Delivery contract: mode=no-mistakes lane=fast" "$brief" \
-    || fail "fast-lane brief did not record its lane on the delivery contract line"
-  assert_grep "FAST LANE - this task ships exactly one review round" "$brief" "fast-lane brief missing the one-round rule"
-  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must match literally
-  assert_grep 'respond `no-mistakes axi respond --action approve`' "$brief" \
-    "fast-lane brief must teach approving the first review gate"
-  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must match literally
-  assert_grep 'Never respond `--action fix` at a review gate in this task' "$brief" \
-    "fast-lane brief must forbid fix rounds at review gates"
-  # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must match literally
-  assert_grep 'scope is exactly its `## Request checklist`' "$brief" \
-    "fast-lane brief missing the scope lock"
-  assert_grep "ask-user findings" "$brief" "fast-lane brief dropped the ask-user escalation carve-out"
-
-  # A standard no-mistakes brief carries none of the lane text.
-  id="brief-standard-f2"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
-  brief="$home/data/$id/brief.md"
-  assert_no_grep "FAST LANE" "$brief" "a standard brief carries fast-lane drive rules"
-  grep -qx "Delivery contract: mode=no-mistakes" "$brief" \
-    || fail "standard brief's delivery contract line grew a lane token"
-
-  # The flag is refused outside its one valid combination.
-  for id_mode in "brief-fast-bad1:--mode direct-PR --fast-lane" "brief-fast-bad2:--mode local-only --fast-lane"; do
-    id=${id_mode%%:*}
-    # shellcheck disable=SC2086  # flags is an intentional word-split arg list
-    out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj ${id_mode#*:} 2>&1); status=$?
-    [ "$status" -ne 0 ] || fail "$id: --fast-lane on a non-no-mistakes ship mode should refuse"
-    assert_contains "$out" "--fast-lane requires --mode no-mistakes" "$id: refusal did not name the mode constraint"
+  for flag in --fast-lane --preview-on-push; do
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "brief-retired$flag" some-proj --mode no-mistakes "$flag" >/dev/null \
+      || fail "$flag: scaffold failed"
+    brief="$home/data/brief-retired$flag/brief.md"
+    grep -qx "Delivery contract: mode=no-mistakes" "$brief" || fail "$flag: delivery contract line changed"
+    assert_no_grep "FAST LANE" "$brief" "$flag: brief carries retired fast-lane drive rules"
+    assert_no_grep "PREVIEW-ON-PUSH" "$brief" "$flag: brief carries retired preview sequencing"
   done
-  out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-fast-bad3 some-proj --scout --fast-lane 2>&1); status=$?
-  [ "$status" -ne 0 ] || fail "--fast-lane on a scout brief should refuse"
-  assert_contains "$out" "--fast-lane applies only to ship briefs" "scout refusal did not name the ship-only constraint"
-  pass "fm-brief.sh: --fast-lane scaffolds the one-review-round contract and refuses misuse"
+  pass "fm-brief.sh: the retired --fast-lane and --preview-on-push flags render nothing"
 }
 
-# Preview-on-push changes only the no-mistakes sequencing: it must not leak
-# into ordinary briefs, and unsupported modes/kinds must fail before writing.
-test_preview_on_push_scaffold_and_refusals() {
-  local home id brief out status args
-  home="$TMP_ROOT/preview-on-push-home"
+
+# A scout scaffold keeps its report but drops the retired asks accounting.
+test_scout_brief_has_no_request_accounting() {
+  local home brief
+  home="$TMP_ROOT/scout-accounting-home"
   mkdir -p "$home/data"
-  id='brief-preview-p1'
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --preview-on-push >/dev/null \
-    || fail "preview-on-push scaffold failed"
-  brief="$home/data/$id/brief.md"
-  grep -qx 'Delivery contract: mode=no-mistakes' "$brief" \
-    || fail "preview-on-push changed the delivery contract mode"
-  assert_grep "Push your fm/$id branch as soon as your local checks pass, BEFORE you start no-mistakes" "$brief" \
-    "preview-on-push brief must require push before validation"
-  assert_grep "previews never gate validation" "$brief" "preview build must not delay validation"
-  assert_grep "Never open the PR yourself on this task: no-mistakes's pr step opens it" "$brief" \
-    "preview-on-push brief must leave PR creation to no-mistakes"
-  assert_grep "pushing its fix commits on top of your already-pushed branch" "$brief" \
-    "preview-on-push brief must preserve pipeline fix pushes"
-  assert_grep "pushed fm/$id for previews" "$brief" "preview-on-push brief missing push status"
-  id='brief-preview-fast'
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes --fast-lane --preview-on-push >/dev/null \
-    || fail "preview-on-push and fast lane should combine"
-  brief="$home/data/$id/brief.md"
-  assert_grep 'Delivery contract: mode=no-mistakes lane=fast' "$brief" "combined brief lost fast lane"
-  assert_grep 'PREVIEW-ON-PUSH' "$brief" "combined brief lost preview sequencing"
-  id='brief-preview-standard'
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null \
-    || fail "standard no-mistakes scaffold failed"
-  assert_no_grep 'PREVIEW-ON-PUSH' "$home/data/$id/brief.md" "standard brief gained preview sequencing"
-  id='brief-preview-direct'
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode direct-PR >/dev/null \
-    || fail "direct-PR scaffold failed"
-  assert_no_grep 'PREVIEW-ON-PUSH' "$home/data/$id/brief.md" "direct-PR brief gained preview sequencing"
-  for args in 'brief-preview-bad1 some-proj --mode direct-PR --preview-on-push' \
-    'brief-preview-bad2 some-proj --mode local-only --preview-on-push' \
-    'brief-preview-bad3 some-proj --scout --preview-on-push' \
-    'brief-preview-bad4 --secondmate --no-projects --preview-on-push'; do
-    id=${args%% *}
-    # shellcheck disable=SC2086  # args intentionally lists command arguments.
-    out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" $args 2>&1); status=$?
-    [ "$status" -ne 0 ] || fail "$id: preview-on-push outside no-mistakes ship should refuse"
-    case "$id" in
-      brief-preview-bad1|brief-preview-bad2)
-        assert_contains "$out" '--preview-on-push requires --mode no-mistakes' "$id: wrong refusal" ;;
-      *) assert_contains "$out" '--preview-on-push applies only to ship briefs' "$id: wrong refusal" ;;
-    esac
-    assert_absent "$home/data/$id/brief.md" "$id: refused scaffold wrote a brief"
-  done
-  pass 'fm-brief.sh: --preview-on-push sequences no-mistakes previews without changing other modes'
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" scout-plain some-proj --scout >/dev/null || fail "scout scaffold failed"
+  brief="$home/data/scout-plain/brief.md"
+  assert_grep "report.md" "$brief" "scout brief lost its report"
+  assert_no_grep "Request checklist" "$brief" "scout brief still carries the retired Request checklist"
+  assert_no_grep "{ASKS}" "$brief" "scout brief still carries the retired {ASKS} placeholder"
+  assert_no_grep "asks <done>" "$brief" "scout brief still demands the retired asks count"
+  assert_no_grep "numbered follow-ups" "$brief" "scout brief still demands the retired follow-up list"
+  pass "fm-brief.sh: a scout brief keeps its report without asks accounting or follow-up filing"
 }
 
-# The checklist placeholder and its content rule live in bin/fm-dod-lib.sh, so
-# they are tested against that library directly: an unfilled {ASKS} must read as
-# a leftover placeholder exactly like {TASK}, an empty checklist body must fail
-# content validation, and a brief without the subsection must stay legacy-valid.
-test_request_checklist_placeholder_and_content_rules() {
-  local checklist_home id brief
-  checklist_home="$TMP_ROOT/checklist-rules-home"
-  mkdir -p "$checklist_home/data"
-  id="brief-checklist-c1"
-  FM_HOME="$checklist_home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
-  brief="$checklist_home/data/$id/brief.md"
+# Live briefs scaffolded before the checklist was retired keep passing the
+# content gates, filled or not: they are captain-private data nobody rewrites.
+test_older_brief_with_request_checklist_stays_valid() {
+  local brief
+  brief="$TMP_ROOT/older-checklist-brief.md"
+  printf "# Task\n## Captain's intent\nFix it.\n\n## Request checklist\n1. [ ] Fix it.\n\n## Firstmate spec\nBuild it.\n\n# Definition of done\nDelivery contract: mode=no-mistakes\n" > "$brief"
   (
     # shellcheck source=bin/fm-dod-lib.sh
     . "$ROOT/bin/fm-dod-lib.sh"
     fm_brief_task_placeholders_present "$brief" \
-      || fail "an unfilled scaffold was not reported as placeholder-carrying"
-    fill() {
-      awk -v task='Fix the measure.' -v spec='Build and verify it.' -v asks='1. [ ] Fix the measure.' '
-        $0 == "{TASK}" { print task; next }
-        $0 == "{FIRSTMATE_SPEC}" { print spec; next }
-        $0 == "{ASKS}" { print asks; next }
-        { print }
-      ' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
-    }
-    fill_partially() {
-      awk -v task='Fix the measure.' -v spec='Build and verify it.' '
-        $0 == "{TASK}" { print task; next }
-        $0 == "{FIRSTMATE_SPEC}" { print spec; next }
-        { print }
-      ' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
-    }
-    drop_asks_line() {
-      awk '$0 == "{ASKS}" { next } { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
-    }
-    fill "$brief"
-    fm_brief_task_placeholders_present "$brief" \
-      && fail "a fully filled brief still reported a placeholder"
+      && fail "an older filled brief was reported as placeholder-carrying"
     fm_brief_task_content_valid "$brief" \
-      || fail "a fully filled brief failed content validation"
-    id="brief-checklist-c2"
-    FM_HOME="$checklist_home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
-    brief="$checklist_home/data/$id/brief.md"
-    fill_partially "$brief"
-    fm_brief_task_placeholders_present "$brief" \
-      || fail "a brief with {TASK} and {FIRSTMATE_SPEC} filled but {ASKS} left behind was not reported as placeholder-carrying"
-    drop_asks_line "$brief"
-    fm_brief_task_placeholders_present "$brief" \
-      && fail "an empty checklist body was misread as a placeholder"
-    fm_brief_task_content_valid "$brief" \
-      && fail "an empty checklist body passed content validation"
-    :
+      || fail "an older filled brief failed content validation"
+    [ "$(fm_brief_task_heading_body "$brief" "## Captain's intent")" = "Fix it." ] \
+      || fail "the older checklist heading leaked into the captain's intent"
   ) || exit 1
-  # A legacy two-subsection brief without the checklist heading stays valid.
-  id="brief-checklist-c3"
-  mkdir -p "$checklist_home/data/$id"
-  printf "# Task\n## Captain's intent\nFix it.\n\n## Firstmate spec\nBuild it.\n\n# Definition of done\nDelivery contract: mode=no-mistakes\n" \
-    > "$checklist_home/data/$id/brief.md"
-  (
-    # shellcheck source=bin/fm-dod-lib.sh
-    . "$ROOT/bin/fm-dod-lib.sh"
-    fm_brief_task_placeholders_present "$checklist_home/data/$id/brief.md" \
-      && fail "a legacy brief without a checklist was reported as placeholder-carrying"
-    fm_brief_task_content_valid "$checklist_home/data/$id/brief.md" \
-      || fail "a legacy brief without a checklist failed content validation"
-  ) || exit 1
-  pass "fm-dod-lib: {ASKS} placeholders and empty checklist bodies are refused; briefs without the subsection stay legacy-valid"
+  pass "fm-dod-lib: an older brief carrying a filled Request checklist stays valid"
 }
 
 # --forge forgejo is the Forgejo value of the project's registered forge binding
@@ -1846,7 +1731,7 @@ test_ship_branch_prefix_override_is_consistent_across_modes() {
   assert_grep "committed on your branch \`contrib/$id\`" "$brief" \
     "local-only: definition-of-done text did not use the configured override"
   # shellcheck disable=SC2016
-  assert_grep "\`done [at=<epoch>]: ready in branch contrib/$id; asks <done>/<total>\`" "$brief" \
+  assert_grep "\`done [at=<epoch>]: ready in branch contrib/$id\`" "$brief" \
     "local-only: status-message text did not use the configured override"
   assert_no_grep "fm/$id" "$brief" \
     "local-only: brief mixed the legacy fm/ prefix in with the configured override"
@@ -2018,9 +1903,9 @@ test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_project_brief_addendum
 test_work_economy_in_all_worker_briefs
-test_fast_lane_scaffold_and_refusals
-test_preview_on_push_scaffold_and_refusals
-test_request_checklist_placeholder_and_content_rules
+test_retired_delivery_flags_render_nothing
+test_scout_brief_has_no_request_accounting
+test_older_brief_with_request_checklist_stays_valid
 test_forge_selection_renders_correct_cli
 test_forge_external_renders_the_review_rail
 test_ship_mode_is_required_and_closed_set
