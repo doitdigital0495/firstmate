@@ -560,6 +560,7 @@ __FM_LIVE_BOARD_DATA__
     top.appendChild(badge(urgent ? "b-danger" : "b-warn", urgent ? "urgent question" : "question for you"));
     if (q.deferred_until) top.appendChild(badge("b-muted", "you deferred this until " + q.deferred_until));
     if (q.waiting_on_other_work) top.appendChild(badge("b-muted", "waits on other work first"));
+    if (q.deadline_default) top.appendChild(badge("b-warn", "proceeds on a default after " + q.deadline_default.date));
     card.appendChild(top);
     var where = el("p", "q-project");
     where.setAttribute("data-part", "project");
@@ -568,6 +569,7 @@ __FM_LIVE_BOARD_DATA__
     card.appendChild(where);
     if (q.about) card.appendChild(cardPart("about", "What this is about", el("p", "q-say", q.about)));
     if (q.purpose) card.appendChild(cardPart("purpose", "What it is for", el("p", "q-say", q.purpose)));
+    if (q.deadline_default) card.appendChild(cardPart("deadline-default", "If you do not answer", el("p", "q-say", q.deadline_default.notice)));
     // A card a manager cannot place says so itself; it never just looks short.
     var bare = q.needs_explanation !== false || !q.about || !q.purpose;
     if (bare) {
@@ -1549,7 +1551,7 @@ __FM_LIVE_BOARD_DATA__
       if (rec) {
         var r = el("span", "need-rec");
         r.appendChild(el("b", "", "Firstmate recommends: "));
-        r.appendChild(el("span", "", rec));
+        r.appendChild(el("span", "", rec + (q.deadline_default ? " - proceeds on this after " + q.deadline_default.date : "")));
         main.appendChild(r);
       }
       li.appendChild(main);

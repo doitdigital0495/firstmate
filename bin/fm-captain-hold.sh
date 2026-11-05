@@ -24,6 +24,8 @@
 #     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD] \
 #     [--context-file <path>]
 #   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release] [--expected-lifecycle <identity>]
+#   fm-captain-hold.sh answer <task-id> --deadline-default
+#   fm-captain-hold.sh defaults-due
 #   fm-captain-hold.sh contexts   (pure canonical-backlog JSON codec on stdin)
 #   fm-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
 #   fm-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
@@ -109,6 +111,23 @@
 # purpose carries a link, backtick or GUID, naming that reader.
 # A context stored before this rule stays valid and answerable, and the live
 # board marks it as needing a plain-language explanation.
+# DEADLINE DEFAULT: a context may also carry scope (a nonempty unique list from
+# product, copy, outward-facing, irreversible, money, security),
+# default_eligible (exactly "small-reversible") and default_date (YYYY-MM-DD).
+# The marker and the date come together, and they require a recommendation and
+# a scope of only product or copy; `hold` refuses anything else, including a
+# date that is not later than today unless that exact date is already published.
+# A stored context that breaks the rule reads as invalid, so it never comes due.
+# The date is the captain's last day to answer: the call comes due the UTC day
+# after it, and only while it is still open and not deferred to a later `--until`.
+# `defaults-due` lists those calls as
+# `<task-id>\t<date>\t<value>\t<label>\t<close>\t<title>` and changes nothing.
+# `answer --deadline-default` is the only way to apply one: it rechecks that the
+# call is due, generates the words itself, and records them through the same
+# guarded answer path under a label that says they are not the captain's. It uses
+# the context's close mode, so a `release` default stays attended-only like any
+# other release. A captain answer needs no special handling: it closes the call,
+# after which the lifecycle guard refuses the default.
 # The owner adds lifecycle, the exact `open --identity` stamp#answer-count.
 # Guarded context requires a valid full UTC stamp; legacy date-only/unknown
 # stamps remain read-only until owner review, never assigned an invented time.
@@ -119,6 +138,8 @@
 # malformed, misplaced, duplicate or stale active context is not answerable.
 # An active hold may acquire missing context, repeat identical context, or gain
 # an about, purpose or option detail it lacks with everything else identical,
+# or gain a deadline default it lacks with everything else identical apart from
+# a previously empty recommendation,
 # but cannot change already-published context within that lifecycle.
 # Re-holding starts without context unless the owner explicitly supplies it.
 # `contexts` enriches canonical {records:[...]} JSON with question_context;
@@ -537,6 +558,7 @@ body_has_resolution_record() {  # <task-body>
     *"Resolution recorded by fm-captain-hold."*"Captain decision:"*) return 0 ;;
     *"Resolution recorded by fm-decision-hold."*"Captain decision:"*) return 0 ;;
     *"Resolution recorded by fm-captain-hold."*"Reconciliation evidence:"*) return 0 ;;
+    *"Resolution recorded by fm-captain-hold."*"$DEADLINE_DEFAULT_LABEL"*) return 0 ;;
   esac
   return 1
 }
@@ -582,12 +604,16 @@ closed_answer_replay_mode_compatible() {  # <mode> <task-body>
   return 1
 }
 
-# The record's label is what keeps an evidence-backed reconciliation from
-# reading as the captain's own words. `reconciled` closes a call that went moot
-# and carries verified evidence; every other mode carries what the captain said.
+# The record's label is what keeps an evidence-backed reconciliation or a
+# deadline default from reading as the captain's own words. `reconciled` closes a
+# call that went moot and carries verified evidence; a deadline default carries
+# the owner's generated words; everything else carries what the captain said.
+DEADLINE_DEFAULT_LABEL="Deadline default (not the captain's words):"
+DEADLINE_DEFAULT=0
 resolution_block() {  # <mode>
   local label='Captain decision:'
   [ "$1" != reconciled ] || label='Reconciliation evidence:'
+  [ "$DEADLINE_DEFAULT" != 1 ] || label=$DEADLINE_DEFAULT_LABEL
   printf 'Resolution recorded by fm-captain-hold.\nDecision digest: %s\nResolution mode: %s\n' "$DECISION_DIGEST" "$1"
   [ -z "$ANSWER_LIFECYCLE" ] || printf 'Captain answer lifecycle: %s\n' "$ANSWER_LIFECYCLE"
   printf '\n%s\n%s\n' "$label" "$DECISION_TEXT"
@@ -887,6 +913,15 @@ load_question_context() {  # <path>; sets QUESTION_CONTEXT
   require_context_codec
   [ -f "$1" ] && [ -s "$1" ] || fail "context file must be a nonempty regular file"
   [ "$(LC_ALL=C wc -c < "$1" | tr -d ' ')" -le 8192 ] || fail "context file exceeds 8192 bytes"
+  # Name the deadline-default refusal; malformed input falls through to the codec.
+  case "$(jq -Rrs -L "$SCRIPT_DIR" 'include "fm-captain-question-context";
+    fm_question_json_decode | fm_question_default_problem // "ok"' "$1" 2>/dev/null)" in
+    marker) fail "a deadline default needs default_eligible set to exactly \"small-reversible\" together with default_date" ;;
+    missing) fail "a deadline default needs all of recommendation, default_date and scope" ;;
+    date) fail "default_date must be a real YYYY-MM-DD date" ;;
+    excluded) fail "a call with outward-facing, irreversible, money or security scope can never carry a deadline default; it waits for the captain" ;;
+    scope) fail "a deadline default is only for small reversible product or copy calls: scope may name only product or copy" ;;
+  esac
   QUESTION_CONTEXT=$(jq -RcS -s -L "$SCRIPT_DIR" 'include "fm-captain-question-context";
     fm_question_json_decode
     | if fm_question_valid(false) then fm_question_normalize
@@ -925,7 +960,7 @@ write_hold_set_stamp() {  # <id> <shown-body> <stamp> <preserve> [<normalized-co
       && [ "$(printf '%s' "$old_context" | jq -r .status)" = ready ]; then
       [ "$(printf '%s' "$old_context" | jq -cS .context)" != "$context" ] || return 0
       printf '%s' "$old_context" | jq -e -L "$SCRIPT_DIR" --argjson new "$context" \
-        'include "fm-captain-question-context"; .context as $old | $new | fm_question_adds_explanation_only($old)' >/dev/null \
+        'include "fm-captain-question-context"; .context as $old | $new | fm_question_adds_only($old)' >/dev/null \
         || fail "active question context differs; resolve this call before publishing new semantics"
       explained=1
     fi
@@ -937,7 +972,7 @@ write_hold_set_stamp() {  # <id> <shown-body> <stamp> <preserve> [<normalized-co
       $'\n'*) body=${body#$'\n'} ;;
     esac
   fi
-  # The explained context contains the one it replaces, so that line is
+  # The extended context contains the one it replaces, so that line is
   # superseded in place: same lifecycle, no second active marker, no history lost.
   if [ "$explained" = 1 ]; then
     case "$body" in
@@ -1262,6 +1297,20 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
   printf '%s %s %s\n' "$id" "$how" "$origin_state"
 }
 
+# A default whose date already passed would apply before the captain ever saw it.
+# A repeat of the date already published on this active call is not a new promise.
+require_future_default_date() {  # <hold-set> <preserve> <shown-body>; reads QUESTION_CONTEXT
+  local date published=''
+  [ -n "$QUESTION_CONTEXT" ] || return 0
+  date=$(printf '%s' "$QUESTION_CONTEXT" | jq -r '.default_date // ""')
+  [ -n "$date" ] || return 0
+  if [ "$2" = 1 ]; then
+    published=$(context_for_body "$(decode_shown_value "$3")" | jq -r '.context.default_date // ""') || published=''
+  fi
+  [ "$date" = "$published" ] || [[ "$date" > "${1%%T*}" ]] \
+    || fail "default_date must be later than today so the captain can see it first: $date"
+}
+
 command_hold() {
   local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
   local existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason original_body='' hold_status=0
@@ -1315,6 +1364,7 @@ command_hold() {
     if [ "$existing_hold_kind" = captain ] && [ "$existing_held" = yes ]; then
       preserve_hold_set=1
     fi
+    require_future_default_date "$hold_set" "$preserve_hold_set" "$(show_field "$show" body)"
     if [ -n "$title" ]; then
       existing_title=$(show_field_value "$show" title)
       [ "$existing_title" = "$title" ] || fail "existing task $id has a different title"
@@ -1322,6 +1372,7 @@ command_hold() {
   else
     [ -n "$title" ] || fail "--title is required to create task $id"
     validate_one_line title "$title"
+    require_future_default_date "$hold_set" 0 ''
     if [ -z "$repo" ] && [ -n "$origin" ] && [ -f "$STATE/$origin.meta" ]; then
       repo=$(meta_value "$STATE/$origin.meta" project)
       repo=${repo%/}
@@ -1509,8 +1560,57 @@ remove_interrupted_answer_stamp() {  # <task-id>
   rm -f -- "$tmp"
 }
 
+# The pending default of a call firstmate may proceed on today, as JSON; nonzero
+# otherwise. A date gate the captain set himself still defers it.
+deadline_default_due() {  # <task-show-output> <today-YYYY-MM-DD>
+  local show=$1 today=$2 hold_until body
+  [ "$(show_field "$show" state)" != "done" ] || return 1
+  [ "$(show_field_value "$show" hold_kind)" = captain ] || return 1
+  hold_until=$(show_field_value "$show" hold_until)
+  case "$hold_until" in
+    ''|-) : ;;
+    *) if [[ "$hold_until" > "$today" ]]; then return 1; fi ;;
+  esac
+  body=$(decode_shown_value "$(show_field "$show" body)") || return 1
+  context_for_body "$body" | jq -ce -L "$SCRIPT_DIR" --arg today "$today" \
+    'include "fm-captain-question-context";
+     select(.status == "ready") | .lifecycle as $lifecycle | .context
+     | .close as $close | fm_question_default_pending
+     | select(. != null and .date < $today) | . + {close:$close,lifecycle:$lifecycle}'
+}
+
+# Build the arguments `answer --deadline-default` runs with. An interrupted close
+# of this same default reads as stale context; regenerating its identical words
+# under its recorded lifecycle lets the answer guard finish it, while any other
+# recorded decision has a different digest and is refused.
+DEADLINE_DECISION_FILE=
+DEADLINE_DECISION_RELEASE=0
+DEADLINE_DECISION_LIFECYCLE=
+prepare_deadline_default() {  # <task-id>
+  local id=$1 show today pending words
+  require_context_codec
+  require_tasks_axi
+  task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
+  show=$TASK_SHOW_OUTPUT
+  today=${FM_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  today=${today%%T*}
+  pending=$(deadline_default_due "$show" "$today") \
+    || pending=$(context_for_body "$(decode_shown_value "$(show_field "$show" body)")" | jq -ce -L "$SCRIPT_DIR" \
+      --arg today "$today" 'include "fm-captain-question-context";
+        select(.status == "stale") | .context | .close as $close | .lifecycle as $lifecycle
+        | fm_question_default_pending | select(. != null and .date < $today)
+        | . + {close:$close,lifecycle:$lifecycle}') \
+    || fail "task $id has no deadline default due: it is answered, deferred, not eligible, or its date has not passed"
+  words=$(printf '%s' "$pending" | jq -r '"The captain had not answered by the end of \(.date) UTC, so Firstmate proceeded on its recommendation: \(.label) (\(.value)). These are not the captain'"'"'s words."')
+  DEADLINE_DECISION_LIFECYCLE=$(printf '%s' "$pending" | jq -r .lifecycle)
+  [ "$(printf '%s' "$pending" | jq -r .close)" != release ] || DEADLINE_DECISION_RELEASE=1
+  DEADLINE_DECISION_FILE=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-captain-hold-default.XXXXXX") \
+    || fail "cannot stage the deadline default"
+  printf '%s\n' "$words" > "$DEADLINE_DECISION_FILE" || fail "cannot stage the deadline default"
+}
+
 command_answer() {
-  local id=${1:-} decision_file='' release=0 show state hold_kind body outcome recorded_mode occurrence expected='' requested_mode='done'
+  local id=${1:-} decision_file='' release=0 deadline_default=0 show state hold_kind body outcome recorded_mode occurrence expected='' requested_mode='done'
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1518,15 +1618,28 @@ command_answer() {
       --decision-file) shift; decision_file=${1:-} ;;
       --release) release=1 ;;
       --expected-lifecycle) [ "$#" -ge 2 ] && [ -n "$2" ] || fail "--expected-lifecycle requires an identity"; shift; expected=$1 ;;
+      --deadline-default) deadline_default=1 ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
   done
   validate_slug task-id "$id"
+  if [ "$deadline_default" = 1 ]; then
+    # The owner chooses the words, close and guard so no caller can supply them.
+    [ -z "$decision_file" ] && [ "$release" = 0 ] && [ -z "$expected" ] \
+      || fail "--deadline-default takes no decision file, --release or --expected-lifecycle"
+    prepare_deadline_default "$id"
+    DEADLINE_DEFAULT=1
+    decision_file=$DEADLINE_DECISION_FILE
+    release=$DEADLINE_DECISION_RELEASE
+    expected=$DEADLINE_DECISION_LIFECYCLE
+  fi
   if [ "$release" = 1 ] && ! release_attended; then
+    [ -z "$DEADLINE_DECISION_FILE" ] || rm -f -- "$DEADLINE_DECISION_FILE"
     fail "task $id stays held: $RELEASE_AWAY_REASON"
   fi
   load_decision "$decision_file"
+  [ -z "$DEADLINE_DECISION_FILE" ] || rm -f -- "$DEADLINE_DECISION_FILE"
   acquire_task_control_lock "$id"
   if [ "$release" = 1 ]; then
     fm_afk_contract_lock_hold "$STATE" || fail "task $id stays held: the away-posture record is locked"
@@ -1937,6 +2050,7 @@ reconcile_request_retire() {  # <task-id>
 
 publish_parent_resolution_then_retire() {  # <task-id> <occurrence> <note>
   local id=$1 occurrence=$2 note=$3 request
+  [ "$DEADLINE_DEFAULT" != 1 ] || note="$note by deadline default, not by the captain"
   request=$(reconcile_request_path "$id")
   publish_parent_hold "$id" "$occurrence" resolved "$note"
   if [ -e "$request" ] && [ "$PARENT_HOLD_PUBLISHED" != 1 ]; then
@@ -2345,6 +2459,18 @@ open_task_ids() {
   '
 }
 
+open_captain_task_ids() {
+  local data
+  data=$(fm_backlog_data_absolute "$DATA") || return 1
+  fm_backlog_row_list "$data" --fields hold_kind 2>/dev/null | awk -F, '
+    /^  [A-Za-z0-9._-]+,/ {
+      id = $1
+      sub(/^ +/, "", id)
+      if ($2 != "done" && $NF == "captain") print id
+    }
+  '
+}
+
 # Every key token stated anywhere in a status log. A cheap candidate scan: it
 # over-includes tokens that are only prose, and status_key_closing_verb below is
 # what actually decides what the stream says about a key.
@@ -2410,6 +2536,30 @@ INNER
 $ids
 EOF
   done
+}
+
+command_defaults_due() {
+  local ids id today pending
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  # A read-only listing on a per-wake path, like `diverged`: what it cannot read
+  # stays undue, so a default only ever proceeds on a record it read in full.
+  command -v tasks-axi >/dev/null 2>&1 || return 0
+  require_context_codec
+  today=${FM_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  today=${today%%T*}
+  ids=$(open_captain_task_ids) || return 0
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    task_show "$id" || continue
+    pending=$(deadline_default_due "$TASK_SHOW_OUTPUT" "$today") || continue
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" \
+      "$(printf '%s' "$pending" | jq -r .date)" "$(printf '%s' "$pending" | jq -r .value)" \
+      "$(sanitize_field "$(printf '%s' "$pending" | jq -r .label)")" \
+      "$(printf '%s' "$pending" | jq -r .close)" \
+      "$(sanitize_field "$(show_field_value "$TASK_SHOW_OUTPUT" title)")"
+  done <<EOF
+$ids
+EOF
 }
 
 # Still an open captain call? Exit 0 yes, 1 no, 2 cannot tell (see the header).
@@ -2497,6 +2647,7 @@ case "${1:-}" in
   verify) shift; command_verify "$@" ;;
   open) shift; command_open "$@" ;;
   diverged) shift; command_diverged "$@" ;;
+  defaults-due) shift; command_defaults_due "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;

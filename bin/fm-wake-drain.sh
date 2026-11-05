@@ -4,7 +4,8 @@
 # optionally acknowledge handled records,
 # annotate every unread line for validated signal status keys, surface unread
 # informational status lines, latest captain-facing statuses not covered by a
-# newer branch outcome, OPEN DECISIONS, captain-call record divergence, and on
+# newer branch outcome, OPEN DECISIONS, captain-call record divergence, captain
+# calls due to proceed on their deadline default, and on
 # a supervision-host home the supervision session's new and unprocessed
 # outcomes (BRANCH OUTCOMES), then assert liveness.
 #
@@ -662,6 +663,47 @@ EOF
   printf 'RECORD DIVERGENCE: reconcile each one - record the captain'"'"'s own words with bin/fm-captain-hold.sh answer <task> --decision-file <path>, or re-open the status decision when that resolution was not the captain'"'"'s word.\n' || return 1
 }
 
+# Print DEFAULTS DUE: captain calls whose deadline default has come due. Nothing
+# here applies anything; bin/fm-captain-hold.sh's `defaults-due` owns which calls
+# count and `answer --deadline-default` owns the record. Bounded and silent like
+# RECORD DIVERGENCE, and a guard failure never changes the drain's exit status.
+print_defaults_due_section() {
+  local due task date value label close title line shown=0 omitted=0 bound
+  local output='' used=0 bytes item_bytes=220 global_bytes=2000
+
+  bound=${FM_DEFAULTS_DUE_TIMEOUT:-20}
+  case "$bound" in ''|*[!0-9]*|0) bound=20 ;; esac
+  due=$(fm_run_timed "$bound" "$SCRIPT_DIR/fm-captain-hold.sh" defaults-due 2>/dev/null) || return 0
+  [ -n "$due" ] || return 0
+
+  while IFS=$(printf '\t') read -r task date value label close title; do
+    [ -n "$task" ] || continue
+    line="$task due to proceed on default \"$label\" ($value, close $close): no captain answer by $date"
+    [ -z "$title" ] || line="$line: $title"
+    fm_cap_line_var "$line" $((item_bytes - 1))
+    line=$FM_LINE_CAP_LINE
+    bytes=$(( ${#line} + 1 ))
+    if [ $((used + bytes)) -gt "$global_bytes" ]; then
+      omitted=$((omitted + 1))
+      continue
+    fi
+    output="$output$line
+"
+    used=$((used + bytes))
+    shown=$((shown + 1))
+  done <<EOF
+$due
+EOF
+
+  [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ] || return 0
+  printf 'DEFAULTS DUE (no captain answer by the deadline - nothing was applied automatically):\n' || return 1
+  printf '%s' "$output" || return 1
+  if [ "$omitted" -gt 0 ]; then
+    printf 'DEFAULTS DUE: %d more omitted (byte cap)\n' "$omitted" || return 1
+  fi
+  printf 'DEFAULTS DUE: apply each with bin/fm-captain-hold.sh answer <task> --deadline-default, steer the worker with that answer as a deadline default, and tell the captain; a close release default is refused while he is away and stays listed.\n' || return 1
+}
+
 # Print BRANCH OUTCOMES: what the supervision host's session recorded since
 # main last drained (docs/supervision-host.md "Captain outcomes"). Off Pi this
 # presentation is what the Pi branch's transcript entries are. It runs only for
@@ -895,6 +937,8 @@ print_status_presentation() {  # [<deduped-raw-rows>]
     fi
   fi
   if [ "$rc" -eq 0 ] && [ -n "$snapshot" ]; then print_status_sections "$snapshot" "$fully_presented" || rc=1; fi
+  # Outside the status sections: a home with no status files still owes a due default.
+  print_defaults_due_section || rc=1
   fm_lock_release "$lock"
   return "$rc"
 }

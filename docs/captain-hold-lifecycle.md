@@ -213,6 +213,16 @@ The canonical snapshot and home summary preserve that validated context; the sep
 The live board page (`bin/fm-live-board.sh`) queues a Lavish choice carrying that close mode and lifecycle, and `bin/fm-procevent-lavish.sh answers` relays the lifecycle as the intake's guard field.
 `tests/fm-captain-hold-lifecycle.test.sh`, `tests/fm-live-board-snapshot.test.sh` and `tests/fm-live-board.test.sh` exercise this mechanism through public commands, including context preservation, answer-before-rehold refusal, the writer's plain-language refusals and the card of a call stored without its explanation.
 
+## Deadline defaults
+
+`bin/fm-captain-hold.sh --help` owns the context fields, eligibility refusals, due rule and record format.
+The policy lives in the `captain-hold-lifecycle` skill.
+The mechanism adds no second decision store: the default lives in the question context, `defaults-due` reads it, and `answer --deadline-default` writes through the guarded answer path.
+The wake drain prints due calls as `DEFAULTS DUE` and applies nothing, so a heartbeat surfaces them and firstmate acts.
+Eligibility is re-checked on every read, so a stored context that breaks the rule is invalid and never comes due.
+The live board card and `decisions_open[].pending_default` in Bearings carry the date and plain-words notice, and a Bearings summary or gate reason names the date even when the call has aged out of Captain's Call.
+`tests/fm-captain-hold-lifecycle.test.sh` and `tests/fm-live-board-snapshot.test.sh` exercise this through public commands.
+
 ## Answer-time resolution
 
 "A keyed answer resolves its matching captain-held task" is one capability with one owner.

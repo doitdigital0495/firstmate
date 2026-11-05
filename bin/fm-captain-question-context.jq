@@ -23,9 +23,34 @@ def fm_question_lifecycle_valid:
 def fm_question_text($max; $newlines):
   type == "string" and length > 0 and length <= $max and test("[^[:space:]]")
   and (test(if $newlines then "[\\x00-\\x09\\x0b-\\x1f\\x7f]" else "[\\x00-\\x1f\\x7f]" end) | not);
+def fm_question_date:
+  type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+  and (try (((. + "T00:00:00Z") | fromdateiso8601 | todateiso8601)[:10] == .) catch false);
+# The first unmet deadline-default rule, or null. Runs on every read as well as
+# at authoring, so a stored context that breaks it is invalid and never comes due.
+def fm_question_default_problem:
+  if (has("default_eligible") or has("default_date")) | not then null
+  elif .default_eligible != "small-reversible" then "marker"
+  elif .recommendation == null or .default_date == null or ((.scope // []) == []) then "missing"
+  elif (.default_date | fm_question_date | not) then "date"
+  elif (.scope | type) != "array" then "scope"
+  elif any(.scope[]; IN("outward-facing","irreversible","money","security")) then "excluded"
+  elif any(.scope[]; IN("product","copy") | not) then "scope"
+  else null end;
+def fm_question_scope_valid:
+  . == null or (type == "array" and length > 0 and (unique | length) == length
+    and all(.[]; IN("product","copy","outward-facing","irreversible","money","security")));
+# What the captain reads and firstmate acts on; null when the call has no default.
+def fm_question_default_pending:
+  if .default_eligible == null then null else
+    .recommendation as $value
+    | ([(.options // [])[] | select(.value == $value) | .label][0] // $value) as $name
+    | {date:.default_date,value:$value,label:$name,
+       notice:("If you have not answered by the end of \(.default_date) UTC, Firstmate will proceed on its recommendation: \($name). Your own answer before then always wins.")}
+  end;
 def fm_question_valid($stored):
   type == "object"
-  and ((keys - (["schema","close","about","purpose","question","options","recommendation","subject"]
+  and ((keys - (["schema","close","about","purpose","question","options","recommendation","subject","scope","default_eligible","default_date"]
     + if $stored then ["lifecycle"] else [] end)) | length == 0)
   and .schema == "fm-captain-question.v1" and (.close | IN("done","release"))
   and (if $stored then (.lifecycle | fm_question_lifecycle_valid) else true end)
@@ -40,6 +65,7 @@ def fm_question_valid($stored):
     and (map(.value) | length == (unique | length)))
   and (.recommendation as $recommendation
     | $recommendation == null or any((.options // [])[]; .value == $recommendation))
+  and (.scope | fm_question_scope_valid) and (fm_question_default_problem == null)
   and (.subject == null or (.subject | type == "object" and keys == ["artifact","version"]
     and (.artifact | fm_question_slug(128))
     and (.version | type == "string" and length <= 64 and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))));
@@ -53,18 +79,25 @@ def fm_question_explanation_problem:
     then "markup"
   elif any((.options // [])[]; .detail == null) then "option"
   else null end;
-# An active call may gain the explanation it lacks; nothing already published changes.
-def fm_question_adds_explanation_only($old):
+# An active call may gain the explanation or the deadline default it lacks; nothing
+# already published changes. A default may name the recommendation it brings with it.
+def fm_question_adds_only($old):
   def bare: del(.about, .purpose) | .options |= map(del(.detail));
+  def undated: del(.default_eligible, .default_date, .scope, .recommendation);
   . as $new
-  | ($new | bare) == ($old | bare)
+  | ($new | bare | undated) == ($old | bare | undated)
+  and all("default_eligible", "default_date", "scope", "recommendation"; . as $field
+    | $old[$field] == null or $new[$field] == $old[$field])
+  and ($new.recommendation == $old.recommendation or $new.default_eligible != null)
   and all("about", "purpose"; . as $field | $old[$field] == null or $new[$field] == $old[$field])
   and all(range(0; $old.options | length);
     . as $i | $old.options[$i].detail == null or $new.options[$i].detail == $old.options[$i].detail);
 def fm_question_normalize:
   {schema,close,options:(.options // []),recommendation:(.recommendation // null),subject:(.subject // null)}
   + (if .about == null then {} else {about} end) + (if .purpose == null then {} else {purpose} end)
-  + if .question == null then {} else {question} end;
+  + (if .question == null then {} else {question} end)
+  + (if .scope == null then {} else {scope} end)
+  + if .default_eligible == null then {} else {default_eligible,default_date} end;
 def fm_question_lifecycle:
   if (.hold_set | fm_question_timestamp) then
     .hold_set + "#" + ([.body_lines[]? | select(test("^Resolution recorded by fm-(captain|decision)-hold\\.$"))] | length | tostring)

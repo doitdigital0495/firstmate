@@ -272,6 +272,29 @@ FM_HOME="$h" FM_ROOT_OVERRIDE="$ROOT" FM_SNAPSHOT_NOW=2026-07-25T00:00:00Z \
   "$ROOT/bin/fm-bearings-snapshot.sh" --json > "$TMP_ROOT/context-bearings.json"
 check "$TMP_ROOT/context-bearings.json" 'all(.decisions_open[]; has("question_context") | not)' \
   'safe context changed the original Bearings digest'
+# A deadline default reaches the captain's page and Bearings with its date, in plain words.
+default_home=$(home deadline-default)
+default_context=$(printf '%s' "$context" | jq -c '.close = "done" | .options[0].detail = "Ships today."
+  | .about = "The widget is ready to go out." | .purpose = "Your answer lets it ship."
+  | . + {scope:["copy"],default_eligible:"small-reversible",default_date:"2026-08-01"}')
+{
+  printf '## In flight\n\n## Queued\n'
+  printf -- '- [ ] with-default - Choose widget (repo: alpha) (kind: ship) (hold: choose) (hold-kind: captain)\n'
+  printf '  Captain hold set: 2026-07-24T00:00:00Z\n  Captain question context: %s\n' "$default_context"
+  printf '\n## Done\n'
+} > "$default_home/data/backlog.md"
+collect "$default_home" "$TMP_ROOT/default-input.json"
+render "$TMP_ROOT/default-input.json" "$TMP_ROOT/default-board.json"
+check "$TMP_ROOT/default-board.json" 'any(.projects[].questions[]; .id == "with-default"
+    and .context.default_date == "2026-08-01" and .context.default_eligible == "small-reversible"
+    and .context.scope == ["copy"])' 'the live board snapshot dropped the validated default'
+FM_HOME="$default_home" FM_ROOT_OVERRIDE="$ROOT" FM_SNAPSHOT_NOW=2026-07-25T00:00:00Z \
+  "$ROOT/bin/fm-bearings-snapshot.sh" --json --all-decisions > "$TMP_ROOT/default-bearings-digest.json"
+check "$TMP_ROOT/default-bearings-digest.json" 'any(.decisions_open[]; .id == "with-default"
+    and .pending_default.date == "2026-08-01" and (.summary | test("proceeds on default after 2026-08-01")))' \
+  'Bearings did not state the pending default and its date'
+pass 'a deadline default reaches the board snapshot and Bearings'
+
 # A malformed replayed structured field is not trusted merely because it says ready.
 jq '(.backlog.records[] | select(.id == "valid-release") | .question_context.context).private_extra = "private context sentinel"
   | (.backlog.records[] | select(.id == "valid-done") | .question_context.status) = "private context sentinel"' \
