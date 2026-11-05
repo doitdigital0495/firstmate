@@ -217,7 +217,7 @@ Record the resulting mode, `yolo` merge posture, and the one-line reason for any
 Name the exact context-doc section or file range to read in the brief, not a whole guide.
 Split large multi-part changes, such as report data, visuals, and validation, into sequential tasks with a fresh worker session for each.
 
-Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap beyond the home's lane cap (`config/lane-capacity`, 30 by default in this fork) when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
+Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap beyond the home's lane cap (`config/lane-capacity`, 50 by default in this fork) when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
 A project's declared machine capacity (`config/project-capacity`) and the machine [load guard](docs/configuration.md#spawn-load-guard) still bound that dispatch: a spawn beyond either exits 75 without launching, and its item stays queued rather than blocked.
 When a change stacks on an earlier unmerged change, land the earlier one first and rebase the stacked one onto main before its review, and never open a third stacked layer.
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.

@@ -849,13 +849,13 @@ The optional local, gitignored `config/lane-capacity` file says how many ship an
 With the file absent nothing changes: the report prints counts and host figures only, never invents a target, never advises holding dispatch, and nothing is published; a malformed value is reported as invalid rather than guessed.
 Persistent secondmates hold no lane.
 The file is a per-machine choice and is not inherited by secondmate homes, so each home owns its own numbers.
-This fork's documented default cap is 30 ordinary workers in parallel, which the primary firstmate and persistent secondmates do not count toward ([`decisions.md`](decisions.md)).
+This fork's documented default cap is 50 ordinary workers in parallel, which the primary firstmate and persistent secondmates do not count toward ([`decisions.md`](decisions.md)).
 
 The first non-comment line is the cap, one non-negative integer, so a file holding only that integer keeps its earlier meaning.
 Optional lines follow, one key and its value per line, with `#` starting a comment:
 
 ```text
-30                     # the cap: lanes this home runs at once
+50                     # the cap: lanes this home runs at once
 min-avail-gb 5         # keep this much memory available; a 1 GB lane must fit above it
 min-disk-gb 60         # every disk row must stay above this many GB
 pressure-file ~/.cache/lookout-beat/beat.json      # repeatable; a lookout.beat 1.x document
