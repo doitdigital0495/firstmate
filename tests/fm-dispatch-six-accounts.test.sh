@@ -5,7 +5,8 @@
 #       and its own unknown quota never stalls the choice while it is held
 #   S9  with cross-account routing off nothing falls onto the supervisor login
 #   S3  a rule's never_providers bans a provider, also inside an ambiguous union
-#   C3  an unreadable five-hour window is ignored, never incomplete
+#   C3  an unreadable five-hour window never makes a choice incomplete
+#   F5  a known five-hour limit holds a seat until its reset; idle, unreadable, or reset-less never blocks
 #   R11 a rate-limited read reuses that store's last good reading under 30 min
 #   S4  a credential failure is named as such, never as unknown quota
 #   T   seat_tier strict order, per-delivery tiers, and their reserve and class rules
@@ -412,7 +413,59 @@ assert_contains "$out" 'status: clear' "a credential failure does not stall the 
 assert_contains "$out" 'credential unusable for provider claude on account claude2' 'the credential failure is named as such'
 assert_contains "$(chosen)" "--account 'claude1'" 'the remaining worker seat runs the work'
 reset_quota
-pass 'C3, R11 and S4: unreadable five-hour windows are ignored, recent readings reused under 24 hours, credential failures named'
+pass 'C3, R11 and S4: unreadable five-hour windows do not block, recent readings reused under 24 hours, credential failures named'
+
+# ---- F5 -----------------------------------------------------------------------
+# five_hour <key> <jq filter over the five-hour window> [row runway]: the row follows the window.
+five_hour() {
+  jq --arg runway "${3:-through_reset}" ".providers[0] |= (.windows[0] |= ($2) | .quotaSemantics.effectiveAvailability[0] |= (.effectivePercentRemaining = ([\$windows_pct, .effectivePercentRemaining] | min) | .runway = {status:\$runway}))" \
+    --argjson windows_pct "$(jq -n "{} | ($2) | .percentRemaining // 100")" "$QDIR/$1.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/$1.json"
+}
+write_response rule_3 0.95 '{"rule_1":0.01,"rule_2":0.02,"rule_3":0.95,"default":0.02}'
+reset_quota
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude2'" 'divergence check: claude2 outranks claude1 on spendPriority'
+for runway in exhausted_now through_reset; do
+  reset_quota
+  five_hour claude2 '.percentRemaining = 0 | .resetsAt = "2030-01-01T05:00:00Z"' "$runway"
+  run "$BRIEF" --task six
+  assert_contains "$(chosen)" "--account 'claude1'" "a seat at its known five-hour limit is held ($runway): $out"
+  assert_contains "$out" 'at its five-hour limit, held until 2030-01-01T05:00:00Z' "the held line names the reset ($runway): $out"
+  assert_contains "$out" 'five_hour:0%@2030-01-01T05:00:00Z' "the held line shows the window ($runway)"
+  # The same window with no published reset cannot hold the seat.
+  reset_quota
+  five_hour claude2 '.percentRemaining = 0 | del(.resetsAt)' "$runway"
+  run "$BRIEF" --task six
+  assert_contains "$out" 'status: clear' "a five-hour window with no published reset does not block ($runway): $out"
+  assert_contains "$out" 'five_hour=100% used, no published reset, does not block' "the line says why ($runway): $out"
+  assert_not_contains "$out" 'held until' "no hold is claimed without a reset ($runway)"
+done
+# Alone on the row, the reset-less seat starts rather than being refused.
+jq '.rules[2].use = [.rules[2].use[1]]' "$TMP_ROOT/rules-original" > "$RULES"
+write_response rule_3 0.95 '{"rule_1":0.01,"rule_2":0.02,"rule_3":0.95,"default":0.02}'
+run "$BRIEF" --task six
+assert_contains "$out" 'status: clear' "a lone seat with a reset-less five-hour window starts: $out"
+assert_contains "$(chosen)" "--account 'claude2'" 'the lone reset-less seat is the one started'
+# A profile floor reads through the same rule.
+jq '.rules[2].use[1].floor = {scope:"all_models",min_percent:10}' "$TMP_ROOT/rules-original" > "$RULES"
+write_response rule_3 0.95 '{"rule_1":0.01,"rule_2":0.02,"rule_3":0.95,"default":0.02}'
+run "$BRIEF" --task six
+assert_not_contains "$out" 'profile floor all_models below' "a reset-less five-hour window does not trip a floor: $out"
+assert_contains "$out" 'status: clear' "the floored seat still starts: $out"
+cp "$TMP_ROOT/rules-original" "$RULES"
+write_response rule_3 0.95 '{"rule_1":0.01,"rule_2":0.02,"rule_3":0.95,"default":0.02}'
+reset_quota
+five_hour claude2 '.percentRemaining = 100 | del(.resetsAt)'
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude2'" "an idle five-hour window does not block: $out"
+assert_contains "$out" 'five_hour=not started (idle window), does not block' 'the idle window is named on its line'
+reset_quota
+five_hour claude2 'del(.percentRemaining, .resetsAt)'
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude2'" "an unreadable five-hour window does not block: $out"
+assert_contains "$out" 'five_hour=unreadable, does not block' 'the unreadable window is named on its line'
+reset_quota
+pass 'F5: a known five-hour limit holds a seat until its named reset; idle, unreadable, and reset-less windows never block'
 
 # ---- P: pipeline seat rows -------------------------------------------------------
 # The fixed row per no-mistakes step: pool 1 is claude1 and claude2, pool 2 is
@@ -511,7 +564,7 @@ set_quota claude2 claude 60 5
 short_seat claude2 3808
 tweak claude2 'del(.windows[0].resetsAt)'
 pipe review
-assert_equals claude2 "$(pfield .seat)" 'an idle five-hour window with no reset stays noise'
+assert_equals claude2 "$(pfield .seat)" 'a five-hour window with no reset does not count as short'
 pipeline_quota
 short_seat claude1 600
 short_seat claude2 700
@@ -519,6 +572,18 @@ pipe review
 assert_equals '1 claude1' "$(pfield '"\(.pool) \(.seat)"')" 'short runways alone keep pool 1, ranked as usual'
 assert_contains "$(pfield .reason)" 'no open seat lasts to reset' 'that is stated'
 pass 'P: a live five-hour window decides inside a tier and does not open pool 2'
+
+# A pipeline seat at a known five-hour limit waits for its reset; one with no published reset never does.
+pipeline_quota
+set_quota claude2 claude 60 5
+five_hour_out claude2 2030-01-01T06:00:00Z
+pipe review
+assert_equals claude1 "$(pfield .seat)" 'a seat at its known five-hour limit is held'
+assert_contains "$(pfield '.candidates[] | select(.seat == "claude2") | .reason')" 'held until 2030-01-01T06:00:00Z' 'the seat view names the reset'
+tweak claude2 'del(.windows[0].resetsAt)'
+pipe review
+assert_equals claude2 "$(pfield .seat)" 'the same limit with no published reset does not hold the seat'
+pass 'P: a five-hour limit holds a pipeline seat only when its reset is published'
 
 # Pool 2 opens only when pool 1 has no room, and claude3 comes first inside it.
 pipeline_quota

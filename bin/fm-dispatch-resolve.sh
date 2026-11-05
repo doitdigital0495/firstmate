@@ -41,7 +41,9 @@
 #   every applicable quota window - session, weekly, and model-scoped - known with
 #   its remaining percent and reset time, or positively established absent for that
 #   plan, so a measured weekly-only plan is complete while an unmeasured or
-#   rate-limited provider is unreadable.
+#   rate-limited provider is unreadable. A five-hour window that is idle, unreadable,
+#   or has no published reset is left out of that gate and never blocks a start;
+#   a known one at its limit holds the seat until its reset, named on the line.
 #   While any candidate is rankable, an unreadable one stays listed as skipped and
 #   is never selected or treated as healthy; a skipped pool with a named warm-up
 #   (zai-window-warm for Z.ai) still gets that warm-up and one re-read first.
@@ -66,7 +68,7 @@
 #   true holds that candidate out of selection while any non-fallback candidate
 #   of the same provider family still has seat capacity: only the weekly (7d)
 #   window decides, so a seat is at its limit when that window is at or above
-#   100% used or a row it bounds reports runway exhausted_now, and a session
+#   100% used or a row it limits reports runway exhausted_now, and a session
 #   (5h) window alone never releases the reserve. Once every same-family
 #   non-fallback seat is at its limit the reserve candidate is eligible, still
 #   ranked below every non-fallback candidate, and its candidate line and the
@@ -123,7 +125,7 @@
 #     fallback: <runner-up rule taken when the picked rule missed its own floor>
 #     reason: <why the status is not clear>
 #     preferred_provider: <family and preference or fallback decision, when applied>
-#     candidate: <harness>:<model> provider=.. windows=<id>:<pct>%@<reset>,.. [account=..] scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | eligible, reserve pick: <why the tier fired> | not eligible: <reason> | not eligible: quota unreadable, skipped: <reason> | incomplete: <reason>
+#     candidate: <harness>:<model> provider=.. windows=<id>:<pct>%@<reset>,.. [<five-hour id>=<why it does not block>] [account=..] scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | eligible, reserve pick: <why the tier fired> | not eligible: <reason> | not eligible: quota unreadable, skipped: <reason> | incomplete: <reason>
 #     profile: --harness <h> [--model <m>] [--effort <e>]     (status clear only)
 #     pick: <CODE> ...; row <id> ...; option <n>: <profile> ... (captain-pick only)
 #     receipt: <name> (one launch, valid <n>s) | none - ... | not written (...)
@@ -739,19 +741,45 @@ FM_DR_SEAT_JQ='
       ($m != "" and (.scope == ("model:" + $bare) or .scope == ("product:" + $bare))) or
       ($qs != null and .scope == $qs)
     )];
+  def provider_windows($p; $lane): (prov($p; $lane).windows // []);
+  def clean_reset($t): ($t | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z"));
+  # A five-hour window counts when its used percent and published reset are both
+  # known, so a seat at that limit is held until the reset. An idle window (0%
+  # used, no reset), an unreadable one, or one with no published reset never
+  # blocks a start.
+  # Run on the snapshot: the ids of five-hour windows (by id or kind).
+  def five_hour_ids($p; $lane):
+    (["five_hour"] + [provider_windows($p; $lane)[] | select((.kind // "") == "five_hour" or (.kind // "") == "session") | .id]) | unique;
+  def only_five_hour_unknown($r; $five):
+    (($r.selection.unmeasurableWindowIds // $r.runway.unmeasurableWindowIds // []) as $u |
+     ($r.effectivePercentRemaining | type) == "number" and ($u | length) > 0 and all($u[]; . as $id | $five | index($id) != null));
+  def five_hour_cannot_hold($id; $five; $windows):
+    ($five | index($id)) != null and
+    (([$windows[] | select(.id == $id)] | first) as $w |
+     $w == null or ($w.percentRemaining | type) != "number" or ($w.resetsAt | type) != "string");
+  # The windows that set the limit of a row: those it names, else those bounding
+  # it, narrowed to the ones with the least room left.
+  def tightest_window_ids($r; $windows):
+    ([($r.runway.limitingWindowId // empty), ($r.runway.limitingWindowIds // [])[], ($r.limitingWindowIds // [])[]] | unique) as $named |
+    (if ($named | length) > 0 then $named else ($r.boundedBy // []) end) as $ids |
+    ([$windows[] | select(.id as $id | $ids | index($id) != null) | select((.percentRemaining | type) == "number")]) as $read |
+    if ($read | length) == 0 then $ids
+    else ($read | map(.percentRemaining) | min) as $low | [$read[] | select(.percentRemaining == $low) | .id] end;
+  def limit_cannot_hold($r; $five; $windows):
+    tightest_window_ids($r; $windows) as $ids |
+    ($ids | length) > 0 and all($ids[]; five_hour_cannot_hold(.; $five; $windows));
   def floor_state($f; $p; $lane):
+    five_hour_ids($p; $lane) as $five | provider_windows($p; $lane) as $windows |
     if $f == null then "none"
     elif prov($p; $lane) == null or (measured($p; $lane) | not) then "unmeasured"
     else [rows($p; $lane)[] | select(.scope == $f.scope)] as $matches
       | if ($matches | length) == 0 then "absent"
-        elif any($matches[]; .status != "known") then "unmeasured"
-        elif any($matches[]; .effectivePercentRemaining < $f.min_percent) then "below"
+        elif any($matches[]; .status != "known" and (only_five_hour_unknown(.; $five) | not)) then "unmeasured"
+        elif any($matches[]; .effectivePercentRemaining < $f.min_percent and (limit_cannot_hold(.; $five; $windows) | not)) then "below"
         else "ok"
         end
     end;
-  def provider_windows($p; $lane): (prov($p; $lane).windows // []);
   def window_row($p; $lane; $id): ([provider_windows($p; $lane)[] | select(.id == $id)] | first) // null;
-  def clean_reset($t): ($t | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z"));
   # Fallback-only reserve seat test: only the weekly window decides whether a
   # non-fallback seat still has capacity, because the weekly allowance is the
   # real limit such a reserve protects; a session (5h) window alone never
@@ -765,8 +793,10 @@ FM_DR_SEAT_JQ='
       reserve_weekly_window($snap; $p; $lane) as $w |
       if $w == null then false
       else (($w.percentRemaining // 100) <= 0) or
+        ($snap | provider_windows($p; $lane)) as $windows |
         any(($snap | rows($p; $lane))[];
-            ((.boundedBy // []) | index($w.id)) != null and (.runway.status // "") == "exhausted_now")
+            ((.boundedBy // []) | index($w.id)) != null and (.runway.status // "") == "exhausted_now"
+            and (tightest_window_ids(.; $windows) | index($w.id)) != null)
       end
     end;
   def unmeasured_ids($p; $lane):
@@ -780,15 +810,6 @@ FM_DR_SEAT_JQ='
     (if ($ids | length) == 0
      then [provider_windows($p; $lane)[] | select((.kind // "") != "model") | .id] | dedupe
      else $ids end);
-  # Captain 2026-11-02 (C3): a readable five-hour window counts; one that is
-  # missing or unreadable is ignored on every account and never makes the
-  # choice incomplete.
-  # Run on the snapshot: the ids of five-hour windows (by id or kind).
-  def five_hour_ids($p; $lane):
-    (["five_hour"] + [provider_windows($p; $lane)[] | select((.kind // "") == "five_hour" or (.kind // "") == "session") | .id]) | unique;
-  def only_five_hour_unknown($r; $five):
-    (($r.selection.unmeasurableWindowIds // $r.runway.unmeasurableWindowIds // []) as $u |
-     ($r.effectivePercentRemaining | type) == "number" and ($u | length) > 0 and all($u[]; . as $id | $five | index($id) != null));
   def credential_failed($p; $lane): ((prov($p; $lane).state.status // "") == "auth_required");
   def completeness($p; $lane; $c):
     (five_hour_ids($p; $lane)) as $five |
@@ -820,7 +841,7 @@ FM_DR_SEAT_JQ='
             end]) as $wev |
           ([$wev[] | select(.missing)] | map(.id)) as $miss |
           if ($miss | length) > 0 then {complete: false, missing: $miss, reason: "windows without known percent or reset: \($miss | join(", "))"}
-          elif ($wev | length) == 0 then {complete: false, missing: $ids, reason: "no readable window besides an ignored five-hour window for provider \($p)"}
+          elif ($wev | length) == 0 then {complete: false, missing: $ids, reason: "no readable window besides a five-hour window that cannot be read for provider \($p)"}
           else {complete: true, windows: $wev}
           end
         end
@@ -828,7 +849,14 @@ FM_DR_SEAT_JQ='
     end;
   def evidence($rows):
     $rows | map({scope, status, pct: (.effectivePercentRemaining // null), runway: (.runway.status // null), spendPriority: (.selection.spendPriority // null)});
-  def evaluate($c):
+  # Why a row is out, naming the reset when only its five-hour window holds it.
+  def limit_reason($base; $r; $five; $windows):
+    tightest_window_ids($r; $windows) as $ids |
+    if ($ids | length) > 0 and all($ids[]; ($five | index(.)) != null) then
+      ([$windows[] | select(.id as $id | $ids | index($id) != null) | .resetsAt] | map(clean_reset(.)) | max) as $reset |
+      "\($base): at its five-hour limit, held until \($reset)"
+    else $base end;
+  def evaluate_seat($c):
     (provider_of($c)) as $p | (lane_of($c)) as $lane |
     if $c.account and $account_quotas[$c.account] == null then
       {profile: $c, provider: $p, eligible: false, reason: "cross-account routing disabled or account not registered"}
@@ -846,12 +874,14 @@ FM_DR_SEAT_JQ='
       (evidence($rows)) as $bounds |
       (floor_state($c.floor; $p; $lane)) as $profile_floor_state |
       (completeness($p; $lane; $c)) as $gate |
-      if any($rows[]; (.runway.status // "") == "exhausted_now") then
-        ($rows | map(select((.runway.status // "") == "exhausted_now")) | first) as $bad |
-        {profile: $c, provider: $p, bounds: $bounds, windows: ($gate.windows // null), scope: $bad.scope, pct: ($bad.effectivePercentRemaining // null), runway: $bad.runway.status, eligible: false, reason: "runway exhausted_now at \($bad.scope)"}
-      elif any($rows[]; .status == "known" and (.effectivePercentRemaining | type) == "number" and .effectivePercentRemaining <= 0) then
-        ($rows | map(select(.status == "known" and (.effectivePercentRemaining | type) == "number" and .effectivePercentRemaining <= 0)) | first) as $bad |
-        {profile: $c, provider: $p, bounds: $bounds, windows: ($gate.windows // null), scope: $bad.scope, pct: $bad.effectivePercentRemaining, runway: $bad.runway.status, eligible: false, reason: "0% remaining at \($bad.scope)"}
+      (five_hour_ids($p; $lane)) as $five | (provider_windows($p; $lane)) as $windows |
+      ([$rows[] | select(limit_cannot_hold(.; $five; $windows) | not)]) as $limits |
+      if any($limits[]; (.runway.status // "") == "exhausted_now") then
+        ($limits | map(select((.runway.status // "") == "exhausted_now")) | first) as $bad |
+        {profile: $c, provider: $p, bounds: $bounds, windows: ($gate.windows // null), scope: $bad.scope, pct: ($bad.effectivePercentRemaining // null), runway: $bad.runway.status, eligible: false, reason: limit_reason("runway exhausted_now at \($bad.scope)"; $bad; $five; $windows)}
+      elif any($limits[]; .status == "known" and (.effectivePercentRemaining | type) == "number" and .effectivePercentRemaining <= 0) then
+        ($limits | map(select(.status == "known" and (.effectivePercentRemaining | type) == "number" and .effectivePercentRemaining <= 0)) | first) as $bad |
+        {profile: $c, provider: $p, bounds: $bounds, windows: ($gate.windows // null), scope: $bad.scope, pct: $bad.effectivePercentRemaining, runway: $bad.runway.status, eligible: false, reason: limit_reason("0% remaining at \($bad.scope)"; $bad; $five; $windows)}
       elif $profile_floor_state == "below" then
         ([rows($p; $lane)[] | select(
           .scope == $c.floor.scope and
@@ -888,6 +918,18 @@ FM_DR_SEAT_JQ='
          spendPriority: $limiting.selection.spendPriority, runway: $limiting.runway.status, binding_reset: $binding_reset,
          reading_age: $reading_age, eligible: true, reason: "ok"}
       end
+    end;
+  # A five-hour window that cannot hold the seat stays visible on its line.
+  def five_hour_state($w):
+    if ($w.percentRemaining | type) != "number" then "unreadable, does not block"
+    elif ($w.percentRemaining >= 100) then "not started (idle window), does not block"
+    else "\(100 - $w.percentRemaining)% used, no published reset, does not block" end;
+  def evaluate($c):
+    evaluate_seat($c) |
+    if .windows == null then .
+    else (account_quota($c) | five_hour_ids(provider_of($c); lane_of($c)) as $five | provider_windows(provider_of($c); lane_of($c)) as $windows |
+      [$windows[] | select(five_hour_cannot_hold(.id; $five; $windows)) | "\(.id)=\(five_hour_state(.))"]) as $open |
+      if ($open | length) > 0 then . + {five_hour_open: $open} else . end
     end;
   # Fallback-only reserve tier over one candidate set (see the header).
   def reserve_tier: . as $cands | map(. as $cand |
@@ -979,7 +1021,7 @@ fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
       end
     end;
   # A live window that will not last: projected exhaustion inside the usable
-  # runway limit. An idle five-hour window with no reset stays noise.
+  # runway limit. A five-hour window with no published reset does not count.
   def limiting_ids: [(.runway.limitingWindowId // empty), (.runway.limitingWindowIds // [])[], (.limitingWindowIds // [])[]];
   def short_runway($e):
     if $sq then false
@@ -989,8 +1031,7 @@ fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
         (.runway.status // "") == "projected_exhaustion"
         and ((.runway.usableRunwaySeconds | type) == "number" and .runway.usableRunwaySeconds < 5400)
         and (limiting_ids as $ids | (($ids | length) > 0 and all($ids[]; . as $id |
-              ($five | index($id)) != null
-              and (([$windows[] | select(.id == $id)] | first | .resetsAt? | type) != "string"))) | not))
+              five_hour_cannot_hold($id; $five; $windows))) | not))
     end;
   # When an out seat comes back: its emptied windows (the latest of them), else
   # its weekly window. Null when no reset is known.
@@ -1374,6 +1415,7 @@ TEXT=$(jq -r '
              then " (" + ([.state_error // empty] + (if .retry_after then [("retry after " + (.retry_after | flat))] else [] end) | join("; ")) + ")"
              else "" end)
         elif .windows then "  windows=\(winstr(.windows))" else "" end)
+      + (if .five_hour_open then "  " + (.five_hour_open | map(flat) | join("  ")) else "" end)
       + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))  runway=\(show(.runway))" else "" end)
       + (if (.bounds // [] | length) > 1 then "  bounds=" + ([.bounds[] | "\(.scope | flat):\(show(.pct))%/\((.runway // .status) | flat)"] | join(",")) else "" end)
       + (if .reading_age != null then "  reading_age=\(.reading_age | flat)s (recent reading reused)" else "" end)

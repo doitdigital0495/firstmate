@@ -48,10 +48,8 @@
 #     has already done that, so those cases also pass as quota unknown.
 #     On a measured pass (exit 0) the chosen candidate's full window table with
 #     used percents and notes is printed; an unpublished 5h window shows as "not
-#     published by provider", never a number. An idle Claude 5h window (0% used,
-#     no reset time because no window has been opened) cannot be exhausted, so it
-#     passes and shows as "not started (idle window)"; any other unreadable 5h
-#     window is ignored (see "Five-hour windows" below).
+#     published by provider", never a number. See "Five-hour windows" below for
+#     how an idle, unreadable, or reset-less 5h window shows.
 #     --consume (the launch itself, bin/fm-spawn.sh) atomically marks the record
 #     spent, so every launch needs its own read; without it the gate is a preview
 #     that marks nothing. A consuming pass on an unverified reading (quota
@@ -75,9 +73,12 @@
 #   never shows one seat's quota under the other's name. Identical canonical
 #   store triples (symlinks resolved) are read once.
 #
-# Five-hour windows (captain 2026-11-02): a readable five-hour window counts
-#   like any other; one that is missing or has no readable used percent or
-#   reset time is ignored and shown as "unreadable, ignored", never a refusal.
+# Five-hour windows (captain 2026-11-05): a five-hour window with a known used
+#   percent and published reset counts like any other, so at its limit it stops
+#   the start until that reset. An idle one (0% used, no reset) shows as "not
+#   started (idle window)", one with no published reset as "no published reset,
+#   does not block", and an unreadable one as "unreadable, does not block"; none
+#   of those ever stops a start.
 #
 # Provider mapping: claude -> claude; codex, opencode -> codex; grok, kimi,
 #   cursor, agy -> same; muse -> meta; omp by model prefix (openai-codex/* ->
@@ -671,7 +672,7 @@ cmd_gate() {
       (if ($bids | length) == 0
        then [$p.windows[] | select((.kind // "") != "model") | .id] | reduce .[] as $x ([]; if (. | index($x)) then . else . + [$x] end)
        else $bids end) as $ids |
-      ([$p.windows[] | select(.id == "five_hour" or .kind == "five_hour")] | first // null) as $w5 |
+      ([$p.windows[] | select(.id == "five_hour" or .kind == "five_hour" or .kind == "session")] | first // null) as $w5 |
       ([$p.windows[] | select(.id == "seven_day" or .kind == "weekly")] | first // null) as $w7 |
       ([$w5, $w7] | map(select(. != null) | .id)) as $base |
       (($ids + $base) | unique) as $req |
@@ -683,13 +684,12 @@ cmd_gate() {
          elif ($w.percentUsed | type) == "number" then $w.percentUsed
          elif ($w.percentRemaining | type) == "number" then (100 - $w.percentRemaining)
          else null end);
-      # An idle Claude 5h window (0% used, no reset because no window is open)
-      # cannot be exhausted, so its missing reset does not block the launch.
+      # An idle 5h window (0% used, no reset because no window is open) cannot
+      # be exhausted, so its missing reset does not block the launch.
       def idle5($id):
-        ($provider == "claude" and $w5 != null and $id == $w5.id and
+        ($w5 != null and $id == $w5.id and
          used($id) == 0 and ((win($id).resetsAt // "") | length) == 0);
-      # Captain 2026-11-02: a five-hour window that cannot be read (no used
-      # percent or no reset time) is ignored on every provider, never a refusal.
+      # A 5h window with no used percent or no published reset never stops a start.
       def unread5($id):
         ($w5 != null and $id == $w5.id and (idle5($id) | not) and
          (((used($id) // "x") | type) != "number" or ((win($id).resetsAt // "") | length) == 0));
@@ -697,14 +697,25 @@ cmd_gate() {
         ($w5 != null and ($r.effectivePercentRemaining | type) == "number" and
          (($r.unmeasurableWindowIds // []) | length) > 0 and
          all(($r.unmeasurableWindowIds // [])[]; . == $w5.id));
+      # The windows that set the limit of a row: those it names, else those
+      # bounding it, narrowed to the ones with the least room left.
+      def tightest($r):
+        (if (($r.limitingWindowIds // []) | length) > 0 then $r.limitingWindowIds else ($r.boundedBy // []) end) as $ids |
+        ([$ids[] | select(((used(.) // "x") | type) == "number")]) as $read |
+        if ($read | length) == 0 then $ids
+        else ($read | map(used(.)) | max) as $high | [$read[] | select(used(.) == $high)] end;
+      def limit_cannot_hold($r):
+        tightest($r) as $t | ($t | length) > 0 and
+        all($t[]; idle5(.) or unread5(.) or (. == "five_hour" and win(.) == null));
+      [$rows[] | select((.runway // "") == "exhausted_now" and (limit_cannot_hold(.) | not))] as $spent |
       [($req[] | select((idle5(.) | not) and (unread5(.) | not) and (win(.) == null or ((used(.) // "x") | type) != "number" or ((win(.).resetsAt // "") | length) == 0)))] as $unknown_ids |
       (($p.modelNotes // {}) as $mn |
        ($mn[$model] // $mn[($model | split("/") | .[0:2] | join("/"))]
         // ([$mn | to_entries[] | select(.key | endswith("/" + $model)) | .value] | first) // "")) as $mnote |
       # Anything known to be exhausted stops first, however little else is known.
-      if any($rows[]; (.runway // "") == "exhausted_now") then
-        ([$rows[] | select((.runway // "") == "exhausted_now")] | first) as $bad |
-        ($bad.limitingWindowIds // []) as $lims |
+      if ($spent | length) > 0 then
+        ($spent | first) as $bad |
+        (tightest($bad)) as $lims |
         (if ($lims | length) > 0 then $lims[0] else "" end) as $wname |
         (([$lims[]? | reset(.)] | map(select(. != null)) | first) // "an unknown time") as $rst |
         {verdict: "refuse", scope: $bad.scope,
@@ -745,8 +756,10 @@ cmd_gate() {
            fiveHourPublished: ($w5 != null),
            scopes: [$rows[] | {scope, status, used: (if (.effectivePercentRemaining | type) == "number" then (100 - .effectivePercentRemaining) else null end),
                                spendPriority: (.spendPriority // null), runway: (.runway // null)}],
-           windows: [$req[] | {id: ., used: (if unread5(.) then "unreadable, ignored" else used(.) end),
-                               resetsAt: (if idle5(.) then "not started (idle window)" elif unread5(.) then "unreadable, ignored" else win(.).resetsAt end),
+           windows: [$req[] | {id: ., used: (used(.) // "unreadable, does not block"),
+                               resetsAt: (if idle5(.) then "not started (idle window)"
+                                          elif unread5(.) then (if used(.) == null then "unreadable, does not block" else "no published reset, does not block" end)
+                                          else win(.).resetsAt end),
                                source: (if $p.readStatus == "cached" then "cached age=\($p.readingAgeSeconds // "unknown")s" elif $p.readStatus == "rate_limited" then "rate limited" else "live" end)}]}
       end
     end' <<< "$entry")

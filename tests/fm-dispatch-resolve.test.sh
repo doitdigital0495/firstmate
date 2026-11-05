@@ -396,6 +396,11 @@ run "$BRIEF" --task pager
 assert_contains "$out" 'status: captain-pick' 'an exhausted session window alone never releases the reserve'
 assert_contains "$out" 'fallback_only reserve held' 'the held reserve is disclosed while asking the captain'
 assert_contains "$out" '--account claude3  class=1  remaining=70%  spendPriority=5  -> not eligible: fallback_only reserve held' 'the pick card marks the held reserve'
+seat_quota 80 1 exhausted_now 0 > "$TMP_ROOT/claude2-quota.json"
+run "$BRIEF" --task pager
+assert_contains "$out" 'fallback_only reserve held' "a runway exhausted on the session window alone never releases the reserve: $out"
+assert_contains "$out" 'at its five-hour limit, held until 2030-01-02T00:00:00Z' 'the seat held on its session window names the reset'
+assert_not_contains "$out" 'at its weekly limit' 'a session limit is never reported as a weekly one'
 # Another family's candidate still outranks an activated reserve.
 jq '.providers += [{provider:"codex",plan:"Plus",state:{status:"fresh"},windows:[{id:"five_hour",kind:"session",percentRemaining:85,resetsAt:"2030-01-02T00:00:00Z"}],quotaSemantics:{status:"known",effectiveAvailability:[{scope:"all_models",status:"known",effectivePercentRemaining:85,boundedBy:["five_hour"],runway:{status:"through_reset"},selection:{spendPriority:1}}]}}]' \
   "$TMP_ROOT/original-quota" > "$QUOTA"

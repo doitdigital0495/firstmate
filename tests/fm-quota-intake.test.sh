@@ -20,7 +20,7 @@
 #      covered); an exhausted account (window and reset time named), a 100%-used
 #      (0% remaining) window, an unmappable harness/model provider family, and a
 #      provider with no Notes entry stop; a missing 7d or model-scoped window is
-#      an unknown quota (an idle Claude 5h window with 0% used and no reset passes).
+#      an unknown quota (an idle, unreadable, or reset-less 5h window passes).
 #   5. gate passes print the chosen candidate's full window table (zai).
 #   6. the test bypass is explicit and prints that it bypassed.
 #   7. the last good reading: a rate-limited read reuses the store's last good
@@ -183,8 +183,8 @@ EOF
 
 # An idle Claude five-hour window: quota-axi reports the window that has not
 # been opened yet as 0% used with no reset time (the live shape seen after a
-# window lapses with no use). Codex carries the same idle shape so the test can
-# prove the exemption stays Claude-only.
+# window lapses with no use). Codex carries the same idle shape: the rule holds
+# on every provider.
 cat > "$TMP_ROOT/snap-idle5h.json" <<'EOF'
 {"schemaVersion":5,"providers":[
  {"provider":"claude","label":"Max","plan":"max","state":{"status":"fresh"},
@@ -201,8 +201,8 @@ cat > "$TMP_ROOT/snap-idle5h.json" <<'EOF'
    {"scope":"all_models","status":"known","effectivePercentRemaining":92,"boundedBy":["five_hour","weekly"],"limitingWindowIds":["weekly"],"runway":{"status":"through_reset","projectionConfidence":"established"},"selection":{"status":"known","spendPriority":1.1213}}]}}]}
 EOF
 
-# The same Claude five-hour window with use but no reset time is not idle:
-# it must still be refused as unknown.
+# The same Claude five-hour window with use but no reset time is not idle, and
+# with no published reset it cannot stop a start either.
 jq '(.providers[] | select(.provider == "claude") | .windows[0]) |= (.percentUsed = 5 | .percentRemaining = 95)' \
   "$TMP_ROOT/snap-idle5h.json" > "$TMP_ROOT/snap-used5h-noreset.json"
 
@@ -619,31 +619,49 @@ test_gate_idle_claude_five_hour() {
   home=$(make_home idle5h)
   seed_record "$home" "$TMP_ROOT/snap-idle5h.json"
 
-  # An idle Claude 5h window (0% used, no reset) cannot be exhausted, so it
-  # does not block; the pass names it as idle instead of a reset time.
+  # An idle 5h window (0% used, no reset) cannot be exhausted, so it does not
+  # block on any provider; the pass names it as idle instead of a reset time.
   out=$(run_gate "$home" --harness claude); rc=$?
   expect_code 0 "$rc" "gate: an idle Claude 5h window must not block: $out"
   assert_contains "$out" "window=five_hour used=0% resets=not started (idle window) source=live" \
     "gate: the pass must show the idle 5h window as not started"
   assert_contains "$out" "window=seven_day used=7% resets=2026-10-05T17:59:59Z source=live" \
     "gate: the pass must still show the Claude 7d used percent and reset"
-
-  # Captain 2026-11-02: an unreadable 5h window is ignored on every provider,
-  # so the same shape on codex passes and says the window was ignored.
   out=$(run_gate "$home" --harness codex); rc=$?
-  expect_code 0 "$rc" "gate: an unreadable codex 5h window is ignored: $out"
-  assert_contains "$out" "window=five_hour used=unreadable, ignored resets=unreadable, ignored" \
-    "gate: the pass must say the codex 5h window was ignored"
+  expect_code 0 "$rc" "gate: an idle codex 5h window must not block: $out"
+  assert_contains "$out" "window=five_hour used=0% resets=not started (idle window) source=live" \
+    "gate: the pass must show the idle codex 5h window as not started"
 
-  # A Claude 5h window with use but no reset time cannot be read either.
+  # A Claude 5h window with use but no published reset does not block.
   home=$(make_home used5h)
   seed_record "$home" "$TMP_ROOT/snap-used5h-noreset.json"
   out=$(run_gate "$home" --harness claude); rc=$?
-  expect_code 0 "$rc" "gate: a Claude 5h window without a reset is ignored: $out"
-  assert_contains "$out" "window=five_hour used=unreadable, ignored" \
-    "gate: the pass must say the unreadable Claude 5h window was ignored"
+  expect_code 0 "$rc" "gate: a Claude 5h window without a reset does not block: $out"
+  assert_contains "$out" "window=five_hour used=5% resets=no published reset, does not block" \
+    "gate: the pass must name the missing reset"
 
-  # A readable 5h window still counts: a spent one refuses.
+  # A 5h window with no used percent does not block.
+  home=$(make_home unread5h)
+  jq '(.providers[] | select(.provider == "claude") | .windows[0]) |= del(.percentUsed, .percentRemaining)' \
+    "$TMP_ROOT/snap-idle5h.json" > "$TMP_ROOT/snap-unread5h.json"
+  seed_record "$home" "$TMP_ROOT/snap-unread5h.json"
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 0 "$rc" "gate: an unreadable 5h window does not block: $out"
+  assert_contains "$out" "window=five_hour used=unreadable, does not block resets=unreadable, does not block" \
+    "gate: the pass must say the 5h window is unreadable"
+
+  # At the limit with no published reset, even an exhausted runway does not block.
+  home=$(make_home spentnoreset5h)
+  jq '(.providers[] | select(.provider == "claude")) |= ((.windows[0] |= (.percentUsed = 100 | .percentRemaining = 0))
+      | .quotaSemantics.effectiveAvailability[0] |= (.effectivePercentRemaining = 0 | .limitingWindowIds = ["five_hour"] | .runway.status = "exhausted_now"))' \
+    "$TMP_ROOT/snap-idle5h.json" > "$TMP_ROOT/snap-spent5h-noreset.json"
+  seed_record "$home" "$TMP_ROOT/snap-spent5h-noreset.json"
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 0 "$rc" "gate: a spent 5h window with no published reset does not block: $out"
+  assert_contains "$out" "window=five_hour used=100% resets=no published reset, does not block" \
+    "gate: the pass must name the missing reset on the spent window"
+
+  # A known 5h limit stops the start and names its reset, whichever way it is reported.
   home=$(make_home spent5h)
   jq '(.providers[] | select(.provider == "codex") | .windows[] | select(.id == "five_hour")) |= (.percentUsed = 100 | .percentRemaining = 0 | .resetsAt = "2026-09-29T19:00:00Z")' \
     "$TMP_ROOT/snap-idle5h.json" > "$TMP_ROOT/snap-spent5h.json"
@@ -651,8 +669,28 @@ test_gate_idle_claude_five_hour() {
   out=$(run_gate "$home" --harness codex); rc=$?
   expect_code 3 "$rc" "gate: a readable spent 5h window still refuses"
   assert_contains "$out" "window five_hour is at 100% used" "gate: the spent 5h window is named"
+  assert_contains "$out" "resets at 2026-09-29T19:00:00Z" "gate: the spent 5h window names its reset"
 
-  pass "gate: an idle or unreadable 5h window is ignored on every provider; a readable spent one still refuses"
+  home=$(make_home runway5h)
+  jq '(.providers[] | select(.provider == "claude")) |= ((.windows[0] |= (.percentUsed = 100 | .percentRemaining = 0 | .resetsAt = "2026-09-29T20:00:00Z"))
+      | .quotaSemantics.effectiveAvailability[0] |= (.effectivePercentRemaining = 0 | .runway.status = "exhausted_now"))' \
+    "$TMP_ROOT/snap-idle5h.json" > "$TMP_ROOT/snap-runway5h.json"
+  seed_record "$home" "$TMP_ROOT/snap-runway5h.json"
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 3 "$rc" "gate: an exhausted runway on a known 5h window refuses: $out"
+  assert_contains "$out" "(window five_hour) resetting at 2026-09-29T20:00:00Z" "gate: the exhausted runway names the 5h reset"
+
+  # A weekly exhaustion is not excused by a 5h window that cannot hold the seat.
+  home=$(make_home weekly5h)
+  jq '(.providers[] | select(.provider == "claude")) |= ((.windows[1] |= (.percentUsed = 100 | .percentRemaining = 0))
+      | .quotaSemantics.effectiveAvailability[0] |= (.effectivePercentRemaining = 0 | .limitingWindowIds = ["seven_day"] | .runway.status = "exhausted_now"))' \
+    "$TMP_ROOT/snap-idle5h.json" > "$TMP_ROOT/snap-weekly5h.json"
+  seed_record "$home" "$TMP_ROOT/snap-weekly5h.json"
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 3 "$rc" "gate: a weekly exhaustion beside an idle 5h window still refuses: $out"
+  assert_contains "$out" "window seven_day" "gate: the weekly window is named"
+
+  pass "gate: a known 5h limit stops until its reset; an idle, unreadable, or reset-less 5h window never blocks"
 }
 
 test_gate_test_bypass() {
