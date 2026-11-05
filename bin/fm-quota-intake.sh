@@ -20,11 +20,14 @@
 #     column joined from config/accounts.json top-level notes (keyed by
 #     provider) and config/crew-dispatch.json model_notes (provider- or
 #     harness/model-keyed, e.g. claude/opus). The full table is printed so it lands in the transcript.
-#     A store read that fails or misses the deadline is recorded as
-#     readStatus=failed and printed; that is an unknown quota, so the script
-#     still exits 0. A rate limited row says "rate limited", never "ok". The
-#     whole record run has one FM_QUOTA_READ_DEADLINE (45 second) deadline; a
-#     store it does not reach is unknown. The newest 50 records are kept.
+#     A store read that fails is recorded readStatus=failed and printed; that is
+#     an unknown quota, so the script still exits 0. A rate limited read, in any
+#     shape quota-axi or the machine quota gate reports one (FM_QUOTA_RATE_LIMITED_JQ
+#     in bin/fm-quota-axi-lib.sh), says "rate limited", never "ok". Stores are read
+#     in parallel and the whole record run ends within one FM_QUOTA_READ_DEADLINE
+#     (45 second) deadline, so a hanging store delays no other: a read still
+#     pending near the deadline is killed and recorded readStatus=unreadable, also
+#     an unknown quota. The newest 50 records are kept.
 #
 #   fm-quota-intake.sh gate --harness <harness> [--model <model>]
 #       [--account <id>] [--task <id>] [--claude-store <path>] [--pi-store <path>]
@@ -37,7 +40,7 @@
 #     unresolvable worker pin; or, on a readable row, an undeclared plan size or
 #     Notes entry.
 #     An unknown quota never stops a start (captain 2026-11-05). A read that
-#     failed or was rate limited, a provider with no rows, or a window with no
+#     failed, was unreadable or was rate limited, a provider with no rows, or a window with no
 #     used percent or reset time passes as "PASS (quota unknown: <reason>)".
 #     Exit 4 asks the launcher to run one fresh `record` and gate again with
 #     --refreshed: no record, or a spent, stale, or unreadable one, or one that
@@ -171,7 +174,7 @@ intake_list_records() { # one path per line, oldest first
   done | LC_ALL=C sort
 }
 
-usage() { sed -n '2,80p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,83p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 # jq parses the record in every mode. quota-axi is only the live reader the
 # record mode drives, and a host without it simply records failed reads.
@@ -210,17 +213,46 @@ intake_store_real() { # <path> - stdout: resolved real path, or the input
   realpath -- "$1" 2>/dev/null || printf '%s\n' "$1"
 }
 
+# Run as a background job, so `exec` makes the job's pid the bounded runner itself.
 quota_axi_full_json() { # <stores> <seconds> - stdout: raw --full --json snapshot
   local stores=$1 seconds=$2 runner=()
   if command -v timeout >/dev/null 2>&1; then
-    runner=(timeout -k 2 "$seconds")
+    runner=(timeout -k 1 "$seconds")
   elif command -v python3 >/dev/null 2>&1; then
     runner=(python3 "$SCRIPT_DIR/fm-dispatch-bounded.py" "$(( $(date +%s) + seconds ))")
   fi
   CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "$(printf '%s\n' "$stores" | sed -n 1p)") \
   PI_CODING_AGENT_DIR=$(fm_account_read_store pi "$(printf '%s\n' "$stores" | sed -n 2p)") \
   CODEX_HOME=$(fm_account_read_store codex "$(printf '%s\n' "$stores" | sed -n 3p)") \
-    "${runner[@]}" quota-axi --full --json </dev/null 2>/dev/null
+    exec "${runner[@]}" quota-axi --full --json </dev/null 2>/dev/null
+}
+
+# The part of the deadline reads may use: the rest is what killing a read that
+# ignores its stop signal and writing the record need, so the whole run ends in time.
+intake_read_seconds() {
+  local margin=$(( FM_QUOTA_READ_DEADLINE / 3 ))
+  [ "$margin" -le 3 ] || margin=3
+  printf '%s\n' "$(( FM_QUOTA_READ_DEADLINE - margin ))"
+}
+
+# Wait for the read jobs, killing any still alive at <kill-epoch>. The runner has
+# already stopped them by then, so this only acts on a host with neither timeout
+# nor python3, or on a runner that itself hung.
+intake_settle_reads() { # <kill-epoch> <pid>...
+  local kill_at=$1 pid alive
+  shift
+  while :; do
+    alive=
+    for pid in "$@"; do
+      if kill -0 "$pid" 2>/dev/null; then alive="$alive $pid"; fi
+    done
+    [ -n "$alive" ] || return 0
+    if [ "$(intake_epoch_now)" -ge "$kill_at" ]; then
+      for pid in $alive; do kill -KILL "$pid" 2>/dev/null || true; done
+      return 0
+    fi
+    sleep 0.2
+  done
 }
 
 # epoch helpers: pure bash arithmetic plus one UTC date probe for display only.
@@ -277,7 +309,7 @@ intake_notes_map() { # stdout: {"providers":{...},"models":{"<provider>":{...}}}
 intake_build_entry() { # <account> <claude> <pi> <codex> <snapshot-file> <plan-lookup-json> <notes-map-json> [<provider>]
   local account=$1 claude=$2 pi=$3 codex=$4 snap=$5 planarg=$6 notesarg=$7 only=${8:-}
   jq -c -n --arg account "$account" --arg claude "$claude" --arg pi "$pi" --arg codex "$codex" \
-    --slurpfile snapshot "$snap" --argjson planarg "$planarg" --argjson notes "$notesarg" --arg only "$only" '
+    --slurpfile snapshot "$snap" --argjson planarg "$planarg" --argjson notes "$notesarg" --arg only "$only" "$FM_QUOTA_RATE_LIMITED_JQ"'
     ($snapshot[0]) as $s |
     def plan_label($v): if ($v | type) == "string" and ($v | length) > 0 and ($v | length) <= 80 and ($v | test("^[[:print:]]+$")) then $v else null end;
     def used_of($rem; $u):
@@ -290,17 +322,20 @@ intake_build_entry() { # <account> <claude> <pi> <codex> <snapshot-file> <plan-l
       stores: {claude: $claude, pi: $pi, codex: $codex},
       providers: [ $s.providers[]? | select($only == "" or .provider == $only) |
         . as $p |
+        ($p | read_rate_limited) as $limited |
+        ($p.reusedReading.lastRead // (if $p.reusedReading != null and $limited then "rate_limited" else null end)) as $last |
         ([$p.quotaSemantics.effectiveAvailability[]? | select(.scope == "all_models" or .scope == "all_products")] | first) as $wide |
         ($planarg[$p.provider].plan // null) as $declared |
         (plan_label($p.plan)) as $qp |
         {
           provider: $p.provider,
           readStatus: (if $p.reusedReading != null then "cached"
+                       elif $limited then "rate_limited"
                        elif (["rate_limited", "stale", "unavailable", "error", "auth_required"] | index($p.state.status // "")) != null then $p.state.status
                        else "ok" end),
           readingAgeSeconds: ($p.reusedReading.ageSeconds // null),
-          lastRead: ($p.reusedReading.lastRead // null),
-          state: {status: ($p.reusedReading.lastRead // $p.state.status // $p.quotaSemantics.status // null),
+          lastRead: $last,
+          state: {status: ($last // (if $limited then "rate_limited" else null end) // $p.state.status // $p.quotaSemantics.status // null),
                   error: ($p.state.error // null), retryAfter: ($p.state.retryAfter // null)},
           plan: (if $declared != null then $declared elif $qp != null then $qp else "unknown" end),
           planSource: (if $declared != null then $planarg[$p.provider].source elif $qp != null then "quota-axi" else "unknown" end),
@@ -353,10 +388,10 @@ intake_print_record() { # <record-json> - full table to stdout
         "  provider=\($p.provider) status=\($ps | words)\(if $ps == "cached" then " age=\($p.readingAgeSeconds // "unknown")s lastRead=\(($p.lastRead // "unknown") | words)" else "" end) plan=\($p.plan) (\($p.planSource)) quota-axi=\($p.quotaAxiPlan) spendPriority=\($sp) runway=\($rw) notes=\($p.notes // "")",
         (($p.modelNotes // {}) | to_entries[] | "    model=\(.key) notes=\(.value)"),
         ($p.windows[]? | . as $w | ($w.resetsAt // "unknown") as $rs |
-          (if $ps == "cached" then "cached age=\($p.readingAgeSeconds // "unknown")s" else "live" end) as $src |
+          (if $ps == "cached" then "cached age=\($p.readingAgeSeconds // "unknown")s" elif $ps == "rate_limited" then "rate limited" else "live" end) as $src |
           "    window=\($w.id) used=\(used($w.percentUsed)) resets=\($rs) source=\($src)")),
-      (select($a.readStatus == "failed") | ($a.error // "unknown error") as $err |
-        "  read failed: \($err)"))
+      (select($a.readStatus == "failed" or $a.readStatus == "unreadable") | ($a.error // "unknown error") as $err |
+        "  read \($a.readStatus): \($err)"))
   '
 }
 
@@ -364,10 +399,10 @@ cmd_record() {
   # tmp stays a global: the EXIT trap must still see it after this function
   # returns, and set -u would otherwise trip on the lost local.
   tmp=$(mktemp -d) || die "mktemp failed"
-  local entries default_stores plan_map account stores key snap entry now ns name file
-  local total sc sp sx recent only read_deadline left read_ok read_error
+  local entries default_stores plan_map account stores key canon_text snap raw entry now ns name file
+  local total sc sp sx recent only read_end left read_status last_read read_error i
   local -a canon=()
-  local -a accounts=()
+  local -a accounts=() listed=() listed_stores=() listed_canon=() listed_keys=() read_pids=() read_keys=()
   trap 'rm -rf -- "$tmp"' EXIT
 
   { sc=$(intake_default_store claude) && sp=$(intake_default_store pi) && sx=$(intake_default_store codex); } ||
@@ -386,8 +421,7 @@ cmd_record() {
     done < <(jq -r '.accounts | keys[]' "$CONFIG/accounts.json" 2>/dev/null | sort)
   fi
 
-  read_deadline=$(( $(intake_epoch_now) + FM_QUOTA_READ_DEADLINE ))
-  entries='[]'
+  read_end=$(( $(intake_epoch_now) + $(intake_read_seconds) ))
   for account in "${accounts[@]}"; do
     if [ "$account" = default ]; then
       stores=$default_stores
@@ -398,49 +432,77 @@ cmd_record() {
       }
     fi
     # One read per canonical store triple: a symlinked alias reads once.
-    key=$(printf '%s\n' "$stores" | while IFS= read -r one; do
+    canon_text=$(printf '%s\n' "$stores" | while IFS= read -r one; do
       if [ "$one" = "$FM_ACCOUNT_NO_STORE" ]; then printf '%s\n' "$one"; else fm_account_canonical_store "$one"; fi
     done)
-    mapfile -t canon <<< "$key"
-    recent=$(fm_quota_recent_file "$STATE")
-    key=$(printf '%s\n' "$key" | cksum | tr -d ' ')
+    key=$(printf '%s\n' "$canon_text" | cksum | tr -d ' ')
+    listed+=("$account")
+    listed_stores+=("$stores")
+    listed_canon+=("$canon_text")
+    listed_keys+=("$key")
+    [ ! -e "$tmp/raw-$key" ] || continue
+    : > "$tmp/raw-$key"
+    left=$(( read_end - $(intake_epoch_now) ))
+    [ "$left" -gt 0 ] || left=1
+    quota_axi_full_json "$stores" "$left" > "$tmp/raw-$key" 2>/dev/null &
+    read_pids+=("$!")
+    read_keys+=("$key")
+  done
+
+  # Every read is running; none of them waits on another. Stderr is closed off
+  # here because the shell reports a killed job on it whenever it notices one.
+  {
+    intake_settle_reads "$(( read_end + 2 ))" "${read_pids[@]}"
+    for i in "${!read_pids[@]}"; do
+      wait "${read_pids[$i]}"
+      case $? in
+        124|137) : > "$tmp/pending-${read_keys[$i]}" ;;
+      esac
+    done
+  } 2>/dev/null
+
+  recent=$(fm_quota_recent_file "$STATE")
+  entries='[]'
+  for i in "${!listed[@]}"; do
+    account=${listed[$i]}
+    stores=${listed_stores[$i]}
+    key=${listed_keys[$i]}
+    mapfile -t canon <<< "${listed_canon[$i]}"
     snap="$tmp/snap-$key.json"
-    if [ ! -f "$snap" ]; then
+    raw="$tmp/raw-$key"
+    read_status=failed
+    last_read=read_failed
+    read_error="quota-axi --full --json failed or invalid for this store"
+    if [ -e "$tmp/pending-$key" ]; then
+      read_status=unreadable
+      last_read=unreadable
+      read_error="the ${FM_QUOTA_READ_DEADLINE}s quota read deadline expired"
+    fi
+    if [ ! -f "$snap" ] && [ ! -e "$tmp/judged-$key" ]; then
+      : > "$tmp/judged-$key"
       # Judge the report, not the exit status: quota-axi exits 1 with a full
       # report when every provider failed, and that report is what names a
       # signed-out login. Calling it a failed read would start on a bad login.
-      read_ok=0
-      left=$(( read_deadline - $(intake_epoch_now) ))
-      if [ "$left" -gt 0 ]; then
-        quota_axi_full_json "$stores" "$left" > "$snap.raw" 2>/dev/null
-        fm_quota_json_valid < "$snap.raw" && read_ok=1
-      fi
-      if [ "$read_ok" -eq 1 ]; then
-        fm_quota_recent_save "$recent" "$snap.raw" "${canon[0]}" "${canon[1]}" "${canon[2]}"
-        if fm_quota_recent_merge "$recent" "$snap.raw" "${canon[0]}" "${canon[1]}" "${canon[2]}" > "$snap.merged" 2>/dev/null && fm_quota_json_valid < "$snap.merged"; then
+      if fm_quota_json_valid < "$raw"; then
+        fm_quota_recent_save "$recent" "$raw" "${canon[0]}" "${canon[1]}" "${canon[2]}"
+        if fm_quota_recent_merge "$recent" "$raw" "${canon[0]}" "${canon[1]}" "${canon[2]}" > "$snap.merged" 2>/dev/null && fm_quota_json_valid < "$snap.merged"; then
           mv -- "$snap.merged" "$snap"
         else
-          mv -- "$snap.raw" "$snap"
+          mv -- "$raw" "$snap"
         fi
-        rm -f -- "$snap.raw" "$snap.merged"
-      elif fm_quota_recent_merge "$recent" "" "${canon[0]}" "${canon[1]}" "${canon[2]}" > "$snap.merged" 2>/dev/null && fm_quota_json_valid < "$snap.merged"; then
-        rm -f -- "$snap.raw"
+      elif fm_quota_recent_merge "$recent" "" "${canon[0]}" "${canon[1]}" "${canon[2]}" "$last_read" > "$snap.merged" 2>/dev/null && fm_quota_json_valid < "$snap.merged"; then
         mv -- "$snap.merged" "$snap"
-      else
-        rm -f -- "$snap.raw" "$snap.merged"
-        snap=""
       fi
+      rm -f -- "$snap.merged"
     fi
-    if [ -z "$snap" ]; then
-      read_error="quota-axi --full --json failed or invalid for this store"
-      [ "$(intake_epoch_now)" -lt "$read_deadline" ] || read_error="the ${FM_QUOTA_READ_DEADLINE}s quota read deadline expired"
+    if [ ! -f "$snap" ]; then
       sc=$(printf '%s\n' "$stores" | sed -n 1p)
       sp=$(printf '%s\n' "$stores" | sed -n 2p)
       sx=$(printf '%s\n' "$stores" | sed -n 3p)
-      entry=$(jq -cn --arg account "$account" \
+      entry=$(jq -cn --arg account "$account" --arg status "$read_status" \
           --arg claude "$sc" --arg pi "$sp" --arg codex "$sx" \
           --arg error "$read_error" '{
-          account: $account, readStatus: "failed",
+          account: $account, readStatus: $status,
           stores: {claude: $claude, pi: $pi, codex: $codex}, error: $error, providers: []}')
       entries=$(jq -cn --argjson all "$entries" --argjson one "$entry" '$all + [$one]')
       continue
@@ -554,8 +616,10 @@ cmd_gate() {
   GATE_RECORD=$record
   # The read already failed: another read inside the same lockout only re-news
   # it, so this is an unknown quota now rather than a request for a fresh read.
-  [ "$(jq -r '.readStatus' <<< "$entry")" != failed ] ||
-    gate_pass_unknown "the read for account $account failed: $(jq -r '.error // "unknown error"' <<< "$entry")"
+  case "$(jq -r '.readStatus' <<< "$entry")" in
+    failed) gate_pass_unknown "the read for account $account failed: $(jq -r '.error // "unknown error"' <<< "$entry")" ;;
+    unreadable) gate_pass_unknown "the read for account $account is unreadable: $(jq -r '.error // "unknown error"' <<< "$entry")" ;;
+  esac
 
   case "$harness" in
     claude) store_field=claude ;;
@@ -683,7 +747,7 @@ cmd_gate() {
                                spendPriority: (.spendPriority // null), runway: (.runway // null)}],
            windows: [$req[] | {id: ., used: (if unread5(.) then "unreadable, ignored" else used(.) end),
                                resetsAt: (if idle5(.) then "not started (idle window)" elif unread5(.) then "unreadable, ignored" else win(.).resetsAt end),
-                               source: (if $p.readStatus == "cached" then "cached age=\($p.readingAgeSeconds // "unknown")s" else "live" end)}]}
+                               source: (if $p.readStatus == "cached" then "cached age=\($p.readingAgeSeconds // "unknown")s" elif $p.readStatus == "rate_limited" then "rate limited" else "live" end)}]}
       end
     end' <<< "$entry")
 

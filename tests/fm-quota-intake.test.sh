@@ -745,7 +745,7 @@ test_provider_row_filter() {
 # <dir>: a PATH holding this script's tools as links, with no quota-axi at all.
 quota_axi_free_path() {
   local tool
-  for tool in bash env jq date sed sort tr cat cksum wc head tail basename dirname mktemp mkdir mv rm chmod realpath awk readlink perl grep cut timeout; do
+  for tool in bash env jq date sed sort tr cat cksum wc head tail basename dirname mktemp mkdir mv rm chmod realpath awk readlink perl grep cut sleep timeout; do
     ln -sf "$(command -v "$tool")" "$1/$tool"
   done
   printf '%s\n' "$1"
@@ -913,6 +913,62 @@ test_honest_status() {
   pass "honest status: a rate limited read is recorded and printed as rate limited, never ok"
 }
 
+# The usual 429 shape: quota-axi answers stale, and only state.error names the 429.
+stale_claude() {  # <source-snapshot> <dest> <error-json>
+  jq --argjson error "$3" '(.providers[] | select(.provider == "claude")) |= (.state = {status: "stale", stale: true, error: $error})' "$1" > "$2"
+}
+
+test_honest_status_every_429_shape() {
+  local home out rec rc
+  stale_claude "$TMP_ROOT/snap-prolite.json" "$TMP_ROOT/snap-stale-429.json" '"Claude quota endpoint rate limited"'
+
+  # Stale with the 429 in its error, nothing cached.
+  home=$(make_home honest-stale)
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-stale-429.json")")
+  rec=$(newest_record "$home")
+  assert_contains "$out" "provider=claude status=rate limited" "stale 429: the provider line must say rate limited"
+  assert_contains "$out" "account=default status=rate limited" "stale 429: the account line must say rate limited"
+  jq -e '.accounts[0].readStatus == "rate_limited" and
+    ([.accounts[0].providers[] | select(.provider == "claude") | .readStatus, .state.status] == ["rate_limited", "rate_limited"])' "$rec" >/dev/null ||
+    fail "stale 429: the record must store rate_limited"
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 0 "$rc" "stale 429: the gate must not refuse: $out"
+  assert_contains "$out" "source=rate limited" "stale 429: the gate must not call its windows live"
+  assert_not_contains "$out" "source=live" "stale 429: the gate must not call its windows live"
+
+  # The same 429 with a last good reading to reuse.
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-prolite.json")")
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-stale-429.json")")
+  rec=$(newest_record "$home")
+  assert_contains "$out" "lastRead=rate limited" "stale 429 reusing a reading: the table must say what the read returned"
+  [ "$(jq -r '.accounts[0].readStatus' "$rec")" = rate_limited ] || fail "stale 429 reusing a reading: the account must not read ok"
+
+  # The machine quota gate's back-off hold: stale with its own age and no error.
+  home=$(make_home honest-held)
+  jq '(.providers[] | select(.provider == "claude")) |= (.state = {status: "stale", stale: true} | .reusedReading = {ageSeconds: 90, savedAt: "2026-11-05T12:00:00Z"})' \
+    "$TMP_ROOT/snap-prolite.json" > "$TMP_ROOT/snap-held.json"
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-held.json")")
+  rec=$(newest_record "$home")
+  assert_contains "$out" "provider=claude status=cached age=90s lastRead=rate limited" "held read: the table must show its age and the rate limit"
+  [ "$(jq -r '.accounts[0].readStatus' "$rec")" = rate_limited ] || fail "held read: the account must not read ok"
+
+  # Stale for another reason is not a rate limit, and the provider line stays honest.
+  home=$(make_home honest-plain-stale)
+  stale_claude "$TMP_ROOT/snap-prolite.json" "$TMP_ROOT/snap-plain-stale.json" 'null'
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-plain-stale.json")")
+  assert_contains "$out" "provider=claude status=stale" "plain stale: must stay stale"
+  assert_not_contains "$out" "rate limited" "plain stale: must not claim a rate limit"
+
+  # A signed-out login whose error mentions a rate limit still stops the start.
+  home=$(make_home honest-auth)
+  jq '(.providers[] | select(.provider == "claude")) |= (.state = {status: "auth_required", error: "token refresh was rate limited"})' \
+    "$TMP_ROOT/snap-prolite.json" > "$TMP_ROOT/snap-auth-429.json"
+  out=$(run_record "$home" "$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-auth-429.json")")
+  out=$(run_gate "$home" --harness claude); rc=$?
+  expect_code 3 "$rc" "auth_required: a bad login must still stop: $out"
+  pass "honest status: all three 429 shapes read rate limited; plain stale and a bad login do not"
+}
+
 test_read_deadline() {
   local home fakebin out rc started rec
   home=$(make_home deadline)
@@ -925,13 +981,81 @@ test_read_deadline() {
   out=$(run_record "$home" "$fakebin" FM_QUOTA_READ_DEADLINE=1); rc=$?
   expect_code 0 "$rc" "record: a read past the deadline is an unknown quota: $out"
   [ "$((SECONDS - started))" -lt 15 ] || fail "two hanging stores must share one deadline, took $((SECONDS - started))s"
-  assert_contains "$out" "the 1s quota read deadline expired" "the table must name the expired deadline"
+  assert_contains "$out" "read unreadable: the 1s quota read deadline expired" "the table must name the expired deadline"
   rec=$(newest_record "$home")
-  jq -e '[.accounts[].readStatus] == ["failed", "failed"]' "$rec" >/dev/null || fail "both stores must be recorded unread"
+  jq -e '[.accounts[].readStatus] == ["unreadable", "unreadable"]' "$rec" >/dev/null || fail "both stores must be recorded unreadable"
   out=$(run_gate "$home" --harness claude); rc=$?
   expect_code 0 "$rc" "gate: an expired deadline must not refuse: $out"
   assert_contains "$out" "quota unknown" "gate: an expired deadline is an unknown quota"
   pass "read deadline: hanging stores share one deadline over the whole read and then count as unknown"
+}
+
+# One store hangs and ignores its stop signal; it sorts before a healthy store.
+test_read_deadline_delays_no_other_read() {
+  local home fakebin out rc started rec elapsed hung
+  home=$(make_home deadline-parallel)
+  mkdir -p "$home/hang/claude" "$home/hang/pi" "$home/hang/codex" "$home/quick/claude" "$home/quick/pi" "$home/quick/codex"
+  jq -n --arg h "$home" '{crossAccount: {enabled: true}, accounts: {
+    "a-hang": {claude: "\($h)/hang/claude", pi: "\($h)/hang/pi", codex: "\($h)/hang/codex"},
+    "z-quick": {claude: "\($h)/quick/claude", pi: "\($h)/quick/pi", codex: "\($h)/quick/codex"}}}' > "$home/config/accounts.json"
+  fakebin=$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-base.json")
+  cat > "$fakebin/quota-axi" <<EOF
+#!/usr/bin/env bash
+case "\$CLAUDE_CONFIG_DIR" in
+  */hang/*) trap '' TERM; printf '%s\n' "\$\$" > "$home/hung.pid"; sleep 30 ;;
+  */quick/*) date +%s > "$home/quick.at" ;;
+esac
+cat -- "$TMP_ROOT/snap-base.json"
+EOF
+  started=$(date +%s)
+  out=$(run_record "$home" "$fakebin" FM_QUOTA_READ_DEADLINE=9); rc=$?
+  elapsed=$(( $(date +%s) - started ))
+  expect_code 0 "$rc" "record: a hanging store is an unknown quota: $out"
+  [ "$elapsed" -le 9 ] || fail "the whole record run must end within its deadline, took ${elapsed}s"
+  [ "$(( $(cat "$home/quick.at") - started ))" -le 2 ] || fail "the hanging store must not delay the next read"
+  assert_not_contains "$out" "Killed" "a killed read must not print job noise"
+  rec=$(newest_record "$home")
+  jq -e '[.accounts[] | {(.account): .readStatus}] | add == {default: "ok", "a-hang": "unreadable", "z-quick": "ok"}' "$rec" >/dev/null ||
+    fail "only the hanging store is unreadable: $(jq -c '[.accounts[] | [.account, .readStatus]]' "$rec")"
+  hung=$(cat "$home/hung.pid")
+  if kill -0 "$hung" 2>/dev/null; then fail "the hanging read must not outlive the run"; fi
+  out=$(run_gate "$home" --harness claude --account a-hang --claude-store "$home/hang/claude"); rc=$?
+  expect_code 0 "$rc" "gate: an unreadable store never stops a start: $out"
+  assert_contains "$out" "quota unknown: the read for account a-hang is unreadable" "gate: the pass says why"
+  pass "read deadline: a hanging store is unreadable, delays no other read, and the whole run ends in time"
+}
+
+# The deadline holds with neither timeout nor python3 on the host.
+test_read_deadline_without_a_runner() {
+  local home fakebin tools out rc started rec
+  home=$(make_home deadline-no-runner)
+  fakebin=$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-base.json")
+  printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$fakebin/quota-axi"
+  tools=$home/tools
+  mkdir -p "$tools"
+  quota_axi_free_path "$tools" >/dev/null
+  rm -f "$tools/timeout"
+  started=$SECONDS
+  out=$(run_record "$home" "$fakebin" FM_QUOTA_READ_DEADLINE=1 PATH="$fakebin:$tools"); rc=$?
+  expect_code 0 "$rc" "record: no runner must still end: $out"
+  [ "$((SECONDS - started))" -lt 10 ] || fail "with no runner the run must still stop the read, took $((SECONDS - started))s"
+  rec=$(newest_record "$home")
+  [ "$(jq -r '.accounts[0].readStatus' "$rec")" = unreadable ] || fail "the killed read must be recorded unreadable"
+  pass "read deadline: with neither timeout nor python3 the run still kills the read and records it unreadable"
+}
+
+# A last good reading still answers for a store that missed the deadline, and
+# says the current read was unreadable.
+test_read_deadline_reuses_last_good() {
+  local home fakebin out
+  home=$(make_home deadline-cached)
+  fakebin=$(make_fake_quota_axi "$home/quota-fake" "$TMP_ROOT/snap-prolite.json")
+  out=$(run_record "$home" "$fakebin")
+  printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$fakebin/quota-axi"
+  out=$(run_record "$home" "$fakebin" FM_QUOTA_READ_DEADLINE=1)
+  assert_contains "$out" "provider=claude status=cached" "the last good reading must answer"
+  assert_contains "$out" "lastRead=unreadable" "the table must say the current read was unreadable"
+  pass "read deadline: a last good reading answers for an unreadable store and says so"
 }
 
 # --- 8. the real spawn and relaunch gates ------------------------------------
@@ -1349,7 +1473,11 @@ test_unknown_quota_never_refuses
 test_known_stops_still_stop
 test_last_good_reading_ages
 test_honest_status
+test_honest_status_every_429_shape
 test_read_deadline
+test_read_deadline_delays_no_other_read
+test_read_deadline_without_a_runner
+test_read_deadline_reuses_last_good
 test_provider_row_filter
 test_real_spawn_gate
 test_worker_pin_record_covers_the_pinned_store
