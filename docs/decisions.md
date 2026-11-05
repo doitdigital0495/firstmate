@@ -3,9 +3,9 @@
 Captain-level routing and operating decisions whose reasoning the current-behavior docs do not carry.
 Each entry links the page that owns its resulting contract.
 
-## 2026-11-05 - up to 30 workers, and unlanded work is finished rather than parked
+## 2026-11-05 - up to 50 workers, and unlanded work is finished rather than parked
 
-**Decision.** A home runs up to 30 ordinary workers in parallel, down from 50.
+**Decision.** A home runs up to 50 ordinary workers in parallel.
 The primary firstmate and persistent secondmates do not count toward that cap, and there is no automatic pause at any usage percentage.
 [`configuration.md`](configuration.md#lane-capacity-configlane-capacity) owns the cap's file format.
 Work that cleanup refuses as uncommitted or unmerged is finished and merged by firstmate rather than sent to the captain, and never forced; [`ship-landing`](../.agents/skills/ship-landing/SKILL.md) owns the procedure.
