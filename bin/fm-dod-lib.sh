@@ -459,12 +459,13 @@ EOF
 }
 
 # The forge-independent middle of the no-mistakes contract: how a worker drives
-# the pipeline, what `--intent` may carry, and the two firstmate-specific rules.
+# the pipeline, what `--intent` may carry, and the three firstmate-specific rules.
 # Written once; only the two sentences about a green PR depend on the forge,
 # because on gerrit, and under pr=manual (the `no-ci` argument), the ci step is
 # skipped and the drive call never reports a green PR.
 fm_nm_driving_block() {  # <forge|no-ci>
-  local pr_return_line='' pr_reattach_clause=';' drive_block wait_cfg
+  local pr_return_line='' pr_reattach_clause=';' drive_block wait_cfg authority_skill
+  authority_skill=${FM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/.agents/skills/ask-user-authority/SKILL.md
   if [ "$1" != gerrit ] && [ "$1" != no-ci ]; then
     pr_return_line="Only a drive call's return reports the green PR: \`no-mistakes axi status\` shows progress but never reports \`checks-passed\` while the ci step is still monitoring the PR for merge, so never wait on a status poll for the next gate or outcome.
 "
@@ -498,17 +499,21 @@ The \`--intent\` string you pass must be self-sufficient: that string plus the c
 When the captain's intent refers to a report, decision, or PR ("do items 1, 2, 3, and 7 of the report"), write the substance of the referenced items into \`--intent\` in the captain's terms, not only the pointer; that substance is the captain's ask by reference, while Firstmate's build instructions and your own decisions still stay out.
 This replaces the no-mistakes skill's advice to enrich \`--intent\` with decisions and tradeoffs; that advice does not apply to Firstmate-dispatched work.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
+Before your first \`no-mistakes axi run\` for this task, run the project's lint and the targeted tests covering your change, never a full suite, then fix and commit what they find, so avoidable findings never reach a review round; when the project defines neither, say so in your done report and start the run.
 
 $drive_block
 A killed or timed-out call is never evidence the daemon died: the daemon accepts your response immediately and runs the round in the background, so the call was only ever waiting for a read while the run kept working.
 Reattach and keep going rather than reporting the pipeline blocked; rule 7 owns the checks that decide when a pipeline block is real.
 
-Two firstmate-specific rules layer on top of that guidance:
-- ask-user findings are never yours to answer: escalate to firstmate using rule 6's ask-user format and stop.
+Three firstmate-specific rules layer on top of that guidance:
+- Settle informational and style review findings yourself, without going up: the \`Informational or style review finding\` row of \`ask-user-authority\` (\`$authority_skill\`) owns what qualifies, so read that row before your first settle.
+  Decline each one through the gate with \`--action approve\`, or \`--ignore\` when other findings get \`--action fix\`, and list it as a numbered follow-up in your done report with its id, file:line, and one line on what it says.
+  Security, data-loss, scope, and irreversible findings always escalate, and so does any doubt about the classification.
+- Beyond that one standing answer, ask-user findings are never yours to answer: escalate to firstmate using rule 6's ask-user format and stop.
   Firstmate applies \`ask-user-authority\` and obtains any required captain decision.
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - NEVER pass \`--yes\` (or \`-y\`) to \`no-mistakes axi run\` or \`no-mistakes axi respond\`. It is banned fleet-wide.
-  It auto-resolves every gate including ask-user findings with no escalation, and answering your own ask-user finding is a hard rule violation.
+  It auto-resolves every gate including ask-user findings with no escalation, and outside that one standing answer, answering your own ask-user finding is a hard rule violation.
 EOF
 }
 
