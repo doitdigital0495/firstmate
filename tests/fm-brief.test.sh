@@ -337,8 +337,7 @@ test_scout_brief_has_no_request_accounting() {
   assert_no_grep "Request checklist" "$brief" "scout brief still carries the retired Request checklist"
   assert_no_grep "{ASKS}" "$brief" "scout brief still carries the retired {ASKS} placeholder"
   assert_no_grep "asks <done>" "$brief" "scout brief still demands the retired asks count"
-  assert_no_grep "numbered follow-ups" "$brief" "scout brief still demands the retired follow-up list"
-  pass "fm-brief.sh: a scout brief keeps its report without asks accounting or follow-up filing"
+  pass "fm-brief.sh: a scout brief keeps its report without asks accounting"
 }
 
 # Live briefs scaffolded before the checklist was retired keep passing the
@@ -1240,6 +1239,12 @@ test_scout_and_secondmate_load_decision_hold_policy() {
     "scout brief did not load the captain-call policy before done"
   assert_grep "pass its shared completion gate for the report and any visual review" "$scout" \
     "scout brief did not cross-reference visual-review completion"
+  assert_grep 'file:line, size (S, M or L), kind (defect, hardening, doc-nit, question or research)' "$scout" \
+    "scout brief did not ask for the follow-up fields"
+  assert_grep "\`## Follow-ups\` section" "$scout" \
+    "scout brief did not name the section teardown checks"
+  assert_no_grep "into the backlog" "$scout" \
+    "scout brief still promised to file follow-ups as backlog rows"
   FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" FM_SECONDMATE_CHARTER='sample reviews' \
     "$ROOT/bin/fm-brief.sh" sample-mate --secondmate --no-projects >/dev/null 2>&1
   charter="$home/data/sample-mate/brief.md"

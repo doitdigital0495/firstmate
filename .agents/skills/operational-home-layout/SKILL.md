@@ -77,6 +77,7 @@ config/watch.env     optional home-local watcher tuning as exported shell assign
 config/usage-warner  optional Claude usage-window thresholds for the opt-in macOS threshold warner armed with bin/fm-usage-warner.sh; LOCAL, gitignored, and NOT inherited by secondmate homes; see docs/configuration.md "Local Claude usage warner"
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 data/                personal fleet records; LOCAL, gitignored as a whole
+  suggestions.jsonl suggestions-not-picked.jsonl  suggested tasks kept off the board and their never-deleted archive; written only by bin/fm-suggestions.sh
   backlog.md         task queue, dependencies, history
   home-identity      durable terminal-session and Claude-account binding, written once and never migrated; bin/fm-home-identity.sh owns its comparison and refusals
   captain.md         this home's domain-local captain preferences and working style; LOCAL, gitignored, canonical even if harness memory mirrors it, and updated with inspect-then-update

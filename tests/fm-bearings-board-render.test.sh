@@ -92,6 +92,17 @@ require_listener_reached_poll() {  # <home>
   fail "the board listener did not reach the Lavish poll (owner: ${owner:-none})"
 }
 
+# Rebuild from the payload already in the home and return what the renderer produced.
+rebuild_and_render() {  # <home>
+  local home=$1
+  PATH="$home/fakebin:$PATH" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROCEVENT_CLAIM_ROOT="$home/procevent-claims" \
+    LAVISH_AXI_STATE_DIR="$home/lavish-state" \
+    "$BOARD" build "$home/payload.json" >/dev/null || fail "the board did not rebuild"
+  node "$HARNESS" "$home/.lavish/bearings-board.html"
+}
+
 # Build the board from <underway-json> plus <charted-json> and return what the
 # renderer produced.
 render_board() {  # <home> <underway-json> <charted-json> [charted_more] [charted_warning_more]
@@ -252,6 +263,38 @@ test_charted_next_reads_newest_filed_first() {
   pass "charted next renders the most recently filed work first"
 }
 
+test_suggested_tasks_render_a_line_and_picks_without_counting_as_charted() {
+  local home out data
+  home=$(make_home suggested)
+  render_board "$home" '[]' '[
+    {"id":"real-queued","repo":"sample","title":"Queued work","reason":"","dispatchable":true}
+  ]' >/dev/null
+  data="$home/payload.json"
+  jq '.suggested = {line:"2 suggested tasks, oldest 12d", more:1, items:[
+    {id:"sg-aaaa1111",repo:"sample",title:"A lead",kind:"defect",size:"S",file_line:"bin/x.sh:1",age_days:12,risk:"stale"}]}' \
+    "$data" > "$data.new"
+  mv "$data.new" "$data"
+  out=$(rebuild_and_render "$home")
+  printf '%s' "$out" | jq -e '
+    .error == ""
+      and .suggestedLine == ["2 suggested tasks, oldest 12d"]
+      and ([.stats[] | select(.label == "charted next") | .n] | map(tostring)) == ["1"]
+      and (.more | any(test("1 more suggested")))
+      and (.charted | any(.title == "A lead" and .pickable == true
+        and ([.badges[].text] == ["suggested"]) and (.sub | test("bin/x.sh:1"))))
+  ' >/dev/null || fail "suggested tasks did not render apart from Charted Next: $out"
+  pass "suggested tasks render one line and pickable rows without counting as Charted Next"
+}
+
+test_a_board_with_no_suggested_field_renders_no_suggested_line() {
+  local home out
+  home=$(make_home suggested-absent)
+  out=$(render_board "$home" '[]' '[]')
+  printf '%s' "$out" | jq -e '.error == "" and .suggestedLine == []' >/dev/null \
+    || fail "a board with no suggestions rendered a line: $out"
+  pass "a board with no suggested field renders no suggested line"
+}
+
 test_charted_rows_without_a_filed_date_follow_the_dated_rows_in_payload_order() {
   local home out
   home=$(make_home charted-undated)
@@ -269,6 +312,8 @@ test_charted_rows_without_a_filed_date_follow_the_dated_rows_in_payload_order() 
 test_an_underway_row_leads_with_the_task_name_and_keeps_its_run_status
 test_an_underway_identifier_label_is_not_replaced_by_run_status
 test_charted_next_reads_newest_filed_first
+test_suggested_tasks_render_a_line_and_picks_without_counting_as_charted
+test_a_board_with_no_suggested_field_renders_no_suggested_line
 test_charted_rows_without_a_filed_date_follow_the_dated_rows_in_payload_order
 test_a_warning_row_reads_as_a_repair_not_as_queued_work
 test_warnings_are_excluded_from_the_charted_next_count

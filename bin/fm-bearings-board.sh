@@ -55,6 +55,12 @@
 # keyed-answer intake as a blind close, are owned by
 # docs/captain-hold-lifecycle.md.
 #
+# The optional `suggested` object carries bin/fm-suggestions.sh's summary `line`,
+# digest `items` (each an id, title and repo, plus any of kind, size, file_line,
+# risk, recommend and age_days), and a `more` count of omitted items. An item's
+# pick travels in the dispatch.charted answer as its `sg-` id; neither it nor the
+# line ever counts as Charted Next work.
+#
 # Validation is fail-closed: the payload must be valid JSON with
 # schema=fm-bearings-board.v1 and every renderer-consumed field must satisfy
 # the fm-bearings-board.v1 types and item invariants below. Every fleet row and
@@ -179,7 +185,17 @@ validate_payload() {  # <data.json>
       and ((has("kind") | not) or (.kind == "queued" or .kind == "warning"))
       and optional_filed
       and (if .kind == "warning" then .dispatchable == false else true end);
+    def suggested_item:
+      type == "object" and repo_marker and (.id | slug(128))
+      and (.title | nonempty_string) and ((has("age_days") | not) or (.age_days | type == "number"));
+    def suggested_ok:
+      (has("suggested") | not)
+      or (.suggested | type == "object"
+          and (.line | type == "string")
+          and ((has("more") | not) or ((.more | type == "number") and (.more >= 0) and (.more | floor == .)))
+          and ((has("items") | not) or ((.items | type == "array") and ([.items[] | suggested_item] | all))));
     type == "object"
+    and suggested_ok
     and (.schema == $schema)
     and (.home | nonempty_string)
     and (.generated | nonempty_string)

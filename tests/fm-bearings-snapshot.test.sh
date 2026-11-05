@@ -1594,6 +1594,30 @@ SH
   chmod +x "$fakebin/jq"
 }
 
+test_suggested_tasks_are_a_summary_and_never_queued_work() {
+  local home fakebin out toon
+  home=$(make_home suggested); write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  out=$(run "$home" "$fakebin" --json) || fail "the snapshot failed with no suggestions"
+  printf '%s' "$out" | jq -e '.suggested == {count:0, oldest_age_days:null, line:""}' >/dev/null \
+    || fail "an empty list was not an empty summary: $(printf '%s' "$out" | jq -c .suggested)"
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_SUGGESTIONS_NOW=$(($(date +%s) - 5 * 86400)) \
+    "$ROOT/bin/fm-suggestions.sh" add --origin scout-a --item 1 --title "A distinct waiting lead" >/dev/null \
+    || fail "the intake failed"
+  out=$(run "$home" "$fakebin" --json) || fail "the snapshot failed with a suggestion"
+  printf '%s' "$out" | jq -e '
+    .suggested == {count:1, oldest_age_days:5, line:"1 suggested task, oldest 5d"}
+      and ([.gates[] | select(.title == "A distinct waiting lead")] == [])
+  ' >/dev/null || fail "a suggestion did not stay a summary: $out"
+  toon=$(run "$home" "$fakebin") || fail "the TOON snapshot failed"
+  assert_contains "$toon" "1 suggested task, oldest 5d" "the TOON form lost the summary"
+  printf 'not json\n' >> "$home/data/suggestions.jsonl"
+  out=$(run "$home" "$fakebin" --json) || fail "a corrupt list broke the snapshot"
+  printf '%s' "$out" | jq -e '.suggested.unavailable == true' >/dev/null \
+    || fail "a corrupt list read as empty: $(printf '%s' "$out" | jq -c .suggested)"
+  pass "suggested tasks reach the snapshot as a summary, outside gates, and disclose an unreadable list"
+}
+
 test_projection_and_toon_fail_closed() {
   local home fakebin out err rc
   home=$(make_home fail-closed); write_fixture "$home"
@@ -3461,4 +3485,5 @@ fm_test_run \
   test_revealed_deferred_holds_show_their_deferral_reason \
   test_pr_repository_cap_and_expansion \
   test_per_repository_pr_cap_is_disclosed \
+  test_suggested_tasks_are_a_summary_and_never_queued_work \
   test_projection_and_toon_fail_closed
