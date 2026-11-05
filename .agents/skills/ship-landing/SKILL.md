@@ -24,6 +24,8 @@ Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm
 
 Tear down a ship task only after landing is confirmed.
 A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result, never an obstacle to bypass.
+Find out what the work is, then get it cleaned up, committed, merged under the configured merge authority, and finished through a worker on that task's delivery path, and retry the teardown.
+Escalate to the captain only when that is not possible, such as work you cannot identify, a finish that needs a captain decision, or a merge firstmate has no authority for.
 Never force teardown without explicit discard authority.
 After successful teardown, record completion, retain only the configured recent Done history, and re-evaluate queued work whose blockers and time gates have cleared.
 
