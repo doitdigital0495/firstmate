@@ -1877,7 +1877,7 @@ The declared value must be a boolean; anything else is an actionable configurati
 **Fallback-only reserve tier**
 
 An optional per-profile boolean `"fallback_only": true` marks a candidate as a reserve seat, such as a Claude seat the captain keeps for firstmate and secondmate work.
-A reserve candidate is eligible only when no non-fallback candidate of the same provider family is still available, where a seat counts as at its limit only when its weekly (7d) window is at or above 100% used or its runway reports `exhausted_now`.
+A reserve candidate is eligible only when no non-fallback candidate of the same provider family is still available, where a seat counts as at its limit only when its weekly (7d) window is at or above 100% used or a runway reporting `exhausted_now` is limited by that window.
 Only the weekly window counts: an exhausted session (5h) window alone never releases the reserve, because the weekly allowance is the real limit on such seats.
 Once eligible, the reserve candidate still ranks below every non-fallback candidate, so it is picked only when no non-fallback candidate is rankable, including candidates of other provider families.
 Typed dispatch resolution's candidate lines and the dispatch receipt state the reserve decision and why, for a held reserve and a picked one alike.
@@ -1923,7 +1923,7 @@ Each row declares these fields, and every one is required unless marked optional
 `fallback_only` is refused in a row, because its reserve test would hold a seat until the earlier seats reach their weekly limit and so skip it when they are only out on a five-hour window.
 Selection uses the same quota evaluation, seat tier hold, spendPriority ranking, and tie-break as worker resolution, with two additions.
 The weekly floor reads the weekly window itself, because a quota row bounded by both windows would also trip on a low five-hour window.
-Inside the open tier, a seat projected to run out within 90 minutes loses to a seat that lasts to its reset, and an idle five-hour window with no reset does not count.
+Inside the open tier, a seat projected to run out within 90 minutes loses to a seat that lasts to its reset, and a five-hour window with no published reset does not count.
 That runway test never opens a later tier: if every open seat is short, they still compete on spendPriority.
 
 Quota evidence gets at most 30 seconds in total, including the first reads, and `FM_DISPATCH_QUOTA_WAIT_SECONDS` can only shorten that.
@@ -2230,7 +2230,8 @@ An absent or empty table returns `no rules to match`; a default-only table can r
 An existing unreadable or malformed table, including a broken symlink, is an exit 2 configuration error.
 Everything after the answer runs in code: the confidence floor, the matched rule's `approval`, `min_confidence`, and `floor`, each candidate's `provider`, `quota_scope`, and `floor`, every applicable account-wide and model/product row from the default and authorized named-store `quota-axi --json` snapshots, the optional `preferred_provider` restriction under the [profile-array procedure](../.agents/skills/quota-array-dispatch/SKILL.md#4-rank-by-spendpriority), and the numeric `spendPriority` argmax within that candidate pool using each candidate's limiting row, restricted to the highest declared `reasoning_class` first under the keep-strongest rule below.
 A candidate is rankable only with complete limit information: every window its applicable rows are bounded by - the weekly limit, a session limit where the plan has one, and named model windows - must carry a known remaining percent and reset time.
-A five-hour window counts whenever it can be read; one that is missing or has no readable percent or reset time is ignored on every account and never makes a candidate incomplete (captain 2026-11-02), and a row unknown only because of such a window ranks on its other windows.
+A five-hour window counts on every account whenever its remaining percent and published reset are both known: a seat at that limit prints `not eligible: <limit>: at its five-hour limit, held until <reset>` and stays out until that reset (captain 2026-11-05).
+An idle window (0% used, no reset), an unreadable one, or one with no published reset never blocks a start and never makes a candidate incomplete: the candidate line names it as `five_hour=<state>, does not block`, a floor does not trip on it, and a row out of room or unknown only because of it stays eligible and ranks on what the row reports.
 A provider whose state is `auth_required` makes only that candidate ineligible as `credential unusable ... not an unknown quota`; it never makes the whole choice incomplete.
 A provider row that a read could not measure for any other reason (rate limited, stale, unavailable, or the read failed outright) reuses that provider's last good reading of the same canonical store from the cache intake and the resolver share (`state/quota-last-good/shared.json`) while it is at most `FM_QUOTA_RECENT_MAX_AGE` (86400) seconds old; the candidate line then shows `reading_age=<s>s (recent reading reused)`, a reused exhausted reading excludes only until that window's own reset time, and nothing older is used. The readings live privately under `state/quota-last-good/`.
 A row whose own status is not known, an unmeasured provider, a profile floor whose scope row is unmeasured, a candidate with no applicable row, or a window without a percent or reset makes that candidate unreadable; it is never ranked, selected, or treated as healthy because its limits are unknown.
