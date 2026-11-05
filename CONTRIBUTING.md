@@ -67,6 +67,7 @@ This fork's own clone uses exactly that layout: `origin` is `https://github.com/
 `/updatefirstmate` (`bin/fm-update.sh`) fast-forwards from the remote literally named `origin`, so after this change it tracks your fork rather than the parent, which is the intended behavior once your fork is your trunk.
 Pull the parent's work in deliberately with `git fetch upstream` and a merge of `upstream/main`, and note that once you have merged your own PRs your fork's `main` has diverged from the parent and can no longer be fast-forwarded from it.
 `gh` still reaches the parent explicitly with `gh -R kunchenguid/firstmate ...`.
+This fork ships every change as a PR to `origin` and never pushes, opens, or merges anything on the parent.
 
 Take the parent as a real merge, never as a squash of its tree.
 A squash records no ancestry with the parent, so the merge base never advances and the next ingestion replays conflicts across every file the squash touched, against content that is already textually identical on both sides.

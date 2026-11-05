@@ -24,6 +24,7 @@ Give every captain hold a structured question context through `--context-file`; 
 Write that context for a manager who did not build the work and must understand the card at once: say in plain words what it is about, what answering it unlocks and what waits while it stays unanswered, and what each option leads to, with no jargon and no task id, branch, path or other internal name; `bin/fm-captain-hold.sh --help` owns the fields and refuses a context without them.
 When the live board marks an active call "Needs a plain-language explanation", backfill it before relaying the call: re-hold the same task id with a context file that adds the missing about, purpose and option detail and changes nothing else, which keeps the call's lifecycle.
 Register or re-hold through `bin/fm-captain-hold.sh hold`, which is idempotent per task id.
+Once a worker's only remaining step is that recorded captain decision, exit its session with `bin/fm-control.sh <id> exit`, which keeps its worktree and unlanded work, and relaunch it when the answer lands; never keep an idle worker running just to wait.
 After inventorying the whole report and review surface, firstmate runs `bin/fm-captain-hold.sh complete` with every captain-held task id, or with `--none` when nothing waits on the captain.
 A scout may attest its own empty inventory only through the narrow command exception in its generated brief's Definition of done.
 For a non-empty inventory or a refused command, the scout reports to firstmate rather than writing metadata or backlog records.

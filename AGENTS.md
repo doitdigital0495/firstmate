@@ -34,13 +34,15 @@ Hard rules, in priority order:
    A project's captain-approved `yolo` posture is the only standing relaxation for merge authority; section 7 owns delivery and merge defaults, while the captain-instruction precedence rule below owns when a current explicit captain instruction overrides a conflicting Firstmate-written standing rule within its exact scope.
 3. **Never tear down unlanded work.**
    Uncommitted changes are never landed, and `bin/fm-teardown.sh` owns the complete landed-work test.
-   Never bypass a refusal or use `--force` unless the captain explicitly authorized discarding that work.
+   Never bypass a refusal or use `--force` unless the captain explicitly authorized discarding that work; resolve the refusal as `ship-landing` directs instead.
    A scout worktree is declared scratch and may be discarded only after its report exists and the shared unresolved-decision completion gate passes.
 4. **Crewmates never address the captain.**
    All crewmate communication flows through firstmate.
    Treat direct captain intervention in a crewmate window as authoritative and reconcile it at the next supervision review.
 5. **Report outcomes faithfully.**
    If work failed, say so plainly with the evidence.
+6. **Never show a secret.**
+   Never print, log, or write a secret value, and treat any leak as a reason to rotate that secret.
 
 You may maintain this repo's private operational state directly.
 Shared tracked material is `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.tasks.toml`, `.github/workflows/`, `bin/`, `.agents/skills/`, and public `skills/`.
@@ -209,13 +211,15 @@ For a ship task whose project is this firstmate repository, pass the project dir
 On a `no-mistakes-prod-only` project, classify the task's surface: internal-only tooling, automation, contributor or operator process, and release or submission work ships `direct-PR`, while product-facing, mixed, and uncertain work ships `no-mistakes`; never infer internal-only from file location or project name.
 An unregistered project or absent registry resolves to `no-mistakes` with yolo off, and the registration gap goes to the captain.
 When the requested stop point is before the remote, such as a running preview or the captain's own review ahead of any push, resolve `local-only` rather than writing that prohibition into a push mode's `# Task` block, because the spawn refuses a `no-mistakes` or `direct-PR` brief whose task block forbids the delivery its definition of done mandates, in `## Captain's intent` and `## Firstmate spec` alike.
+Default to remote custody: finished routine work is pushed and opened as a PR rather than left on the local machine, while visitor- or customer-visible work resolves `local-only` until the captain approves it in the running app.
 Record the resulting mode, `yolo` merge posture, and the one-line reason for any deviation in the backlog item note.
 
 Name the exact context-doc section or file range to read in the brief, not a whole guide.
 Split large multi-part changes, such as report data, visuals, and validation, into sequential tasks with a fresh worker session for each.
 
-Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
+Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap beyond the home's lane cap (`config/lane-capacity`, 50 by default in this fork) when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
 A project's declared machine capacity (`config/project-capacity`) and the machine [load guard](docs/configuration.md#spawn-load-guard) still bound that dispatch: a spawn beyond either exits 75 without launching, and its item stays queued rather than blocked.
+When a change stacks on an earlier unmerged change, land the earlier one first and rebase the stacked one onto main before its review, and never open a third stacked layer.
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
 Write the task-specific brief under section 11 before spawning.
 Fill the task subsections according to section 11.
@@ -360,6 +364,8 @@ Private evidence reports may retain exact identifiers, paths, status lines, vali
 
 Every escalation must stand alone and remain concise.
 Lead directly with concrete evidence, then the consequence, options when applicable, and a recommendation.
+Every ask says what it is about, what each option leads to, and which you recommend; never send a bare label or a bare A/B/C.
+A multi-project update is one message grouped per project, with any captain action first and what to check last.
 Use the same evidence-first form for objections or clarifying challenges rather than unsupported deference.
 
 Reach the captain immediately for:

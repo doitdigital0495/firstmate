@@ -1,7 +1,14 @@
 # Decision log
 
-Captain-level routing decisions whose reasoning the current-behavior docs do not carry.
-[`configuration.md`](configuration.md#pipeline-seat-rows) owns the resulting contract.
+Captain-level routing and operating decisions whose reasoning the current-behavior docs do not carry.
+Each entry links the page that owns its resulting contract.
+
+## 2026-11-05 - up to 50 workers, and unlanded work is finished rather than parked
+
+**Decision.** A home runs up to 50 ordinary workers in parallel.
+The primary firstmate and persistent secondmates do not count toward that cap, and there is no automatic pause at any usage percentage.
+[`configuration.md`](configuration.md#lane-capacity-configlane-capacity) owns the cap's file format.
+Work that cleanup refuses as uncommitted or unmerged is finished and merged by firstmate rather than sent to the captain, and never forced; [`ship-landing`](../.agents/skills/ship-landing/SKILL.md) owns the procedure.
 
 ## 2026-11-04 - no-mistakes steps choose their seat from two pools
 
@@ -10,6 +17,7 @@ Pool 1 is claude1 or claude2.
 Pool 2 is claude3 and every Codex account, used only when pool 1 has no seat with room.
 A live five-hour window counts for the pipeline only, claude3 stops at 20 percent weekly room left, and Codex seats run at the step's reasoning class.
 When both pools are empty the step fails and names every seat's reset, with no downgrade and no GLM.
+[`configuration.md`](configuration.md#pipeline-seat-rows) owns the resulting contract.
 
 **Why a fixed row.** The step name already fixes the row, and a model call per step would add cost and turn a Jev outage into a captain pick that a pipeline cannot answer.
 
