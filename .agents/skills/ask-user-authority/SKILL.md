@@ -15,8 +15,8 @@ This skill is the single owner of the decision policy for no-mistakes ask-user f
 Finding authority is determined by the criteria below, not by `yolo`.
 Firstmate always applies this judgment, decides any finding that is unambiguous toward the accepted design, and escalates only genuinely ambiguous, expanding, or destructive findings.
 
-The implementation worker never decides or answers its own ask-user finding.
-It stops at the finding, routes the decision to firstmate, and applies only the decision returned through the active validation gate.
+The implementation worker never decides or answers its own ask-user finding, with one exception: the worker-settled row of the standing answers below.
+For anything else it stops at the finding, routes the decision to firstmate, and applies only the decision returned through the active validation gate.
 
 ## Decide
 
@@ -45,6 +45,7 @@ A new product or access guarantee still uses the escalation criteria above; a fa
 | Machine-limit Test failure | Approve the gate with the limitation recorded and leave the affected test to CI when the failure is attributable to local resource limits, not an unexplained assertion or product failure, and CI will run the affected test. |
 | A non-production environment is missing its configured test script | Run the targeted tests available in that environment instead and return that evidence through the gate when the configured script is absent on the branch under test, in any non-production environment, and the replacement tests exercise the changed behavior, recording any coverage that remains unavailable; this is never a skip or waiver of testing. |
 | Stale generated file | Include the regenerated file in the same PR through the gate when the repository's generator produces it from the accepted change or current authoritative inputs, with no unrelated semantic expansion. |
+| Informational or style review finding (worker-settled) | The worker settles it without going up, whatever action the gate gives it, by declining it through the active gate so it costs no fix round and recording it as a numbered follow-up in its done report, when the finding only reports information or concerns wording, formatting, naming, or comments and neither fixing nor leaving it changes behavior. |
 
 A project's home-private brief addendum may add a `## Standing answers` table of project-specific recurring kinds, which that project's worker briefs then carry; `docs/configuration.md` owns the addendum mechanism.
 Apply its rows exactly like the rows above and under the same conditions, and keep project-specific rows in that addendum rather than in this tracked table.
@@ -53,7 +54,9 @@ Record the matched kind, relevant evidence, and returned answer in the task's de
 When another gate presents the same question, even with a new finding id, reuse that answer if the accepted contract, evidence, and consequences are unchanged instead of asking the captain again.
 If it recurs after a purported fix, inspect the result and authorize completion of the already-decided correction rather than reopening the same choice.
 Changed consequences or a questionable abstraction still escalate under Decide above.
-Workers continue routing ask-user findings to firstmate; this table never authorizes a worker to answer its own gate.
+The worker-settled row is the only one a worker applies itself; for every other row, workers continue routing ask-user findings to firstmate.
+Security, data loss, scope expansion, and irreversible choices never match that row and always escalate, and so does a doubtful classification, whatever severity the reviewer assigned.
+A gate that also holds an ask-user finding outside that row goes to firstmate whole, and firstmate applies the row to the qualifying findings.
 
 ## Captain-facing escalation
 

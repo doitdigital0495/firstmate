@@ -60,4 +60,52 @@ test_primary_and_secondmate_instruction_generation() {
   pass "primary workers and secondmates receive the authority rule through generated instructions"
 }
 
+test_worker_settle_and_pre_gate_checks_reach_every_gate_variant() {
+  local home id brief args owner
+  home="$TMP_ROOT/settle-home"
+  mkdir -p "$home/data"
+
+  for args in 'no-mistakes' 'no-mistakes --pr manual' 'no-mistakes --forge gerrit'; do
+    id="settle-$(printf '%s' "$args" | tr -c 'a-z\n' '-')"
+    # shellcheck disable=SC2086 # Word splitting supplies the variant's flags.
+    FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$BRIEF" "$id" sample --mode $args >/dev/null 2>&1 \
+      || fail "the $args brief should scaffold"
+    brief="$home/data/$id/brief.md"
+    assert_grep 'Settle informational and style review findings yourself, without going up' "$brief" \
+      "the $args worker cannot settle informational and style findings"
+    assert_grep 'Security, data-loss, scope, and irreversible findings always escalate, and so does any doubt' "$brief" \
+      "the $args worker lost the always-escalate boundary"
+    assert_grep 'list it as a numbered follow-up in your done report' "$brief" \
+      "the $args worker is not told to record a settled finding"
+    assert_grep 'Beyond that one standing answer, ask-user findings are never yours to answer' "$brief" \
+      "the $args worker may now answer ask-user findings outside the standing answer"
+    assert_grep "except any standing answer your Definition of done has you settle yourself" "$brief" \
+      "the $args worker's rule 6 contradicts the worker-settle rule"
+    # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
+    assert_grep 'Before your first `no-mistakes axi run` for this task, run the project'"'"'s lint and the targeted tests covering your change, never a full suite' "$brief" \
+      "the $args worker is not told to run cheap local checks before the first gate"
+    assert_no_grep 'neither fixing nor leaving it changes behavior' "$brief" \
+      "the $args brief restated the qualification the policy owner states once"
+  done
+
+  # The brief routes to the policy owner by path, so that path must resolve.
+  # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
+  owner=$(grep -o '`[^`]*ask-user-authority/SKILL\.md`' "$brief" | head -n 1 | tr -d '`')
+  [ -n "$owner" ] || fail "the worker-settle rule names no policy owner path"
+  assert_present "$owner" "the worker-settle rule points at a missing policy owner"
+
+  # A mode that runs no pipeline has no gate to settle at or to check before.
+  for args in direct-PR local-only; do
+    FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$BRIEF" "settle-$args" sample --mode "$args" >/dev/null 2>&1 \
+      || fail "the $args brief should scaffold"
+    brief="$home/data/settle-$args/brief.md"
+    assert_no_grep 'Settle informational and style review findings' "$brief" \
+      "a $args worker was given a pipeline gate rule"
+    assert_no_grep 'run the project'"'"'s lint and the targeted tests covering your change' "$brief" \
+      "a $args worker was given a pre-gate step with no gate after it"
+  done
+  pass "every no-mistakes variant carries worker-settle and pre-gate checks; modes with no pipeline do not"
+}
+
 test_primary_and_secondmate_instruction_generation
+test_worker_settle_and_pre_gate_checks_reach_every_gate_variant
