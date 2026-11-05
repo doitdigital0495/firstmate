@@ -1251,6 +1251,12 @@ test_ci_ready_done_log_beats_monitoring_run() {
   assert_contains "$out" "source: status-log" "ci-ready state comes from the status log"
   assert_contains "$out" "checks green" "ci-ready detail preserves the report"
   assert_not_contains "$out" "state: working" "ci-ready is not hidden by monitoring run"
+  # A live brief scaffolded before the asks accounting was retired still appends
+  # this tail, and its done signal must read exactly like the plain one.
+  printf 'done [at=1788576000]: PR https://github.com/o/r/pull/2 checks green; asks 3/3\n' > "$d/state/feat-ci.status"
+  out=$(run_crew_state "$d" feat-ci)
+  assert_contains "$out" "state: done" "ci-ready status log with an asks tail -> done"
+  assert_contains "$out" "source: status-log" "ci-ready state with an asks tail comes from the status log"
   pass "ci-ready status log beats monitoring run"
 }
 

@@ -52,7 +52,7 @@ while [ "$#" -gt 0 ]; do
     --captain-pick) RESOLVE_ARGS+=(--captain-pick); shift ;;
     --harness|--model|--effort|--account|--harness=*|--model=*|--effort=*|--account=*)
       die 'profile flags belong to the resolver, not the caller' ;;
-    --scout|--fast-lane|--preview-on-push|--herdr-resume-lock-wait)
+    --scout|--herdr-resume-lock-wait)
       [ "$VERB" != relaunch ] || die "unsupported relaunch option $1"
       case "$VERB:$1" in promote:--scout|promote:--herdr-resume-lock-wait) die "unsupported promote option $1" ;; esac
       ARGS+=("$1"); shift ;;

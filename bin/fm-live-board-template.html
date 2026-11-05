@@ -807,7 +807,6 @@ __FM_LIVE_BOARD_DATA__
       row.appendChild(project);
       var route = el("div", "running-name");
       route.appendChild(el("span", "delivery-mode", p.mode));
-      (p.flags || []).forEach(function (flag) { route.appendChild(el("span", "w-note", flag)); });
       row.appendChild(route);
       row.appendChild(el("span", "delivery-approval w-note", p.approval));
       list.appendChild(row);

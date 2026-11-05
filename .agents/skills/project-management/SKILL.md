@@ -52,7 +52,6 @@ The optional `+yolo` posture changes merge authority only and does not change th
 Default it off for every project and every posture, and enable it only on the captain's explicit instruction.
 `AGENTS.md` section 7 owns the merge-authority contract.
 
-The optional `preview-on-push` posture marks a project whose CI builds preview environments from fm/* pushes; register it only on the captain's instruction, and `AGENTS.md` section 7 owns what it changes.
 The optional `forge=` token records which forge the project's remote actually is; its values are `forge=gerrit`, `forge=forgejo`, and `forge=external`.
 It is orthogonal to the mode and to `+yolo`, so it is never derived from either, and it is never inferred at use time from a remote name, host, port, or push target.
 At add or create intake, run `bin/fm-forge-detect.sh projects/<name>` once the clone exists and propose its answer alongside the posture; the captain's confirmation is what binds it, and the registry token is the durable record of that confirmation.

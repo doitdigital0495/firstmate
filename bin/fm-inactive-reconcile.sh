@@ -364,7 +364,8 @@ state_line_note() { # <state-line>
 # a PR, so it never carries one, exactly as pr_for_task rules for the
 # ledger-first path. Otherwise a status-log state carries a PR only in a mode's
 # ready-signal shape (`PR <url>`, `PR <url> checks green`, or Gerrit's
-# `PR <url> published for review`, optionally followed by `; asks <done>/<total>`)
+# `PR <url> published for review`, optionally followed by the `; asks <n>/<m>`
+# tail a brief scaffolded before that accounting was retired still instructs)
 # naming a review URL bin/fm-pr-lib.sh parses, so a PR a worker merely mentioned
 # in prose is never the delivery.
 terminal_outcome_pr() { # <state-line> <kind>
@@ -411,8 +412,9 @@ terminal_outcome_corroborated() { # <state> <last-status-line> <state-line>
 # The task's delivered PR. Recorded meta pr= is the only authoritative source;
 # the fallback scrape accepts only a preferred terminal line in a mode's
 # ready-signal shape (`done: PR <url>` or `done: PR <url> checks green`,
-# optionally carrying an emission-time tag and an `; asks <done>/<total>` tail
-# this scrape steps over without reading), so a PR a worker merely mentioned in prose is never claimed as the
+# optionally carrying an emission-time tag and the retired `; asks <n>/<m>` tail
+# a still-live older brief instructs, both of which this scrape steps over without
+# reading), so a PR a worker merely mentioned in prose is never claimed as the
 # delivery.
 # A scout never delivers a PR, so it never carries one.
 pr_for_task() { # <meta> [preferred-line]

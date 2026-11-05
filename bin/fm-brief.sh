@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--fast-lane] [--preview-on-push] [--branch-prefix <prefix>] [--base-branch <branch>] [--forge <none|gerrit|forgejo|external> [--shape squash]] [--pr <auto|manual>] [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--forge <none|gerrit|forgejo|external> [--shape squash]] [--pr <auto|manual>] [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--base-branch <branch>] [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -49,31 +49,8 @@
 # the three concrete modes at intake before calling this script.
 # Every ship and scout scaffold carries a shared harness-neutral work-economy
 # block for blocking waits, range reads, batched probes, and short output.
-# Every ship and scout scaffold also carries `## Request checklist` with an
-# `{ASKS}` placeholder Firstmate fills before dispatch: one numbered checkbox line
-# per distinct captain ask, in the captain's terms ("1. [ ] <ask>"). The
-# definition of done makes the worker account for every item with proof in a done
-# report at data/<task-id>/report.md and end every done line with
-# `asks <done>/<total>`, so a lost ask is visible at the first done report; a
-# brief without the subsection (hand-written or pre-checklist) is legacy-valid
-# and accounts for the asks under `## Captain's intent` instead.
-# `--fast-lane` (ship, --mode no-mistakes only) writes the one-review-round
-# delivery lane: the brief's definition of done instructs the worker to approve
-# the first review gate (never `--action fix` there) and lock scope to the
-# checklist, with out-of-scope findings recorded as follow-ups instead of
-# commits. The lane is a driver rule, not a no-mistakes option: no-mistakes has
-# no per-run rounds cap (bin/fm-dod-lib.sh owns that finding), which is exactly
-# why the worker needs the instruction. The recorded line becomes
-# "Delivery contract: mode=no-mistakes lane=fast", and bin/fm-spawn.sh requires
-# the matching --fast-lane flag there.
-# `--preview-on-push` (ship, --mode no-mistakes only) records that this
-# project's CI builds preview environments from fm/* pushes: the brief's
-# definition of done instructs the worker to push its fm/* branch right after
-# local checks - BEFORE starting no-mistakes - so previews build immediately,
-# and to never open the PR itself (no-mistakes's pr step opens it). Resolve it
-# from the project's registered posture in data/projects.md.
 # The generated ship brief records the chosen mode as a fixed machine-readable
-# "Delivery contract: mode=<mode>" line ("... lane=fast" with --fast-lane).
+# "Delivery contract: mode=<mode>" line.
 # bin/fm-spawn.sh reads that line and refuses
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
 # recorded task metadata cannot drift apart. That spawn also refuses a no-mistakes or
@@ -261,8 +238,6 @@ HERDR_LAB=0
 NO_PROJECTS=0
 MODE=
 MODE_SET=0
-FAST_LANE=0
-PREVIEW_ON_PUSH=0
 BRANCH_PREFIX=fm/
 BRANCH_PREFIX_SET=0
 BASE_BRANCH=
@@ -305,8 +280,6 @@ for a in "$@"; do
     --no-projects) NO_PROJECTS=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
-    --fast-lane) FAST_LANE=1 ;;
-    --preview-on-push) PREVIEW_ON_PUSH=1 ;;
     --branch-prefix) want_value="branch-prefix" ;;
     --branch-prefix=*) BRANCH_PREFIX=${a#--branch-prefix=}; BRANCH_PREFIX_SET=1 ;;
     --base-branch) want_value="base-branch" ;;
@@ -347,26 +320,6 @@ if [ "$KIND" = ship ]; then
 elif [ "$MODE_SET" -eq 1 ]; then
   echo "error: --mode applies only to ship briefs; a scout delivers a report and a secondmate charter is not a delivery contract" >&2
   exit 1
-fi
-if [ "$FAST_LANE" -eq 1 ]; then
-  if [ "$KIND" != ship ]; then
-    echo "error: --fast-lane applies only to ship briefs; the one-review-round lane is a delivery contract, and a scout's report or a charter ships no PR through it" >&2
-    exit 1
-  fi
-  if [ "$MODE" != no-mistakes ]; then
-    echo "error: --fast-lane requires --mode no-mistakes; the one-review-round lane modifies the no-mistakes review drive, so the other modes have nothing for it to modify" >&2
-    exit 1
-  fi
-fi
-if [ "$PREVIEW_ON_PUSH" -eq 1 ]; then
-  if [ "$KIND" != ship ]; then
-    echo "error: --preview-on-push applies only to ship briefs; a scout delivers a report and a charter ships no branch to preview" >&2
-    exit 1
-  fi
-  if [ "$MODE" != no-mistakes ]; then
-    echo "error: --preview-on-push requires --mode no-mistakes; direct-PR pushes before anything else already, so only the pipeline mode delays previews" >&2
-    exit 1
-  fi
 fi
 
 # A ship branch's prefix is optional per-project cosmetics, not a delivery
@@ -736,9 +689,6 @@ IFS= read -r -d '' TASK_SECTION <<'EOF' || true
 ## Captain's intent
 {TASK}
 
-## Request checklist
-{ASKS}
-
 ## Firstmate spec
 {FIRSTMATE_SPEC}
 EOF
@@ -850,20 +800,18 @@ $WAIT_BLOCK$INBOX_SECTION
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
-Walk the brief's \`## Request checklist\` items in order in the report: \`[x]\` for each answered ask together with its proof - a command and the output line that proves it, a file:line, or a link - or \`[ ]\` with why it is not answered; a brief with no such subsection accounts for each distinct ask under \`## Captain's intent\` the same way.
-End the report with numbered follow-ups for anything noticed but not investigated or fixed; firstmate files them into the backlog from this report, so omitting one silently drops it.
 $LAVISH_LINE
 Before reporting done, read and follow \`$FM_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
 Only when the reviewed inventory is empty, run \`FM_HOME=$(shell_quote "$FM_HOME") bash $(shell_quote "$FM_ROOT/bin/fm-captain-hold.sh") complete $(shell_quote "$ID") --none\`.
 This exception permits only that command, not direct metadata edits, another task, or any backlog write.
 If any captain call remains, ask firstmate to register the inventory and attest completion before you report done.
 If the command refuses, report the refusal to firstmate and stop rather than bypassing the completion gate.
-When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}; asks <done>/<total>\` to the status file and stop.
+When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}\` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
 EOF
 record_brief_milestone
 append_brief_include
-echo "scaffolded: $BRIEF (scout; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})"
+echo "scaffolded: $BRIEF (scout; replace {TASK} and {FIRSTMATE_SPEC})"
 exit 0
 fi
 
@@ -886,11 +834,7 @@ case "$MODE" in
     ;;
 esac
 RULE1=$(fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
-LANE=
-[ "$FAST_LANE" -eq 0 ] || LANE=fast
-PREVIEW=
-[ "$PREVIEW_ON_PUSH" -eq 0 ] || PREVIEW=on-push
-DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT" "$PR_TEXT" "$DATA" "$LANE" "$PREVIEW" "$STATE") || exit 1
+DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT" "$PR_TEXT" "$DATA" "$STATE") || exit 1
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
@@ -954,13 +898,11 @@ EOF
 record_brief_milestone
 append_brief_include
 if [ "$PR_TEXT" = manual ]; then
-  echo "scaffolded: $BRIEF (ship, mode=$MODE${LANE:+ lane=$LANE} pr=manual; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})"
-elif [ "$FAST_LANE" -eq 1 ]; then
-  echo "scaffolded: $BRIEF (ship, mode=$MODE lane=fast; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})"
+  echo "scaffolded: $BRIEF (ship, mode=$MODE pr=manual; replace {TASK} and {FIRSTMATE_SPEC})"
 elif [ "$FORGE" = none ]; then
-  echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})"
+  echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK} and {FIRSTMATE_SPEC})"
 elif [ "$FORGE" = gerrit ]; then
-  echo "scaffolded: $BRIEF (ship, mode=$MODE forge=$FORGE shape=$SHAPE; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})"
+  echo "scaffolded: $BRIEF (ship, mode=$MODE forge=$FORGE shape=$SHAPE; replace {TASK} and {FIRSTMATE_SPEC})"
 else
-  echo "scaffolded: $BRIEF (ship, mode=$MODE forge=$FORGE; replace {TASK}, {ASKS}, and {FIRSTMATE_SPEC})"
+  echo "scaffolded: $BRIEF (ship, mode=$MODE forge=$FORGE; replace {TASK} and {FIRSTMATE_SPEC})"
 fi
