@@ -1378,6 +1378,96 @@ test_opt_in_still_refuses_an_unclean_slot_first() {
   pass "with the opt-in an unclean slot is still refused, untouched, before any base is chosen"
 }
 
+# Seed the case with tracked project files and a brief for the ship under test,
+# then spawn it and leave its output in OVERLAP_OUT.
+overlap_case() {  # <case-name> <id> <brief-intent>
+  local rec
+  rec=$(make_case "$1" "$2")
+  read_case_record "$rec"
+  mkdir -p "$PROJECT_DIR/src"
+  printf 'x\n' > "$PROJECT_DIR/src/gateway.py"
+  printf 'x\n' > "$PROJECT_DIR/src/other.py"
+  git -C "$PROJECT_DIR" add src
+  git -C "$PROJECT_DIR" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm files
+  fm_test_spawn_brief "$HOME_DIR" "$2" "$3"
+}
+
+overlap_in_flight_ship() {  # <id> <kind> <project> <brief-intent> [pr-url]
+  fm_test_spawn_brief "$HOME_DIR" "$1" "$4"
+  {
+    printf 'kind=%s\nproject=%s\n' "$2" "$3"
+    [ -z "${5:-}" ] || printf 'pr=%s\n' "$5"
+  } > "$HOME_DIR/state/$1.meta"
+}
+
+# shellcheck disable=SC2016  # the backticks are literal brief text
+test_ship_overlap_warns_without_blocking() {
+  local id out status other
+  id='overlap-new-o1'
+  overlap_case overlap-warn "$id" 'Fix the timeout in `gateway.py` and see src/absent.py.'
+  overlap_in_flight_ship overlap-review-o2 ship "$PROJECT_DIR" 'Rework src/gateway.py, then README.md.' 'https://example.invalid/pull/7'
+  overlap_in_flight_ship overlap-apart-o3 ship "$PROJECT_DIR" 'Only `src/other.py` changes.'
+  overlap_in_flight_ship overlap-scout-o4 scout "$PROJECT_DIR" 'Reads `src/gateway.py`.'
+  overlap_in_flight_ship overlap-elsewhere-o5 ship "$CASE_DIR/elsewhere" 'Edits `src/gateway.py` in another project.'
+  overlap_in_flight_ship overlap-readonly-o6 ship "$PROJECT_DIR" 'Out of scope: `src/gateway.py`.'
+  overlap_in_flight_ship overlap-runner-o14 ship "$PROJECT_DIR" 'Tests: run `src/gateway.py` after the change.'
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off 2>&1)
+  status=$?
+  expect_code 0 "$status" "an overlapping ship must still launch"$'\n'"$out"
+  assert_contains "$out" "spawned $id" "the overlapping ship did not launch"
+  assert_contains "$out" "warning: ship overlap: $id names the same files as in-flight ship overlap-review-o2 (https://example.invalid/pull/7): src/gateway.py;" \
+    "an in-review ship naming the same file was not flagged"$'\n'"$out"
+  for other in overlap-apart-o3 overlap-scout-o4 overlap-elsewhere-o5 overlap-readonly-o6 overlap-runner-o14; do
+    assert_not_contains "$out" "in-flight ship $other" "$other must not be flagged"
+  done
+  pass "a ship naming an in-flight ship's file warns and still launches"
+}
+
+# shellcheck disable=SC2016  # the backticks are literal brief text
+test_ship_overlap_flags_a_queued_ship() {
+  local id out status other
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "skipped queued-ship overlap: tasks-axi is not installed"
+    return 0
+  }
+  id='overlap-new-o7'
+  overlap_case overlap-queued "$id" 'Change `src/gateway.py`.'
+  tasks-axi add overlap-queued-o8 'queued work' --kind ship --repo "$(basename "$PROJECT_DIR")" \
+    --body 'Needs src/gateway.py changed.' --file "$HOME_DIR/data/backlog.md" >/dev/null \
+    || fail "could not seed the queued backlog ship"
+  tasks-axi add overlap-queued-o9 'queued work' --kind ship --repo "$(basename "$PROJECT_DIR")" \
+    --body 'Needs src/other.py changed.' --file "$HOME_DIR/data/backlog.md" >/dev/null \
+    || fail "could not seed the second queued backlog ship"
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off 2>&1)
+  status=$?
+  expect_code 0 "$status" "a ship overlapping a queued ship must still launch"$'\n'"$out"
+  assert_contains "$out" "names the same files as queued ship overlap-queued-o8: src/gateway.py;" \
+    "a queued ship whose notes name the same file was not flagged"$'\n'"$out"
+  assert_not_contains "$out" "queued ship overlap-queued-o9" "a queued ship naming another file must not be flagged"
+  pass "a ship naming a queued backlog ship's file warns and still launches"
+}
+
+# shellcheck disable=SC2016  # the backticks are literal brief text
+test_ship_overlap_skips_scouts_and_disjoint_ships() {
+  local id out status other
+  id='overlap-scout-o10'
+  overlap_case overlap-scout "$id" 'Look at `src/gateway.py`.'
+  overlap_in_flight_ship overlap-review-o11 ship "$PROJECT_DIR" 'Rework `src/gateway.py`.'
+  out=$(run_spawn "$id" --scout 2>&1)
+  status=$?
+  expect_code 0 "$status" "a scout must launch"$'\n'"$out"
+  assert_not_contains "$out" "ship overlap" "a scout ships nothing and must not be flagged"
+
+  id='overlap-silent-o12'
+  overlap_case overlap-silent "$id" 'Change `src/other.py`.'
+  overlap_in_flight_ship overlap-review-o13 ship "$PROJECT_DIR" 'Rework `src/gateway.py`.'
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off 2>&1)
+  status=$?
+  expect_code 0 "$status" "a disjoint ship must launch"$'\n'"$out"
+  assert_not_contains "$out" "ship overlap" "ships naming different files must not be flagged"
+  pass "a scout and a disjoint ship launch without an overlap warning"
+}
+
 test_remote_seeded_home_spawns_from_treehouse_pool
 test_pool_slot_claim_follows_the_spawn_outcome
 test_refused_launch_leaves_the_pool_for_a_retry_and_a_second_task
@@ -1410,5 +1500,8 @@ test_default_keeps_origin_tip_while_the_primary_leads
 test_opt_in_base_follows_the_delivery_and_the_review_follows_the_base
 test_opt_in_keeps_a_named_base_branch_on_origin
 test_opt_in_still_refuses_an_unclean_slot_first
+test_ship_overlap_warns_without_blocking
+test_ship_overlap_flags_a_queued_ship
+test_ship_overlap_skips_scouts_and_disjoint_ships
 
 echo "# all fm-spawn-pool-base-freshen tests passed"

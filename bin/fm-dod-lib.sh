@@ -490,6 +490,9 @@ ${pr_return_line}Whenever a drive call returns without a gate or an outcome - it
   cat <<EOF
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
+Immediately before each \`no-mistakes axi run\` that starts a run - never while one is active - run \`git fetch origin\` and rebase your branch onto the tip of this task's base branch (the one this contract names, otherwise the repository default), so the gate starts on a fresh base.
+If that rebase conflicts or brings in changes your work depends on, resolve them and rerun your local proof first.
+If anything delays the start after that, fetch again and rebase again if the base moved.
 When starting no-mistakes, pass \`--intent\` as only this brief's \`## Captain's intent\` subsection body, not its heading, plus any later words the captain actually said.
 Preserve the actual words without adding speaker labels or direct address; the subsection heading supplies provenance outside the pipeline input.
 For a legacy brief with no such subsection, include only words on lines marked \`[captain] \`, excluding that metadata prefix; never copy its mixed \`# Task\` wholesale.

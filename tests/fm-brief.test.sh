@@ -1833,6 +1833,38 @@ test_inbox_section_keeps_the_shell_in_the_worktree
 # Rule 2 governs file edits rather than pool administration, so every crewmate
 # scaffold must prohibit the administrative act itself. The rule is emitted from
 # one shared string so the ship and scout copies cannot drift apart.
+# Every no-mistakes variant tells the worker to start the gate on a fresh base,
+# and a mode that never starts a gate does not.
+test_no_mistakes_rebases_right_before_the_gate() {
+  local home id flags brief
+  home="$TMP_ROOT/rebase-home"
+  write_registry "$home"
+  for id_flags in \
+    'rebase-nm-g1|--mode no-mistakes' \
+    'rebase-manual-g2|--mode no-mistakes --pr manual' \
+    'rebase-gerrit-g3|--mode no-mistakes --forge gerrit --shape squash'; do
+    id=${id_flags%%|*}
+    flags=${id_flags#*|}
+    # shellcheck disable=SC2086  # flags is a word list on purpose
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj $flags >/dev/null 2>&1 \
+      || fail "fm-brief.sh $flags should scaffold"
+    brief="$home/data/$id/brief.md"
+    # shellcheck disable=SC2016
+    assert_grep 'Immediately before each `no-mistakes axi run` that starts a run - never while one is active - run `git fetch origin` and rebase your branch' "$brief" \
+      "$flags: the definition of done does not rebase right before the gate"
+    assert_grep 'fetch again and rebase again if the base moved' "$brief" \
+      "$flags: the definition of done does not re-check a delayed start"
+  done
+  for id_flags in 'rebase-direct-g4|direct-PR' 'rebase-local-g5|local-only'; do
+    id=${id_flags%%|*}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "${id_flags#*|}" >/dev/null 2>&1 \
+      || fail "fm-brief.sh --mode ${id_flags#*|} should scaffold"
+    assert_no_grep 'that starts a run - never while one is active' "$home/data/$id/brief.md" \
+      "${id_flags#*|}: a mode with no gate gained the pre-gate rebase step"
+  done
+  pass "fm-brief.sh: every no-mistakes variant rebases right before the gate, and only those"
+}
+
 test_crewmate_scaffolds_forbid_pool_administration() {
   local home id brief mode ship_rule scout_rule
   home="$TMP_ROOT/pool-admin-home"
@@ -1949,4 +1981,5 @@ test_ship_branch_prefix_empty_override_yields_bare_task_id
 test_branch_prefix_is_refused_where_it_does_not_apply
 test_branch_prefix_value_is_validated
 test_branch_prefix_command_is_shell_safe
+test_no_mistakes_rebases_right_before_the_gate
 test_crewmate_scaffolds_forbid_pool_administration
