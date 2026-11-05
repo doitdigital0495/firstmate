@@ -275,13 +275,13 @@ unreadable pi
 FM_DISPATCH_QUOTA_ATTEMPTS=1 run "$BRIEF" --task six
 assert_contains "$(chosen)" "--account 'claude2'" "the attempt bound stops the warm-up, not the dispatch: $out"
 [ ! -e "$TMP_ROOT/warm-calls" ] || fail 'the warm-up ran past the attempt bound'
-FM_DISPATCH_QUOTA_ATTEMPTS=3 run "$BRIEF" --task six
+FM_DISPATCH_QUOTA_ATTEMPTS=3 FM_DISPATCH_QUOTA_WAIT_SECONDS=60 run "$BRIEF" --task six
 assert_contains "$(chosen)" "--account 'glm'" "the warmed pool joins this choice: $out"
 assert_equals 1 "$(wc -l < "$TMP_ROOT/warm-calls" | tr -d ' ')" 'the warm-up runs exactly once'
 rm -f "$FAKEBIN/zai-window-warm"
 reset_quota
 unreadable pi
-FM_DISPATCH_QUOTA_ATTEMPTS=3 run "$BRIEF" --task six
+FM_DISPATCH_QUOTA_ATTEMPTS=3 FM_DISPATCH_QUOTA_WAIT_SECONDS=60 run "$BRIEF" --task six
 assert_contains "$(chosen)" "--account 'claude2'" "an absent warm-up never stalls the choice: $out"
 cp "$TMP_ROOT/tier-rules" "$RULES"
 write_response rule_1 0.95 "$worker"
