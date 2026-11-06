@@ -128,6 +128,15 @@ The crew-hosted recovery ordering and arm-and-acknowledge rule are owned by the 
 : Nothing was captured: the source named in the payload is registered but nothing is confirmed to be collecting from it. There is no result file to read and no `handled` call to make; the ordinary drain acknowledgement consumes the row.
 : The payload says which shape it is and what clears it. Follow it exactly as the arming section above describes - a `start` is named only for the reused-pid strand, a leaderless group is a human check and reclaims itself once its group is empty, and a launch that never proved its claim closes its own episode if a later cycle finds the source owned.
 
+### Keeping a wake to few calls
+
+This changes how many tool calls a wake costs, never what is acknowledged or when; `AGENTS.md` section 8 and the drain's own `WAKE_ACK_REQUIRED` line stay the authority for the acknowledgement.
+- Read the drain output once and answer from it.
+  Do not re-drain, and do not re-read the same drain through ad-hoc `grep`, `awk`, or a saved copy such as `/tmp/drainN.txt`; drain again only for a new wake.
+- Chain the printed acknowledgement onto the Bash call that performs your last handling action instead of spending a separate turn on it, for example `bin/fm-procevent.sh handled <source-id> <sequence> && <the exact WAKE_ACK_REQUIRED command>`.
+- Join them with `&&` so a failed handling step leaves the acknowledgement unrun, and chain it only once every presented wake is handled and the open decisions and unread status are reconciled.
+  Copy the command exactly as printed, generation included; an acknowledgement you cannot chain still runs on its own after handling, as before.
+
 ## What the runner guarantees, exactly
 
 Supported by tests:
