@@ -5,7 +5,8 @@
 # the captain picks it. This script is the only writer of two local files in the
 # home's data directory (FM_DATA_OVERRIDE, else $FM_HOME/data):
 #   suggestions.jsonl             every recorded follow-up not yet expired
-#   suggestions-not-picked.jsonl  the "not picked" archive; records are never deleted
+#   suggestions-not-picked.jsonl  the "not picked" archive; records are never deleted,
+#                                 and leave it only when `restore` moves one back
 # Nothing dispatches from either file, and neither is a tasks-axi state.
 # .agents/skills/scout-completion/SKILL.md owns the judgment applied before intake;
 # this script owns the mechanics below.
@@ -16,9 +17,12 @@
 #       [--kind defect|hardening|doc-nit|question|research] [--risk <text>]
 #       [--repo <name>] [--recommend pick|bundle|drop] [--hold]
 #   fm-suggestions.sh summary [--json]
+#   fm-suggestions.sh list --json
 #   fm-suggestions.sh digest [--json]
 #   fm-suggestions.sh pick <suggestion-id>... [--task-kind <kind>]
 #   fm-suggestions.sh bundle <suggestion-id>... --into <suggestion-or-task-id>
+#   fm-suggestions.sh drop <suggestion-id>...
+#   fm-suggestions.sh restore <suggestion-id>...
 #   fm-suggestions.sh expire
 #   fm-suggestions.sh archive [--json]
 #   fm-suggestions.sh check <task-id> [--report <path>]
@@ -30,6 +34,7 @@
 #   repeat     duplicate of `target`, a suggestion or an open backlog row
 #   expired    went unpicked for FM_SUGGESTIONS_EXPIRE_DAYS (default 30) days
 #   escalated  sent to the captain; `target` is the captain-held row
+#   dropped    the captain removed it from the list (bin/fm-forget.sh)
 #
 # add        Prints `<outcome> <id> [<target>]`. A repeated --origin/--item pair,
 #            or the same origin and title, returns the first result unchanged.
@@ -49,6 +54,8 @@
 #            Past-due records already count as gone even before `expire` moves them.
 #            --json prints {count, oldest_age_days, line}; plain prints the line,
 #            which is empty when nothing is waiting.
+# list       Read-only and lock-free: the waiting suggestions as a JSON array,
+#            oldest first, each with age_days; past-due records are left out.
 # digest     Expires past-due records, then lists what is waiting, oldest first.
 # pick       Files a backlog row for each id with a stable row id, so a retry after
 #            a partial failure reuses the row. Works on an archived record too.
@@ -56,6 +63,10 @@
 #            Default task kind: scout for question and research, otherwise ship.
 # bundle     Records each id as bundled into the target, which must be a waiting
 #            suggestion or an open backlog row.
+# drop       Moves each waiting suggestion to the archive as `dropped`. Prints
+#            `dropped <id> <title>`; anything not waiting is refused.
+# restore    Moves each dropped record back to the list as waiting, its 30 days
+#            starting again. Prints `restored <id>`; any other record is refused.
 # expire     Moves past-due records to the archive. Idempotent, also after a crash
 #            between the archive append and the list rewrite.
 # archive    Lists the "not picked" archive.
@@ -378,7 +389,7 @@ pick_one() {  # <id> <task-kind-or-empty>
   outcome=$(jq -r .outcome <<<"$record")
   case "$outcome" in
     picked) printf 'picked %s %s\n' "$id" "$(jq -r .target <<<"$record")"; return 0 ;;
-    suggested|expired) ;;
+    suggested|expired|dropped) ;;
     *) printf 'fm-suggestions: %s is already %s (%s)\n' "$id" "$outcome" "$(jq -r '.target // "-"' <<<"$record")" >&2; return 1 ;;
   esac
   title=$(jq -r .title <<<"$record")
@@ -433,6 +444,71 @@ cmd_bundle() {
   done
   write_store "$LIST" "$list"
   printf 'bundled %s into %s\n' "${ids[*]}" "$into"
+}
+
+cmd_list() {
+  local list
+  [ "${1-}" = --json ] && [ $# -eq 1 ] || die "list: use list --json" 2
+  list=$(read_store "$LIST") || exit 1
+  jq --argjson now "$NOW" --argjson days "$EXPIRE_DAYS" "$JQ_DEFS"'
+    [ .[] | select(.outcome == "suggested" and (past_due($now; $days) | not)) | . + {age_days:age_days($now)} ]
+    | sort_by(.filed_at)' <<<"$list"
+}
+
+# Waiting records move to the archive as dropped; the append skips ids the
+# archive already holds, so a crash before the list rewrite converges.
+cmd_drop() {
+  [ $# -gt 0 ] || die "drop: name at least one suggestion id" 2
+  acquire_lock
+  do_expire >/dev/null
+  local list archive id status=0 record
+  list=$(read_store "$LIST") || exit 1
+  archive=$(read_store "$ARCHIVE") || exit 1
+  for id in "$@"; do
+    record=$(jq -c --arg id "$id" 'first(.[] | select(.id == $id and .outcome == "suggested")) // empty' <<<"$list")
+    if [ -z "$record" ]; then
+      printf 'fm-suggestions: %s is not a waiting suggestion; not dropped\n' "$id" >&2
+      status=1
+      continue
+    fi
+    record=$(jq -c --argjson now "$NOW" '.outcome = "dropped" | .resolved_at = $now' <<<"$record")
+    archive=$(jq -c --argjson r "$record" 'if any(.[]; .id == $r.id) then . else . + [$r] end' <<<"$archive")
+    write_store "$ARCHIVE" "$archive"
+    list=$(jq -c --arg id "$id" '[ .[] | select(.id != $id) ]' <<<"$list")
+    write_store "$LIST" "$list"
+    printf 'dropped %s %s\n' "$id" "$(jq -r .title <<<"$record")"
+  done
+  return "$status"
+}
+
+# A dropped record goes back to the list; the list append comes first and skips
+# ids it already holds, so a crash before the archive rewrite converges.
+cmd_restore() {
+  [ $# -gt 0 ] || die "restore: name at least one suggestion id" 2
+  acquire_lock
+  do_expire >/dev/null
+  local list archive id status=0 record
+  list=$(read_store "$LIST") || exit 1
+  archive=$(read_store "$ARCHIVE") || exit 1
+  for id in "$@"; do
+    record=$(jq -c --arg id "$id" 'first(.[] | select(.id == $id and .outcome == "dropped")) // empty' <<<"$archive")
+    if [ -z "$record" ]; then
+      if jq -e --arg id "$id" 'any(.[]; .id == $id and .outcome == "suggested")' <<<"$list" >/dev/null; then
+        printf 'restored %s\n' "$id"
+        continue
+      fi
+      printf 'fm-suggestions: %s is not a dropped suggestion; not restored\n' "$id" >&2
+      status=1
+      continue
+    fi
+    record=$(jq -c --argjson now "$NOW" '.outcome = "suggested" | .resolved_at = null | .filed_at = $now' <<<"$record")
+    list=$(jq -c --argjson r "$record" 'if any(.[]; .id == $r.id) then . else . + [$r] end' <<<"$list")
+    write_store "$LIST" "$list"
+    archive=$(jq -c --arg id "$id" '[ .[] | select(.id != $id) ]' <<<"$archive")
+    write_store "$ARCHIVE" "$archive"
+    printf 'restored %s\n' "$id"
+  done
+  return "$status"
 }
 
 cmd_expire() {
@@ -503,13 +579,16 @@ command=${1-}
 [ $# -eq 0 ] || shift
 # check needs jq only once a report has items, so teardown of a task with no
 # follow-ups keeps working on a host or PATH without it.
-case "$command" in add|summary|digest|pick|bundle|expire|archive) require_jq ;; esac
+case "$command" in add|summary|list|digest|pick|bundle|drop|restore|expire|archive) require_jq ;; esac
 case "$command" in
   add) cmd_add "$@" ;;
   summary) cmd_summary "$@" ;;
+  list) cmd_list "$@" ;;
   digest) cmd_digest "$@" ;;
   pick) cmd_pick "$@" ;;
   bundle) cmd_bundle "$@" ;;
+  drop) cmd_drop "$@" ;;
+  restore) cmd_restore "$@" ;;
   expire) cmd_expire "$@" ;;
   archive) cmd_archive "$@" ;;
   check) cmd_check "$@" ;;

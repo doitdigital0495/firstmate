@@ -434,7 +434,7 @@ family_for_basename() {
       ;;
     fm-bearings-board-render.test.sh|fm-bearings-snapshot.test.sh|fm-contributions.test.sh|\
     fm-fleet-snapshot-view.test.sh|fm-live-board-snapshot.test.sh|fm-home-summary-refresh.test.sh|\
-    fm-live-board.test.sh|fm-live-board-prs.test.sh|bridge.test.sh)
+    fm-live-board.test.sh|fm-live-board-prs.test.sh|bridge.test.sh|fm-forget.test.sh)
       printf '%s\n' snapshot-bearings
       ;;
     fm-backend-cmux.test.sh|fm-backend-cmux-smoke.test.sh)
@@ -1904,6 +1904,11 @@ families_for_changed_path() {
       printf '%s\n' __script__:fm-live-board.test.sh
       ;;
     bin/fm-bridge.sh|bin/fm-bridge-template.html|bin/fm-bridge-asks.jq|bin/fm-bridge-fleet.sh|bin/fm-bridge-fleet.jq|tests/assets/bridge-render-harness.mjs)
+      printf '%s\n' __script__:bridge.test.sh
+      ;;
+    bin/fm-forget.sh|bin/fm-bridge-intake.sh|bin/fm-bridge-tasks.jq)
+      # Remove and Restore: the owner, the Bridge's intake and its tasks feed.
+      printf '%s\n' __script__:fm-forget.test.sh
       printf '%s\n' __script__:bridge.test.sh
       ;;
     bin/fm-live-board-prs.sh|bin/fm-live-board-prs.jq)

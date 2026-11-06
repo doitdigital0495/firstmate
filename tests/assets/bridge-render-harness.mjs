@@ -8,11 +8,15 @@
 // a spec `@<ask-id>:<action>` clicks that card's button carrying
 // data-action=<action> (nudge, stop-clock);
 // `!nolavish` (first) runs the page without window.lavish.
+// Any other `@<data-act>[=<data-id>]` spec clicks the first enabled element carrying
+// those attributes (a checkbox toggles and fires change); `@search=<text>`
+// types into the task search. Specs run in order.
 // Prints one JSON document:
 //   { fresh, stale, staleBanner, banners:[text], stats:[text],
 //     sections:[{title, count, asks:[id]}], groups:[{title, asks:[id]}],
 //     cards:{<ask>:{text, queued, status}}, text, queued:[{prompt, tag, text, data}],
-//     sources:text, fleet:{homes:[{label, open, text}], rows:[{title, flags, text}], banners:[text], text} }
+//     sources:text, fleet:{homes:[{label, open, text}], rows:[{title, flags, text}], banners:[text], text},
+//     tasks:{text, rows:[{id, text, pending}], confirm, notice} }
 import { readFileSync } from "node:fs";
 
 const [file, nowArg, ...specs] = process.argv.slice(2);
@@ -86,15 +90,40 @@ new Function("window", "document", "Event", "setInterval", "setTimeout", "Date",
 
 const root = ids.root;
 const cardOf = (ask) => { let hit = null; root.walk((n) => { if (n.tagName === "article" && n.getAttribute("data-ask") === ask) hit = n; }); return hit; };
+const byAct = (act, id) => {
+  let hit = null;
+  root.walk((n) => {
+    if (hit || n.getAttribute("data-act") !== act) return;
+    if (id !== undefined && n.getAttribute("data-id") !== id) return;
+    if (n.disabled) return;
+    hit = n;
+  });
+  return hit;
+};
 for (const spec of specs) {
   if (spec.startsWith("!")) continue;
   if (spec.startsWith("@")) {
-    const [ask, action] = spec.slice(1).split(":");
-    const c = cardOf(ask);
-    if (!c) { console.error("no card " + ask); process.exit(3); }
-    const btn = c.querySelectorAll("button").find((b) => b.getAttribute("data-action") === action && !b.hidden);
-    if (!btn) { console.error("no " + action + " button on " + ask); process.exit(4); }
-    btn.dispatchEvent(new Ev("click"));
+    if (spec.indexOf("=") < 0 && spec.indexOf(":") >= 0) {
+      const [ask, action] = spec.slice(1).split(":");
+      const c = cardOf(ask);
+      if (!c) { console.error("no card " + ask); process.exit(3); }
+      const btn = c.querySelectorAll("button").find((b) => b.getAttribute("data-action") === action && !b.hidden);
+      if (!btn) { console.error("no " + action + " button on " + ask); process.exit(4); }
+      btn.dispatchEvent(new Ev("click"));
+      continue;
+    }
+    const at = spec.indexOf("=");
+    const act = at < 0 ? spec.slice(1) : spec.slice(1, at);
+    const arg = at < 0 ? undefined : spec.slice(at + 1);
+    if (act === "search") {
+      const n = byAct("search");
+      n.value = arg; n.dispatchEvent(new Ev("input"));
+      continue;
+    }
+    const n = byAct(act, arg);
+    if (!n) { console.error("no enabled element " + spec); process.exit(4); }
+    if (n.type === "checkbox") { n.checked = !n.checked; n.dispatchEvent(new Ev("change")); }
+    else n.dispatchEvent(new Ev("click"));
     continue;
   }
   const at = spec.indexOf("=");
@@ -155,5 +184,16 @@ root.walk((n) => {
     out.fleet.rows.push({ title: n.getAttribute("data-row"), flags: (n.getAttribute("data-flags") || "").split(",").filter(Boolean), text: visible(n) });
   }
 });
+let tasksNode = null;
+root.walk((n) => { if (n.getAttribute("id") === "tasks") tasksNode = n; });
+if (tasksNode) {
+  const t = { text: visible(tasksNode), rows: [], confirm: "", notice: "" };
+  tasksNode.walk((n) => {
+    if (n.getAttribute("data-task") !== null) t.rows.push({ id: n.getAttribute("data-task"), text: visible(n), pending: /is-pending/.test(n.className) });
+    if (n.className === "confirm") t.confirm = visible(n);
+    if (/\bbanner warn\b/.test(n.className) && n.getAttribute("role") === "status") t.notice = visible(n);
+  });
+  out.tasks = t;
+}
 out.text = ids.fresh.textContent + " " + visible(root);
 process.stdout.write(JSON.stringify(out) + "\n");

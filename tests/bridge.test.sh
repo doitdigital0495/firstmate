@@ -309,11 +309,13 @@ test_redaction_and_escaping() {
   {
     printf 'needs-decision [key=leak] [at=%s]: use token %s and https://example.com/cb?code=s3cr3tvalue now\n' "$now" "$token"
     printf 'needs-decision [key=xss] [at=%s]: </script><img src=x onerror=alert(1)> ok?\n' "$now"
+    printf 'needs-decision [key=board] [at=%s]: review http://127.0.0.1:4387/session/d2bbe6103e9cc5aa please\n' "$now"
   } > "$home/state/w1.status"
   in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
   for f in "$home/data/bridge/bridge.html" "$home/state/bridge/digest.txt" "$home/state/bridge/asks.json"; do
     grep -q "$token" "$f" && fail "a planted token reached $(basename "$f")"
     grep -q 's3cr3tvalue' "$f" && fail "a URL query reached $(basename "$f")"
+    grep -q 'd2bbe6103e9cc5aa' "$f" && fail "a Lavish session id reached $(basename "$f")"
   done
   grep -q '</script><img' "$home/data/bridge/bridge.html" && fail "markup in a question was not escaped in the page"
   out=$(render "$home" "$now")
@@ -334,7 +336,7 @@ test_digest_and_bounds() {
   in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
   out=$(in_home "$home" "$BRIDGE" digest)
   [ "$(wc -c < "$home/state/bridge/digest.txt")" -le 2048 ] || fail "the digest is over 2048 bytes"
-  printf '%s\n' "$out" | head -1 | grep -q '^bridge v1 checked=.* sources=2/2$' || fail "the digest header is wrong: $out"
+  printf '%s\n' "$out" | head -1 | grep -q '^bridge v1 checked=.* sources=3/3$' || fail "the digest header is wrong: $out"
   printf '%s\n' "$out" | grep -q '^asks you=0 firstmate=40 ' || fail "the digest did not count the questions: $out"
   printf '%s\n' "$out" | grep -q '^+[0-9]* more$' || fail "a long digest did not say how many more: $out"
   printf '%s\n' "$out" | tail -n 1 | grep -q '^bridge-end hash=[0-9a-f]\{12\}$' || fail "the digest has no end line: $out"
@@ -791,9 +793,109 @@ test_guard_refreshes_without_watcher() {
   pass "with the watcher down, guarded commands keep an enabled Bridge refreshed"
 }
 
+test_tasks_feed_and_page() {
+  local home now out
+  home=$(make_home tasks)
+  printf '%s\n' "$ENABLED" > "$home/config/bridge.json"
+  tasks_in "$home" add pilot "Plan the pilot" --repo web-shop --body "Captain 2026-11-06: plan the pilot with one customer"
+  tasks_in "$home" add pilot-mail "Mail the pilot customer" --repo web-shop --blocked-by pilot \
+    --body "$(printf 'Picked from suggestion sg-0a1b2c3d, a follow-up of pilot.\nDraft the first mail. token=ghp_abcdefghijklmnopqrstuvwxyz123456')"
+  tasks_in "$home" add later-one "A later idea" --body "Origin: scout-review"
+  tasks_in "$home" hold later-one --reason "after launch" --until 2099-01-01
+  tasks_in "$home" add busy "Being built" --repo web-shop
+  worker "$home" busy
+  in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
+  out=$(feed "$home" '.tasks')
+  check "$out" '.read == "ok" and .counts.open == 4 and .counts.waiting == 1 and .counts.later == 1 and .counts.nosource == 1' \
+    "the tasks feed did not count its lanes: $out"
+  check "$out" '[.rows[] | select(.id == "pilot")][0] | .origin.kind == "captain" and .origin.label == "You asked for this on 2026-11-06"
+    and .needed_by == [{id:"pilot-mail", title:"Mail the pilot customer"}] and .keep == null and .project == "web-shop"' \
+    "a captain task lost its origin or its dependent"
+  check "$out" '[.rows[] | select(.id == "pilot-mail")][0] | .origin.kind == "suggestion" and (.origin.label | contains("Plan the pilot"))
+    and .needs == [{id:"pilot", title:"Plan the pilot", state:"open"}] and .lane == "waiting" and (.what | startswith("Draft the first mail"))' \
+    "a picked follow-up lost its origin, its blocker or its explainer"
+  check "$out" '[.rows[] | select(.id == "later-one")][0] | .origin.label == "Came from: scout-review" and .lane == "later"' \
+    "an Origin: line or a dated hold was not read"
+  check "$out" '[.rows[] | select(.id == "busy")][0] | .keep == "worker" and (.keep_text | contains("teardown"))' \
+    "a task with a worker was offered for removal"
+  grep -q ghp_abcdefghijklmnopqrstuvwxyz123456 "$home/data/bridge/bridge.html" && fail "a token in a task note reached the page"
+  grep -q '^tasks open=4 ready=1 waiting=1 later=1 ' "$home/state/bridge/digest.txt" || fail "the digest has no tasks line: $(cat "$home/state/bridge/digest.txt")"
+  now=$(date +%s)
+  out=$(render "$home" "$now" @group=origin)
+  check "$out" '.tasks.text | contains("Follow-ups of: Plan the pilot (1)") and contains("You asked for these (1)")' \
+    "grouping by origin did not regroup the rows"
+  out=$(render "$home" "$now" @open=pilot)
+  check "$out" '[.tasks.rows[] | select(.id == "pilot")][0].text | contains("What it is: Captain 2026-11-06: plan the pilot")
+    and contains("Where it came from: You asked for this on 2026-11-06") and contains("Needed by: Mail the pilot customer")' \
+    "an opened task does not explain what it is, where it came from and what needs it"
+  out=$(render "$home" "$now" @select-mode @pick=pilot @pick=later-one @remove-selected)
+  check "$out" '.tasks.confirm | contains("Removed now (1): A later idea")
+    and contains("Kept (1)") and contains("Plan the pilot - Another open task still needs it")' \
+    "the confirmation did not list what goes and what stays with why"
+  out=$(render "$home" "$now" @select-mode @select-group=web-shop @remove-selected)
+  check "$out" '.tasks.confirm | contains("Removed now (2): Plan the pilot Mail the pilot customer") and (contains("Kept") | not)' \
+    "a task and the task that needs it were not removable together"
+  out=$(render "$home" "$now" @select-mode @select-shown @remove-selected @confirm-remove)
+  check "$out" '.queued | length == 1 and .[0].tag == "choice" and .[0].data.schema == "fm-bridge-action.v1"
+    and .[0].data.action == "remove" and (.[0].data.items | map(.id) | sort) == ["later-one","pilot","pilot-mail"]
+    and all(.[0].data.items[]; .rev | test("^[0-9a-f]{16}$"))' "Select all shown did not queue one remove of every free row"
+  check "$out" '[.tasks.rows[] | select(.pending) | .id] | sort == ["later-one","pilot","pilot-mail"]' "queued rows are not marked"
+  out=$(render "$home" "$now" !nolavish @open=pilot @remove-one=pilot @confirm-remove)
+  check "$out" '.queued == [] and (.tasks.confirm | contains("only works when this board is open in Lavish"))' \
+    "a press outside Lavish claimed to queue"
+  pass "the tasks feed explains each task with its origin and both-way links, groups it, and bulk-selects into one confirmed remove"
+}
+
+test_intake_applies_remove_and_restore() {
+  local home now out sid batch result
+  home=$(make_home intake)
+  printf '%s\n' "$ENABLED" > "$home/config/bridge.json"
+  tasks_in "$home" add a1 "First unwanted"
+  tasks_in "$home" add a2 "Second unwanted"
+  tasks_in "$home" add a3 "Needs the second" --blocked-by a2
+  out=$(in_home "$home" "$BRIDGE" open 2>&1) || fail "open failed: $out"
+  sid=$(printf '%s\n' "$out" | sed -n 's/^bound: //p')
+  [ -n "$sid" ] || fail "open did not bind the page source: $out"
+  now=$(date +%s)
+  out=$(render "$home" "$now" @select-mode @pick=a1 @pick=a2 @remove-selected @confirm-remove)
+  batch=$(printf '%s' "$out" | jq -r '.queued[0].data.batch')
+  mkdir -p "$home/state/procevent-inbox"
+  result="$home/state/procevent-inbox/$sid.1.result"
+  capture "$result" "$(printf '%s' "$out" | jq -c '.queued')"
+  capture "$TMP_ROOT/outside.result" "$(printf '%s' "$out" | jq -c '.queued')"
+  out=$(in_home "$home" "$ROOT/bin/fm-bridge-intake.sh" "$TMP_ROOT/outside.result" 2>&1) && fail "a result outside the capture inbox was applied"
+  cp "$result" "$home/state/procevent-inbox/lavish-0000000000000000.1.result"
+  out=$(in_home "$home" "$ROOT/bin/fm-bridge-intake.sh" "$home/state/procevent-inbox/lavish-0000000000000000.1.result" 2>&1) \
+    && fail "a result from another source was applied"
+  assert_contains "$out" "not this home's Bridge" "a foreign source was not named"
+  printf 'off\n' > "$home/config/bridge-actions"
+  out=$(in_home "$home" "$ROOT/bin/fm-bridge-intake.sh" "$result" 2>&1) && fail "the kill switch did not stop the press"
+  rm -f "$home/config/bridge-actions"
+  out=$(in_home "$home" "$ROOT/bin/fm-bridge-intake.sh" "$result") || fail "the intake failed: $out"
+  assert_contains "$out" "press remove batch=$batch items=1" "the receipt does not name the press"
+  assert_contains "$out" "removed a1" "the intake did not remove the free task"
+  (cd "$home" && tasks-axi list) | grep -q '^  a1,' && fail "a1 is still listed"
+  jq -s -e --arg sid "$sid" 'any(.[]; .id == "a1" and (.by | contains($sid)) and (.by | contains("press")))' \
+    "$home/data/forgotten-index.jsonl" >/dev/null || fail "the removal does not record the press it came from"
+  out=$(in_home "$home" "$ROOT/bin/fm-bridge-intake.sh" "$result")
+  assert_contains "$out" "already applied" "a repeated wake applied the press twice"
+  in_home "$home" "$BRIDGE" build >/dev/null || fail "rebuild failed"
+  out=$(render "$home" "$now")
+  check "$out" '.tasks.text | contains("Removed, restorable for 90 days (1)") and contains("Last results (1)") and contains("removed a1")' \
+    "the page does not show the removed list and the receipt"
+  out=$(render "$home" "$now" "@restore-one=a1")
+  check "$out" '.queued[0].data | .action == "restore" and .items == [{id:"a1"}]' "Restore did not queue a restore of the row"
+  capture "$home/state/procevent-inbox/$sid.2.result" "$(printf '%s' "$out" | jq -c '.queued')"
+  out=$(in_home "$home" "$ROOT/bin/fm-bridge-intake.sh" "$home/state/procevent-inbox/$sid.2.result") || fail "the restore intake failed: $out"
+  assert_contains "$out" "restored a1" "the intake did not restore the row"
+  (cd "$home" && tasks-axi list) | grep -q '^  a1,' || fail "a1 did not come back"
+  pass "the intake applies a Bridge press only from this home's bound capture, once, records the press, and restores"
+}
+
 fm_test_run test_config_gate test_keyed_question_lifecycle test_hold_answer_path \
   test_secondmate_export_and_names test_never_falsely_green test_redaction_and_escaping \
   test_digest_and_bounds test_incremental_reads test_refresh_retention test_watcher_tick \
   test_alerts_fire_once_per_step test_deadline_clock_on_the_card test_nudge_and_parked_work \
   test_fleet_flags_and_crew_cache test_fleet_usage_never_triggers_quota test_fleet_hierarchy \
-  test_fleet_failure_is_visible test_guard_refreshes_without_watcher
+  test_fleet_failure_is_visible test_guard_refreshes_without_watcher \
+  test_tasks_feed_and_page test_intake_applies_remove_and_restore
