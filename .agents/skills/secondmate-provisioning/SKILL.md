@@ -57,6 +57,7 @@ Retire or clean that home first, and re-scaffold a stale project-bearing charter
 Keep custom charter text focused on the persistent responsibility, available project clones, and genuinely domain-specific hard rules.
 The scaffolded charter, later copied to `data/charter.md`, owns the standard lifecycle and escalation wording.
 Preserve the generated charter sections unless the domain genuinely needs a hard rule.
+Never weaken the generated sub-manager role section: a secondmate delegates worker tasks to its own crewmates under `AGENTS.md` section 1, and custom charter text must not ask it to do that work itself.
 
 Provision a local persistent home and registry entry after the charter is filled:
 
