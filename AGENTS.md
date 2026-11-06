@@ -218,6 +218,7 @@ Record the resulting mode, `yolo` merge posture, and the one-line reason for any
 
 Name the exact context-doc section or file range to read in the brief, not a whole guide.
 Split large multi-part changes, such as report data, visuals, and validation, into sequential tasks with a fresh worker session for each.
+Before writing the ship brief for a big ship task - several subsystems, data or money semantics, a schema or migration, security, an irreversible change, or the captain asks - load `plan-review-gate`; this captain-requested plan review precedes dispatch and never reviews the diff.
 
 Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap beyond the home's lane cap (`config/lane-capacity`, 50 by default in this fork) when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
 A project's declared machine capacity (`config/project-capacity`) and the machine [load guard](docs/configuration.md#spawn-load-guard) still bound that dispatch: a spawn beyond either exits 75 without launching, and its item stays queued rather than blocked.
