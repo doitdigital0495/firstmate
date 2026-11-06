@@ -67,8 +67,31 @@ fm_harness_path_name() {  # <path>
 #   ps -f -p PID  UID PID PPID TTY STIME COMMAND               (full argv)
 # A genuinely dead or inaccessible pid still fails both paths, so this widens
 # nothing: it only stops a supported platform from failing on ps syntax alone.
+#
+# On Linux each function first reads the same kernel fields procps itself
+# reports - /proc/<pid>/comm, /proc/<pid>/cmdline with NULs as spaces, and the
+# ppid field of /proc/<pid>/stat - without forking, because the ancestry walk
+# asks up to three questions per hop and each ps fork costs tens of
+# milliseconds there. Any read that yields nothing (dead pid, zombie or kernel
+# thread with an empty cmdline, a non-Linux host, Cygwin's differently shaped
+# /proc) falls through to the ps paths above unchanged.
+# FM_PROC_ROOT_OVERRIDE points tests at a fake or absent /proc.
+# Sets _FM_PROC_DIR rather than printing it, so the fast path forks nothing.
+_FM_PROC_DIR=
+_fm_proc_pid_dir() {  # <pid>: set _FM_PROC_DIR to /proc/<pid> when the Linux fast path applies
+  _FM_PROC_DIR=
+  case "${OSTYPE:-}" in linux*) ;; *) return 1 ;; esac
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  [ -r "${FM_PROC_ROOT_OVERRIDE:-/proc}/$1/stat" ] || return 1
+  _FM_PROC_DIR=${FM_PROC_ROOT_OVERRIDE:-/proc}/$1
+}
+
 fm_ps_comm() {  # <pid> -> executable name or path
   local pid=$1 out
+  if _fm_proc_pid_dir "$pid" && IFS= read -r out < "$_FM_PROC_DIR/comm" 2>/dev/null && [ -n "$out" ]; then
+    printf '%s' "$out"
+    return 0
+  fi
   out=$(ps -o comm= -p "$pid" 2>/dev/null) && [ -n "$out" ] && { printf '%s' "$out"; return 0; }
   out=$(ps -p "$pid" 2>/dev/null | awk 'NR == 2 { for (i = 8; i <= NF; i++) printf "%s%s", (i > 8 ? " " : ""), $i; exit }')
   [ -n "$out" ] || return 1
@@ -77,6 +100,16 @@ fm_ps_comm() {  # <pid> -> executable name or path
 
 fm_ps_args() {  # <pid> -> full command line
   local pid=$1 out
+  local -a argv=()
+  if _fm_proc_pid_dir "$pid" && mapfile -d '' -t argv < "$_FM_PROC_DIR/cmdline" 2>/dev/null && [ "${#argv[@]}" -gt 0 ]; then
+    local IFS=' '
+    out="${argv[*]}"
+    # Render embedded control characters the way procps does: newline as a
+    # space, any other as '?'.
+    out=${out//$'\n'/ }
+    out=${out//[[:cntrl:]]/?}
+    [ -z "$out" ] || { printf '%s' "$out"; return 0; }
+  fi
   out=$(ps -o args= -p "$pid" 2>/dev/null) && [ -n "$out" ] && { printf '%s' "$out"; return 0; }
   out=$(ps -f -p "$pid" 2>/dev/null | awk 'NR == 2 { for (i = 6; i <= NF; i++) printf "%s%s", (i > 6 ? " " : ""), $i; exit }')
   [ -n "$out" ] || return 1
@@ -84,7 +117,15 @@ fm_ps_args() {  # <pid> -> full command line
 }
 
 fm_ps_ppid() {  # <pid> -> parent pid
-  local pid=$1 out
+  local pid=$1 out stat
+  # The comm field may itself contain spaces and parentheses, so the fields
+  # after it are found by stripping through its LAST closing parenthesis.
+  if _fm_proc_pid_dir "$pid" && IFS= read -r stat < "$_FM_PROC_DIR/stat" 2>/dev/null; then
+    stat=${stat##*) }
+    out=${stat#* }
+    out=${out%% *}
+    case "$out" in ''|*[!0-9]*) ;; *) printf '%s' "$out"; return 0 ;; esac
+  fi
   out=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') && [ -n "$out" ] && { printf '%s' "$out"; return 0; }
   out=$(ps -f -p "$pid" 2>/dev/null | awk 'NR == 2 { print $3; exit }')
   [ -n "$out" ] || return 1
@@ -442,8 +483,8 @@ fm_session_lock_trusted_session_id() {  # [<ancestry-pids>]
     # from CLAUDE_PID and this same id, so it is matched in that form.
     case "$pid" in
       "$claude_pid")
-        comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
-        args=$(ps -o args= -p "$pid" 2>/dev/null)
+        comm=$(fm_ps_comm "$pid") || return 1
+        args=$(fm_ps_args "$pid")
         fm_harness_process_matches "$comm" "$args" || return 1
         ;;
       "$FM_WIN_PID_PREFIX$claude_pid")

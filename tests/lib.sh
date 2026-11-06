@@ -609,6 +609,16 @@ fm_fakebin() {
   printf '%s\n' "$fakebin"
 }
 
+# fm_test_hide_proc <dir>: make a suite's fake `ps` the whole process table.
+# On Linux the production process readers (fm_ps_* in bin/fm-session-lock-lib.sh
+# and every other FM_PROC_ROOT_OVERRIDE reader) consult /proc before ps, so a
+# fixture pid that also exists on the host - pid 1, or any recycled number -
+# would otherwise be answered by the real kernel instead of the fixture. Call it
+# once, in the suite's top-level shell, when the suite shadows ps.
+fm_test_hide_proc() {
+  export FM_PROC_ROOT_OVERRIDE="$1/no-proc"
+}
+
 fm_fake_exit0() {
   local fakebin=$1 tool
   shift

@@ -70,6 +70,7 @@ unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT CURSOR_AGENT CURSOR_IN
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 fm_git_identity fmtest fmtest@example.com
 TMP_ROOT=$(fm_test_tmproot fm-secondmate-harness)
+fm_test_hide_proc "$TMP_ROOT"
 export FM_BACKEND=tmux
 
 # Every claude launch pre-registers workspace trust for the directory it starts
