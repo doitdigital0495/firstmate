@@ -197,10 +197,29 @@ fm_pending_reply_extract_corr() {  # <text>
 
 # 0 if <text> carries the exact correlation token for <corr_id>, as a whole
 # word: xcorr=<id> or corr=<id>ff is a different token, not this one.
+# Built in-process: status scans call this once per candidate line.
 fm_pending_reply_text_has_corr() {  # <text> <corr_id>
   local text=$1 corr=$2 re
-  re="(^|[^[:alnum:]_])$(fm_pending_reply_corr_token "$corr")([^[:alnum:]_]|\$)"
+  re="(^|[^[:alnum:]_])corr=${corr}([^[:alnum:]_]|\$)"
   [[ $text =~ $re ]]
+}
+
+# Print "<line-number>:<line>" for each line of <status-file> that could
+# resolve <corr_id>, in file order, from one grep process. A resolving line
+# must contain the literal token corr=<corr_id>, so that fixed-string match is
+# a superset of fm_pending_reply_line_resolves, which each caller still applies
+# to every candidate; a status log thousands of lines long then costs one fork
+# rather than one per line. Line numbers count lines exactly as a read loop
+# does, an unterminated final line included. A correlation id that is not
+# plain [A-Za-z0-9_] keeps its regex meaning in the per-line check, so it
+# selects every line instead.
+_fm_pending_reply_corr_candidates() {  # <status-file> <corr_id>
+  local status_file=$1 corr=$2
+  [ -f "$status_file" ] && [ -n "$corr" ] || return 0
+  case "$corr" in
+    *[!A-Za-z0-9_]*) LC_ALL=C grep -an '' "$status_file" 2>/dev/null || true ;;
+    *) LC_ALL=C grep -anF "corr=$corr" "$status_file" 2>/dev/null || true ;;
+  esac
 }
 
 # Byte length of the first <keep> UTF-8 characters of <text> when it holds more
@@ -613,13 +632,14 @@ fm_pending_reply_line_resolves() {  # <line> <corr_id>
 fm_pending_reply_find_resolve_line() {  # <status-file> <corr_id>
   local status_file=$1 corr=$2 line
   [ -f "$status_file" ] || return 0
-  while IFS= read -r line || [ -n "$line" ]; do
+  while IFS= read -r line; do
+    line=${line#*:}
     [ -n "$line" ] || continue
     if fm_pending_reply_line_resolves "$line" "$corr"; then
       printf '%s' "$line"
       return 0
     fi
-  done < "$status_file"
+  done < <(_fm_pending_reply_corr_candidates "$status_file" "$corr")
   return 0
 }
 
@@ -1168,15 +1188,22 @@ fm_pending_reply_escalation_payload() {  # <record-path> <kind>
 # that exact escalation remains open. If an unrelated decision has since taken
 # over that key, the close is withheld so the unrelated decision is not cleared.
 fm_pending_reply_escalation_line() {  # <status-file> <record-path> <corr_id>
-  local status_file=$1 rec=$2 corr=$3 line found='' kind payload own_key untimed
+  local status_file=$1 rec=$2 corr=$3 line found='' kind payload own_key untimed verb
+  local -a payloads=()
   [ -f "$status_file" ] || return 0
   [ "$(fm_pending_reply_get "$rec" corr_id)" = "$corr" ] || return 0
   own_key=$(fm_pending_reply_escalation_key "$corr")
+  # The payloads depend only on the record, so they are read once here and the
+  # line loop below stays fork-free however long the status log grows.
+  for kind in missed delivery-unknown recovery-delivery; do
+    payload=$(fm_pending_reply_escalation_payload "$rec" "$kind") || continue
+    payloads+=("$payload")
+  done
   while IFS= read -r line || [ -n "$line" ]; do
-    [ "$(status_line_verb "$line")" = blocked ] || continue
+    status_line_verb "$line" verb
+    [ "$verb" = blocked ] || continue
     _fm_status_untimed "$line" untimed
-    for kind in missed delivery-unknown recovery-delivery; do
-      payload=$(fm_pending_reply_escalation_payload "$rec" "$kind") || continue
+    for payload in ${payloads[@]+"${payloads[@]}"}; do
       case "$untimed" in
         "blocked [key=$own_key]: $payload"|"blocked: $payload") found=$line; break ;;
         "blocked [key=$own_key]: $payload "*|"blocked: $payload "*) found=$line; break ;;
@@ -1402,9 +1429,9 @@ fm_pending_reply_detect_wrong_home() {  # <state-dir> <corr_id> <secondmate-home
     fi
     sighting_base=$(fm_pending_reply_sighting_encode "$status_file" 0) || continue
     sighting_base=${sighting_base%:0}
-    line_no=0
-    while IFS= read -r line || [ -n "$line" ]; do
-      line_no=$((line_no + 1))
+    while IFS= read -r line; do
+      line_no=${line%%:*}
+      line=${line#*:}
       fm_pending_reply_line_resolves "$line" "$corr" || continue
       sighting_id="$sighting_base:$line_no"
       [ -n "$first" ] || first=$sighting_id
@@ -1418,7 +1445,7 @@ fm_pending_reply_detect_wrong_home() {  # <state-dir> <corr_id> <secondmate-home
       fi
       hits=$((hits + 1))
       changed=1
-    done < "$status_file"
+    done < <(_fm_pending_reply_corr_candidates "$status_file" "$corr")
   done
   if [ -n "$first" ] && [ -z "$(fm_pending_reply_get "$rec" wrong_home_first_sighting)" ]; then
     fm_pending_reply_set "$rec" wrong_home_first_sighting "$first" || return 1

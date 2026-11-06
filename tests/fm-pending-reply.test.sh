@@ -38,6 +38,8 @@
 #      the decision; a retry while that decision is still open appends nothing
 #  19. A request summary keeps accented letters, drops control characters, and
 #      caps at 120 characters without splitting one under any caller locale
+#  20. Status scans over a long log stay one pass, so a tick's cost does not
+#      grow a fork per status line, and keep their exact verdicts
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -1166,6 +1168,71 @@ test_wrong_home_detected_not_acknowledged() {
   pass "wrong-home reports are detected but do not silently acknowledge"
 }
 
+# A secondmate's status log only grows, and the watcher reconciles every open
+# record against it on each tick, so one status scan must not pay a fork per
+# line: thousands of lines times dozens of open records once ran a single tick
+# past the watcher's heartbeat bound. Each scan - the parent-status resolve, the
+# escalation close, and the wrong-home sweep - runs over a long log under a
+# budget that a per-line fork misses many times over, and still keeps its exact
+# verdict: near-miss tokens, a self-escalation line, and another request's
+# token never resolve, and a sighting keeps its true line number.
+test_long_status_logs_scan_in_one_pass() {
+  local home state sm_home corr esc rec filler lines=10000 start elapsed budget=10 sighting
+  home=$(setup_parent long-log)
+  state="$home/state"
+  sm_home="$TMP_ROOT/long-log-sm-$RANDOM"
+  mkdir -p "$sm_home/state"
+  export FM_PENDING_REPLY_NOW=8500
+  corr=$(fm_pending_reply_create "$home" "$state" hibit "long log request")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  esc=$(fm_pending_reply_create "$home" "$state" hibit "long log escalation")
+  fm_pending_reply_mark_delivered "$state" "$esc"
+  filler="$TMP_ROOT/long-log-filler-$RANDOM"
+  awk -v n="$lines" 'BEGIN { for (i = 1; i <= n; i++) printf "working [at=%d]: step %d corr=%016x\n", 1000 + i, i, i }' > "$filler"
+  {
+    cat "$filler"
+    printf 'working: near miss xcorr=%s\n' "$corr"
+    printf 'working: near miss corr=%sff\n' "$corr"
+    printf 'working: pending-reply-missed echoed corr=%s\n' "$corr"
+  } > "$state/hibit.status"
+  start=$(date +%s)
+  if fm_pending_reply_try_resolve "$state" "$corr"; then
+    fail "near-miss and self-escalation lines in a long log must not resolve"
+  fi
+  printf 'done [corr=%s]: report.md is in data/hibit\n' "$corr" >> "$state/hibit.status"
+  fm_pending_reply_try_resolve "$state" "$corr" || fail "the correlated report at the end of a long log should resolve"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  [ "$(fm_pending_reply_get "$rec" resolved_via)" = document ] \
+    || fail "a long-log resolve should classify its line (via=$(fm_pending_reply_get "$rec" resolved_via))"
+  rec=$(fm_pending_reply_path "$state" "$esc")
+  fm_pending_reply_set "$rec" phase escalated
+  fm_pending_reply_set "$rec" escalated_epoch 8400
+  {
+    printf 'blocked [key=pending-reply-%s]: pending-reply-missed: task=hibit pending-reply-id=%s request=long log escalation\n' \
+      "$esc" "$esc"
+    cat "$filler"
+    printf 'done [corr=%s]: late reply\n' "$esc"
+  } >> "$state/hibit.status"
+  fm_pending_reply_try_resolve "$state" "$esc" || fail "a late reply after a long log should resolve the escalated record"
+  [ -n "$(fm_pending_reply_get "$rec" escalation_closed_epoch)" ] \
+    || fail "the escalation inside a long log should close"
+  [ -z "$(status_open_decisions "$state/hibit.status")" ] \
+    || fail "the long log's escalation stayed open: $(status_open_decisions "$state/hibit.status")"
+  corr=$(fm_pending_reply_create "$home" "$state" other "long wrong-home request")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  { cat "$filler"; printf 'done [corr=%s]: stranded after a long log\n' "$corr"; } > "$sm_home/state/child.status"
+  fm_pending_reply_detect_wrong_home "$state" "$corr" "$sm_home" || fail "a long wrong-home sweep should succeed"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  [ "$(fm_pending_reply_get "$rec" wrong_home_hits)" = 1 ] \
+    || fail "a long wrong-home log should count one sighting, got $(fm_pending_reply_get "$rec" wrong_home_hits)"
+  sighting=$(fm_pending_reply_sighting_display "$(fm_pending_reply_get "$rec" wrong_home_first_sighting)")
+  [ "${sighting##*:}" = $((lines + 1)) ] || fail "a long-log sighting should keep its true line number, got $sighting"
+  elapsed=$(( $(date +%s) - start ))
+  [ "$elapsed" -le "$budget" ] \
+    || fail "status scans over ${lines}-line logs took ${elapsed}s (budget ${budget}s): a scan still pays per line"
+  pass "long status logs scan in one pass and keep their exact verdicts"
+}
+
 test_unmarked_captain_input_creates_no_expectation() {
   local dir fb log home rc pending_count
   dir="$TMP_ROOT/unmarked"; mkdir -p "$dir"
@@ -2151,6 +2218,7 @@ test_unrelated_and_stale_corr_cannot_resolve
 test_another_mates_echo_cannot_resolve
 test_restart_preserves_expectation_and_parent_destination
 test_wrong_home_detected_not_acknowledged
+test_long_status_logs_scan_in_one_pass
 test_unmarked_captain_input_creates_no_expectation
 test_fm_send_marked_secondmate_creates_pending_and_embeds_corr
 test_document_pointer_resolves
