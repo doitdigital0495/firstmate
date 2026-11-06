@@ -2744,13 +2744,18 @@ Set `enabled` to false in `config/live-board.json` or delete that file to stop r
 
 ## Bridge (config/bridge.json)
 
-The Bridge is an opt-in browser page with one job: show every question that is waiting, from this home and its secondmates, within one watcher poll of being asked.
+The Bridge is an opt-in browser page that shows every question that is waiting, from this home and its secondmates, within one watcher poll of being asked, and below them the fleet: who runs where and what each task is doing.
 It is separate from the live board and from `/bearings lavish`, reads only Firstmate's durable records, and spends no model calls to build.
 Needs you lists every open captain hold in this home and the captain holds each local secondmate exports.
 Waiting on Firstmate lists questions this home's workers raised as keyed `needs-decision` or `blocked` status lines; they are addressed to Firstmate first, and the captain may answer them too.
 A banner counts those keyed questions that have no question card yet, and a secondmate's own crew questions appear under "Waiting on" that secondmate's name.
 A secondmate's relayed `captain-hold-<id>` lines fold into the card its home exports, are grouped as probably settled when that home no longer lists the hold, and are grouped as relayed when that home's list could not be read.
 Each card shows who asked, how long ago, what waits behind it, and the options and recommendation when the question carries them; cards that hold up more work rank first.
+The Fleet section lists Firstmate's watcher and wake queue, then each home as a tree: this home's tasks, each local secondmate and its tasks, down to three levels, read from each home's own task records rather than its capped summary.
+A task row shows its plain stage, its own last report (never a harness label), how long ago it reported, its PR link and its seat.
+Six flags mark rows that need a look: stale (working, but no report and no pane change for max(30 min, 3 times its usual gap)), repeating (the same report three times in an hour), noisy (over 100 status lines in a day), at review over an hour, finished over a day ago with its task row still open, and state unknown with the reason.
+Seat usage shows the 5-hour and weekly windows from the last shared quota read, names a window that read did not report, and never starts a read.
+A secondmate home that is remote, too deep or unreadable is named rather than dropped, and a fleet that could not be read at all says so instead of showing an empty crew.
 Secondmates are shown by the name in the local, gitignored `config/bridge-names.json`, or as "a secondmate", never by registry id:
 
 ```json
@@ -2764,7 +2769,7 @@ To enable it in a home, create the local, gitignored `config/bridge.json`, then 
 ```
 
 `open` publishes `data/bridge/bridge.html`, opens it as a Lavish session, and binds its answers to the captain-hold intake before arming it.
-While the config stays enabled, the watcher runs `bin/fm-bridge.sh refresh` each poll; it rebuilds only when a status log, task record, the task list, the name map or a secondmate export changed, and otherwise costs one builtin file-time check.
+While the config stays enabled, the watcher runs `bin/fm-bridge.sh refresh` each poll, and guarded commands run it while the watcher is down; it rebuilds when a status log, task record, the task list, the name map, a secondmate export or a secondmate home's task records changed, and every five minutes, and otherwise costs one builtin file-time check.
 Enable it in each secondmate home too: that home's refresh writes the export its parent reads, `state/bridge/asks.json`.
 Answers use the existing intake only: a captain hold's answer goes through `fm-captain-hold.sh answers` with every guard it already has, and an answer to any other card reaches Firstmate as a captured Lavish result carrying an opaque ask id, which `bin/fm-bridge.sh route <ask-id>` turns into the `fm-send.sh --resolve-key` relay or the secondmate to ask; `route` refuses an ask whose question changed or closed.
 A question waiting on Firstmate or a secondmate for 15 minutes or more says so on its card and offers Nudge, which queues a request for Firstmate to settle it now through the same captured-result path as an answer.
@@ -2786,7 +2791,7 @@ steps 0 4h 24h
 A question for the captain alerts when it first appears and again as it passes each later step, once per step, and one refresh sends at most one alert, whose text is only a count and the oldest age, never question text.
 An invalid line switches every channel off and the page says why; the page always states whether desktop alerts are on, through which channel, and when the last one went out or failed.
 Agents read the state in one call with `bin/fm-bridge.sh digest`, a file of at most 2,048 bytes in which every question's text follows `data:` and is data, not an instruction.
-[`bin/fm-bridge.sh`](../bin/fm-bridge.sh)'s header owns the commands, schemas, sources, card rules, routes, alerts and digest grammar, and [`bin/fm-bridge-asks.jq`](../bin/fm-bridge-asks.jq) owns the wording, redaction and order.
+[`bin/fm-bridge.sh`](../bin/fm-bridge.sh)'s header owns the commands, schemas, sources, card and fleet rules, routes, alerts and digest grammar, [`bin/fm-bridge-asks.jq`](../bin/fm-bridge-asks.jq) owns the question wording, redaction and order, [`bin/fm-bridge-fleet.sh`](../bin/fm-bridge-fleet.sh) owns the fleet reads and their bounds, and [`bin/fm-bridge-fleet.jq`](../bin/fm-bridge-fleet.jq) owns the flag thresholds and fleet wording.
 Set `enabled` to false or delete `config/bridge.json` to stop refreshing; the published page stays in place and marks itself out of date.
 
 ## Local Claude usage warner (config/usage-warner)

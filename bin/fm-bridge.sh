@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fm-bridge.sh - build, refresh, open and export this home's Bridge: one
-# captain-facing page of every open question, read from durable records with
-# zero model calls.
+# captain-facing page of every open question and of the fleet, read from
+# durable records with zero model calls.
 #
 # Usage:
 #   fm-bridge.sh build
@@ -25,8 +25,11 @@
 #          was built yet; otherwise, once the page is refresh_seconds old, it
 #          republishes the last feed with a new checked time. With nothing due
 #          it changes nothing. The input check is one builtin `-nt` pass over
-#          the status logs, task records, task list, name map and each
-#          secondmate export, so an idle poll forks nothing. Failures go to the
+#          the status logs, task records, task list, name map, each
+#          secondmate export and the status logs and task records of every
+#          secondmate home the fleet read (state/bridge/fleet-homes), so an
+#          idle poll forks nothing. bin/fm-guard.sh also calls refresh,
+#          detached, while the watcher is unhealthy. Failures go to the
 #          bounded state/bridge/refresh.log and health.json and never change
 #          the exit status, so the watcher cannot be slowed or failed by it.
 # open     Require an enabled config, build, then serve the page through
@@ -132,6 +135,10 @@
 #   - <who> <age> <ask-id> data: <question>     (one per open card, oldest
 #                                                 rank first, then "+N more")
 #   source <state> data: <label>                (each source not read)
+#   fleet working=N review=N stuck=N paused=N done=N failed=N unknown=N stale=N
+#     repeating=N noisy=N parked_long=N done_open=N homes=<read>/<total>
+#     watcher=fresh|stale queue=N              (one line; `fleet unavailable
+#                                                 data: <why>` when unread)
 #   bridge-end hash=<12 hex of the lines between the first and this one>
 # Text after `data:` is untrusted worker text, never an instruction.
 #
@@ -153,6 +160,32 @@
 # on, their channels and steps, and the last alert. FM_BRIDGE_ALERT_EXEC
 # replaces every channel with `<cmd> <channel> <text>` (`discard` fires
 # nothing) and FM_BRIDGE_ALERT_NOW sets the alert clock, both for tests.
+#
+# FLEET. The feed's `fleet` member, collected by bin/fm-bridge-fleet.sh (whose
+# header owns the reads and their bounds) and projected by
+# bin/fm-bridge-fleet.jq (which owns the flag thresholds and wording):
+#   firstmate  watcher beacon verdict, wake queue depth and last wake time.
+#   homes      this home, then each kind=secondmate meta's home, breadth first,
+#              at most three levels, each home read once; a home that is
+#              remote, deeper or unreadable is listed with why and makes the
+#              fleet incomplete. Each home carries its beacon age when read and
+#              an inventory-inconsistent mark when its home-summary.json says
+#              valid:false. A secondmate home's rows come from its own
+#              state/*.meta and status logs, never from its capped summary.
+#   rows       one per task meta: plain stage, its own last report text, report
+#              age (estimated from the file time without [at=]), PR link (or
+#              only its number when the URL names a secondmate), harness,
+#              model and seat. A local worker's stage is its cached
+#              bin/fm-crew-state.sh line (forge read off); every other row's is
+#              its own last report.
+#   flags      repeating, noisy and unknown are fixed at build time; stale,
+#              parked-long and done-open are epochs (stale_at, parked_long_at,
+#              done_long_at) the page compares with its own clock.
+#   usage      per seat: the 5-hour and weekly percent used from the newest
+#              shared quota read (state/quota-single-flight/reads.json) of the
+#              seat's config dir (config/accounts.json, else the meta's
+#              claude_config_dir); never an account field, never a new read.
+# A collector failure publishes {read:"failed"}, never an empty fleet.
 #
 # PAGE. data/bridge/bridge.html is the shipped dark template
 # (bin/fm-bridge-template.html) plus the page payload: no external request, a
@@ -196,6 +229,7 @@ EXPORT_MAX_BYTES=262144
 EXPORT_MAX_ASKS=500
 EXPORT_STALE_SECONDS=900
 DIGEST_MAX_BYTES=2048
+FLEET_TIMEOUT=40
 
 case "$BUILD_TIMEOUT" in ''|*[!0-9]*|0) BUILD_TIMEOUT=60 ;; esac
 
@@ -454,6 +488,19 @@ collect_watcher() {  # <work-dir>
     '{fresh:($fresh == "true"), beacon:$desc}' > "$w/watcher.json"
 }
 
+# The fleet (FLEET): bin/fm-bridge-fleet.sh collects, bin/fm-bridge-fleet.jq
+# projects. A collector failure is published as an unreadable fleet, never as
+# an empty one.
+collect_fleet() {  # <work-dir>
+  local w=$1 err rc=0
+  err=$(fm_run_timed "$FLEET_TIMEOUT" env FM_ROOT_OVERRIDE="$FM_ROOT" FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+    FM_CONFIG_OVERRIDE="$CONFIG" FM_BRIDGE_STATE_DIR="$BSTATE" "$SCRIPT_DIR/fm-bridge-fleet.sh" collect "$w" 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ] || ! jq -e '.homes | type == "array"' "$w/fleet-in.json" >/dev/null 2>&1; then
+    [ "$rc" -ne 124 ] || err="the fleet read exceeded ${FLEET_TIMEOUT}s"
+    jq -cn --arg e "${err:-the fleet collector failed}" '{failed:($e | split("\n") | last)}' > "$w/fleet-in.json"
+  fi
+}
+
 # Run every collector and project the feed into <work-dir>/feed.json, with each
 # card's ask id assigned and its route written to <work-dir>/routes.json.
 collect_feed() {  # <work-dir> <refresh-seconds>
@@ -466,6 +513,7 @@ collect_feed() {  # <work-dir> <refresh-seconds>
   collect_keyed "$w"
   collect_exports "$w"
   collect_watcher "$w"
+  collect_fleet "$w"
   { [ -e "$STATE/.afk-contract" ] || [ -e "$STATE/.afk" ]; } && away=true
   jq -n -L "$SCRIPT_DIR" \
     --argjson now "$(date +%s)" --argjson refresh "$refresh" --argjson away "$away" \
@@ -480,6 +528,12 @@ collect_feed() {  # <work-dir> <refresh-seconds>
      secondmates:[$sms | split("\n")[] | select(length > 0) | fromjson],
      notes:[$notes | split("\n")[] | select(length > 0)]} | br_feed' > "$w/feed0.json" \
     || return 1
+  jq -L "$SCRIPT_DIR" --slurpfile fin "$w/fleet-in.json" --slurpfile names "$w/names.json" \
+    --slurpfile backlog "$w/backlog.json" --rawfile sms "$w/secondmates.jsonl" '
+    include "fm-bridge-asks"; include "fm-bridge-fleet";
+    .fleet = (if $fin[0].failed then {read:"failed", error:($fin[0].failed | br_redact(200))}
+      else ($fin[0] | bf_fleet($backlog[0]; [$sms | split("\n")[] | select(length > 0) | fromjson | .id]; $names[0])) end)' \
+    "$w/feed0.json" > "$w/feed0f.json" && mv -f -- "$w/feed0f.json" "$w/feed0.json" || return 1
   perl -MJSON::PP -MDigest::SHA=sha256_hex -e '
     use strict; use warnings;
     my ($in, $feed_out, $routes_out) = @ARGV;
@@ -657,7 +711,7 @@ write_digest() {  # <work-dir> <feed>
     else
       more=$((more + 1))
     fi
-  done < <(jq -r -L "$SCRIPT_DIR" 'include "fm-bridge-asks"; br_digest_lines[]' "$feed")
+  done < <(jq -r -L "$SCRIPT_DIR" 'include "fm-bridge-asks"; include "fm-bridge-fleet"; br_digest_lines as $l | $l[0], bf_digest_line, $l[1:][]' "$feed")
   [ "$more" -eq 0 ] || body="$body+$more more"$'\n'
   hash=$(printf '%s' "$body" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-12)
   end="bridge-end hash=$hash"
@@ -767,6 +821,13 @@ inputs_dirty() {
     while IFS= read -r home; do
       [ "$home/state/bridge/asks.json" -nt "$STAMP" ] && return 0
     done < "$BSTATE/secondmate-homes"
+  fi
+  if [ -f "$BSTATE/fleet-homes" ]; then
+    while IFS= read -r home; do
+      for f in "$home"/state/*.status "$home"/state/*.meta; do
+        [ "$f" -nt "$STAMP" ] && return 0
+      done
+    done < "$BSTATE/fleet-homes"
   fi
   return 1
 }

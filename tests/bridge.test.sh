@@ -596,7 +596,204 @@ test_nudge_and_parked_work() {
   pass "a question waiting on Firstmate past 15 minutes offers a routed nudge, and parked work is listed"
 }
 
+# --- slice 2: the fleet ------------------------------------------------------
+
+# A crew-state stand-in: answers from $FM_HOME/crew/<id> and logs each call.
+crew_stub() {  # <home>
+  cat > "$1/crew-stub" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$FM_HOME/crew-calls"
+cat "$FM_HOME/crew/$1" 2>/dev/null || printf 'garbled reader output\n'
+SH
+  chmod +x "$1/crew-stub"
+  mkdir -p "$1/crew"
+}
+crew_says() { printf 'state: %s · source: %s · %s\n' "$3" "$4" "$5" > "$1/crew/$2"; }
+in_fleet() { local home=$1; shift; FM_BRIDGE_CREW_STATE_CMD="$home/crew-stub" in_home "$home" "$@"; }
+row() { jq -c --arg t "$2" '[.fleet.homes[].rows[] | select(.title == $t)][0]' "$1/state/bridge/feed.json"; }
+rendered_flags() {  # <home> <now> <title>
+  render "$1" "$2" | jq -c --arg t "$3" '[.fleet.rows[] | select(.title == $t)][0].flags'
+}
+
+test_fleet_flags_and_crew_cache() {
+  local home now r i calls
+  home=$(make_home fleet)
+  printf '%s\n' "$ENABLED" > "$home/config/bridge.json"
+  crew_stub "$home"
+  now=$(date +%s)
+  for i in w1 w2 w3 w4 w5; do worker "$home" "$i"; done
+  crew_says "$home" w1 working pane 'harness busy (claude-hook)'
+  printf 'working [at=%s]: reading the parser\n' "$((now - 4000))" > "$home/state/w1.status"
+  crew_says "$home" w2 working pane 'busy'
+  for i in 1 2 3; do printf 'failed [at=%s]: pipeline step %s failed: lint\n' "$((now - 300 + i))" "$i"; done > "$home/state/w2.status"
+  crew_says "$home" w3 working pane 'busy'
+  # 101 different lines in a day, the last one just now: noisy, not repeating or stale.
+  for i in $(seq 1 101); do printf 'working [at=%s]: tick %s\n' "$((now - 70700 + i * 700))" "$(printf '%s' "$i" | tr 0-9 a-j)"; done > "$home/state/w3.status"
+  crew_says "$home" w4 parked run-step 'waiting at the review gate'
+  printf 'working [at=%s]: pipeline started\n' "$((now - 60))" > "$home/state/w4.status"
+  printf 'done [at=%s]: PR https://github.com/acme/shop/pull/7\n' "$((now - 90000))" > "$home/state/w5.status"
+  crew_says "$home" w5 'done' status-log 'PR https://github.com/acme/shop/pull/7'
+  tasks_in "$home" add w5 "Ship the cart" --repo web-shop --kind ship
+  : > "$home/crew-calls"
+  in_fleet "$home" "$BRIDGE" refresh
+  [ "$(sort "$home/crew-calls" | tr '\n' ' ')" = "w1 w2 w3 w4 w5 " ] || fail "the first refresh did not read every worker once: $(cat "$home/crew-calls")"
+  r=$(row "$home" "w1")
+  check "$r" '.state == "working" and .stale_at == '"$((now - 4000 + 1800))"' and .now_text == "reading the parser"' \
+    "a quiet worker did not get its stale time from max(30 min, 3 x median gap), or showed the harness instead of its report"
+  check "$(rendered_flags "$home" "$((now - 2201))" w1)" 'index("stale") == null' "a worker was stale before its threshold"
+  check "$(rendered_flags "$home" "$((now - 2200))" w1)" 'index("stale") != null' "a worker that stopped appending was not stale at its threshold"
+  grep -q '^fleet working=3 review=1 .* stale=1 repeating=1 noisy=1 parked_long=0 done_open=1 ' "$home/state/bridge/digest.txt" \
+    || fail "the digest fleet line is wrong: $(grep '^fleet' "$home/state/bridge/digest.txt")"
+  check "$(rendered_flags "$home" "$now" w2)" 'index("repeating") != null' "a status line repeated three times in an hour was not flagged repeating"
+  check "$(rendered_flags "$home" "$now" w3)" 'index("noisy") != null and index("repeating") == null' "a log with over 100 lines a day was not flagged noisy (or was called repeating)"
+  check "$(rendered_flags "$home" "$now" w4)" 'index("parked-long") == null' "a worker just parked was flagged parked long"
+  check "$(rendered_flags "$home" "$((now + 3700))" w4)" 'index("parked-long") != null' "a worker parked over an hour was not flagged"
+  check "$(rendered_flags "$home" "$now" "Ship the cart")" 'index("done-open") != null' "a worker done over a day with its task row open was not flagged"
+  check "$(row "$home" "Ship the cart")" '.pr == "https://github.com/acme/shop/pull/7"' "a finished worker lost its PR link"
+  # The current-state reader is cached: nothing changed, nothing re-read.
+  : > "$home/crew-calls"
+  in_fleet "$home" "$BRIDGE" build >/dev/null || fail "build failed"
+  [ ! -s "$home/crew-calls" ] || fail "an unchanged worker was re-read: $(cat "$home/crew-calls")"
+  # A new line clears stale, and only that worker is re-read.
+  sleep 1
+  printf 'working [at=%s]: parser done, writing tests\n' "$(date +%s)" >> "$home/state/w1.status"
+  in_fleet "$home" "$BRIDGE" refresh
+  [ "$(cat "$home/crew-calls")" = w1 ] || fail "a changed worker was not the only one re-read: $(cat "$home/crew-calls")"
+  check "$(rendered_flags "$home" "$(date +%s)" w1)" 'index("stale") == null' "a stale worker kept the flag after its next line"
+  grep -q ' stale=0 ' "$home/state/bridge/digest.txt" || fail "the digest still counts the worker stale"
+  # A reader that cannot decide is shown as unknown, with why.
+  rm -f "$home/crew/w1"
+  printf 'working [at=%s]: next\n' "$(date +%s)" >> "$home/state/w1.status"
+  in_fleet "$home" "$BRIDGE" build >/dev/null || fail "build failed"
+  check "$(row "$home" w1)" '.state == "unknown" and (.flags | index("unknown")) and (.unknown_detail | length > 0)' \
+    "an undecided state reader did not show as unknown with its reason"
+  calls=$(render "$home" "$now" | jq -r '.fleet.text')
+  assert_contains "$calls" "Why unknown" "the page did not say why a worker is unknown"
+  pass "fleet flags fire at their thresholds, clear on the next line, and crew-state is re-read only on change"
+}
+
+test_fleet_usage_never_triggers_quota() {
+  local home now f
+  home=$(make_home quota)
+  crew_stub "$home"
+  now=$(date +%s)
+  cat > "$home/fakebin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+: > "$FM_HOME/quota-was-called"
+exit 1
+SH
+  chmod +x "$home/fakebin/quota-axi"
+  fm_write_meta "$home/state/w1.meta" 'kind=ship' 'harness=claude' 'seat=claude9' "claude_config_dir=$home/cfg9"
+  crew_says "$home" w1 working pane busy
+  printf 'working [at=%s]: busy\n' "$now" > "$home/state/w1.status"
+  printf '{"accounts":{"claude9":{"provider":"claude","claude":"%s/cfg9"}}}\n' "$home" > "$home/config/accounts.json"
+  mkdir -p "$home/state/quota-single-flight"
+  jq -n --arg dir "$home/cfg9" --argjson at "$((now - 120))" '{("full|0|" + $dir): {at:$at, schemaVersion:5, rows:[
+    {provider:"claude", plan:"max", account:{accountId:"acct-123456", email:"captain@example.com"},
+     windows:[{id:"seven_day", kind:"weekly", percentUsed:41, resetsAt:"2026-11-10T09:00:00Z"}]}]}}' \
+    > "$home/state/quota-single-flight/reads.json"
+  in_fleet "$home" "$BRIDGE" build >/dev/null || fail "build failed"
+  assert_absent "$home/quota-was-called" "the Bridge triggered a quota read"
+  check "$(feed "$home" '.fleet.usage')" 'length == 1 and .[0].seat == "claude9" and .[0].workers == 1
+    and (.[0].windows | map(select(.kind == "weekly"))[0].used) == 41
+    and (.[0].windows | map(select(.kind == "session"))[0].used) == null' \
+    "the usage hint did not read the shared quota record per seat"
+  assert_contains "$(render "$home" "$now" | jq -r '.fleet.text')" "5 hours not reported, week 41% used" \
+    "the page did not show the reported window and name the missing one"
+  for f in "$home/data/bridge/bridge.html" "$home/state/bridge/digest.txt" "$home/state/bridge/feed.json"; do
+    grep -q 'captain@example.com\|acct-123456\|cfg9' "$f" && fail "an account field or config path reached $(basename "$f")"
+  done
+  pass "the usage hint reads shared quota records only, never starts a read, and carries no account details"
+}
+
+test_fleet_hierarchy() {
+  local home sm sm2 sm3 sm4 now marker out
+  home=$(make_home tree)
+  printf '%s\n' "$ENABLED" > "$home/config/bridge.json"
+  crew_stub "$home"
+  now=$(date +%s)
+  sm="$home-sm"; sm2="$home-sm2"; sm3="$home-sm3"; sm4="$home-sm4"
+  mkdir -p "$sm/state" "$sm2/state" "$sm3/state" "$sm4/state"
+  fm_write_meta "$home/state/$REG.meta" 'kind=secondmate' "home=$sm" 'harness=claude'
+  printf 'working [at=%s]: relaying for %s\n' "$now" "$REG" > "$home/state/$REG.status"
+  fm_write_meta "$home/state/zz8far.meta" 'kind=secondmate' 'home=/elsewhere' 'remote_host=boat'
+  fm_write_meta "$sm/state/paint.meta" 'kind=ship' 'harness=codex' 'seat=codex1'
+  printf 'needs-decision [key=c] [at=%s]: which blue for %s? PR https://github.com/acme/%s/pull/9\n' "$now" "$REG" "$REG" > "$sm/state/paint.status"
+  printf '{"valid":false}\n' > "$sm/state/home-summary.json"
+  fm_write_meta "$sm/state/zz7mid.meta" 'kind=secondmate' "home=$sm2"
+  fm_write_meta "$sm2/state/zz6low.meta" 'kind=secondmate' "home=$sm3"
+  fm_write_meta "$sm2/state/zz5loop.meta" 'kind=secondmate' "home=$sm"
+  fm_write_meta "$sm3/state/zz4deep.meta" 'kind=secondmate' "home=$sm4"
+  fm_write_meta "$sm4/state/hidden.meta" 'kind=ship'
+  printf '{"schema":"fm-bridge-names.v1","names":{"%s":"Harbor"}}\n' "$REG" > "$home/config/bridge-names.json"
+  marker="$TMP_ROOT/tree-marker"; : > "$marker"; sleep 1
+  : > "$home/crew-calls"
+  in_fleet "$home" "$BRIDGE" build >/dev/null || fail "build failed"
+  out=$(feed "$home" '.fleet')
+  check "$out" '(.homes | map(.home)) == ["Firstmate","a secondmate","Harbor","a secondmate","a secondmate","a secondmate","a secondmate"]
+    and (.homes | map(.read)) == ["ok","remote","ok","ok","repeated","ok","too-deep"]
+    and (.homes | map(.depth)) == [0,1,1,2,3,3,4]
+    and ([.homes[] | select(.home == "Harbor")][0] | .inventory_inconsistent and (.rows | map(.title) | index("paint")))
+    and .complete == false' \
+    "the home tree is not three levels deep with a visited set, remote and too-deep homes named"
+  [ ! -s "$home/crew-calls" ] || fail "a secondmate or another home's worker was sent to crew-state: $(cat "$home/crew-calls")"
+  check "$(feed "$home" '[.fleet.homes[].rows[] | select(.title == "paint")][0]')" \
+    '.state == "blocked" and .pr == null and (.pr_text | test("#9")) and (.now_text | test("Harbor"))' \
+    "a secondmate worker's row did not come from its own report with its registry id replaced"
+  out=$(render "$home" "$now")
+  printf '%s' "$out" | jq -r '.text' | grep -q "$REG\|zz7mid\|zz6low\|zz4deep\|zz8far" && fail "the rendered fleet showed a secondmate registry id"
+  grep -q "$REG\|zz7mid\|zz6low\|zz4deep\|zz8far" "$home/data/bridge/bridge.html" "$home/state/bridge/digest.txt" \
+    && fail "the published page or digest carries a secondmate registry id"
+  check "$out" '(.fleet.banners | any(test("could not be read")))' "a fleet with unread homes did not say so"
+  [ -z "$(find "$sm" "$sm2" "$sm3" "$sm4" -newer "$marker" -print 2>/dev/null)" ] || fail "the Bridge wrote into a secondmate's home"
+  sleep 1
+  printf 'working [at=%s]: mixing paint\n' "$(date +%s)" >> "$sm/state/paint.status"
+  in_fleet "$home" "$BRIDGE" refresh
+  check "$(feed "$home" '[.fleet.homes[].rows[] | select(.title == "paint")][0]')" '.state == "working"' \
+    "a new line in a secondmate worker's log did not trigger a refresh"
+  pass "the fleet reads homes three levels deep, never writes into them, and renders no registry id"
+}
+
+test_fleet_failure_is_visible() {
+  local home now
+  home=$(make_home fleetfail)
+  printf '%s\n' "$ENABLED" > "$home/config/bridge.json"
+  crew_stub "$home"
+  worker "$home" w1
+  crew_says "$home" w1 working pane busy
+  printf 'working: hi\n' > "$home/state/w1.status"
+  mkdir -p "$home/state/bridge"
+  printf 'not a directory\n' > "$home/state/bridge/crew"
+  in_fleet "$home" "$BRIDGE" build >/dev/null || fail "a failed fleet read failed the whole build"
+  now=$(date +%s)
+  check "$(feed "$home" '.fleet')" '.read == "failed"' "a failed fleet read was not published as failed"
+  check "$(render "$home" "$now")" '.fleet.banners | any(test("could not be read"))' "the page did not say the fleet is unreadable"
+  grep -q '^fleet unavailable data: ' "$home/state/bridge/digest.txt" || fail "the digest did not say the fleet is unavailable"
+  rm -f "$home/state/bridge/crew"
+  in_fleet "$home" "$BRIDGE" build >/dev/null || fail "rebuild failed"
+  check "$(feed "$home" '.fleet')" '.read == "ok" and .counts.total == 1' "the fleet did not recover"
+  pass "a fleet that cannot be read is shown as unreadable, never as an empty fleet"
+}
+
+test_guard_refreshes_without_watcher() {
+  local home i
+  home=$(make_home guarded)
+  printf '%s\n' "$ENABLED" > "$home/config/bridge.json"
+  worker "$home" w1
+  mkdir -p "$TMP_ROOT/guard-root"
+  PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$TMP_ROOT/guard-root" FM_HOME="$home" FM_GUARD_GRACE=999 \
+    FM_SUPERVISION_MODEL=persistent "$ROOT/bin/fm-guard.sh" >/dev/null 2>&1 || true
+  i=0
+  while [ ! -s "$home/data/bridge/bridge.html" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+  [ -s "$home/data/bridge/bridge.html" ] || fail "a guarded command with the watcher down did not refresh the Bridge"
+  i=0
+  while [ -e "$home/state/bridge/.build.lock" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+  pass "with the watcher down, guarded commands keep an enabled Bridge refreshed"
+}
+
 fm_test_run test_config_gate test_keyed_question_lifecycle test_hold_answer_path \
   test_secondmate_export_and_names test_never_falsely_green test_redaction_and_escaping \
   test_digest_and_bounds test_incremental_reads test_refresh_retention test_watcher_tick \
-  test_alerts_fire_once_per_step test_deadline_clock_on_the_card test_nudge_and_parked_work
+  test_alerts_fire_once_per_step test_deadline_clock_on_the_card test_nudge_and_parked_work \
+  test_fleet_flags_and_crew_cache test_fleet_usage_never_triggers_quota test_fleet_hierarchy \
+  test_fleet_failure_is_visible test_guard_refreshes_without_watcher

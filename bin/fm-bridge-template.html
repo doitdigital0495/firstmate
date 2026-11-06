@@ -81,6 +81,20 @@ details.group > div { padding: 2px 10px 4px; }
 .sources { margin-top: 26px; font-size: 0.82rem; color: var(--text-faint); }
 .sources li { margin: 2px 0; }
 .sources .bad { color: var(--rust); }
+.fleet { margin-top: 26px; }
+.fleet h3 { margin: 16px 0 6px; font-size: 0.95rem; color: var(--text-strong); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 6px 0; font-size: 0.8rem; color: var(--text-muted); }
+.chip.warn { color: var(--gold); border-color: var(--gold-soft); }
+.fhome.d1 { margin-left: 10px; } .fhome.d2 { margin-left: 20px; } .fhome.d3 { margin-left: 30px; }
+.fhome > summary b { color: var(--text-strong); }
+.frow { border-top: 1px solid var(--line-soft); padding: 7px 2px; overflow-wrap: anywhere; }
+.frow:first-child { border-top: 0; }
+.frow .t { color: var(--text-strong); font-weight: 600; }
+.frow p { margin: 3px 0 0; font-size: 0.86rem; }
+.frow a { color: var(--ocean); }
+.st-working { color: var(--sea); } .st-blocked, .st-failed, .st-unknown { color: var(--rust); } .st-parked { color: var(--gold); }
+.usage li { margin: 3px 0; font-size: 0.88rem; }
+.usage { padding-left: 18px; margin: 4px 0; }
 @media (min-width: 720px) { .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 </style>
 </head>
@@ -449,6 +463,117 @@ __FM_BRIDGE_DATA__
     pd.appendChild(pl);
     root.appendChild(pd);
   }
+  /* Fleet: who runs where. bin/fm-bridge-fleet.jq owns stages, flags and
+     their thresholds; the page only compares the epochs it was given with its
+     own clock, so a flag that falls due between builds still shows. */
+  var FLAG_WORDS = { "stale": "no news for a while", "repeating": "repeating itself", "noisy": "very busy log",
+    "parked-long": "at review over an hour", "done-open": "finished over a day ago, not cleaned up", "unknown": "state unknown" };
+  function rowFlags(r, now) {
+    var f = (r.flags || []).slice();
+    if (r.stale_at && now >= r.stale_at) f.push("stale");
+    if (r.parked_long_at && now >= r.parked_long_at) f.push("parked-long");
+    if (r.done_long_at && now >= r.done_long_at) f.push("done-open");
+    return f;
+  }
+  function fleetRow(r, now) {
+    var d = el("div", "frow");
+    var flags = rowFlags(r, now);
+    d.setAttribute("data-row", r.title || "");
+    d.setAttribute("data-flags", flags.join(","));
+    var top = el("div", "meta");
+    top.appendChild(el("span", "t", r.title || "Unnamed task"));
+    top.appendChild(el("span", "chip st-" + (r.state || "unknown"), r.secondmate ? "Secondmate: " + r.stage : r.stage));
+    flags.forEach(function (f) { top.appendChild(el("span", "chip flag", FLAG_WORDS[f] || f)); });
+    d.appendChild(top);
+    var info = [];
+    if (r.last_epoch) info.push("last report " + (r.last_estimated ? "about " : "") + ago(now - r.last_epoch) + " ago");
+    else info.push("no report yet");
+    info.push("read from " + r.read_from);
+    var who = [r.harness, r.model, r.seat].filter(function (x) { return x; }).join(" ");
+    if (who) info.push(who);
+    d.appendChild(el("p", "hint", info.join(" - ")));
+    if (r.now_text) { var n = el("p"); n.appendChild(el("b", "", "Now: ")); n.appendChild(document.createTextNode(r.now_text)); d.appendChild(n); }
+    if (r.pr) { var pp = el("p"); var a = el("a", "", r.pr); a.href = r.pr; a.target = "_blank"; a.rel = "noopener noreferrer"; pp.appendChild(a); d.appendChild(pp); }
+    if (!r.pr && r.pr_text) d.appendChild(el("p", "hint", r.pr_text));
+    if (r.unknown_detail) d.appendChild(el("p", "err", "Why unknown: " + r.unknown_detail));
+    return d;
+  }
+  function renderFleet(f) {
+    var now = nowSec();
+    var box = el("section", "fleet");
+    var h = el("h2", "", "Fleet ");
+    box.appendChild(h);
+    if (f.read !== "ok" || !Array.isArray(f.homes)) {
+      box.appendChild(el("div", "banner bad", "The fleet could not be read" + (f.error ? ": " + f.error : "") + ". Nothing here about the crew is current."));
+      root.appendChild(box);
+      return;
+    }
+    var all = [];
+    f.homes.forEach(function (hm) { (hm.rows || []).forEach(function (r) { all.push(r); }); });
+    h.appendChild(el("small", "", "(" + (f.complete ? "" : "at least ") + all.length + ")"));
+    var fm = f.firstmate || {};
+    var beat = el("div", "banner" + (fm.watcher_fresh ? "" : " warn"));
+    beat.textContent = "Firstmate: " + (fm.watcher_fresh ? "its watcher was checking in" : "its watcher was NOT checking in")
+      + " when this was read; " + (fm.queue_depth || 0) + (fm.queue_depth === 1 ? " wake waits" : " wakes wait")
+      + (fm.last_wake_epoch ? "; last wake " + ago(now - fm.last_wake_epoch) + " ago." : ".");
+    box.appendChild(beat);
+    if (!f.complete) box.appendChild(el("div", "banner bad", "Some secondmate homes could not be read, so the crew may be larger than shown."));
+    var c = f.counts || {}, tally = {};
+    all.forEach(function (r) { rowFlags(r, now).forEach(function (x) { tally[x] = (tally[x] || 0) + 1; }); });
+    var chips = el("div", "chips");
+    [["working", "working"], ["parked", "at review"], ["blocked", "stuck or waiting"], ["paused", "paused"], ["done", "finished"], ["failed", "failed"], ["unknown", "unknown"]]
+      .forEach(function (p) { if (c[p[0]]) chips.appendChild(el("span", "chip", c[p[0]] + " " + p[1])); });
+    Object.keys(FLAG_WORDS).forEach(function (k) { if (tally[k] && k !== "unknown") chips.appendChild(el("span", "chip flag", tally[k] + " " + FLAG_WORDS[k])); });
+    box.appendChild(chips);
+    f.homes.forEach(function (hm) {
+      var d = el("details", "group fhome d" + Math.min(hm.depth || 0, 3));
+      d.setAttribute("data-home", hm.label);
+      var rows = hm.rows || [];
+      var flagged = rows.filter(function (r) { return rowFlags(r, now).length; }).length;
+      if (hm.depth === 0 || flagged) d.open = true;
+      var sum = el("summary");
+      sum.appendChild(el("b", "", hm.home));
+      var bits = [rows.length + (rows.length === 1 ? " task" : " tasks")];
+      if (flagged) bits.push(flagged + " need a look");
+      if (hm.parent) bits.push("under " + hm.parent);
+      if (hm.beacon_age !== null && hm.beacon_age !== undefined) bits.push("watcher beacon " + ago(hm.beacon_age) + " old when read");
+      sum.appendChild(document.createTextNode(" - " + bits.join(", ")));
+      d.appendChild(sum);
+      var inner = el("div");
+      if (hm.read !== "ok") inner.appendChild(el("p", "empty", hm.read_note || "Not read."));
+      if (hm.inventory_inconsistent) inner.appendChild(el("p", "hint", "Its own home summary says its inventory is inconsistent; rows below come from its task records."));
+      var open = rows.filter(function (r) { return r.state !== "done" || rowFlags(r, now).length; });
+      var done = rows.filter(function (r) { return open.indexOf(r) < 0; });
+      open.forEach(function (r) { inner.appendChild(fleetRow(r, now)); });
+      if (done.length) {
+        var dd = el("details", "group");
+        dd.appendChild(el("summary", "", "Finished (" + done.length + ")"));
+        var di = el("div");
+        done.forEach(function (r) { di.appendChild(fleetRow(r, now)); });
+        dd.appendChild(di);
+        inner.appendChild(dd);
+      }
+      if (!rows.length && hm.read === "ok") inner.appendChild(el("p", "empty", "No tasks in flight."));
+      d.appendChild(inner);
+      box.appendChild(d);
+    });
+    box.appendChild(el("h3", "", "Seat usage"));
+    var ul = el("ul", "usage");
+    (f.usage || []).forEach(function (u) {
+      var parts = (u.windows || []).map(function (w) {
+        var name = w.kind === "session" ? "5 hours" : "week";
+        return w.used === null || w.used === undefined ? name + " not reported" : name + " " + w.used + "% used";
+      });
+      var line = u.seat + " (" + u.workers + (u.workers === 1 ? " task" : " tasks") + ", " + u.working + " working): "
+        + (u.read === "ok" ? parts.join(", ") : u.read) + (u.at_epoch ? " - read " + ago(now - u.at_epoch) + " ago" : "");
+      ul.appendChild(el("li", "", line));
+    });
+    if (!(f.usage || []).length) ul.appendChild(el("li", "", "No seat recorded for any task."));
+    box.appendChild(ul);
+    box.appendChild(el("p", "hint", "Secondmates are read up to " + (f.depth_max || 3) + " levels deep. Usage comes from the last shared quota read; the Bridge never starts one. Cost per task is not measured."));
+    root.appendChild(box);
+  }
+  if (data.fleet) renderFleet(data.fleet);
 
   var src = el("div", "sources");
   src.appendChild(el("b", "", "Sources: " + (data.sources ? data.sources.ok + " of " + data.sources.total + " read" : "unknown")));
