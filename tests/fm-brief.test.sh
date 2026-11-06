@@ -929,6 +929,18 @@ test_secondmate_no_projects_charter() {
     "secondmate charter did not close a quietly ended routed-work phase"
   assert_grep 'use the same key on its later' "$brief" \
     "secondmate charter did not supersede working phases with later states"
+  assert_grep '# Sub-manager role' "$brief" \
+    "secondmate charter lost the sub-manager role section"
+  assert_grep 'you never do project, research, browsing, drafting, build, or test work yourself, even when it looks small' "$brief" \
+    "secondmate charter no longer forbids doing worker tasks itself"
+  assert_grep 'Delegate that work to crewmates you spawn and supervise in this home' "$brief" \
+    "secondmate charter no longer routes worker tasks to its own crewmates"
+  assert_grep "Section 1 of the local \`AGENTS.md\` owns this rule" "$brief" \
+    "secondmate charter no longer points to AGENTS.md section 1 as the rule owner"
+  assert_grep 'Routine work is never escalated to the main firstmate: you handle it inside this home through your own crewmates' "$brief" \
+    "secondmate charter escalation section lost the crewmate-handled routine-work line"
+  assert_no_grep 'Handle routine work yourself' "$brief" \
+    "secondmate charter still reads as doing routine work itself"
   if grep -nE '^-[[:space:]]*$' "$brief" >/dev/null; then
     fail "project-less charter left a stray empty project bullet"
   fi

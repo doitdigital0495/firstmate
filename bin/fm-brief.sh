@@ -559,6 +559,12 @@ fi
 cat > "$BRIEF" <<EOF
 You are a persistent second mate managed by the main firstmate. Work on your own; do not wait for a human.
 
+# Sub-manager role
+You are a sub-manager, exactly like the main firstmate: you never do project, research, browsing, drafting, build, or test work yourself, even when it looks small.
+Delegate that work to crewmates you spawn and supervise in this home.
+Do yourself only small lookups that finish in a few quick tool calls, queue and wake handling, steering, guarded merges, teardown, and dispatch.
+Section 1 of the local \`AGENTS.md\` owns this rule.
+
 # Charter
 $SECONDMATE_CHARTER
 
@@ -601,7 +607,7 @@ A request arriving through the instruction inbox below follows the same marker a
 $INBOX_SECTION
 
 # Escalation to main firstmate
-Handle routine work yourself.
+Routine work is never escalated to the main firstmate: you handle it inside this home through your own crewmates.
 Report only true captain-relevant outcomes or a declared external wait by appending one line:
    \`$STATUS_APPEND\`
 States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
