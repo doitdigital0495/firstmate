@@ -89,6 +89,21 @@
 #   for those accounts. With no tier declared, behavior is unchanged.
 #   docs/configuration.md "Crew dispatch profiles" owns the declared fields.
 #
+# Worker five-hour guard and burst spreader (worker mode only; pipeline rows
+#   are untouched). Before the reserve and seat tier holds, a rankable seat
+#   with a five-hour window that has a published reset and less room left
+#   than the floor is held: FM_DISPATCH_FIVE_HOUR_WORKDAY_PERCENT (20) on
+#   Mon-Fri inside FM_DISPATCH_WORKDAY_HOURS (08-18) in FM_DISPATCH_WORKDAY_TZ
+#   (Europe/Amsterdam), else FM_DISPATCH_FIVE_HOUR_OFFHOURS_PERCENT (5). With
+#   no other seat able to start the guard is waived and the line says so.
+#   Each clear worker resolution appends "<epoch> <account|home:provider>
+#   <cost>" to $STATE/dispatch-burst-ledger, the cost per provider from
+#   FM_DISPATCH_BURST_COSTS (claude=1.3,codex=2.6,zai=2.0); a debit fades
+#   linearly to 0 over FM_DISPATCH_BURST_WINDOW_SECONDS (1800; 0 turns it
+#   off), and the seat ranks on spendPriority * ((pct - debit) / pct) ^ 0.8.
+#   FM_DISPATCH_NOW_EPOCH pins the clock for both. docs/configuration.md
+#   "Crew dispatch profiles" owns the behavior.
+#
 # Pipeline mode: `pipeline --step <step>` picks the seat for one no-mistakes
 #   step from the top-level "pipeline_rows" row naming that step, with no model
 #   call, brief, receipt, or captain pick. Each profile declares its "pool" and
@@ -713,6 +728,71 @@ TIE_RR_FILE=$STATE/dispatch-tie-round-robin
 TIE_RR=$(cat "$TIE_RR_FILE" 2>/dev/null) || TIE_RR=0
 case "$TIE_RR" in '' | *[!0-9]*) TIE_RR=0 ;; esac
 [ "${#TIE_RR}" -le 9 ] || TIE_RR=0
+# ---- worker five-hour guard and burst spreader (see the header) ---------------
+fm_dispatch_now() {  # epoch seconds; FM_DISPATCH_NOW_EPOCH pins it
+  case "${FM_DISPATCH_NOW_EPOCH:-}" in '' | *[!0-9]*) date +%s ;; *) printf '%s' "$FM_DISPATCH_NOW_EPOCH" ;; esac
+}
+fm_dispatch_workday() {  # <epoch>: exit 0 inside the declared working day (Mon-Fri)
+  local stamp dow hour
+  stamp=$(TZ=$WORKDAY_TZ date -d "@$1" '+%u %H' 2>/dev/null || TZ=$WORKDAY_TZ date -r "$1" '+%u %H' 2>/dev/null) || return 1
+  read -r dow hour <<<"$stamp"
+  case "$dow$hour" in '' | *[!0-9]*) return 1 ;; esac
+  hour=$((10#$hour))
+  [ "$dow" -le 5 ] && [ "$hour" -ge "$WORKDAY_START" ] && [ "$hour" -lt "$WORKDAY_END" ]
+}
+fm_dispatch_burst_cost() {  # <provider>: the assumed weekly points one start costs
+  local pair cost=''
+  for pair in ${BURST_COSTS//,/ }; do
+    [ "${pair%%=*}" = "$1" ] || continue
+    cost=${pair#*=}
+  done
+  [[ "$cost" =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 1
+  printf '%s' "$cost"
+}
+NOW_EPOCH=$(fm_dispatch_now)
+WORKDAY_TZ=${FM_DISPATCH_WORKDAY_TZ:-Europe/Amsterdam}
+WORKDAY_HOURS=${FM_DISPATCH_WORKDAY_HOURS:-08-18}
+[[ "$WORKDAY_HOURS" =~ ^[0-9]{1,2}-[0-9]{1,2}$ ]] || WORKDAY_HOURS=08-18
+WORKDAY_START=$((10#${WORKDAY_HOURS%-*})) WORKDAY_END=$((10#${WORKDAY_HOURS#*-}))
+if fm_dispatch_workday "$NOW_EPOCH"; then
+  GUARD_FLOOR=$(fm_dispatch_clamp_int "${FM_DISPATCH_FIVE_HOUR_WORKDAY_PERCENT:-}" 20 0 100)
+  GUARD_PERIOD="while the captain works (Mon-Fri $WORKDAY_HOURS $WORKDAY_TZ)"
+else
+  GUARD_FLOOR=$(fm_dispatch_clamp_int "${FM_DISPATCH_FIVE_HOUR_OFFHOURS_PERCENT:-}" 5 0 100)
+  GUARD_PERIOD="outside working hours (Mon-Fri $WORKDAY_HOURS $WORKDAY_TZ)"
+fi
+FIVE_HOUR_GUARD=$(jq -cn --argjson floor "$GUARD_FLOOR" --arg period "$GUARD_PERIOD" '{floor: $floor, period: $period}')
+BURST_COSTS=${FM_DISPATCH_BURST_COSTS:-claude=1.3,codex=2.6,zai=2.0}
+BURST_WINDOW=$(fm_dispatch_clamp_int "${FM_DISPATCH_BURST_WINDOW_SECONDS:-}" 1800 0 86400)
+BURST_LEDGER=$STATE/dispatch-burst-ledger
+# Recent debits per seat, each fading linearly to nothing over the window.
+BURST_DEBITS='{}'
+if [ "$MODE" = worker ] && [ "$BURST_WINDOW" -gt 0 ] && [ -s "$BURST_LEDGER" ]; then
+  BURST_DEBITS=$(awk -v now="$NOW_EPOCH" -v win="$BURST_WINDOW" '
+    NF == 3 && $1 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+(\.[0-9]+)?$/ {
+      age = now - $1; if (age < 0) age = 0
+      if (age < win) { d[$2] += $3 * (1 - age / win); n[$2]++ }
+    }
+    END { for (k in d) printf "%s %.4f %d\n", k, d[k], n[k] }' "$BURST_LEDGER" \
+    | jq -cRn '[inputs | split(" ") | {key: .[0], value: {debit: (.[1] | tonumber), starts: (.[2] | tonumber)}}] | from_entries') \
+    || BURST_DEBITS='{}'
+fi
+# fm_dispatch_burst_record: debit the seat a clear worker resolution chose. A
+# ledger whose newest debit has fully faded starts again from empty.
+fm_dispatch_burst_record() {
+  local seat provider cost last
+  [ "$BURST_WINDOW" -gt 0 ] && [ "$SQ" != true ] || return 0
+  IFS=$'\t' read -r seat provider < <(jq -r '.chosen | [(.profile.account // ("home:" + (.provider // ""))), (.provider // "")] | @tsv' <<<"$RESULT") || return 0
+  [ -n "$provider" ] && [ -n "$seat" ] || return 0
+  cost=$(fm_dispatch_burst_cost "$provider") || return 0
+  mkdir -p "$STATE" 2>/dev/null || return 0
+  last=$(tail -n 1 "$BURST_LEDGER" 2>/dev/null | awk '{ print $1 }')
+  case "$last" in
+    '' | *[!0-9]*) : ;;
+    *) [ "$(( NOW_EPOCH - last ))" -lt "$BURST_WINDOW" ] || rm -f "$BURST_LEDGER" ;;
+  esac
+  printf '%s %s %s\n' "$NOW_EPOCH" "$seat" "$cost" >> "$BURST_LEDGER" 2>/dev/null || true
+}
 # ---- resolution: declared gates + quota evidence + argmax, all in jq ----------
 # Seat evaluation shared by worker and pipeline resolution: quota evidence,
 # completeness, reserve and seat-tier holds, and the spend-priority argmax. It
@@ -982,10 +1062,12 @@ FM_DR_SEAT_JQ='
   # the sooner reset of the binding window, then to a fixed round-robin over a
   # stable order; both are logged.
   def reset_epoch($c): ($c.binding_reset // null) as $r | if ($r | type) == "string" then ($r | try fromdateiso8601 catch null) else null end;
+  # A worker burst debit (rank_priority) ranks in place of the published score.
+  def rank_priority: (.rank_priority // .spendPriority);
   def rank_winner:
     . as $ranked |
-    ($ranked | max_by(.spendPriority)) as $best |
-    ([$ranked[] | select(.spendPriority == $best.spendPriority)]) as $ties |
+    ($ranked | max_by(rank_priority)) as $best |
+    ([$ranked[] | select(rank_priority == ($best | rank_priority))]) as $ties |
     (if ($ties | length) < 2 then {winner: $best}
      else
        ([$ties[] | reset_epoch(.)] | map(select(. != null)) | min) as $soonest |
@@ -993,7 +1075,7 @@ FM_DR_SEAT_JQ='
          | sort_by([(.profile.account // ""), .profile.harness, (.profile.model // ""), (.profile.effort // "")])) as $ordered |
        ($rr % ($ordered | length)) as $slot |
        {winner: $ordered[$slot], round_robin: (($ordered | length) > 1),
-        tie_break: ("\($ties | length) candidates tied at spendPriority \($best.spendPriority); " +
+        tie_break: ("\($ties | length) candidates tied at spendPriority \($best | rank_priority); " +
           (if $soonest == null then "no binding reset known" else "sooner binding reset \($soonest | todate) kept \($ordered | length)" end) +
           (if ($ordered | length) > 1 then "; round-robin slot \($slot + 1) of \($ordered | length)" else "" end) +
           " -> \($ordered[$slot].profile.harness):\($ordered[$slot].profile.model // "default")\(if $ordered[$slot].profile.account then " @" + $ordered[$slot].profile.account else "" end)")}
@@ -1087,9 +1169,34 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   if [ "$MODE" = pipeline ]; then fm_dispatch_pipeline_json "$@"; return; fi
   jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
     --argjson final "${3:-false}" --arg jev_failed "$JEV_FAILED_REASON" --argjson force_pick "$FORCE_PICK" --arg delivery "$BRIEF_DELIVERY" \
+    --argjson guard "$FIVE_HOUR_GUARD" --argjson debits "$BURST_DEBITS" \
     --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
 '"$FM_DR_SEAT_JQ"'
+  # Five-hour guard (worker starts only): the first five-hour window of a
+  # rankable seat that has a published reset and less room than the floor.
+  def five_hour_guard_hit($e):
+    provider_of($e.profile) as $p | lane_of($e.profile) as $lane |
+    (account_quota($e.profile) // {providers: []}) |
+    five_hour_ids($p; $lane) as $five |
+    ([provider_windows($p; $lane)[] | select(.id as $id | ($five | index($id)) != null)
+      | select((.percentRemaining | type) == "number" and (.resetsAt | type) == "string" and .percentRemaining < $guard.floor)] | first) // null;
+  def five_hour_guard:
+    map(if .eligible and ((.unranked // false) | not) and ((.sq // false) | not) and .provider != null then
+          five_hour_guard_hit(.) as $w |
+          if $w == null then .
+          else . + {eligible: false, five_hour_guard: true,
+            reason: "five-hour guard: \($w.id) \($w.percentRemaining)% left, under \($guard.floor)% \($guard.period); resets \(clean_reset($w.resetsAt))"} end
+        else . end);
+  # Burst spreader: a seat debited by recent starts ranks on its score scaled as
+  # if that many weekly points were already spent, the way spendPriority falls.
+  def burst_key: (.profile.account // ("home:" + (.provider // "")));
+  def burst_adjust:
+    map(burst_key as $k | ($debits[$k] // null) as $d |
+      if $d != null and .eligible and (.spendPriority | type) == "number" and (.pct | type) == "number" and .pct > 0 then
+        (((([.pct - $d.debit, 0.1] | max) / .pct) | pow(.; 0.8)) * .spendPriority * 10000 | round / 10000) as $adj |
+        . + {rank_priority: $adj, burst: {debit: $d.debit, starts: $d.starts}}
+      else . end);
   def rule_at($c):
     if ($c | test("^rule_[1-9][0-9]*$")) then
       ($c | ltrimstr("rule_") | tonumber) as $n |
@@ -1184,8 +1291,20 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   # under the weekly-window seat test above; it then ranks below every
   # non-fallback candidate at selection.
   # An unmeasured rule floor gates the whole row, so its candidates stay as gathered.
-  ($unbanned | reserve_tier | seat_tier_hold(false)
-    | if ($sel.rule_floor_incomplete // false) or ($ambiguous and any($union_floors[]; .state == "unmeasured")) then . else skip_unreadable end) as $cands |
+  # The five-hour guard runs first, so a guarded seat holds no later tier and
+  # never opens the reserve. It never empties a choice: with no other rankable
+  # seat left it is waived and the line says so.
+  def hold_and_skip:
+    reserve_tier | seat_tier_hold(false)
+    | if ($sel.rule_floor_incomplete // false) or ($ambiguous and any($union_floors[]; .state == "unmeasured")) then . else skip_unreadable end;
+  ($unbanned | five_hour_guard | hold_and_skip) as $guarded |
+  (if any($guarded[]; .five_hour_guard // false) and (any($guarded[]; .eligible and ((.unranked // false) | not)) | not)
+   then [$unbanned | hold_and_skip | .[] |
+     if .eligible and ((.unranked // false) | not) and ((.sq // false) | not) and .provider != null then
+       five_hour_guard_hit(.) as $w |
+       if $w == null then . else . + {guard_waived: "five-hour guard waived: \($w.id) \($w.percentRemaining)% left, under \($guard.floor)% \($guard.period), but no other seat can start"} end
+     else . end]
+   else $guarded end | burst_adjust) as $cands |
   ([$cands[] | select(.incomplete)]) as $incomplete |
   def when_of($c): (if rule_at($c) == null then $none_criterion else rule_at($c).when end | .[0:60]);
   ({
@@ -1259,7 +1378,10 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
           elif ($ranked | length) < ($pickable | length) then "\($sel.note); strongest reasoning class \($strongest), \(($pickable | length) - ($ranked | length)) weaker eligible candidate(s) outranked"
           else $sel.note end)
                + (if ($winner.reserve_active // false) then "; \($winner.reason)" else "" end)
-               + ([$cands[] | select(.unreadable) | seat_label] as $skipped | if ($skipped | length) > 0 then "; quota unreadable, skipped: \($skipped | join(", "))" else "" end)), candidates: $cands, chosen: $winner, row: $winner_row}
+               + ([$cands[] | select(.unreadable) | seat_label] as $skipped | if ($skipped | length) > 0 then "; quota unreadable, skipped: \($skipped | join(", "))" else "" end)
+               + ([$cands[] | select(.five_hour_guard) | seat_label] as $held | if ($held | length) > 0 then "; five-hour guard held: \($held | join(", "))" else "" end)
+               + ([$cands[] | select(.burst) | "\(seat_label) \(.spendPriority) -> \(.rank_priority) after \(.burst.starts) recent start(s)"] as $debited
+                  | if ($debited | length) > 0 then "; burst debit: \($debited | join(", "))" else "" end)), candidates: $cands, chosen: $winner, row: $winner_row}
         + (if $tb.tie_break then {tie_break: $tb.tie_break, tie_round_robin: ($tb.round_robin // false)} else {} end)
         + (if ($unranked | length) > 0 then
              {unranked_note: "\($unranked | length) eligible candidate(s) unranked (\([$unranked[].provider] | unique | join(", ")))"}
@@ -1421,10 +1543,12 @@ TEXT=$(jq -r '
              else "" end)
         elif .windows then "  windows=\(winstr(.windows))" else "" end)
       + (if .five_hour_open then "  " + (.five_hour_open | map(flat) | join("  ")) else "" end)
-      + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))  runway=\(show(.runway))" else "" end)
+      + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))"
+          + (if .burst then " burst_debit=\(.burst.debit | flat)pt/\(.burst.starts | flat)start(s) ranks=\(.rank_priority | flat)" else "" end)
+          + "  runway=\(show(.runway))" else "" end)
       + (if (.bounds // [] | length) > 1 then "  bounds=" + ([.bounds[] | "\(.scope | flat):\(show(.pct))%/\((.runway // .status) | flat)"] | join(",")) else "" end)
       + (if .reading_age != null then "  reading_age=\(.reading_age | flat)s (recent reading reused)" else "" end)
-      + "  -> " + (if .quota_unknown then "eligible, \(.reason | flat)" elif .incomplete then "incomplete: \(.reason | flat)" elif .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .sq then "eligible (quota ranking off: home declares a single shared quota)" elif .eligible and (.reserve_active // false) then "eligible, \(.reason | flat)" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)
+      + "  -> " + (if .quota_unknown then "eligible, \(.reason | flat)" elif .incomplete then "incomplete: \(.reason | flat)" elif .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .sq then "eligible (quota ranking off: home declares a single shared quota)" elif .eligible and (.reserve_active // false) then "eligible, \(.reason | flat)" elif .eligible and .guard_waived then "eligible, \(.guard_waived | flat)" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)
       + "  plan=\(.plan | flat) (\(.plan_source | flat))"),
   (if .chosen then "  profile: --harness \(.chosen.profile.harness | shell_arg)"
       + (if .chosen.profile.model then " --model \(.chosen.profile.model | shell_arg)" else "" end)
@@ -1445,6 +1569,7 @@ case "$(jq -r '.status // ""' <<<"$RESULT")" in
     # launch gate will ask for. The per-launch intake is recorded here.
     fm_dr_record_intake || emit_error "quota intake failed; stop and report"
     if RECEIPT_NAME=$(fm_dr_write_clear "$BRIEF" "$TASK_ID" "$RESULT"); then
+      fm_dispatch_burst_record
       printf '  source: jev\n'
       printf '  receipt: %s (one launch, valid %ss)\n' "$RECEIPT_NAME" "$(fm_dr_max_age)"
     else

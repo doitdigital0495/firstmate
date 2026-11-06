@@ -1795,7 +1795,7 @@ Firstmate cannot see which part of a worker's life uses the resource, so the num
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
 Jev chooses the best matching natural-language rule through [typed dispatch resolution](#typed-dispatch-resolution-jevd-socket); code applies deterministic quota and eligibility gates.
-The resolver selects the rule's eligible profile by any declared seat tier, then spendPriority; firstmate reviews it under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only the receipted concrete profile flags to `fm-spawn.sh`.
+The resolver selects the rule's eligible profile by any declared seat tier, the worker five-hour guard, then spendPriority less any recent burst debit; firstmate reviews it under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only the receipted concrete profile flags to `fm-spawn.sh`.
 
 **Spawn requirements**
 
@@ -1900,6 +1900,23 @@ This orders only the worker that drives the delivery: a no-mistakes pipeline's o
 A firstmate or secondmate does not launch through `--account`: its seat is the home identity or a per-secondmate pin, so its row's order names the seat for a [deliberate subscription switch](#deliberate-claude-subscription-switch-and-clean-exit) when the current seat reaches its limit.
 Without either field, behavior is unchanged.
 A value of any other shape is an actionable configuration error reported like any other malformed profile field.
+
+**Worker five-hour guard and burst spreader**
+
+Both apply to worker and scout starts only; [pipeline seat rows](#pipeline-seat-rows) keep their own pools, tiers, weekly floor and runway test.
+The five-hour guard holds a rankable seat out of a new start while one of its five-hour windows has a published reset and less room than the floor: 20% left while the captain works (Monday to Friday, 08:00 to 18:00 Europe/Amsterdam) and 5% left outside those hours and at weekends.
+The held line reads `not eligible: five-hour guard: <window> <pct>% left, under <floor>% <period>; resets <reset>`, and the note names every held seat.
+A five-hour window without a reset, an idle or unreadable one, and a seat with no five-hour window are never guarded, and a candidate with unknown quota is never guarded either.
+The guard runs before the reserve and seat tier holds, so a guarded seat holds no later tier and never opens a `fallback_only` reserve.
+It never empties a choice: when no other seat could start, the guarded seats compete as before and their lines read `eligible, five-hour guard waived: ...`.
+The burst spreader debits the seat of every clear worker resolution in `state/dispatch-burst-ledger`, so starts in quick succession spread over the seats furthest behind pace instead of all landing on one.
+A debit is the assumed weekly points one start costs: 1.3 on a Claude seat, 2.6 on Codex and 2.0 on Z.ai.
+It fades linearly to nothing over 30 minutes, by which time the worker's real use shows in fresh quota readings, and a ledger whose newest debit has faded starts again from empty.
+A debited seat ranks on its `spendPriority` scaled as if those points were already spent, `spendPriority * ((remaining - debit) / remaining) ^ 0.8`, and its candidate line shows `burst_debit=<points>pt/<n>start(s) ranks=<score>`.
+The receipt keeps the published `spendPriority` and the note names each debit; exact ties and the round-robin compare the debited score.
+Resolutions that run at the same moment read the ledger before either writes, so they can still pick the same seat.
+`FM_DISPATCH_FIVE_HOUR_WORKDAY_PERCENT` (20), `FM_DISPATCH_FIVE_HOUR_OFFHOURS_PERCENT` (5), `FM_DISPATCH_WORKDAY_TZ` (`Europe/Amsterdam`) and `FM_DISPATCH_WORKDAY_HOURS` (`08-18`) tune the guard.
+`FM_DISPATCH_BURST_COSTS` (`claude=1.3,codex=2.6,zai=2.0`) and `FM_DISPATCH_BURST_WINDOW_SECONDS` (1800, 0 turns the spreader off) tune the spreader, and a provider without a cost is never debited.
 
 ### Pipeline seat rows
 
@@ -2231,6 +2248,7 @@ An existing unreadable or malformed table, including a broken symlink, is an exi
 Everything after the answer runs in code: the confidence floor, the matched rule's `approval`, `min_confidence`, and `floor`, each candidate's `provider`, `quota_scope`, and `floor`, every applicable account-wide and model/product row from the default and authorized named-store `quota-axi --json` snapshots, the optional `preferred_provider` restriction under the [profile-array procedure](../.agents/skills/quota-array-dispatch/SKILL.md#4-rank-by-spendpriority), and the numeric `spendPriority` argmax within that candidate pool using each candidate's limiting row, restricted to the highest declared `reasoning_class` first under the keep-strongest rule below.
 A candidate is rankable only with complete limit information: every window its applicable rows are bounded by - the weekly limit, a session limit where the plan has one, and named model windows - must carry a known remaining percent and reset time.
 A five-hour window counts on every account whenever its remaining percent and published reset are both known: a seat at that limit prints `not eligible: <limit>: at its five-hour limit, held until <reset>` and stays out until that reset (captain 2026-11-05).
+Above that limit, the worker five-hour guard and burst spreader under "Crew dispatch profiles" decide which known seats a new start may take.
 An idle window (0% used, no reset), an unreadable one, or one with no published reset never blocks a start and never makes a candidate incomplete: the candidate line names it as `five_hour=<state>, does not block`, a floor does not trip on it, and a row out of room or unknown only because of it stays eligible and ranks on what the row reports.
 A provider whose state is `auth_required` makes only that candidate ineligible as `credential unusable ... not an unknown quota`; it never makes the whole choice incomplete.
 A provider row that a read could not measure for any other reason (rate limited, stale, unavailable, or the read failed outright) reuses that provider's last good reading of the same canonical store from the cache intake and the resolver share (`state/quota-last-good/shared.json`) while it is at most `FM_QUOTA_RECENT_MAX_AGE` (86400) seconds old; the candidate line then shows `reading_age=<s>s (recent reading reused)`, a reused exhausted reading excludes only until that window's own reset time, and nothing older is used. The readings live privately under `state/quota-last-good/`.

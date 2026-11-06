@@ -7,6 +7,7 @@
 #   S3  a rule's never_providers bans a provider, also inside an ambiguous union
 #   C3  an unreadable five-hour window never makes a choice incomplete
 #   F5  a known five-hour limit holds a seat until its reset; idle, unreadable, or reset-less never blocks
+#   G   worker five-hour guard by working day, and the burst spreader
 #   R11 a rate-limited read reuses that store's last good reading under 30 min
 #   S4  a credential failure is named as such, never as unknown quota
 #   T   seat_tier strict order, per-delivery tiers, and their reserve and class rules
@@ -109,6 +110,8 @@ export PATH="$FAKEBIN:$PATH" QUOTA_DIR="$QDIR"
 unset FM_QUOTA_INTAKE_TEST_BYPASS
 export FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE="$HOME_DIR/state" FM_CONFIG_OVERRIDE="$HOME_DIR/config" FM_DATA_OVERRIDE="$HOME_DIR/data" FM_JEVD_SOCKET="$SOCKET"
 export FM_DISPATCH_QUOTA_ATTEMPTS=1 FM_DISPATCH_QUOTA_BACKOFF_MS=250 FM_DISPATCH_QUOTA_WAIT_SECONDS=20
+# Sequential resolves would debit each other; section G turns the spreader on.
+export FM_DISPATCH_BURST_WINDOW_SECONDS=0
 # The supervisor's own login is the home pin store, as on a real home.
 export CLAUDE_CONFIG_DIR="$STORES/claude3" PI_CODING_AGENT_DIR="$STORES/pi" CODEX_HOME="$STORES/codex1"
 write_response() {
@@ -491,6 +494,136 @@ assert_contains "$out" 'five_hour=unreadable, does not block' 'the unreadable wi
 reset_quota
 pass 'F5: a known five-hour limit holds a seat until its named reset; idle, unreadable, and reset-less windows never block'
 
+# ---- G: worker five-hour guard and burst spreader ---------------------------------
+DAY=1793876520      # Thu 2026-11-05 12:02 CET, inside the working day
+EVENING=1793905200  # Thu 2026-11-05 20:00 CET
+SATURDAY=1794049200 # Sat 2026-11-07 12:00 CET
+LEDGER="$HOME_DIR/state/dispatch-burst-ledger"
+qtweak() { jq ".providers[0] |= ($2)" "$QDIR/$1.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/$1.json"; }
+no_five_hour() { qtweak "$1" '.windows |= map(select(.id != "five_hour")) | .quotaSemantics.effectiveAvailability[0].boundedBy = ["seven_day"]'; }
+unreadable() { qtweak "$1" '.state = {status:"rate_limited", error:"quota endpoint rate limited"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]}'; }
+cat > "$RULES" <<'JSON'
+{"rules":[{"when":"Writing and reporting","use":[
+   {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","reasoning_class":2},
+   {"harness":"claude","model":"sonnet","effort":"high","account":"claude2","reasoning_class":2},
+   {"harness":"claude","model":"sonnet","effort":"high","account":"claude3","fallback_only":true,"reasoning_class":2},
+   {"harness":"codex","model":"gpt-6.1-sol","effort":"high","account":"codex1","reasoning_class":2}]}],
+ "default":[{"harness":"claude","model":"opus","effort":"medium","account":"claude1","reasoning_class":2}]}
+JSON
+cp "$RULES" "$TMP_ROOT/rules-guard"
+write_response rule_1 0.95 '{"rule_1":0.95,"default":0.05}'
+# claude1 and codex1 have no five-hour window, as on the live seats.
+guard_quota() { reset_quota; set_quota codex1 codex 50 0.5; no_five_hour claude1; no_five_hour codex1; rm -f "$LEDGER"; }
+grun() { FM_DISPATCH_NOW_EPOCH=$1 run "$BRIEF" --task guard; }
+brun() { FM_DISPATCH_NOW_EPOCH=$1 FM_DISPATCH_BURST_WINDOW_SECONDS=1800 run "$BRIEF" --task burst; }
+line_of() { printf '%s\n' "$out" | grep "account=$1 "; }
+guard_quota
+grun "$DAY"
+assert_contains "$(chosen)" "--account 'claude2'" "divergence check: claude2 outranks claude1 with room in its window: $out"
+five_hour claude2 '.percentRemaining = 19 | .resetsAt = "2030-01-01T05:00:00Z"'
+grun "$DAY"
+assert_contains "$(chosen)" "--account 'claude1'" "19% left in a five-hour window with a reset holds the seat by day: $out"
+assert_contains "$(line_of claude2)" 'not eligible: five-hour guard: five_hour 19% left, under 20% while the captain works (Mon-Fri 08-18 Europe/Amsterdam); resets 2030-01-01T05:00:00Z' "the held line says why: $out"
+assert_contains "$out" 'five-hour guard held: claude:sonnet@claude2' 'the note names the held seat'
+assert_equals 'five-hour guard' "$(jq -r '.candidates[] | select(.account == "claude2") | .reason | .[0:15]' "$(latest)")" 'the receipt records the guard'
+grun "$EVENING"
+assert_contains "$(chosen)" "--account 'claude2'" "19% is enough after hours: $out"
+five_hour claude2 '.percentRemaining = 6 | .resetsAt = "2030-01-01T05:00:00Z"'
+grun "$EVENING"
+assert_contains "$(chosen)" "--account 'claude2'" "6% is allowed after hours: $out"
+assert_not_contains "$out" 'five-hour guard' 'no guard after hours at 6%'
+grun "$SATURDAY"
+assert_contains "$(chosen)" "--account 'claude2'" "6% is allowed at the weekend: $out"
+grun "$DAY"
+assert_contains "$(chosen)" "--account 'claude1'" "6% is held by day: $out"
+five_hour claude2 '.percentRemaining = 4 | .resetsAt = "2030-01-01T05:00:00Z"'
+grun "$EVENING"
+assert_contains "$(chosen)" "--account 'claude1'" "under 5% is held after hours: $out"
+assert_contains "$(line_of claude2)" 'five_hour 4% left, under 5% outside working hours' 'the after-hours floor is named'
+pass 'G: the five-hour guard holds a seat under 20% by day and under 5% after hours and at weekends'
+
+guard_quota
+five_hour claude2 '.percentRemaining = 3 | del(.resetsAt)'
+grun "$DAY"
+assert_contains "$(chosen)" "--account 'claude2'" "a five-hour window without a reset never counts: $out"
+assert_contains "$out" 'five_hour=97% used, no published reset, does not block' 'the line says it does not block'
+assert_not_contains "$out" 'five-hour guard' 'no guard without a reset'
+guard_quota
+five_hour claude2 '.percentRemaining = 10 | .resetsAt = "2030-01-01T05:00:00Z"'
+set_quota codex1 codex 50 1.5
+no_five_hour codex1
+grun "$DAY"
+assert_contains "$(chosen)" "--account 'codex1'" "codex1 without a five-hour window wins on spendPriority: $out"
+assert_contains "$(line_of claude1)" '-> eligible' 'claude1 without a five-hour window is never guarded'
+assert_equals 1 "$(printf '%s\n' "$out" | grep -c 'not eligible: five-hour guard')" 'only the seat with a low window is guarded'
+pass 'G: the guard ignores a window without a reset and skips seats with no five-hour window'
+
+guard_quota
+five_hour claude2 '.percentRemaining = 10 | .resetsAt = "2030-01-01T05:00:00Z"'
+jq '.rules[0].use = [.rules[0].use[1]]' "$TMP_ROOT/rules-guard" > "$RULES"
+write_response rule_1 0.95 '{"rule_1":0.95,"default":0.05}'
+grun "$DAY"
+assert_contains "$out" 'status: clear' "the guard never empties a choice: $out"
+assert_contains "$(chosen)" "--account 'claude2'" 'the lone guarded seat still starts'
+assert_contains "$out" 'eligible, five-hour guard waived: five_hour 10% left' 'the waiver is named'
+cp "$TMP_ROOT/rules-guard" "$RULES"
+write_response rule_1 0.95 '{"rule_1":0.95,"default":0.05}'
+guard_quota
+five_hour claude2 '.percentRemaining = 10 | .resetsAt = "2030-01-01T05:00:00Z"'
+unreadable claude1
+unreadable codex1
+grun "$DAY"
+assert_contains "$out" 'status: clear' "unreadable seats beside a guarded one still start: $out"
+assert_contains "$(chosen)" "--account 'claude2'" 'the only known seat starts with the guard waived'
+guard_quota
+for key in claude1 claude2 claude3 codex1; do unreadable "$key"; done
+grun "$DAY"
+assert_contains "$out" 'status: clear' "unknown quota on every seat still starts by day: $out"
+assert_contains "$out" 'quota unknown' 'the start is marked quota unknown'
+pass 'G: the guard is waived rather than empty a choice, and an unknown quota never blocks a start'
+
+# Scenario 6 of the routing report: the 11:02Z burst, where 15 of 15 starts went to claude2.
+burst_quota() {
+  reset_quota
+  set_quota claude1 claude 96 1.4632; no_five_hour claude1
+  set_quota claude2 claude 24 1.4854
+  five_hour claude2 '.percentRemaining = 89 | .resetsAt = "2030-01-01T06:00:00Z"'
+  set_quota claude3 claude 76 0.322
+  set_quota codex1 codex 99 1.1242; no_five_hour codex1
+  rm -f "$LEDGER"
+}
+burst_quota
+picks=()
+for ((i = 0; i < 20; i++)); do
+  brun "$DAY"
+  picks+=("$(chosen | sed -n "s/.*--account '\([^']*\)'.*/\1/p")")
+  [ "$i" -ne 1 ] || second=$out
+done
+assert_equals 'claude1=15 claude2=5' "$(printf '%s\n' "${picks[@]}" | sort | uniq -c | awk '{ printf "%s%s=%s", sep, $2, $1; sep = " " }')" "a burst of 20 spreads as in scenario 6: ${picks[*]}"
+assert_equals claude2 "${picks[0]}" 'the first start of the burst takes the furthest-behind seat'
+assert_contains "$second" 'burst_debit=1.3pt/1start(s) ranks=1.4207' "the debited seat shows its adjusted score: $second"
+assert_contains "$second" 'burst debit: claude:sonnet@claude2 1.4854 -> 1.4207 after 1 recent start(s)' 'the note names the debit'
+assert_equals 1.4854 "$(jq -r '.candidates[] | select(.account == "claude2") | .spendPriority' "$(latest)")" 'the receipt keeps the published spendPriority'
+assert_equals 20 "$(wc -l < "$LEDGER" | tr -d ' ')" 'every clear start is debited once'
+brun "$((DAY + 1800))"
+assert_contains "$(chosen)" "--account 'claude2'" "a debit is gone once its window has passed: $out"
+assert_not_contains "$out" 'burst_debit=' 'no faded debit is shown'
+assert_equals "$((DAY + 1800)) claude2 1.3" "$(cat "$LEDGER")" 'a ledger of faded debits starts fresh'
+printf '%s claude2 1.3\n' "$DAY" > "$LEDGER"
+brun "$((DAY + 900))"
+assert_contains "$out" 'burst_debit=0.65pt/1start(s)' "a debit fades linearly inside its window: $out"
+burst_quota
+printf '%s claude2 50\n' "$DAY" > "$LEDGER"
+FM_DISPATCH_NOW_EPOCH=$DAY run "$BRIEF" --task burst
+assert_contains "$(chosen)" "--account 'claude2'" "a zero window turns the spreader off: $out"
+rm -f "$LEDGER"
+FM_DISPATCH_BURST_COSTS='claude=0.5,codex=2.6,zai=2.0' brun "$DAY"
+assert_equals "$DAY claude2 0.5" "$(tail -n 1 "$LEDGER")" 'the per-provider cost is overridable'
+rm -f "$LEDGER"
+reset_quota
+cp "$TMP_ROOT/rules-original" "$RULES"
+pass 'G: a burst of worker starts spreads over the furthest-behind seats and the debit fades with its window'
+
 # ---- P: pipeline seat rows -------------------------------------------------------
 # The fixed row per no-mistakes step: pool 1 is claude1 and claude2, pool 2 is
 # claude3 above its weekly floor and then the Codex seats. A healthy glm seat with
@@ -552,6 +685,17 @@ run "$BRIEF" --task six-p
 assert_not_contains "$(tail -1 "$LOG")" 'gpt-6.1-sol' 'worker requests never show the pipeline rows to Jev'
 assert_contains "$out" "--account 'claude1'" 'worker resolution ignores the pipeline rows'
 pass 'P: a step resolves from its fixed row with no model call and no receipt'
+# The worker guard and spreader never reach a pipeline row: a low five-hour
+# window with a reset by day and a heavy burst debit leave the pick as it was.
+pipeline_quota
+tweak claude1 '.windows[0].percentRemaining = 10 | .windows[0].resetsAt = "2030-01-01T05:00:00Z"'
+printf '%s claude1 60\n' "$DAY" > "$LEDGER"
+FM_DISPATCH_NOW_EPOCH=$DAY FM_DISPATCH_BURST_WINDOW_SECONDS=1800 pipe review
+assert_equals 'ok claude1' "$(pfield '"\(.status) \(.seat)"')" "a pipeline step ignores the five-hour guard and burst debits: $pout $perr"
+assert_not_contains "$pout" 'five-hour guard' 'no guard on a pipeline candidate'
+assert_equals "$DAY claude1 60" "$(cat "$LEDGER")" 'a pipeline pick writes no burst debit'
+rm -f "$LEDGER"
+pass 'P: pipeline rows keep their seat order with no five-hour guard or burst debit'
 
 # Tie-break: the shared rule, soonest reset and then the round-robin.
 pipeline_quota
