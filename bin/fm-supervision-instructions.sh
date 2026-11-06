@@ -28,14 +28,17 @@ AFK=0
 AFK_MODE=away
 X_MODE=0
 REPAIR_LINE=0
+STATE_ONLY=0
 QUEUE_PENDING=0
 
 usage() {
   cat <<'EOF'
-Usage: fm-supervision-instructions.sh [--harness <name>] [--read-only 0|1] [--afk 0|1] [--afk-mode away|quiet] [--x-mode 0|1] [--repair-line] [--queue-pending 0|1]
+Usage: fm-supervision-instructions.sh [--harness <name>] [--read-only 0|1] [--afk 0|1] [--afk-mode away|quiet] [--x-mode 0|1] [--repair-line] [--state-only] [--queue-pending 0|1]
 
 Print the current primary harness's supervision operating instructions.
 With --repair-line, print one concise repair instruction for guard and hook messages.
+With --state-only, print the block's heading and "Current state" lines, then the
+exact command that prints the full block; the bounded context re-emit uses it.
 --afk-mode only matters when --afk 1 (present); it selects the away-mode vs
 quiet-mode (kunchenguid/firstmate#2356) wording, and defaults to away.
 EOF
@@ -85,6 +88,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --repair-line)
       REPAIR_LINE=1
+      shift
+      ;;
+    --state-only)
+      STATE_ONLY=1
       shift
       ;;
     -h|--help)
@@ -328,6 +335,11 @@ if [ -n "$HOST_SNIPPET" ]; then
   printf '%s\n' '- Supervision host: on; it takes away-posture wakes and, where the dialog mirror is verified, eligible attended wakes itself, and hands the rest to you (protocol at the end of this block).'
 fi
 ordinary_wake_line
+if [ "$STATE_ONLY" -eq 1 ]; then
+  printf 'Full operating block (procedure for this harness): bin/fm-supervision-instructions.sh --harness %s --read-only %s --afk %s --afk-mode %s --x-mode %s\n' \
+    "$HARNESS" "$READ_ONLY" "$AFK" "$AFK_MODE" "$X_MODE"
+  exit 0
+fi
 printf '\n'
 render_snippet
 printf '\n'

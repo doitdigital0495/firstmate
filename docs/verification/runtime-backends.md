@@ -767,6 +767,28 @@ The lab home was deleted and the test entry was removed from the store and verif
 That automated spawn case runs against a fake claude, so it asserts the store entry and the launch command and nothing more; the live arms above are what establish that the entry actually suppresses the dialog.
 The composer-classification record below observes the same gate from the other side, where an untrusted worktree left Claude, Grok, and Muse unverified because the guard reads a first-launch trust dialog as an unreadable composer.
 
+## Claude home-local captain imports
+
+Verified 2026-11-06 on Claude Code 2.1.319 on Linux (WSL2).
+`bin/fm-captain-imports-lib.sh` relies on three Claude behaviors for the primary home's `CLAUDE.local.md`: Claude loads that file beside `CLAUDE.md`, an `@`-import inside the session's project directory loads without the external-import approval dialog, and an import outside it is skipped until external imports are approved.
+The probe used a throwaway git directory whose `CLAUDE.local.md` imported `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`, each holding one marker, and asked the model to list the loaded markers.
+
+```sh
+(cd "$probe_home" && printf '%s' "$prompt" | claude -p --model haiku --max-turns 1)
+(cd "$probe_home/projects/p1" && printf '%s' "$prompt" | claude -p --model haiku --max-turns 1)
+```
+
+```text
+ALPHA-7731
+BRAVO-2290
+CHARLIE-5512
+```
+
+From the home itself all three imported markers loaded.
+From `projects/p1` below the home, where the same imports are external, the model reported that no memory file contents were loaded.
+The 2.1.319 loader stops following imports at depth 5 (`s>=5` against a root file at depth 0), and the captain imports use depth 1.
+The external-import approval prompt therefore never fires for a session started in the home, and a project session below the home does not receive captain-private memory unless the captain approves external imports for that project.
+
 ## Pi seeded-secondmate project trust
 
 [`fm-spawn.sh --help`](../../bin/fm-spawn.sh) owns the seeded-secondmate project-trust approval contract and compatibility fallback.

@@ -11,6 +11,7 @@
 #                 "MISSING_MANUAL: <tool> (instructions: <url>)", "NEEDS_GH_AUTH",
 #                 "BACKEND_INVALID: <name> (known: <names>)",
 #                 "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>",
+#                 "CAPTAIN_IMPORTS: <why CLAUDE.local.md could not be kept>",
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
 #                 "ACCOUNTS: invalid config/accounts.json - <reason>",
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
@@ -82,6 +83,9 @@
 #          guesses at malformed or unsafe existing files, and secondmate homes
 #          await the primary-authoritative inherited value instead of creating
 #          their own.
+#          The same primary-only locked path creates the gitignored home-local
+#          CLAUDE.local.md that @-imports the captain memory files when it is
+#          absent; bin/fm-captain-imports-lib.sh owns its content and rules.
 #          X mode is OPTIONAL and inert unless FM_HOME/.env has a non-empty
 #          FMX_PAIRING_TOKEN. When opted in, bootstrap requires curl+jq, writes
 #          the relay poll shim and 30s cadence config, and prints an FMX line.
@@ -210,6 +214,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-secondmate-nudge-lib.sh"
 # shellcheck source=bin/fm-startup-memory-budget-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-startup-memory-budget-lib.sh"
+# shellcheck source=bin/fm-captain-imports-lib.sh
+. "$SCRIPT_DIR/fm-captain-imports-lib.sh"
 # shellcheck source=bin/fm-x-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-backend.sh disable=SC1091
@@ -1463,6 +1469,13 @@ startup_memory_budget_setup() {
   fi
 }
 
+captain_imports_setup() {
+  # Primary-only like the budget above; the library skips a secondmate home.
+  if ! fm_captain_imports_materialize "$FM_HOME"; then
+    echo "CAPTAIN_IMPORTS: $FM_CAPTAIN_IMPORTS_ERROR"
+  fi
+}
+
 if [ "${1:-}" = "lavish-compatible" ]; then
   tool_version_at_least lavish-axi "$LAVISH_AXI_BOARD_MIN"
   exit
@@ -1535,6 +1548,7 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ] && local_phase; then
     fi
   fi
   startup_memory_budget_setup
+  captain_imports_setup
   if backlog_record_reconcile; then
     :
   else

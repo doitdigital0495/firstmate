@@ -64,7 +64,7 @@ The run wrapper learns the source in one of two ways:
 - It takes `--source <name>` when the adapter knows the source natively.
 - Otherwise it reads the `source` field from a Claude/Codex-shaped JSON hook payload on stdin.
 
-A re-emit (`--reemit`) reprints the digest for a process that already has the helm and lost only its context.
+A re-emit (`--reemit`) prints a bounded summary for a process that already has the helm and lost only its context.
 
 | Source | Action | Why |
 | --- | --- | --- |
@@ -116,6 +116,7 @@ The requested session start remains idempotent.
 `bin/fm-session-start.sh --reemit` owns these re-emit details:
 
 - Which work a re-emit skips.
+- Its output bound and what the bounded summary keeps.
 - Its true-start AGENTS.md baseline.
 - Its supported stale-instruction refresh pairs.
 
@@ -242,7 +243,8 @@ The wrapper reads `source` from the hook payload.
 Native stdout context injection is supported.
 Claude caps one hook output string at 10,000 characters.
 Above the cap the model receives a preview of the first 2,000 characters plus the path of a saved file, and is not asked to read that file.
-A context re-emit therefore prints a short `RE-EMIT CUE` first, which tells the model to read the saved file.
+A context re-emit is therefore bounded to fit the cap, and still prints a short `RE-EMIT CUE` first for a wake drain that overflows on its own, which tells the model to read the saved file.
+On a Claude primary, `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md` reach every turn through the home-local `CLAUDE.local.md` imports owned by `bin/fm-captain-imports-lib.sh`, so the re-emit does not reprint them.
 
 ### Codex exec
 

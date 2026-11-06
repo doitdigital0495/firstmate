@@ -2409,28 +2409,155 @@ SH
 # --- context re-emit (--reemit) ----------------------------------------------
 
 test_reemit_cue_survives_the_hook_output_preview() {
-  local rec root home fakebin reemit normal head2k
+  local rec root home fakebin reemit normal head2k i
   rec=$(new_world reemit-cue)
   IFS='|' read -r root home fakebin <<FIXTURE
 $rec
 FIXTURE
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
-  mkdir -p "$home/data"
-  awk 'BEGIN { for (i = 0; i < 400; i++) printf "preference line %04d padding padding padding\n", i }' > "$home/data/captain.md"
 
   normal=$(FM_FAKE_HARNESS_PID=$$ run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   assert_not_contains "$normal" "RE-EMIT CUE" "a normal start printed the re-emit cue"
 
+  # The re-emit never cuts its wake drain, so a deep enough queue overflows the
+  # hook cap on its own; the cue is what keeps that spilled drain reachable.
+  for i in $(seq 1 120); do
+    append_wake "$home/state" signal "task-$i" "done: queued wake $i with enough prose to make the drain long" \
+      || fail "seed wake $i failed"
+  done
   reemit=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_FAKE_HARNESS_PID=$$ PATH="$fakebin:$BASE_PATH" \
     env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
     "$SESSION_START" --reemit)
-  [ "${#reemit}" -gt 10000 ] || fail "re-emit fixture did not exceed the hook output limit"
+  [ "$(printf '%s' "$reemit" | LC_ALL=C wc -c | tr -d ' ')" -gt 10000 ] \
+    || fail "re-emit fixture did not exceed the hook output limit"
+  assert_contains "$reemit" "queued wake 120 with enough prose" "the re-emit cut its wake drain to fit the bound"
   head2k=$(printf '%s' "$reemit" | head -c 2000)
   assert_contains "$head2k" "RE-EMIT CUE" "the re-emit cue is not inside the first 2000 characters"
   assert_contains "$head2k" "Full output saved to" "the re-emit cue does not point at the saved output"
 
   pass "--reemit puts its read cue in the first 2000 characters and a normal start omits it"
+}
+
+# The largest fleet recorded on a real primary: 43 tasks under way and 110
+# open decisions. The re-emit must fit Claude's 10,000-character hook cap while
+# the lock line, every queued wake, its acknowledgement, and the open decisions
+# still lead the output.
+test_reemit_is_bounded_for_the_largest_recorded_fleet() {
+  local rec root home fakebin reemit bytes now n id k decisions listed cut
+  local lock_line drain_line ack_line fleet_line sequence generation
+  rec=$(new_world reemit-bounded)
+  IFS='|' read -r root home fakebin <<FIXTURE
+$rec
+FIXTURE
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  now=$(date +%s)
+  decisions=0
+  for n in $(seq 1 43); do
+    id=$(printf 'task-%02d' "$n")
+    printf 'window=fm-sess:%s\nkind=ship\n' "$id" > "$home/state/$id.meta"
+    printf 'working [at=%s]: started the assigned change and reproduced the reported behavior\n' \
+      $((now - 3600 - n * 60)) > "$home/state/$id.status"
+    for k in 1 2 3; do
+      [ "$k" -le 2 ] || [ "$n" -le 24 ] || continue
+      printf 'needs-decision [key=q%s] [at=%s]: option A keeps the current contract, option B changes the public flag for item %s of %s\n' \
+        "$k" $((now - n * 60 - k)) "$k" "$id" >> "$home/state/$id.status"
+      decisions=$((decisions + 1))
+    done
+  done
+  [ "$decisions" -eq 110 ] || fail "fixture built $decisions open decisions, not 110"
+  FM_FAKE_HARNESS_PID=$$ run_session_start "$home" "$root" "$fakebin:$BASE_PATH" >/dev/null
+  for n in 3 9 17 31 40 43; do
+    append_wake "$home/state" signal "$(printf 'task-%02d' "$n")" "needs-decision: QUEUED-WAKE-MARKER-$n after the compaction" \
+      || fail "seed wake $n failed"
+  done
+
+  reemit=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_FAKE_HARNESS_PID=$$ PATH="$fakebin:$BASE_PATH" \
+    env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    "$SESSION_START" --reemit)
+  bytes=$(printf '%s' "$reemit" | LC_ALL=C wc -c | tr -d ' ')
+  [ "$bytes" -le 10000 ] || fail "re-emit for 43 tasks and 110 open decisions printed $bytes bytes: $reemit"
+
+  for n in 3 9 17 31 40 43; do
+    assert_contains "$reemit" "QUEUED-WAKE-MARKER-$n after the compaction" "the bounded re-emit dropped queued wake $n"
+  done
+  assert_contains "$reemit" "OPEN DECISIONS (still open" "the bounded re-emit dropped the OPEN DECISIONS section"
+  assert_contains "$reemit" "open decisions: 110 (first 5:" "the bounded re-emit did not count every open decision"
+  assert_contains "$reemit" "queued wakes: 6," "the bounded re-emit did not count the queued wakes"
+  assert_contains "$reemit" "tasks under way (state/*.meta): 43" "the bounded re-emit did not count the tasks"
+  assert_contains "$reemit" "bin/fm-crew-state.sh <id>" "the bounded re-emit lost its current-state pointer"
+  assert_contains "$reemit" "bin/fm-tasks-axi.sh show <id> --full" "the bounded re-emit lost its task-body pointer"
+  assert_contains "$reemit" "Full operating block" "the bounded re-emit lost the supervision block pointer"
+  listed=$(printf '%s\n' "$reemit" | grep -c '^- task-[0-9][0-9]: ')
+  cut=$(printf '%s\n' "$reemit" | sed -n 's/^(\([0-9][0-9]*\) more task(s) cut by the re-emit bound.*/\1/p')
+  [ "$((listed + ${cut:-0}))" -eq 43 ] || fail "re-emit listed $listed task(s) and disclosed ${cut:-0} cut, not 43"
+  [ "$listed" -gt 0 ] || fail "re-emit listed no task at all"
+
+  lock_line=$(printf '%s\n' "$reemit" | grep -n '^LOCK$' | head -1 | cut -d: -f1)
+  drain_line=$(printf '%s\n' "$reemit" | grep -n 'QUEUED-WAKE-MARKER-3 after' | head -1 | cut -d: -f1)
+  ack_line=$(printf '%s\n' "$reemit" | grep -n '^WAKE_ACK_REQUIRED:' | head -1 | cut -d: -f1)
+  fleet_line=$(printf '%s\n' "$reemit" | grep -n '^FLEET STATE$' | head -1 | cut -d: -f1)
+  [ -n "$lock_line" ] && [ -n "$drain_line" ] && [ -n "$ack_line" ] && [ -n "$fleet_line" ] \
+    || fail "re-emit is missing its LOCK, drain, acknowledgement, or FLEET STATE line"
+  [ "$lock_line" -lt "$drain_line" ] && [ "$drain_line" -lt "$fleet_line" ] && [ "$ack_line" -lt "$fleet_line" ] \
+    || fail "the lock, the queued wakes, and their acknowledgement did not lead the bounded summary"
+
+  sequence=$(printf '%s\n' "$reemit" | sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' | tail -1)
+  generation=$(printf '%s\n' "$reemit" | sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through [0-9][0-9]* --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' | tail -1)
+  [ -n "$sequence" ] && [ -n "$generation" ] || fail "bounded re-emit omitted the wake acknowledgement"
+  FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-wake-drain.sh" --ack-through "$sequence" \
+    --recovery-generation "$generation" >/dev/null || fail "bounded re-emit acknowledgement failed"
+  [ ! -s "$home/state/.wake-queue" ] || fail "bounded re-emit acknowledgement left queued wakes behind"
+
+  pass "--reemit fits 43 tasks and 110 open decisions in 10,000 characters with wakes, ack, and decisions first"
+}
+
+# Captain memory reaches a Claude primary through the home-local CLAUDE.local.md
+# imports, so the re-emit stops reprinting it there; anywhere the imports are
+# not live it points at the files instead, and a full startup still prints them.
+test_reemit_context_follows_the_captain_imports() {
+  local rec root home fakebin startup reemit
+  rec=$(new_world reemit-imports)
+  IFS='|' read -r root home fakebin <<FIXTURE
+$rec
+FIXTURE
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  printf 'CAPTAIN-PRIVATE-MARKER preference\n' > "$home/data/captain.md"
+  printf 'LEARNING-MARKER fact\n' > "$home/data/learnings.md"
+
+  startup=$(FM_FAKE_HARNESS_PID=$$ CLAUDE_PROJECT_DIR="$home" run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$startup" "CAPTAIN-PRIVATE-MARKER" "a full startup stopped printing data/captain.md"
+  assert_contains "$startup" "LEARNING-MARKER" "a full startup stopped printing data/learnings.md"
+  assert_present "$home/CLAUDE.local.md" "locked primary startup did not create the captain imports file"
+
+  reemit=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_FAKE_HARNESS_PID=$$ PATH="$fakebin:$BASE_PATH" \
+    CLAUDE_PROJECT_DIR="$home" env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    "$SESSION_START" --reemit)
+  assert_contains "$reemit" "primary harness: claude" "the imports fixture did not run as a Claude primary"
+  assert_not_contains "$reemit" "CAPTAIN-PRIVATE-MARKER" "the re-emit reprinted imported captain memory"
+  assert_not_contains "$reemit" "LEARNING-MARKER" "the re-emit reprinted imported learnings"
+  assert_contains "$reemit" "loaded every turn by the" "the re-emit did not say the captain memory is imported"
+  assert_contains "$reemit" "$home/CLAUDE.local.md" "the re-emit did not name the importing file"
+
+  reemit=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_FAKE_HARNESS_PID=$$ PATH="$fakebin:$BASE_PATH" \
+    CLAUDE_PROJECT_DIR="$root" env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    "$SESSION_START" --reemit)
+  assert_contains "$reemit" "Captain memory is not imported here" \
+    "a session rooted outside the home was told its imports are live"
+  assert_contains "$reemit" "$home/data/captain.md (present," "the not-imported re-emit did not point at captain.md"
+  assert_contains "$reemit" "$home/data/captain-shared.md ABSENT" "the not-imported re-emit lost the ABSENT marker"
+  assert_not_contains "$reemit" "CAPTAIN-PRIVATE-MARKER" "the not-imported re-emit reprinted captain memory past its bound"
+
+  rm -f "$home/CLAUDE.local.md"
+  reemit=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_FAKE_HARNESS_PID=$$ PATH="$fakebin:$BASE_PATH" \
+    CLAUDE_PROJECT_DIR="$home" env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    "$SESSION_START" --reemit)
+  assert_contains "$reemit" "Captain memory is not imported here" "a home without the imports file was told its imports are live"
+  assert_absent "$home/CLAUDE.local.md" "a re-emit recreated the imports file outside the locked startup sweep"
+
+  pass "--reemit relies on live captain imports and points at the files whenever they are not imported"
 }
 
 test_reemit_skips_startup_sweeps_but_keeps_the_wake_drain() {
@@ -2469,11 +2596,11 @@ EOF
   FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-wake-drain.sh" --ack-through "$sequence" \
     --recovery-generation "$generation" || fail "--reemit wake acknowledgement failed"
   [ ! -s "$home/state/.wake-queue" ] || fail "--reemit acknowledgement left queued wakes behind"
-  assert_contains "$reemit" "CONTEXT" "--reemit dropped the context digest"
-  assert_contains "$reemit" "FLEET STATE" "--reemit dropped the fleet-state digest"
+  assert_contains "$reemit" "CONTEXT" "--reemit dropped the context summary"
+  assert_contains "$reemit" "FLEET STATE" "--reemit dropped the fleet-state summary"
   assert_contains "$reemit" "NEXT STEP" "--reemit dropped the closing reminder"
 
-  pass "--reemit reprints the digest without repeating startup's mutating sweeps and still drains queued wakes"
+  pass "--reemit re-emits a bounded summary without repeating startup's mutating sweeps and still drains queued wakes"
 }
 
 test_agents_baseline_stays_at_true_start_and_reemits_on_every_drifted_pi_compact() {
@@ -3200,6 +3327,8 @@ test_runtime_bound_leaves_a_healthy_digest_untouched
 test_runtime_bound_leaves_harness_ancestry_headroom
 test_reemit_skips_startup_sweeps_but_keeps_the_wake_drain
 test_reemit_cue_survives_the_hook_output_preview
+test_reemit_is_bounded_for_the_largest_recorded_fleet
+test_reemit_context_follows_the_captain_imports
 test_agents_baseline_stays_at_true_start_and_reemits_on_every_drifted_pi_compact
 test_read_only_pi_compact_refreshes_against_its_own_session_identity
 test_codex_unreachable_reset_sources_do_not_claim_instruction_refresh

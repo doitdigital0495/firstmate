@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Behavioral coverage for the visible startup-memory budget, its safe parser,
-# accounting command, primary-to-secondmate convergence, and exact reread bytes.
+# accounting command, primary-to-secondmate convergence, and exact reread bytes,
+# plus the primary-only CLAUDE.local.md that imports the same three files.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -140,6 +141,56 @@ test_primary_bootstrap_materializes_visible_default() {
   [ ! -e "$second/config/startup-memory-budget" ] \
     || fail "secondmate bootstrap created an independent budget instead of awaiting inheritance"
   pass "primary bootstrap materializes only the visible default and preserves valid captain choices"
+}
+
+test_primary_bootstrap_materializes_captain_imports() {
+  local rec root home fakebin out second before
+  rec=$(new_bootstrap_world captain-imports)
+  root=${rec%%|*}
+  home=${rec#*|}
+  fakebin=$(make_fake_toolchain "$TMP_ROOT/captain-imports")
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_BACKEND=tmux FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+    FM_BOOTSTRAP_DETECT_ONLY=1 "$BOOTSTRAP")
+  [ ! -e "$home/CLAUDE.local.md" ] || fail "detect-only bootstrap created the captain imports file"
+
+  out=$(run_bootstrap "$root" "$home" "$fakebin")
+  [ -z "$out" ] || fail "creating the captain imports file should stay quiet, got: $out"
+  for line in '@data/captain.md' '@data/captain-shared.md' '@data/learnings.md'; do
+    grep -Fqx -- "$line" "$home/CLAUDE.local.md" || fail "captain imports file lacks $line"
+  done
+
+  printf '%s\n' 'captain note kept here' >> "$home/CLAUDE.local.md"
+  before=$(cat "$home/CLAUDE.local.md")
+  out=$(run_bootstrap "$root" "$home" "$fakebin")
+  [ -z "$out" ] || fail "a complete captain-edited imports file was reported: $out"
+  [ "$(cat "$home/CLAUDE.local.md")" = "$before" ] || fail "bootstrap rewrote a complete captain-edited imports file"
+
+  printf '%s\n' 'personal notes without imports' > "$home/CLAUDE.local.md"
+  out=$(run_bootstrap "$root" "$home" "$fakebin")
+  case "$out" in
+    *"CAPTAIN_IMPORTS: CLAUDE.local.md exists without"*) ;;
+    *) fail "an imports file lacking the import lines was not reported: $out" ;;
+  esac
+  [ "$(cat "$home/CLAUDE.local.md")" = 'personal notes without imports' ] \
+    || fail "bootstrap overwrote an existing CLAUDE.local.md"
+
+  rm -f "$home/CLAUDE.local.md"
+  printf '%s\n' '@data/captain.md' > "$TMP_ROOT/captain-imports/elsewhere.md"
+  ln -s "$TMP_ROOT/captain-imports/elsewhere.md" "$home/CLAUDE.local.md"
+  out=$(run_bootstrap "$root" "$home" "$fakebin")
+  case "$out" in
+    *"CAPTAIN_IMPORTS: CLAUDE.local.md is a symlink"*) ;;
+    *) fail "a symlinked imports file was not reported: $out" ;;
+  esac
+  [ -L "$home/CLAUDE.local.md" ] || fail "bootstrap replaced a symlinked CLAUDE.local.md"
+
+  second="$TMP_ROOT/captain-imports/secondmate"
+  mkdir -p "$second/config" "$second/data" "$second/state"
+  printf '%s\n' sm > "$second/.fm-secondmate-home"
+  run_bootstrap "$root" "$second" "$fakebin" >/dev/null
+  [ ! -e "$second/CLAUDE.local.md" ] || fail "secondmate bootstrap created a captain imports file"
+  pass "primary bootstrap creates the captain imports file once and never overwrites or creates one elsewhere"
 }
 
 expect_rejected_read() {
@@ -362,6 +413,7 @@ test_primary_budget_converges_with_exact_reread_and_safe_failures() {
 }
 
 test_primary_bootstrap_materializes_visible_default
+test_primary_bootstrap_materializes_captain_imports
 test_safe_parser_rejects_ambiguous_and_unsafe_values
 test_budget_accounting_reports_all_three_files_and_safe_failure
 test_primary_budget_converges_with_exact_reread_and_safe_failures
