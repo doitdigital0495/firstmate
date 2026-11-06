@@ -1190,14 +1190,38 @@ assert_grep "cannot stage" "$home/state/.live-board-refresh.log" "a failed refre
 pass "refresh rebuilds only when due and keeps the last good board on failure"
 
 # --- Open: serve, bind before arm ----------------------------------------------
-out=$(in_home "$home" "$LIVE" open 2>&1) || fail "open failed: $out"
-assert_contains "$out" "session: live" "open did not prove the session live"
+out=$(in_home "$home" "$LIVE" open-board 2>&1) || fail "open-board failed: $out"
+assert_contains "$out" "session: live" "open-board did not prove the session live"
+assert_contains "$out" "served: $home/data/live-board/board.html" "open-board did not serve the live board"
 sid=$(printf '%s\n' "$out" | sed -n 's/^bound: //p')
-[ -n "$sid" ] || fail "open did not bind the board source: $out"
-assert_contains "$out" "armed: $sid" "open did not arm the bound source"
+[ -n "$sid" ] || fail "open-board did not bind the board source: $out"
+assert_contains "$out" "armed: $sid" "open-board did not arm the bound source"
 in_home "$home" "$ROOT/bin/fm-captain-hold.sh" binding "$sid" >/dev/null \
   || fail "the armed source has no keyed-answer binding"
-pass "open serves the board, binds its answers, then arms the source"
+pass "open-board serves the board, binds its answers, then arms the source"
+
+# --- Open leads to the Bridge once it is enabled -----------------------------
+out=$(in_home "$home" "$LIVE" open 2>&1) || fail "open without a Bridge failed: $out"
+assert_contains "$out" "the Bridge is off" "open did not say why it kept the live board"
+assert_contains "$out" "served: $home/data/live-board/board.html" "open without a Bridge did not serve the live board"
+printf '%s\n' 'not json' > "$home/config/bridge.json"
+out=$(in_home "$home" "$LIVE" open 2>&1) || fail "open with an invalid Bridge config failed: $out"
+assert_contains "$out" "Bridge config is invalid" "open did not name the invalid Bridge config"
+assert_contains "$out" "served: $home/data/live-board/board.html" "an invalid Bridge config did not keep the live board"
+printf '%s\n' '{"schema":"fm-bridge-config.v1","enabled":true}' > "$home/config/bridge.json"
+out=$(in_home "$home" "$LIVE" open 2>&1) || fail "open with the Bridge enabled failed: $out"
+assert_contains "$out" "served: $home/data/bridge/bridge.html" "open did not serve the Bridge"
+assert_not_contains "$out" "live-board/board.html" "open served the live board while the Bridge is enabled"
+[ "$(cat "$home/lavish-open")" = "$(cd "$home/data/bridge" && pwd -P)/bridge.html" ] \
+  || fail "Lavish was not opened on the Bridge page: $(cat "$home/lavish-open")"
+bsid=$(printf '%s\n' "$out" | sed -n 's/^bound: //p')
+[ -n "$bsid" ] && [ "$bsid" != "$sid" ] || fail "open did not bind the Bridge as its own source: $out"
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" binding "$bsid" >/dev/null \
+  || fail "the Bridge source has no keyed-answer binding"
+out=$(in_home "$home" "$LIVE" open-board 2>&1) || fail "open-board with the Bridge enabled failed: $out"
+assert_contains "$out" "served: $home/data/live-board/board.html" "open-board did not keep the live board reachable"
+rm -f "$home/config/bridge.json"
+pass "open leads to the Bridge when it is enabled and keeps the live board otherwise"
 
 # --- Guarded answers through the Lavish adapter --------------------------------
 lifecycle=$(render "$home" "$now" 'ws-carrier=postnl' | jq -r '.queued[0].data.lifecycle')

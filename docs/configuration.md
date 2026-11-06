@@ -2678,6 +2678,8 @@ Arm the check once per home with `bin/fm-tool-update-check.sh arm`.
 ## Live board (config/live-board.json)
 
 The live board is an opt-in browser page that shows the captain's projects in this home, each with its open captain questions first and then its open work in three lanes, and refreshes about once a minute.
+The [Bridge](#bridge-configbridgejson) replaces it as the captain's board: with the Bridge enabled, `bin/fm-live-board.sh open` opens the Bridge, and `bin/fm-live-board.sh open-board` opens this page.
+This page stays for what the Bridge does not show yet: the captain's named projects and their table of contents, pull request timelines and environments, Landed in the last 24 hours, Project delivery and merging, a secondmate's queued work that has no worker yet, and the "Needs a plain-language explanation" mark.
 It opens with five headline numbers - questions for the captain, stuck or stopped work, workers moving, workers waiting outside the team, and pull requests merged in the last 24 hours - with the quieter totals on one line under them.
 A Needs you section then gives every open captain question one line - what it is about, the choice, and Firstmate's recommendation - with an Answer link that jumps to its card, and names workers that wait on a decision asked elsewhere.
 Doing now holds every task that has a worker, one line each with what the worker is doing and its status - working, waiting for validation, waiting for a merge or CI, paused on an outside wait, or stuck or stopped - Next holds queued work with no hold and no unfinished prerequisite that a worker will start without the captain, and Charted next holds everything that will not start or move on its own, each card saying what it waits for.
@@ -2700,7 +2702,7 @@ To enable it in a home, create the local, gitignored `config/live-board.json`:
 {"schema":"fm-live-board-config.v1","enabled":true,"refresh_seconds":60}
 ```
 
-Then run `bin/fm-live-board.sh open` once; it publishes `data/live-board/board.html`, opens it as a Lavish session, and arms that session's answers through the captain-hold intake.
+Then run `bin/fm-live-board.sh open-board` once, or `open` in a home without the Bridge; it publishes `data/live-board/board.html`, opens it as a Lavish session, and arms that session's answers through the captain-hold intake.
 While the config stays enabled, the home's watcher rebuilds the page whenever it is older than `refresh_seconds`, and Lavish repaints the open page.
 A page whose rebuilds stop marks itself stale and then out of date instead of looking current.
 Projects are named the way the captain talks about them through a second local, gitignored file, `config/live-board-projects.json`, which Firstmate maintains:
@@ -2763,7 +2765,7 @@ Secondmates are shown by the name in the local, gitignored `config/bridge-names.
 {"schema":"fm-bridge-names.v1","names":{"<registry-id>":"Miko"}}
 ```
 
-To enable it in a home, create the local, gitignored `config/bridge.json`, then run `bin/fm-bridge.sh open` once:
+To enable it in a home, create the local, gitignored `config/bridge.json`, then run `bin/fm-bridge.sh open` or `bin/fm-live-board.sh open` once:
 
 ```json
 {"schema":"fm-bridge-config.v1","enabled":true,"refresh_seconds":60}

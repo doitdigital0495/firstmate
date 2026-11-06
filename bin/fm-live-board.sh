@@ -5,7 +5,17 @@
 #   fm-live-board.sh build
 #   fm-live-board.sh refresh
 #   fm-live-board.sh open
+#   fm-live-board.sh open-board
 #   fm-live-board.sh path
+#
+# The Bridge (bin/fm-bridge.sh) replaces this board as the captain's one
+# board, so `open` leads to the Bridge whenever it is enabled. This page stays
+# built and reachable through `open-board` only for what the Bridge does not
+# show yet: the captain's named projects with their table of contents, the
+# pull request timelines and environment strips, Landed in the last 24 hours
+# and its merged count, Project delivery and merging, a secondmate's queued
+# work that has no worker yet, and the "Needs a plain-language explanation"
+# mark on a captain question stored without its about and purpose.
 #
 # The live board is a separate captain-facing browser page, never a Bearings
 # mode: the shipped dark template (bin/fm-live-board-template.html) plus one
@@ -32,7 +42,13 @@
 #          try-lock; otherwise do nothing. Failures are appended to the bounded
 #          state/.live-board-refresh.log and never change the exit status, so
 #          the watcher cannot be slowed or failed by board publication.
-# open     Require an enabled config, build, then serve the board through
+# open     With the Bridge enabled (its config/bridge.json, owned by
+#          bin/fm-bridge.sh), run `fm-bridge.sh open` and nothing else. With the
+#          Bridge off or its config invalid, say why on stderr and do what
+#          open-board does, so a home that never enabled the Bridge keeps its
+#          board.
+# open-board
+#          Require an enabled config, build, then serve this board through
 #          bin/fm-lavish-board-lib.sh, which proves the Lavish session live
 #          before binding the source to the keyed-answer intake and arming it.
 #          The browser opens unless the caller set LAVISH_AXI_NO_OPEN=1.
@@ -473,12 +489,29 @@ command_refresh() {
   return 0
 }
 
-command_open() {
+command_open_board() {
   local refresh
   [ "$#" -eq 0 ] || { usage >&2; exit 2; }
   refresh=$(config_refresh_seconds) || exit 1
   build_board "$refresh"
   fm_lavish_board_serve "$(board_path)"
+}
+
+# The Bridge's own config check decides, so the two scripts can never disagree
+# about whether it is on.
+bridge_off_reason() {
+  # shellcheck disable=SC2016 # $1 expands in the child shell.
+  bash -c '. "$1" && config_refresh_seconds >/dev/null' fm-bridge-config "$SCRIPT_DIR/fm-bridge.sh" 2>&1
+}
+
+command_open() {
+  local why
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  if why=$(bridge_off_reason); then
+    exec "$SCRIPT_DIR/fm-bridge.sh" open
+  fi
+  printf 'fm-live-board: %s; opening the live board instead\n' "${why:-the Bridge is off}" >&2
+  command_open_board
 }
 
 # A test that sources this file gets the functions and constants above only.
@@ -487,6 +520,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     build) shift; command_build "$@" ;;
     refresh) shift; (command_refresh "$@") || true ;;
     open) shift; command_open "$@" ;;
+    open-board) shift; command_open_board "$@" ;;
     path) board_path ;;
     -h|--help|help) usage ;;
     *) usage >&2; exit 2 ;;
