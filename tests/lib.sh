@@ -58,6 +58,8 @@ export FM_GATE_REFUSE_BYPASS=1
 # record with bin/fm-quota-intake.sh itself (tests/fm-quota-intake.test.sh)
 # after unsetting this bypass locally.
 export FM_QUOTA_INTAKE_TEST_BYPASS=1
+# Suites change a fake quota between runs; the single-flight cases opt back in.
+export FM_QUOTA_SHARED_READ_TTL=0
 # Arms the test-only seams bin/ scripts expose (e.g. fm-afk-launch.sh's
 # FM_TEST_HARNESS harness pin). Normal primary launches do not arm it, so a
 # leaked harness pin alone stays inert outside a suite.

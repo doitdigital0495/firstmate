@@ -67,6 +67,12 @@
 #   a start until its reset time. A credential failure (auth_required) is never
 #   reused.
 #
+# Single-flight reads: parallel records share one read per login, one lock across
+#   the read phase, so a seat whose login another read covered reuses that attempt
+#   instead of reading its own triple; each record is still its own file, consumed
+#   by one launch. A stuck lock holder costs one bounded wait, then every store is
+#   recorded unreadable. See "single-flight reads" in bin/fm-quota-axi-lib.sh.
+#
 # Provider row filter: a registered account that declares `provider` in
 #   config/accounts.json is recorded with that provider's rows only, so a store
 #   shared by two seats (one Pi agent directory for a Codex and a Z.ai seat)
@@ -101,6 +107,8 @@
 #   FM_QUOTA_INTAKE_MAX_AGE seconds (600) - record freshness for the gate.
 #   FM_QUOTA_RECENT_MAX_AGE seconds (86400) - last good reading reuse bound.
 #   FM_QUOTA_READ_DEADLINE seconds (45) - deadline on one whole record run.
+#   FM_QUOTA_SHARED_READ_TTL seconds (120) - reuse window for a login's last read.
+#   FM_QUOTA_LOCK_WAIT_SECONDS seconds (the deadline) - total wait for the read lock.
 #   FM_QUOTA_INTAKE_KEEP records (50) - record retention count.
 #   FM_QUOTA_INTAKE_TEST_BYPASS=1 - see above.
 #
@@ -402,6 +410,9 @@ cmd_record() {
   tmp=$(mktemp -d) || die "mktemp failed"
   local entries default_stores plan_map account stores key canon_text snap raw entry now ns name file
   local total sc sp sx recent only read_end left read_status last_read read_error i
+  local locked reused covered login
+  local -A scheduled=()
+  local -a logins=() deferred_keys=() deferred_canon=() read_canon=()
   local -a canon=()
   local -a accounts=() listed=() listed_stores=() listed_canon=() listed_keys=() read_pids=() read_keys=()
   trap 'rm -rf -- "$tmp"' EXIT
@@ -423,6 +434,11 @@ cmd_record() {
   fi
 
   read_end=$(( $(intake_epoch_now) + $(intake_read_seconds) ))
+  recent=$(fm_quota_recent_file "$STATE")
+  # One lock across the read phase. A waiter may wait out the whole deadline, past a
+  # holder that started with it and has a hung store, so it still gets the other stores.
+  locked=1
+  fm_quota_lock_take "$recent" "$FM_QUOTA_READ_DEADLINE" || locked=0
   for account in "${accounts[@]}"; do
     if [ "$account" = default ]; then
       stores=$default_stores
@@ -443,11 +459,35 @@ cmd_record() {
     listed_keys+=("$key")
     [ ! -e "$tmp/raw-$key" ] || continue
     : > "$tmp/raw-$key"
+    if [ "$locked" -eq 0 ]; then
+      : > "$tmp/pending-$key"
+      continue
+    fi
+    mapfile -t canon <<< "$canon_text"
+    # A login read within the window, or about to be read by this run, is not read
+    # again: one read per login however many seats and starts share it.
+    reused=$(fm_quota_reads_reuse "$recent" full "${canon[0]}" "${canon[1]}" "${canon[2]}")
+    if [ -n "$reused" ]; then
+      [ "$reused" = failed ] || printf '%s\n' "$reused" > "$tmp/raw-$key"
+      continue
+    fi
+    mapfile -t logins < <(fm_quota_read_logins "${canon[0]}" "${canon[1]}" "${canon[2]}")
+    covered=$FM_QUOTA_SHARED_READ_TTL
+    for login in "${logins[@]}"; do
+      [ -n "${scheduled[$login]:-}" ] || covered=0
+    done
+    if [ "$covered" -gt 0 ] && [ "${#logins[@]}" -gt 0 ]; then
+      deferred_keys+=("$key")
+      deferred_canon+=("$canon_text")
+      continue
+    fi
+    for login in "${logins[@]}"; do scheduled[$login]=1; done
     left=$(( read_end - $(intake_epoch_now) ))
     [ "$left" -gt 0 ] || left=1
-    quota_axi_full_json "$stores" "$left" > "$tmp/raw-$key" 2>/dev/null &
+    quota_axi_full_json "$stores" "$left" > "$tmp/raw-$key" 2>/dev/null 9>&- &
     read_pids+=("$!")
     read_keys+=("$key")
+    read_canon+=("$canon_text")
   done
 
   # Every read is running; none of them waits on another. Stderr is closed off
@@ -461,8 +501,19 @@ cmd_record() {
       esac
     done
   } 2>/dev/null
+  for i in "${!read_keys[@]}"; do
+    mapfile -t canon <<< "${read_canon[$i]}"
+    raw="$tmp/raw-${read_keys[$i]}"
+    fm_quota_json_valid < "$raw" || raw=
+    fm_quota_reads_save "$recent" full "$raw" "${canon[0]}" "${canon[1]}" "${canon[2]}"
+  done
+  for i in "${!deferred_keys[@]}"; do
+    mapfile -t canon <<< "${deferred_canon[$i]}"
+    reused=$(fm_quota_reads_reuse "$recent" full "${canon[0]}" "${canon[1]}" "${canon[2]}")
+    [ "$reused" = failed ] || [ -z "$reused" ] || printf '%s\n' "$reused" > "$tmp/raw-${deferred_keys[$i]}"
+  done
+  [ "$locked" -eq 0 ] || fm_quota_lock_drop
 
-  recent=$(fm_quota_recent_file "$STATE")
   entries='[]'
   for i in "${!listed[@]}"; do
     account=${listed[$i]}

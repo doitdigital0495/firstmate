@@ -2296,6 +2296,9 @@ At launch, `bin/fm-quota-intake.sh` stops a start only on a known exhausted wind
 An unknown quota starts, and every start on an unverified reading appends one `started on unverified quota` line with the provider, reason, and cached reading age to `state/quota-unverified-starts.log`.
 A rate limited read shows as `rate limited` in the intake record and table, never `ok`.
 Stores are read in parallel and one `FM_QUOTA_READ_DEADLINE` (45 second) deadline bounds a whole record run, so a hanging store delays no other and is recorded as `unreadable`, an unknown quota.
+Parallel starts share one provider read per login: one `flock` under `state/quota-single-flight/` covers the read and keeps the attempt there, and any seat or start needing that login within `FM_QUOTA_SHARED_READ_TTL` (default 120) seconds reuses it, a failed attempt included, so seven store triples over four logins make four reads.
+A start that waits past `FM_QUOTA_LOCK_WAIT_SECONDS` (default the read deadline, in total per process) goes on with quota unknown, so a stuck holder never blocks it; a host without `flock` keeps the reuse but not the serialization.
+The resolver's `--json` reads and the intake's `--full --json` reads are shared separately and do not answer for each other.
 Firstmate can stop a route it judges unsafe, but cannot select another profile, mint a receipt, or answer a pick.
 The historical direct-HTTP canary is not evidence for this socket route.
 

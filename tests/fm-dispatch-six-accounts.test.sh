@@ -40,6 +40,7 @@ printf '# Task\n## Captain%s intent\nFix the pager.\n## Firstmate spec\nOne page
 # store's, else "pi" for the shared Pi agent directory.
 cat > "$FAKEBIN/quota-axi" <<'SH'
 #!/usr/bin/env bash
+[ -z "${QUOTA_CALL_LOG:-}" ] || printf '%s\n' "$*" >> "$QUOTA_CALL_LOG"
 key=default
 case "${CLAUDE_CONFIG_DIR:-}" in /nonexistent/*|'') ;; *) key=$(basename "$CLAUDE_CONFIG_DIR") ;; esac
 if [ "$key" = default ]; then
@@ -297,6 +298,29 @@ FM_DISPATCH_QUOTA_ATTEMPTS=3 FM_DISPATCH_QUOTA_WAIT_SECONDS=60 run "$BRIEF" --ta
 assert_contains "$(chosen)" "--account 'claude2'" "an absent warm-up never stalls the choice: $out"
 cp "$TMP_ROOT/tier-rules" "$RULES"
 write_response rule_1 0.95 "$worker"
+# Parallel starts read each login once: the same calls as one start, not four times them.
+reset_quota
+# Earlier cases left attempts here; this one starts cold.
+rm -rf "$HOME_DIR/state/quota-single-flight"
+QUOTA_CALL_LOG="$TMP_ROOT/one-start" FM_QUOTA_SHARED_READ_TTL=120 run "$BRIEF" --task six
+assert_contains "$out" 'status: clear' "one start resolves: $out"
+assert_equals 3 "$(grep -c '^--json$' "$TMP_ROOT/one-start")" 'one start reads the home, claude1 and claude2 logins once'
+assert_equals 3 "$(grep -c '^--full --json$' "$TMP_ROOT/one-start")" 'its intake reads each login once'
+reset_quota
+rm -rf "$HOME_DIR/state/quota-single-flight"
+starts=()
+for i in 1 2 3 4; do
+  ( export QUOTA_CALL_LOG="$TMP_ROOT/parallel-starts" FM_QUOTA_SHARED_READ_TTL=120 FM_QUOTA_READ_DEADLINE=300; "$TOOL" "$BRIEF" --task "six$i" > "$TMP_ROOT/parallel-$i" 2>&1 ) &
+  starts+=("$!")
+done
+# Only the starts: a bare wait would also wait on the Jev stub, which never exits.
+wait "${starts[@]}"
+for i in 1 2 3 4; do
+  assert_contains "$(cat "$TMP_ROOT/parallel-$i")" 'receipt: dispatch-' "parallel start $i has its receipt: $(cat "$TMP_ROOT/parallel-$i")"
+done
+assert_equals 3 "$(grep -c '^--json$' "$TMP_ROOT/parallel-starts")" 'four parallel starts share the three resolver reads'
+assert_equals 3 "$(grep -c '^--full --json$' "$TMP_ROOT/parallel-starts")" 'four parallel starts share the three intake reads'
+reset_quota
 pass 'U: an unreadable candidate is skipped while another is readable; none readable starts the first seat; bad logins do not'
 reset_quota
 set_quota claude1 claude 0 1 exhausted_now
