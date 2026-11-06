@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; base-uri 'none'; form-action 'none'" />
+<title>Firstmate Bridge</title>
+<link rel="icon" href="data:," />
+<style>
+/* Shipped renderer for bin/fm-bridge.sh. Self-contained: no external fonts,
+   scripts, images or requests. Palette follows the live board's navy, gold,
+   rust and sea tokens on an explicitly dark surface. */
+:root {
+  color-scheme: dark;
+  --bg: #10162a; --bg-raised: #171f36; --bg-card: #1d2640; --bg-inset: #141b30;
+  --line: #2c3858; --line-soft: #222c4a;
+  --text: #e9e3d3; --text-strong: #fbf4e2; --text-muted: #a7afc6; --text-faint: #8590ad;
+  --gold: #e0a52e; --gold-soft: #3a3020; --rust: #e08365; --rust-soft: #3b2421;
+  --sea: #7cc4a0; --sea-soft: #1f3a30; --ocean: #8cc0dd; --ocean-soft: #1d3346;
+  --focus: 0 0 0 3px #f0d38c;
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+html { background: #10162a; background: var(--bg); color: var(--text); }
+body { margin: 0; background: #10162a; background: var(--bg); color: var(--text); font: 15px/1.45 var(--font); -webkit-text-size-adjust: 100%; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+button, input, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: none; box-shadow: var(--focus); border-radius: 6px; }
+.br { max-width: 860px; margin: 0 auto; padding: 16px 14px 48px; }
+.br-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
+.br-head h1 { margin: 0; font-size: 1.3rem; color: var(--text-strong); }
+.fresh { color: var(--text-muted); font-size: 0.85rem; }
+.fresh.is-stale { color: var(--rust); font-weight: 600; }
+.banner { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-raised); font-size: 0.92rem; }
+.banner.bad { border-color: var(--rust); background: var(--rust-soft); color: var(--text-strong); }
+.banner.warn { border-color: var(--gold); background: var(--gold-soft); }
+.banner ul { margin: 6px 0 0; padding-left: 18px; }
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 14px 0 4px; }
+.stat { background: var(--bg-raised); border: 1px solid var(--line-soft); border-radius: 10px; padding: 8px 10px; }
+.stat b { display: block; font-size: 1.5rem; color: var(--text-strong); line-height: 1.1; }
+.stat span { color: var(--text-muted); font-size: 0.82rem; }
+.stat.you b { color: var(--gold); }
+h2 { margin: 22px 0 8px; font-size: 1.05rem; color: var(--text-strong); }
+h2 small { color: var(--text-muted); font-weight: 400; }
+.empty { color: var(--text-muted); font-size: 0.92rem; margin: 4px 0; }
+.card { background: var(--bg-card); border: 1px solid var(--line); border-left: 4px solid var(--gold); border-radius: 10px; padding: 10px 12px; margin: 0 0 10px; overflow-wrap: anywhere; }
+.card.old { border-left-color: var(--rust); }
+.card.is-queued { border-left-color: var(--sea); }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 0.8rem; color: var(--text-muted); }
+.chip { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--bg-inset); border: 1px solid var(--line-soft); }
+.chip.age { color: var(--gold); border-color: var(--gold-soft); }
+.chip.age.old { color: var(--rust); border-color: var(--rust); }
+.chip.flag { color: var(--rust); }
+.chip.ok { color: var(--sea); }
+.q { margin: 6px 0 4px; color: var(--text-strong); font-size: 0.98rem; }
+.ctx { margin: 2px 0; color: var(--text); font-size: 0.9rem; }
+.ctx b, .blocks b { color: var(--text-muted); font-weight: 600; }
+.blocks { margin: 4px 0; font-size: 0.85rem; color: var(--text-muted); }
+form { margin: 8px 0 0; }
+.opt { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; margin: 4px 0; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--bg-inset); cursor: pointer; }
+.opt.rec { border-color: var(--gold); }
+.opt input { margin-top: 3px; accent-color: var(--gold); }
+.opt small { display: block; color: var(--text-muted); }
+.opt em { color: var(--gold); font-style: normal; font-size: 0.78rem; }
+textarea, input[type=text] { width: 100%; margin: 6px 0 0; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg-inset); }
+textarea { min-height: 64px; resize: vertical; }
+.foot { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: 6px; }
+.btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--gold); background: var(--gold-soft); color: var(--text-strong); cursor: pointer; }
+.btn.quiet { border-color: var(--line); background: transparent; color: var(--text-muted); }
+.hint { color: var(--text-muted); font-size: 0.8rem; }
+.err { color: var(--rust); font-size: 0.85rem; }
+.done { color: var(--sea); font-size: 0.9rem; }
+details.group { margin: 6px 0 10px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--bg-raised); }
+details.group > summary { padding: 8px 12px; cursor: pointer; color: var(--text); }
+details.group > div { padding: 2px 10px 4px; }
+.sources { margin-top: 26px; font-size: 0.82rem; color: var(--text-faint); }
+.sources li { margin: 2px 0; }
+.sources .bad { color: var(--rust); }
+@media (min-width: 720px) { .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+</style>
+</head>
+<body>
+<main class="br" id="bridge">
+  <div class="br-head"><h1>Bridge</h1><span class="fresh" id="fresh" role="status">Loading</span></div>
+  <div id="root"><p class="empty">This page needs JavaScript to show the questions.</p></div>
+</main>
+<script id="bridge-data" type="application/json">
+__FM_BRIDGE_DATA__
+</script>
+<script>
+(function () {
+  "use strict";
+  var data;
+  try { data = JSON.parse(document.getElementById("bridge-data").textContent); } catch (e) { data = null; }
+  var root = document.getElementById("root");
+  var fresh = document.getElementById("fresh");
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = String(text);
+    return n;
+  }
+  function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
+  function utf8Bytes(s) { try { return new TextEncoder().encode(s).length; } catch (e) { return s.length * 3; } }
+  function nowSec() { return Math.floor(Date.now() / 1000); }
+  function ago(sec) {
+    if (sec < 90) return Math.max(0, sec) + " s";
+    if (sec < 5400) return Math.round(sec / 60) + " min";
+    if (sec < 172800) return Math.round(sec / 3600) + " h";
+    return Math.round(sec / 86400) + " days";
+  }
+  if (!data || data.schema !== "fm-bridge-asks.v1" || !Array.isArray(data.asks)) {
+    clear(root);
+    root.appendChild(el("div", "banner bad", "The Bridge data could not be read. Nothing below is current; ask Firstmate to rebuild the Bridge."));
+    fresh.textContent = "Unreadable"; fresh.className = "fresh is-stale";
+    return;
+  }
+
+  var refresh = Number(data.refresh_seconds) || 60;
+  var staleAfter = Math.max(150, Math.round(refresh * 2.5));
+  var checked = Number(data.checked_epoch || data.generated_epoch) || 0;
+  var staleBanner = el("div", "banner bad");
+  staleBanner.hidden = true;
+  function tickFresh() {
+    var age = nowSec() - checked;
+    var stale = age > staleAfter;
+    fresh.textContent = stale ? "Out of date: last checked " + ago(age) + " ago" : "Checked " + ago(age) + " ago";
+    fresh.className = "fresh" + (stale ? " is-stale" : "");
+    staleBanner.hidden = !stale;
+    staleBanner.textContent = "This board was last checked " + ago(age) + " ago, longer than it should be. "
+      + "The Bridge builder or Firstmate's watcher may have stopped, so questions asked since then are missing.";
+  }
+
+  var asks = data.asks;
+  var counts = data.counts || {};
+  var complete = data.complete === true;
+  clear(root);
+  root.appendChild(staleBanner);
+
+  /* Unread sources: never a green zero. */
+  var srcItems = (data.sources && data.sources.items) || [];
+  var unread = srcItems.filter(function (s) { return s.read !== "ok"; });
+  if (!complete) {
+    var b = el("div", "banner bad");
+    b.appendChild(el("b", "", "Not everything could be read, so there may be more questions than shown."));
+    var ul = el("ul");
+    unread.forEach(function (s) { ul.appendChild(el("li", "", s.label + ": " + (s.detail || s.read))); });
+    b.appendChild(ul);
+    root.appendChild(b);
+  }
+  if (data.watcher && data.watcher.fresh === false) {
+    root.appendChild(el("div", "banner warn", "Firstmate's watcher has not checked in recently (last " + (data.watcher.beacon || "never") + "), so this board may stop updating."));
+  }
+
+  var stats = el("div", "stats");
+  function stat(cls, n, label) {
+    var s = el("div", "stat " + cls);
+    s.appendChild(el("b", "", (complete ? "" : "at least ") + n));
+    s.appendChild(el("span", "", label));
+    stats.appendChild(s);
+  }
+  stat("you", counts.you || 0, "need you");
+  stat("", counts.firstmate || 0, "wait on Firstmate");
+  stat("", counts.secondmates || 0, "wait on a secondmate");
+  stat("", (counts.relayed || 0) + (counts.moot || 0), "relayed or probably settled");
+  root.appendChild(stats);
+
+  if (counts.unregistered > 0) {
+    root.appendChild(el("div", "banner warn", counts.unregistered === 1
+      ? "1 question from the crew has no question card for you yet. It waits on Firstmate, who answers it or turns it into a card; you may answer it here too."
+      : counts.unregistered + " questions from the crew have no question card for you yet. They wait on Firstmate, who answers them or turns them into cards; you may answer them here too."));
+  }
+
+  /* Queued answers survive a live reload through one hidden field per card,
+     keyed to the card's ask id, which changes whenever the question does. */
+  function card(q) {
+    var age = q.asked_epoch ? nowSec() - q.asked_epoch : null;
+    var old = age !== null && age >= 4 * 3600;
+    var c = el("article", "card" + (old ? " old" : ""));
+    c.setAttribute("data-ask", q.ask || "");
+    var meta = el("div", "meta");
+    meta.appendChild(el("span", "", (q.home ? q.home + " - " : "") + (q.asker || "Unknown asker")));
+    if (age !== null) {
+      meta.appendChild(el("span", "chip age" + (old ? " old" : ""), (q.asked_estimated ? "about " : "") + ago(age) + " old"));
+    } else {
+      meta.appendChild(el("span", "chip age", "age unknown"));
+    }
+    if (age !== null && age >= 86400) meta.appendChild(el("span", "chip flag", "over a day"));
+    meta.appendChild(el("span", "chip", q.source === "hold" ? "question for you" : "crew question"));
+    if (q.as_of_epoch) meta.appendChild(el("span", "chip", "as of " + ago(nowSec() - q.as_of_epoch) + " ago"));
+    (q.flags || []).forEach(function (f) {
+      var words = { "worker-gone": "worker no longer running", "likely-moot": "probably settled", "relayed": "also relayed to Firstmate" }[f] || f;
+      meta.appendChild(el("span", "chip flag", words));
+    });
+    if (q.deferred_until) meta.appendChild(el("span", "chip", "put off until " + q.deferred_until));
+    c.appendChild(meta);
+    if (q.about) { var a = el("p", "ctx"); a.appendChild(el("b", "", "What this is: ")); a.appendChild(document.createTextNode(q.about)); c.appendChild(a); }
+    if (q.purpose) { var p = el("p", "ctx"); p.appendChild(el("b", "", "Why it matters: ")); p.appendChild(document.createTextNode(q.purpose)); c.appendChild(p); }
+    c.appendChild(el("p", "q", q.question || "(no question text recorded)"));
+    var waits = (q.blocks || []).slice(0, 5);
+    if (waits.length || q.blocks_text) {
+      var bl = el("p", "blocks");
+      bl.appendChild(el("b", "", "Waiting on this: "));
+      bl.appendChild(document.createTextNode(waits.length ? waits.join("; ") + ((q.blocks || []).length > 5 ? "; and " + ((q.blocks.length) - 5) + " more" : "") : q.blocks_text));
+      c.appendChild(bl);
+    }
+    if (q.default_date) c.appendChild(el("p", "hint", "If unanswered, Firstmate goes ahead with the recommended option after " + q.default_date + ", marked as not your words."));
+    if (q.away_note) c.appendChild(el("p", "hint", q.away_note));
+    if (q.answer_note) c.appendChild(el("p", "err", q.answer_note));
+    if (q.answer !== "none") c.appendChild(answerForm(q, c));
+    return c;
+  }
+
+  function answerForm(q, c) {
+    var form = el("form");
+    var options = Array.isArray(q.options) ? q.options : [];
+    var radios = [];
+    options.forEach(function (o) {
+      var lab = el("label", "opt" + (q.recommendation === o.value ? " rec" : ""));
+      var r = document.createElement("input");
+      r.type = "radio"; r.name = "pick"; r.value = o.value;
+      radios.push(r);
+      lab.appendChild(r);
+      var txt = el("span");
+      txt.appendChild(el("span", "", o.label));
+      if (q.recommendation === o.value) { txt.appendChild(document.createTextNode(" ")); txt.appendChild(el("em", "", "recommended")); }
+      if (o.detail) txt.appendChild(el("small", "", o.detail));
+      lab.appendChild(txt);
+      form.appendChild(lab);
+    });
+    var note;
+    if (options.length) {
+      note = document.createElement("input"); note.type = "text";
+      note.placeholder = "optional note"; note.setAttribute("aria-label", "Optional note");
+    } else {
+      note = document.createElement("textarea");
+      note.placeholder = "Type your answer"; note.setAttribute("aria-label", "Your answer");
+    }
+    note.name = "note";
+    form.appendChild(note);
+    var foot = el("div", "foot");
+    var btn = el("button", "btn", q.approve ? "Queue approval" : "Queue answer");
+    btn.type = "submit";
+    foot.appendChild(btn);
+    var status = el("span", "hint");
+    status.setAttribute("role", "status");
+    foot.appendChild(status);
+    form.appendChild(foot);
+    var kept = document.createElement("input");
+    kept.type = "hidden"; kept.name = "queued"; kept.value = "";
+    form.appendChild(kept);
+    var doneBox = el("div", "done"); doneBox.hidden = true;
+    var doneText = el("span");
+    var change = el("button", "btn quiet", "Change answer"); change.type = "button";
+    doneBox.appendChild(doneText); doneBox.appendChild(document.createTextNode(" ")); doneBox.appendChild(change);
+    form.appendChild(doneBox);
+    var stamp = String(q.ask || "");
+    function keptAnswer() {
+      var v = String(kept.value || ""), at = v.indexOf("\t");
+      return at >= 0 && v.slice(0, at) === stamp ? v.slice(at + 1) : "";
+    }
+    function sync() {
+      var shown = keptAnswer();
+      c.className = c.className.replace(/ is-queued/g, "") + (shown ? " is-queued" : "");
+      doneBox.hidden = !shown;
+      doneText.textContent = shown ? "Answer queued in Lavish: " + shown : "";
+      Array.prototype.forEach.call(form.querySelectorAll(".opt, textarea, input[type=text], .foot"), function (n) { n.hidden = !!shown; });
+    }
+    syncers.push(sync);
+    change.addEventListener("click", function () { kept.value = ""; announce(kept); sync(); status.textContent = "Queue a new answer; it replaces the earlier one if Lavish has not sent it."; });
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      status.className = "hint"; status.textContent = "";
+      var value = "";
+      radios.forEach(function (r) { if (r.checked) value = r.value; });
+      var noteText = String(note.value || "").replace(/\s+/g, " ").trim();
+      if (!value && !noteText) { status.className = "err"; status.textContent = options.length ? "Pick an option or write a note first." : "Write your answer first."; return; }
+      var label = value;
+      options.forEach(function (o) { if (o.value === value) label = o.label; });
+      var shown = value ? (noteText ? label + " - " + noteText : label) : noteText;
+      if (utf8Bytes(value) + utf8Bytes(noteText) + 3 > 512 || utf8Bytes(shown) > 512) { status.className = "err"; status.textContent = "The answer is too long (512 bytes maximum)."; return; }
+      if (!(window.lavish && window.lavish.queuePrompt)) { status.className = "err"; status.textContent = "Answers can only be sent when this board is open in Lavish."; return; }
+      var payload, prompt;
+      if (q.answer === "hold-guarded" || q.answer === "hold-free") {
+        payload = { schema: "fm-bearings-answer.v1", question: q.task, selection: value, note: noteText };
+        if (q.answer === "hold-guarded") { payload.close = q.close; payload.lifecycle = q.lifecycle; }
+        prompt = "Bridge answer - " + q.question + ": " + shown;
+      } else {
+        payload = { schema: "fm-bridge-answer.v1", ask: q.ask, selection: value, note: noteText };
+        prompt = "Bridge answer " + q.ask + " (route with fm-bridge.sh route " + q.ask + ") - " + q.question + ": " + shown;
+      }
+      window.lavish.queuePrompt(prompt, { tag: "choice", text: q.question + " -> " + shown, element: form, data: payload });
+      kept.value = stamp + "\t" + shown;
+      announce(kept);
+      sync();
+    });
+    return form;
+  }
+
+  var syncers = [];
+  function announce(node) {
+    try { node.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) { /* page-local only */ }
+  }
+  function section(title, list, emptyText) {
+    var h = el("h2", "", title + " ");
+    h.appendChild(el("small", "", "(" + (complete ? "" : "at least ") + list.length + ")"));
+    root.appendChild(h);
+    if (!list.length) { root.appendChild(el("p", "empty", complete ? emptyText : "None shown, but some sources could not be read.")); return; }
+    list.forEach(function (q) { root.appendChild(card(q)); });
+  }
+  function group(title, list) {
+    if (!list.length) return;
+    var d = el("details", "group");
+    d.appendChild(el("summary", "", title + " (" + list.length + ")"));
+    var inner = el("div");
+    list.forEach(function (q) { inner.appendChild(card(q)); });
+    d.appendChild(inner);
+    root.appendChild(d);
+  }
+
+  var you = asks.filter(function (q) { return q.who === "you"; });
+  var fm = asks.filter(function (q) { return q.who === "firstmate" && !q.group; });
+  var relayed = asks.filter(function (q) { return q.group === "relayed"; });
+  var moot = asks.filter(function (q) { return q.group === "moot"; });
+  var sm = asks.filter(function (q) { return q.who === "secondmate"; });
+  section("Needs you", you, "Nothing waits on you right now.");
+  section("Waiting on Firstmate", fm, "No crew question waits on Firstmate.");
+  group("Relayed from a secondmate whose own list was not read", relayed);
+  group("Probably settled: the secondmate no longer lists these", moot);
+  var homes = [];
+  sm.forEach(function (q) { if (homes.indexOf(q.home) < 0) homes.push(q.home); });
+  homes.forEach(function (h) { section("Waiting on " + (h || "a secondmate"), sm.filter(function (q) { return q.home === h; }), ""); });
+
+  var src = el("div", "sources");
+  src.appendChild(el("b", "", "Sources: " + (data.sources ? data.sources.ok + " of " + data.sources.total + " read" : "unknown")));
+  var sl = el("ul");
+  srcItems.forEach(function (s) { sl.appendChild(el("li", s.read === "ok" ? "" : "bad", s.label + ": " + s.read + (s.detail ? " - " + s.detail : ""))); });
+  (data.notes || []).forEach(function (n) { sl.appendChild(el("li", "", n)); });
+  src.appendChild(sl);
+  root.appendChild(src);
+
+  function syncAll() { syncers.forEach(function (f) { f(); }); }
+  syncAll();
+  /* Lavish restores form fields by message after a live reload; repaint then. */
+  window.addEventListener("message", function () { setTimeout(syncAll, 0); setTimeout(syncAll, 300); });
+  tickFresh();
+  setInterval(tickFresh, 15000);
+})();
+</script>
+</body>
+</html>

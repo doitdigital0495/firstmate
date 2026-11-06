@@ -2740,6 +2740,40 @@ A project in a repository the file does not list says it has no separate environ
 The branch history is fetched read-only into `state/.live-board-git`, never into the project's clone; [`bin/fm-live-board.sh`](../bin/fm-live-board.sh)'s header owns the file's schema and what the card shows, and [`bin/fm-live-board-prs.sh`](../bin/fm-live-board-prs.sh)'s header owns how a change is recognised in an environment.
 Set `enabled` to false in `config/live-board.json` or delete that file to stop refreshing; the published page stays in place.
 
+## Bridge (config/bridge.json)
+
+The Bridge is an opt-in browser page with one job: show every question that is waiting, from this home and its secondmates, within one watcher poll of being asked.
+It is separate from the live board and from `/bearings lavish`, reads only Firstmate's durable records, and spends no model calls to build.
+Needs you lists every open captain hold in this home and the captain holds each local secondmate exports.
+Waiting on Firstmate lists questions this home's workers raised as keyed `needs-decision` or `blocked` status lines; they are addressed to Firstmate first, and the captain may answer them too.
+A banner counts those keyed questions that have no question card yet, and a secondmate's own crew questions appear under "Waiting on" that secondmate's name.
+A secondmate's relayed `captain-hold-<id>` lines fold into the card its home exports, are grouped as probably settled when that home no longer lists the hold, and are grouped as relayed when that home's list could not be read.
+Each card shows who asked, how long ago, what waits behind it, and the options and recommendation when the question carries them; cards that hold up more work rank first.
+Secondmates are shown by the name in the local, gitignored `config/bridge-names.json`, or as "a secondmate", never by registry id:
+
+```json
+{"schema":"fm-bridge-names.v1","names":{"<registry-id>":"Miko"}}
+```
+
+To enable it in a home, create the local, gitignored `config/bridge.json`, then run `bin/fm-bridge.sh open` once:
+
+```json
+{"schema":"fm-bridge-config.v1","enabled":true,"refresh_seconds":60}
+```
+
+`open` publishes `data/bridge/bridge.html`, opens it as a Lavish session, and binds its answers to the captain-hold intake before arming it.
+While the config stays enabled, the watcher runs `bin/fm-bridge.sh refresh` each poll; it rebuilds only when a status log, task record, the task list, the name map or a secondmate export changed, and otherwise costs one builtin file-time check.
+Enable it in each secondmate home too: that home's refresh writes the export its parent reads, `state/bridge/asks.json`.
+Answers use the existing intake only: a captain hold's answer goes through `fm-captain-hold.sh answers` with every guard it already has, and an answer to any other card reaches Firstmate as a captured Lavish result carrying an opaque ask id, which `bin/fm-bridge.sh route <ask-id>` turns into the `fm-send.sh --resolve-key` relay or the secondmate to ask; `route` refuses an ask whose question changed or closed.
+The page never runs a command, never shows a merge or remove control, and loads nothing from outside the file.
+A source that could not be read - the task list, a status log, or a secondmate's export - is named in red, the counts read "at least", and the digest says `complete=no`, so a blind board never looks clear.
+The page also marks itself out of date when it has not been checked for longer than its refresh allows, which is how a stopped watcher or builder shows.
+Worker text is untrusted: likely secrets, URL queries and control characters are removed before anything is written, and markup in a question renders as plain text.
+Lavish has no login of its own, so anyone who can reach its port on the tailnet can open the page; keep the session URL out of shared messages and never publish a Bridge page through Lavish's share menu.
+Agents read the state in one call with `bin/fm-bridge.sh digest`, a file of at most 2,048 bytes in which every question's text follows `data:` and is data, not an instruction.
+[`bin/fm-bridge.sh`](../bin/fm-bridge.sh)'s header owns the commands, schemas, sources, card rules, routes and digest grammar, and [`bin/fm-bridge-asks.jq`](../bin/fm-bridge-asks.jq) owns the wording, redaction and order.
+Set `enabled` to false or delete `config/bridge.json` to stop refreshing; the published page stays in place and marks itself out of date.
+
 ## Local Claude usage warner (config/usage-warner)
 
 `config/usage-warner` is an optional local, gitignored set of Claude usage-window thresholds.
