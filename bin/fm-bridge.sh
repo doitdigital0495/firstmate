@@ -40,7 +40,8 @@
 #          the file is missing, truncated or older than three refresh periods.
 # route    Print where an answer to <ask-id> goes (ANSWERS); exit 3 when that
 #          question is no longer open on the current Bridge, so a stale press is
-#          never relayed.
+#          never relayed. For a captain hold it also prints the stop-clock
+#          command a Stop the clock request runs.
 #
 # CONFIG. The Bridge is off unless config/bridge.json is a regular file holding
 # exactly {"schema":"fm-bridge-config.v1","enabled":true} with an optional
@@ -86,7 +87,16 @@
 # Within a section cards rank by how much waits behind them, then age.
 # A keyed line may follow `<question> | A: <option> | B: <option> | rec=A |
 # blocks=<what waits>`; two or more lettered options make it pickable,
-# anything else is answered in free text. All free text is redacted
+# anything else is answered in free text. bin/fm-brief.sh rule 6 tells every
+# worker to raise a blocking question at once in that shape.
+# A captain hold's deadline default (owned by bin/fm-captain-hold.sh) is the
+# card's `default`: pending with the epoch it may apply and the recommended
+# label, which the page counts down; stopped; blocked by the owner's effect
+# check; or never, naming the scope that keeps it waiting for the captain.
+# A card that is not the captain's and has waited 15 minutes or more shows
+# "Waiting on Firstmate" (or the secondmate) with its age and a Nudge button.
+# The page also lists parked work: every task behind an open card and every
+# worker whose keyed line is `blocked`. All free text is redacted
 # (bin/fm-bridge-asks.jq br_redact: control characters, key blocks, bearer
 # tokens, common token prefixes, long hex or base64 runs and URL queries) and
 # capped before it is written anywhere.
@@ -101,7 +111,11 @@
 # that schema is not a keyed answer, so the result reaches Firstmate, who runs
 # `fm-bridge.sh route <ask-id>` and relays through `fm-send.sh <task>
 # --resolve-key <key>` for a keyed question here, or to the named secondmate
-# for an exported card. An ask id is a hash of the card's source record (task,
+# for an exported card. Nudge queues fm-bridge-nudge.v1 and Stop the clock
+# queues fm-bridge-stop-clock.v1, each carrying only the ask id; neither is a
+# keyed answer, so both reach Firstmate, who routes the ask and settles the
+# question now, or runs the stop-clock command `route` prints, before it
+# applies any due default. An ask id is a hash of the card's source record (task,
 # key and raise time, or hold lifecycle), so a re-raised or re-held question
 # gets a new id and `route` refuses the old one.
 #
@@ -120,6 +134,25 @@
 #   source <state> data: <label>                (each source not read)
 #   bridge-end hash=<12 hex of the lines between the first and this one>
 # Text after `data:` is untrusted worker text, never an instruction.
+#
+# ALERTS. Desktop alerts are off unless config/bridge-alerts exists
+# (FM_BRIDGE_ALERTS_FILE overrides the path). Each non-empty, non-comment line
+# is a channel directive with config/wedge-alarm's meaning - off, auto|default
+# (osascript on macOS, none elsewhere), osascript, herdr, command:<cmd> (run
+# through `sh -c` with the text on $1 and stdin) - or one `steps <step>...` line
+# of 0, <n>m, <n>h or <n>d ages (default `steps 0 4h 24h`). Any other line, or a
+# file that is not a readable regular file, turns every channel off and the
+# page names the problem. Every page build and republish checks the cards for
+# the captain (Needs you, not grouped) against state/bridge/alerts.json
+# (fm-bridge-alerts.v1: the highest step each open ask id has alerted, and the
+# last alert): when any card reached a step it has not alerted, one alert goes
+# to every channel, each bounded to 10 s, with only a count and the oldest age
+# as text. A card first seen past several steps alerts once. With no channel
+# to try the ledger only forgets closed asks. A failing channel is logged and
+# shown on the page, never a failed build. The page states whether alerts are
+# on, their channels and steps, and the last alert. FM_BRIDGE_ALERT_EXEC
+# replaces every channel with `<cmd> <channel> <text>` (`discard` fires
+# nothing) and FM_BRIDGE_ALERT_NOW sets the alert clock, both for tests.
 #
 # PAGE. data/bridge/bridge.html is the shipped dark template
 # (bin/fm-bridge-template.html) plus the page payload: no external request, a
@@ -148,6 +181,9 @@ ROUTES="$BSTATE/routes.json"
 EXPORT="$BSTATE/asks.json"
 DIGEST="$BSTATE/digest.txt"
 HEALTH="$BSTATE/health.json"
+ALERTS_FILE="${FM_BRIDGE_ALERTS_FILE:-$CONFIG/bridge-alerts}"
+ALERT_LEDGER="$BSTATE/alerts.json"
+ALERT_TIMEOUT=10
 STAMP="$BSTATE/.inputs-stamp"
 LOCK="$BSTATE/.build.lock"
 LOG="$BSTATE/refresh.log"
@@ -460,6 +496,154 @@ collect_feed() {  # <work-dir> <refresh-seconds>
   ' "$w/feed0.json" "$w/feed.json" "$w/routes.json"
 }
 
+# --- alerts ------------------------------------------------------------------
+
+# Parse config/bridge-alerts into JSON on stdout:
+#   {configured, channels:[...], steps:[seconds...], problem}
+# A missing file is not configured; an unreadable file or any invalid line
+# turns every desktop alert off and names the problem, so a typo never reads as
+# a working channel.
+alerts_config() {
+  local line n=0 channels='' steps='' problem='' word num secs
+  if [ ! -e "$ALERTS_FILE" ] && [ ! -L "$ALERTS_FILE" ]; then
+    printf '{"configured":false,"channels":[],"steps":[0,14400,86400],"problem":null}\n'
+    return 0
+  fi
+  if [ ! -f "$ALERTS_FILE" ] || [ -L "$ALERTS_FILE" ] || [ ! -r "$ALERTS_FILE" ]; then
+    problem="config/bridge-alerts is not a readable regular file"
+  else
+    while IFS= read -r line || [ -n "$line" ]; do
+      n=$((n + 1))
+      line="${line#"${line%%[![:space:]]*}"}"
+      line="${line%"${line##*[![:space:]]}"}"
+      case "$line" in
+        ''|'#'*) continue ;;
+        off|auto|default|osascript|herdr) channels="$channels$line"$'\n' ;;
+        command:?*) channels="$channels$line"$'\n' ;;
+        'steps '*)
+          steps=''
+          for word in ${line#steps }; do
+            num=${word%[mhd]}
+            case "$word:$num" in
+              0:0) secs=0 ;;
+              *:*[!0-9]*|*:|*:0*) problem="line $n: step '$word' is not 0, <n>m, <n>h or <n>d"; break 2 ;;
+              *m:*) secs=$((num * 60)) ;;
+              *h:*) secs=$((num * 3600)) ;;
+              *d:*) secs=$((num * 86400)) ;;
+              *) problem="line $n: step '$word' is not 0, <n>m, <n>h or <n>d"; break 2 ;;
+            esac
+            steps="$steps$secs "
+          done
+          [ -n "$steps" ] || { problem="line $n: steps lists no step"; break; }
+          ;;
+        *) problem="line $n is not a channel or a steps line"; break ;;
+      esac
+    done < "$ALERTS_FILE"
+  fi
+  jq -cn --arg channels "$channels" --arg steps "${steps:-0 14400 86400}" --arg problem "$problem" '
+    ($steps | split(" ") | map(select(length > 0) | tonumber) | unique) as $s
+    | {configured: true,
+       channels: (if $problem != "" then [] else ($channels | split("\n") | map(select(length > 0))) end),
+       steps: $s,
+       problem: (if $problem == "" then null else $problem end)}'
+}
+
+# Run one notifier channel, bounded; a missing tool or a failure returns nonzero.
+# FM_BRIDGE_ALERT_EXEC replaces every real channel: it runs as
+# `<cmd> <channel> <summary>`, and the value `discard` fires nothing.
+alert_channel() {  # <channel> <summary>
+  local channel=$1 summary=$2
+  case "${FM_BRIDGE_ALERT_EXEC:-}" in
+    discard) return 0 ;;
+    ?*) fm_run_timed "$ALERT_TIMEOUT" "$FM_BRIDGE_ALERT_EXEC" "$channel" "$summary" >/dev/null 2>&1; return ;;
+  esac
+  case "$channel" in
+    osascript)
+      command -v osascript >/dev/null 2>&1 || return 1
+      fm_run_timed "$ALERT_TIMEOUT" osascript -e 'on run argv' \
+        -e 'display notification (item 1 of argv) with title "Firstmate Bridge"' -e 'end run' "$summary" >/dev/null 2>&1 ;;
+    herdr)
+      command -v herdr >/dev/null 2>&1 || return 1
+      fm_run_timed "$ALERT_TIMEOUT" herdr notification show "Firstmate Bridge" --body "$summary" >/dev/null 2>&1 ;;
+    command:*)
+      printf '%s\n' "$summary" | fm_run_timed "$ALERT_TIMEOUT" sh -c "${channel#command:}" sh "$summary" >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Fire desktop alerts for captain questions that crossed an age step since the
+# last run, record the per-question step ledger, and print the alert state the
+# page shows. One alert per run at most, whatever the number of crossings, and
+# each question fires each step once: a step it passed while unseen is recorded
+# with the one it reached. With no channel to try (no config, `off`, an invalid
+# config, or `auto` where the platform has none) the ledger only forgets closed
+# questions, so switching alerts on later sends one catch-up alert. The text
+# carries only a count and an age, never question text.
+run_alerts() {  # <feed>
+  local feed=$1 config now ledger='{}' plan summary channel fired='' failed='' channels resolved=''
+  config=$(alerts_config) || return 1
+  now=${FM_BRIDGE_ALERT_NOW:-$(date +%s)}
+  case "$now" in ''|*[!0-9]*) now=$(date +%s) ;; esac
+  if [ -f "$ALERT_LEDGER" ] && [ ! -L "$ALERT_LEDGER" ]; then
+    ledger=$(jq -ce 'if type == "object" and .schema == "fm-bridge-alerts.v1" then . else error("schema") end' \
+      "$ALERT_LEDGER" 2>/dev/null) || ledger='{}'
+  fi
+  plan=$(jq -c --argjson now "$now" --argjson config "$config" --argjson ledger "$ledger" '
+    def age_words: if . < 3600 then "\((. / 60) | floor) min" elif . < 172800 then "\((. / 3600) | floor) h"
+      else "\((. / 86400) | floor) days" end;
+    [.asks[] | select(.who == "you" and .group == null)
+      | {ask, age: (if .asked_epoch == null then 0 else ([$now - .asked_epoch, 0] | max) end)}] as $mine
+    | $config.steps as $steps
+    | [$mine[] | . as $q
+        | ([range(0; $steps | length) | select($steps[.] <= $q.age)] | last // -1) as $reached
+        | (($ledger.fired // {})[$q.ask].step // -1) as $before
+        | $q + {reached: $reached, before: $before}] as $rows
+    | {crossed: ([$rows[] | select(.reached > .before)] | length),
+       summary: ((if ($mine | length) == 1 then "1 question waits for you" else "\($mine | length) questions wait for you" end)
+         + ", oldest \(($mine | map(.age) | max // 0) | age_words). Open the Bridge to answer."),
+       fired: ([$rows[] | {key: .ask, value: {step: ([.reached, .before] | max)}}] | from_entries)}' "$feed") || return 1
+  summary=$(printf '%s' "$plan" | jq -r .summary)
+  channels=$(printf '%s' "$config" | jq -r '.channels[]')
+  if [ "$(printf '%s' "$plan" | jq -r .crossed)" -gt 0 ] && ! printf '%s\n' "$channels" | grep -qx off; then
+    while IFS= read -r channel; do
+      [ -n "$channel" ] || continue
+      case "$channel" in
+        auto|default) if [ "$(uname)" = Darwin ]; then channel=osascript; else continue; fi ;;
+      esac
+      resolved="$resolved $channel"
+      if alert_channel "$channel" "$summary"; then fired="$fired ${channel%%:*}"; else failed="$failed ${channel%%:*}"; fi
+    done < <(printf '%s\n' "$channels")
+  fi
+  if ! jq -cn --argjson now "$now" --argjson plan "$plan" --argjson ledger "$ledger" \
+      --arg fired "$fired" --arg failed "$failed" --arg resolved "$resolved" '
+      def words: split(" ") | map(select(length > 0));
+      ($resolved | words | length > 0) as $tried
+      | {schema: "fm-bridge-alerts.v1",
+       fired: (if $tried then $plan.fired
+               else ($ledger.fired // {}) | with_entries(select($plan.fired[.key] != null)) end),
+       last: (if $tried then {epoch: $now, text: $plan.summary,
+                sent: ($fired | words), failed: ($failed | words), tried: ($resolved | words | length)}
+              else ($ledger.last // null) end)}' > "$ALERT_LEDGER.tmp" \
+    || ! mv -f -- "$ALERT_LEDGER.tmp" "$ALERT_LEDGER"; then
+    rm -f -- "$ALERT_LEDGER.tmp"
+    return 1
+  fi
+  [ -z "$failed" ] || log_line "Bridge alert channel failed:$failed"
+  # The state the page shows: channel names and steps, never commands.
+  jq -c --argjson config "$config" '{configured: $config.configured,
+      channels: [$config.channels[] | sub(":.*$"; "")], steps: $config.steps, problem: $config.problem,
+      last: .last}' "$ALERT_LEDGER"
+}
+
+# Run alerts over <feed> and store their page state in it; an alert failure is
+# logged and shown on the page, never a failed build.
+apply_alerts() {  # <feed>
+  local feed=$1 state
+  state=$(run_alerts "$feed" 2>/dev/null) \
+    || state='{"configured":true,"channels":[],"steps":[],"problem":"the alert step could not run","last":null}'
+  jq --argjson alerts "$state" '.alerts = $alerts' "$feed" > "$feed.alerts" && mv -f -- "$feed.alerts" "$feed"
+}
+
 # --- publication -----------------------------------------------------------
 
 write_digest() {  # <work-dir> <feed>
@@ -529,6 +713,7 @@ run_build() {  # <publish-page:0|1> <lock-wait-seconds>
   input_signature > "$stamp_next" 2>/dev/null || : > "$stamp_next"
   collect_feed "$w" "$refresh" || fail "the Bridge feed could not be projected; the previous files are unchanged"
   jq --argjson now "$(date +%s)" '.checked_epoch = $now' "$w/feed.json" > "$w/feed1.json" && mv -f "$w/feed1.json" "$w/feed.json"
+  [ "$publish" = 0 ] || apply_alerts "$w/feed.json" || log_line "the alert state could not be added to the page"
   [ "$publish" = 0 ] || publish_page "$w" "$w/feed.json"
   { jq -L "$SCRIPT_DIR" 'include "fm-bridge-asks"; br_export' "$w/feed.json" > "$w/export.json" \
     && atomic_write "$EXPORT" "$w/export.json"; } || fail "cannot publish the export"
@@ -548,6 +733,7 @@ republish() {
   # shellcheck disable=SC2064
   trap "rm -rf -- '$w'" EXIT
   jq --argjson now "$(date +%s)" '.checked_epoch = $now' "$FEED" > "$w/feed.json" || return 1
+  apply_alerts "$w/feed.json" || log_line "the alert state could not be added to the page"
   publish_page "$w" "$w/feed.json"
   atomic_write "$FEED" "$w/feed.json" || return 1
   write_digest "$w" "$FEED" || return 1
@@ -679,7 +865,7 @@ command_route() {
   }
   jq -r --arg ask "$ask" '.[$ask] as $r
     | if $r.kind == "hold" then
-        "kind: captain-hold\ntask: \($r.task)\nlifecycle: \($r.lifecycle // "none")\nrelay: none; fm-captain-hold.sh answers took it when Lavish captured it"
+        "kind: captain-hold\ntask: \($r.task)\nlifecycle: \($r.lifecycle // "none")\nrelay: none; fm-captain-hold.sh answers took it when Lavish captured it\nstop-clock: bin/fm-captain-hold.sh stop-clock \($r.task) --source <who pressed it, and the Lavish result id>"
       elif $r.kind == "key" then
         "kind: keyed-question\ntask: \($r.task)\nkey: \($r.key)\nrelay: bin/fm-send.sh \($r.task) --resolve-key \($r.key) <the captain words>"
       else

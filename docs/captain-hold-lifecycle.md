@@ -220,8 +220,10 @@ The policy lives in the `captain-hold-lifecycle` skill.
 The mechanism adds no second decision store: the default lives in the question context, `defaults-due` reads it, and `answer --deadline-default` writes through the guarded answer path.
 The wake drain prints due calls as `DEFAULTS DUE` and applies nothing, so a heartbeat surfaces them and firstmate acts.
 Eligibility is re-checked on every read, so a stored context that breaks the rule is invalid and never comes due.
+The deadline is a day or an hour stamp at least 24 hours after the hold, and an effect check on the recommended answer's own words keeps a call that would merge, publish, send, delete, spend or touch access waiting for the captain whatever scope its author declared.
+`stop-clock` ends a call's default for its lifecycle, so only an answer settles it; the Bridge's Stop the clock request is how the captain asks for it.
 The live board card and `decisions_open[].pending_default` in Bearings carry the date and plain-words notice, and a Bearings summary or gate reason names the date even when the call has aged out of Captain's Call.
-`tests/fm-captain-hold-lifecycle.test.sh` and `tests/fm-live-board-snapshot.test.sh` exercise this through public commands.
+`tests/fm-captain-hold-lifecycle.test.sh`, `tests/fm-live-board-snapshot.test.sh` and `tests/bridge.test.sh` exercise this through public commands.
 
 ## Answer-time resolution
 

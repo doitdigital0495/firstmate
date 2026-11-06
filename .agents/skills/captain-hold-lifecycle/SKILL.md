@@ -38,11 +38,12 @@ Never close anything the captain owns without recording what he actually said: `
 A merge approval uses that existing release path because approval permits the merge to proceed; cleanup closes the work only after it lands and records what shipped.
 Closing a held row at merge approval instead records completion before landing, so the backlog claims completion before the work actually ships.
 When the answer changes what a task must build, follow `AGENTS.md` section 7's mid-task ask rule to preserve the captain's words in the brief and steer the worker.
-A deadline default lets a small, reversible product or copy call proceed on the recommended answer after a stated date, with the captain's page and Bearings showing the default and date until then.
+A deadline default lets a small, reversible product or copy call proceed on the recommended answer after a stated date, or after an hour stamp 24 hours out (the captain's standing pick), with the captain's page and Bearings showing the default and deadline until then.
 Set it only when the call is honestly that small and reversible, and declare any outward-facing, irreversible, money or security scope so the owner refuses the default and the call keeps waiting for the captain.
 `bin/fm-captain-hold.sh --help` owns the fields and refusals.
 When the wake drain prints `DEFAULTS DUE`, run `bin/fm-captain-hold.sh answer <id> --deadline-default`, which records owner-generated words that say they are not the captain's; steer any worker with that answer as a deadline default and tell the captain in the next report.
 Never write a default into `--decision-file`, and never present one as his decision.
+When a captured Bridge result asks to stop the clock, run the `stop-clock` command `bin/fm-bridge.sh route <ask-id>` prints before applying any due default, and record the press as its `--source`.
 When the captain says "later", that is an answer too: re-hold with `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --until <date>` so the item leaves the live Captain's Call and resurfaces on its date, instead of leaving a live-looking card or fabricating a closure.
 "A keyed answer resolves its matching captain-held task" is one capability with one owner, `bin/fm-captain-hold.sh answers`, and every channel that carries a captain answer feeds it the same task id and answer; a channel never maps keys to tasks, records a decision, or resolves anything itself.
 Chat already feeds it through `bin/fm-send.sh --resolve-key`, and a captured-answer source feeds it once bound with `bin/fm-captain-hold.sh bind <source-id>`; bind before arming the source, and key each structured question by the held task's id.

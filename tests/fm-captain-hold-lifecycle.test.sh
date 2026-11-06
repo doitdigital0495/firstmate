@@ -5564,6 +5564,108 @@ test_deadline_default_respects_deferral_release_and_stored_rules() {
   ) || exit 1
 }
 
+# Hour-level default: hold_default stamps 2026-07-20T12:00:00Z, so the
+# earliest allowed deadline is 24 hours later.
+DEFAULT_AT_OK='. + {scope:["copy"],default_eligible:"small-reversible",default_at:"2026-07-21T12:00:00Z"}'
+
+test_hour_default_comes_due_on_the_minute_and_is_labelled() {
+  (
+    local home due show
+    home=$(make_home default-hour)
+    default_context "$home" "$DEFAULT_AT_OK"
+    hold_default "$home" sample-hour || fail "eligible hour default refused"
+    # One minute before the deadline nothing is due; one minute after it is.
+    due=$(FM_CAPTAIN_HOLD_NOW=2026-07-21T11:59:00Z run_captain "$home" defaults-due) || fail "defaults-due failed"
+    [ -z "$due" ] || fail "hour default came due before its time: $due"
+    if FM_CAPTAIN_HOLD_NOW=2026-07-21T11:59:00Z run_captain "$home" answer sample-hour --deadline-default >/dev/null 2>&1; then
+      fail "hour default applied before its time"
+    fi
+    due=$(FM_CAPTAIN_HOLD_NOW=2026-07-21T12:01:00Z run_captain "$home" defaults-due) || fail "defaults-due failed"
+    [ "$due" = "$(printf 'sample-hour\t2026-07-21T12:00:00Z\tgo\tGo live\tdone\tPick the wording')" ] \
+      || fail "hour due listing is wrong: $due"
+    FM_CAPTAIN_HOLD_NOW=2026-07-21T12:01:00Z run_captain "$home" answer sample-hour --deadline-default >/dev/null \
+      || fail "due hour default could not be applied"
+    show=$(tasks_in "$home" show sample-hour --full)
+    assert_contains "$show" "Deadline default (not the captain's words):" "hour default is not labelled"
+    assert_contains "$show" 'had not answered by 12:00 UTC on 2026-07-21' "hour default does not state its deadline"
+    assert_contains "$show" "These are not the captain's words." "hour default words claim to be the captain's"
+    if printf '%s' "$show" | grep -F 'Captain decision:' >/dev/null; then fail "hour default was presented as the captain's decision"; fi
+    pass "an hour-level default comes due on the minute and is recorded as not the captain's words"
+  ) || exit 1
+}
+
+test_hour_default_refusals_and_effect_check() {
+  (
+    local home patch expected stored
+    home=$(make_home default-hour-refused)
+    while IFS='|' read -r patch expected; do
+      default_context "$home" "$patch"
+      cp "$home/data/backlog.md" "$home/before"
+      if hold_default "$home" sample-refused 2>"$home/err"; then fail "ineligible hour default accepted: $patch"; fi
+      assert_grep "$expected" "$home/err" "wrong refusal for: $patch"
+      cmp "$home/before" "$home/data/backlog.md" || fail "refused hour default changed the backlog: $patch"
+    done <<'CASES'
+. + {scope:["copy"],default_eligible:"small-reversible",default_at:"2026-07-21T11:59:59Z"}|at least 24 hours after
+. + {scope:["copy"],default_eligible:"small-reversible",default_at:"2026-07-21 12:00"}|exactly one of default_date
+. + {scope:["copy"],default_eligible:"small-reversible",default_at:"2026-07-22T12:00:00Z",default_date:"2026-08-01"}|exactly one of default_date
+. + {scope:["outward-facing"],default_eligible:"small-reversible",default_at:"2026-07-22T12:00:00Z"}|can never carry a deadline default
+. + {scope:["copy"],default_eligible:"small-reversible",default_at:"2026-07-22T12:00:00Z",options:[{value:"go",label:"Publish the page",detail:"Puts it live for everyone."},{value:"wait",label:"Wait",detail:"Keeps it."}]}|can never carry this effect (publish)
+. + {scope:["product"],default_eligible:"small-reversible",default_date:"2026-08-01",options:[{value:"go",label:"Go",detail:"Merges the branch today."},{value:"wait",label:"Wait",detail:"Keeps it."}]}|can never carry this effect (merges)
+. + {scope:["copy"],default_eligible:"small-reversible",default_date:"2026-08-01",question:"Send the new email to every customer?"}|can never carry this effect
+CASES
+    # A stored outward-facing effect written past the refusal never comes due.
+    stored=$(default_context "$home" "$DEFAULT_AT_OK" && jq -cS '.options[0].label = "Send it to customers" | . + {lifecycle:"2026-07-14T12:00:00Z#0"}' "$home/context.json")
+    {
+      printf '## In flight\n\n## Queued\n- [ ] sample-forged - Forged (repo: sample) (hold: choose) (hold-kind: captain)\n'
+      printf '  Captain hold set: 2026-07-14T12:00:00Z\n  Captain question context: %s\n\n## Done\n' "$stored"
+    } > "$home/data/backlog.md"
+    run_captain "$home" open sample-forged >/dev/null || fail "forged effect fixture is not an open call"
+    [ -z "$(FM_CAPTAIN_HOLD_NOW=2030-01-01T00:00:00Z run_captain "$home" defaults-due)" ] \
+      || fail "an outward-facing recommendation came due"
+    if FM_CAPTAIN_HOLD_NOW=2030-01-01T00:00:00Z run_captain "$home" answer sample-forged --deadline-default >/dev/null 2>&1; then
+      fail "an outward-facing recommendation was applied by default"
+    fi
+    pass "hour defaults refuse short, malformed or doubled deadlines, and outward effects never come due"
+  ) || exit 1
+}
+
+test_stop_clock_ends_the_default_for_this_lifecycle() {
+  (
+    local home out show
+    home=$(make_home default-stop)
+    default_context "$home" "$DEFAULT_AT_OK"
+    hold_default "$home" sample-stop || fail "eligible hour default refused"
+    if run_captain "$home" stop-clock sample-stop >/dev/null 2>&1; then fail "stop-clock ran without provenance"; fi
+    out=$(FM_CAPTAIN_HOLD_NOW=2026-07-20T13:00:00Z run_captain "$home" stop-clock sample-stop --source "captain on the Bridge") \
+      || fail "stop-clock failed"
+    [ "$out" = 'stopped: sample-stop' ] || fail "stop-clock output: $out"
+    out=$(FM_CAPTAIN_HOLD_NOW=2026-07-20T14:00:00Z run_captain "$home" stop-clock sample-stop --source "again") \
+      || fail "a repeated stop-clock failed"
+    assert_contains "$out" 'already, at 2026-07-20T13:00:00Z' "repeated stop-clock was not idempotent"
+    [ "$(grep -c 'Captain deadline default stopped:' "$home/data/backlog.md")" = 1 ] || fail "repeated stop wrote a second line"
+    [ -z "$(FM_CAPTAIN_HOLD_NOW=2030-01-01T00:00:00Z run_captain "$home" defaults-due)" ] || fail "a stopped clock came due"
+    if FM_CAPTAIN_HOLD_NOW=2030-01-01T00:00:00Z run_captain "$home" answer sample-stop --deadline-default >/dev/null 2>&1; then
+      fail "a stopped default was applied"
+    fi
+    # The call stays answerable by the captain through the guarded path.
+    printf 'Wait for the legal team.\n' > "$home/decision"
+    run_captain "$home" answer sample-stop --decision-file "$home/decision" \
+      --expected-lifecycle "$(run_captain "$home" open sample-stop --identity)" >/dev/null \
+      || fail "a stopped call could not be answered"
+    show=$(tasks_in "$home" show sample-stop --full)
+    assert_contains "$show" 'Captain decision:' "answer after stop lost its label"
+    assert_contains "$show" 'Captain deadline default stopped: 2026-07-20T12:00:00Z#0 at 2026-07-20T13:00:00Z by captain on the Bridge' \
+      "the stop record was lost"
+    # Refusals: no default to stop, closed call.
+    default_context "$home" '.'
+    hold_default "$home" sample-nodefault || fail "plain hold refused"
+    if run_captain "$home" stop-clock sample-nodefault --source x >/dev/null 2>"$home/err"; then fail "stopped a call without a default"; fi
+    assert_grep 'carries no deadline default' "$home/err" "no-default refusal did not explain itself"
+    if run_captain "$home" stop-clock sample-stop --source x >/dev/null 2>&1; then fail "stopped a closed call"; fi
+    pass "stop-clock ends a deadline default for its lifecycle and leaves the captain's answer path intact"
+  ) || exit 1
+}
+
 test_active_call_may_gain_but_not_change_a_deadline_default() {
   (
     local home identity
@@ -5616,6 +5718,9 @@ test_deadline_default_refuses_ineligible_calls
 test_deadline_default_due_and_applied_as_not_the_captains_words
 test_captain_answer_wins_over_deadline_default
 test_deadline_default_respects_deferral_release_and_stored_rules
+test_hour_default_comes_due_on_the_minute_and_is_labelled
+test_hour_default_refusals_and_effect_check
+test_stop_clock_ends_the_default_for_this_lifecycle
 test_active_call_may_gain_but_not_change_a_deadline_default
 test_structured_context_keeps_origin_and_encoded_reason
 test_reholding_expired_context_preserves_history_not_authority

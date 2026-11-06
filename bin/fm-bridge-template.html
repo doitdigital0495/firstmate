@@ -74,6 +74,10 @@ textarea { min-height: 64px; resize: vertical; }
 details.group { margin: 6px 0 10px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--bg-raised); }
 details.group > summary { padding: 8px 12px; cursor: pointer; color: var(--text); }
 details.group > div { padding: 2px 10px 4px; }
+.clock { margin: 6px 0 2px; padding: 6px 8px; border-radius: 8px; background: var(--bg-inset); border: 1px dashed var(--gold); font-size: 0.86rem; }
+.clock.held { border-color: var(--line); color: var(--text-muted); }
+.parked { margin: 4px 0; padding-left: 18px; font-size: 0.88rem; }
+.parked li { margin: 3px 0; }
 .sources { margin-top: 26px; font-size: 0.82rem; color: var(--text-faint); }
 .sources li { margin: 2px 0; }
 .sources .bad { color: var(--rust); }
@@ -166,6 +170,35 @@ __FM_BRIDGE_DATA__
   stat("", (counts.relayed || 0) + (counts.moot || 0), "relayed or probably settled");
   root.appendChild(stats);
 
+  /* Desktop alerts: say plainly whether this page is the only signal. */
+  (function () {
+    var a = data.alerts;
+    if (!a) return;
+    var b;
+    function stepWords(list) {
+      var words = (list || []).map(function (sec) { return sec === 0 ? "arrival" : ago(sec); });
+      return words.length > 1 ? words.slice(0, -1).join(", ") + " and " + words[words.length - 1] : (words[0] || "arrival");
+    }
+    if (!a.configured) {
+      b = el("div", "banner", "Desktop alerts are not set up, so this page is the only place new questions show. Firstmate can switch them on.");
+    } else if (a.problem) {
+      b = el("div", "banner bad", "Desktop alerts are off because their settings could not be read (" + a.problem + "). Only this page shows new questions.");
+    } else if (!(a.channels || []).length || (a.channels || []).indexOf("off") >= 0) {
+      b = el("div", "banner", "Desktop alerts are switched off, so this page is the only place new questions show.");
+    } else {
+      var text = "Desktop alerts are on (" + a.channels.join(", ") + "): one when a question for you arrives and again at " + stepWords((a.steps || []).filter(function (x) { return x > 0; })) + ".";
+      var bad = false;
+      if (a.last && a.last.epoch) {
+        text += " Last alert " + ago(nowSec() - a.last.epoch) + " ago: " + a.last.text;
+        if ((a.last.failed || []).length) { text += " It could not be delivered through " + a.last.failed.join(", ") + "."; bad = true; }
+        else if (!a.last.tried) { text += " No desktop channel works on this computer, so it was shown here only."; bad = true; }
+      }
+      b = el("div", "banner" + (bad ? " warn" : ""), text);
+    }
+    b.setAttribute("data-alerts", "1");
+    root.appendChild(b);
+  })();
+
   if (counts.unregistered > 0) {
     root.appendChild(el("div", "banner warn", counts.unregistered === 1
       ? "1 question from the crew has no question card for you yet. It waits on Firstmate, who answers it or turns it into a card; you may answer it here too."
@@ -205,11 +238,72 @@ __FM_BRIDGE_DATA__
       bl.appendChild(document.createTextNode(waits.length ? waits.join("; ") + ((q.blocks || []).length > 5 ? "; and " + ((q.blocks.length) - 5) + " more" : "") : q.blocks_text));
       c.appendChild(bl);
     }
-    if (q.default_date) c.appendChild(el("p", "hint", "If unanswered, Firstmate goes ahead with the recommended option after " + q.default_date + ", marked as not your words."));
+    if (q.default) c.appendChild(clock(q, c));
+    if (q.who !== "you" && !q.group && age !== null && age >= 900) {
+      var waitOn = q.who === "firstmate" ? "Firstmate" : (q.home || "a secondmate");
+      meta.appendChild(el("span", "chip flag", "Waiting on " + waitOn + " " + ago(age)));
+      c.appendChild(actionButton(q, c, "nudge", "Nudge Firstmate",
+        "Nudge queued: Firstmate is asked to settle this now.",
+        "Bridge nudge " + q.ask + " (route with fm-bridge.sh route " + q.ask + "): the captain asks Firstmate to settle this question now - " + q.question));
+    }
     if (q.away_note) c.appendChild(el("p", "hint", q.away_note));
     if (q.answer_note) c.appendChild(el("p", "err", q.answer_note));
     if (q.answer !== "none") c.appendChild(answerForm(q, c));
     return c;
+  }
+
+  /* A deadline default as the captain reads it: a countdown with a way to stop
+     it, or why this question can never go ahead without an answer. */
+  function clock(q, c) {
+    var d = q.default, box;
+    if (d.state === "pending" && d.due_epoch) {
+      var left = d.due_epoch - nowSec();
+      box = el("div", "clock");
+      box.appendChild(el("p", "hint", left > 0
+        ? "Goes ahead with the recommended answer (" + (d.label || "recommended") + ") in " + ago(left) + ", marked as not your words, unless you answer first."
+        : "Due now: Firstmate goes ahead with the recommended answer (" + (d.label || "recommended") + ") at its next check, marked as not your words, unless you answer first."));
+      box.appendChild(actionButton(q, c, "stop-clock", "Stop the clock",
+        "Stop queued: Firstmate stops the clock, and this waits for your answer.",
+        "Bridge stop the clock " + q.ask + " (route with fm-bridge.sh route " + q.ask + "): the captain wants no default for this question - " + q.question));
+      return box;
+    }
+    box = el("div", "clock held");
+    if (d.state === "stopped") box.textContent = "You stopped the clock: this waits for your answer.";
+    else if (d.state === "blocked") box.textContent = "Cannot go ahead without you: the recommended answer would " + (d.reason ? "touch " + d.reason : "need your approval") + ".";
+    else if (d.state === "never") box.textContent = "Cannot go ahead without you: this is " + (d.reason || "a call only you can make") + ".";
+    else box.textContent = "Waits for your answer.";
+    return box;
+  }
+
+  /* One queued request (nudge, stop the clock) for Firstmate, kept across a
+     live reload like an answer, keyed to the card's ask id. */
+  function actionButton(q, c, action, label, doneWords, prompt) {
+    var wrap = el("div", "foot");
+    var btn = el("button", "btn quiet", label);
+    btn.type = "button";
+    btn.setAttribute("data-action", action);
+    var status = el("span", "hint");
+    status.setAttribute("role", "status");
+    var kept = document.createElement("input");
+    kept.type = "hidden"; kept.name = action; kept.value = "";
+    wrap.appendChild(btn); wrap.appendChild(status); wrap.appendChild(kept);
+    var stamp = String(q.ask || "");
+    function sync() {
+      var on = String(kept.value || "") === stamp && stamp !== "";
+      btn.hidden = on;
+      status.className = on ? "done" : "hint";
+      if (on) status.textContent = doneWords;
+    }
+    syncers.push(sync);
+    btn.addEventListener("click", function () {
+      if (!(window.lavish && window.lavish.queuePrompt)) { status.className = "err"; status.textContent = "This only works when the board is open in Lavish."; return; }
+      var schema = action === "nudge" ? "fm-bridge-nudge.v1" : "fm-bridge-stop-clock.v1";
+      window.lavish.queuePrompt(prompt, { tag: "choice", text: label + ": " + q.question, element: wrap, data: { schema: schema, ask: q.ask } });
+      kept.value = stamp;
+      announce(kept);
+      sync();
+    });
+    return wrap;
   }
 
   function answerForm(q, c) {
@@ -331,6 +425,30 @@ __FM_BRIDGE_DATA__
   var homes = [];
   sm.forEach(function (q) { if (homes.indexOf(q.home) < 0) homes.push(q.home); });
   homes.forEach(function (h) { section("Waiting on " + (h || "a secondmate"), sm.filter(function (q) { return q.home === h; }), ""); });
+
+  /* Parked work: everything that cannot move until a question is answered. */
+  var parked = [];
+  asks.forEach(function (q) {
+    if (q.group) return;
+    var age = q.asked_epoch ? ago(nowSec() - q.asked_epoch) : "unknown time";
+    var who = q.who === "you" ? "you" : (q.who === "firstmate" ? "Firstmate" : (q.home || "a secondmate"));
+    if (q.verb === "blocked") parked.push({ what: q.asker || "A task", q: q, who: who, age: age });
+    (q.blocks || []).forEach(function (b) { parked.push({ what: b, q: q, who: who, age: age }); });
+    if (!(q.blocks || []).length && q.blocks_text) parked.push({ what: q.blocks_text, q: q, who: who, age: age });
+  });
+  if (parked.length) {
+    var pd = el("details", "group");
+    pd.appendChild(el("summary", "", "Parked until a question is answered (" + parked.length + ")"));
+    var pl = el("ul", "parked");
+    parked.forEach(function (p) {
+      var li = el("li");
+      li.appendChild(el("b", "", p.what));
+      li.appendChild(document.createTextNode(" waits on " + p.who + " for " + p.age + ": " + p.q.question));
+      pl.appendChild(li);
+    });
+    pd.appendChild(pl);
+    root.appendChild(pd);
+  }
 
   var src = el("div", "sources");
   src.appendChild(el("b", "", "Sources: " + (data.sources ? data.sources.ok + " of " + data.sources.total + " read" : "unknown")));

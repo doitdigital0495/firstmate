@@ -424,6 +424,179 @@ test_watcher_tick() {
   pass "a running watcher keeps an enabled Bridge published"
 }
 
+# A recorder standing in for every desktop channel: one line per alert.
+alert_recorder() {  # <home> -> recorder path
+  cat > "$1/alert-recorder" <<'SH'
+#!/usr/bin/env bash
+printf '%s|%s\n' "$1" "$2" >> "${0%/*}/alerts.log"
+SH
+  chmod +x "$1/alert-recorder"
+  printf '%s\n' "$1/alert-recorder"
+}
+alert_count() { if [ -f "$1/alerts.log" ]; then wc -l < "$1/alerts.log" | tr -d ' '; else printf '0\n'; fi; }
+build_at() {  # <home> <alert-now-epoch>
+  in_home "$1" env FM_BRIDGE_ALERT_EXEC="$1/alert-recorder" FM_BRIDGE_ALERT_NOW="$2" "$BRIDGE" build >/dev/null \
+    || fail "build failed at $2"
+}
+
+test_alerts_fire_once_per_step() {
+  local home t0 set out
+  home=$(make_home alerts)
+  printf '%s\n' "$ENABLED" > "$home/config/bridge.json"
+  alert_recorder "$home" >/dev/null
+  t0=$(( $(date +%s) - 120 ))
+  set=$(date -u -d "@$t0" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$t0" +%Y-%m-%dT%H:%M:%SZ)
+  tasks_in "$home" add ws-colour "Pick the banner colour" --repo web-shop --kind captain
+  in_home "$home" env FM_CAPTAIN_HOLD_NOW="$set" "$ROOT/bin/fm-captain-hold.sh" hold ws-colour \
+    --reason "Secret plan: blue or green banner?" >/dev/null || fail "could not hold the question"
+
+  # No config: nothing fires and the page says it is the only signal.
+  build_at "$home" "$((t0 + 60))"
+  [ "$(alert_count "$home")" = 0 ] || fail "an alert fired with no config/bridge-alerts"
+  check "$(render "$home")" '.banners | any(test("Desktop alerts are not set up"))' "the page did not say alerts are not set up"
+
+  # An invalid config turns every channel off and says why.
+  printf 'herdr\nsteps 0 4x\n' > "$home/config/bridge-alerts"
+  build_at "$home" "$((t0 + 60))"
+  [ "$(alert_count "$home")" = 0 ] || fail "an invalid alert config still fired"
+  check "$(render "$home")" '.banners | any(test("settings could not be read.*4x"))' "an invalid alert config was not named"
+
+  # A valid config: one alert on arrival, one per later step, never a repeat.
+  printf '# desktop alerts\nherdr\nsteps 0 4h 24h\n' > "$home/config/bridge-alerts"
+  build_at "$home" "$((t0 + 60))"
+  [ "$(alert_count "$home")" = 1 ] || fail "arrival did not fire exactly one alert: $(cat "$home/alerts.log" 2>/dev/null)"
+  build_at "$home" "$((t0 + 600))"
+  [ "$(alert_count "$home")" = 1 ] || fail "a second build in the same step fired again"
+  build_at "$home" "$((t0 + 4 * 3600 + 60))"
+  [ "$(alert_count "$home")" = 2 ] || fail "the 4 h step did not fire exactly once"
+  build_at "$home" "$((t0 + 5 * 3600))"
+  [ "$(alert_count "$home")" = 2 ] || fail "the 4 h step fired twice"
+  build_at "$home" "$((t0 + 24 * 3600 + 60))"
+  [ "$(alert_count "$home")" = 3 ] || fail "the 24 h step did not fire exactly once"
+  build_at "$home" "$((t0 + 48 * 3600))"
+  [ "$(alert_count "$home")" = 3 ] || fail "an alert fired past the last step"
+  out=$(cat "$home/alerts.log")
+  assert_contains "$out" "herdr|1 question waits for you" "the alert did not go to the configured channel with a count"
+  printf '%s' "$out" | grep -qiE 'secret|banner|colour' && fail "alert text carried question text: $out"
+  check "$(render "$home")" '.banners | any(test("Desktop alerts are on \\(herdr\\).*arrives and again at 4 h and 24 h.*Last alert"))' \
+    "the page did not show the alert channel, steps and last alert"
+
+  # A question first seen past a step fires once, not once per step it skipped.
+  tasks_in "$home" add ws-font "Pick the heading font" --repo web-shop --kind captain
+  in_home "$home" env FM_CAPTAIN_HOLD_NOW="$set" "$ROOT/bin/fm-captain-hold.sh" hold ws-font --reason "Serif or sans?" >/dev/null \
+    || fail "could not hold the second question"
+  build_at "$home" "$((t0 + 48 * 3600 + 60))"
+  [ "$(alert_count "$home")" = 4 ] || fail "a late-seen question did not fire exactly one alert"
+  assert_contains "$(tail -n 1 "$home/alerts.log")" "2 questions wait for you, oldest 2 days" "the alert count or age is wrong"
+
+  # `off` silences every channel.
+  printf 'off\nherdr\n' > "$home/config/bridge-alerts"
+  rm -f "$home/state/bridge/alerts.json"
+  build_at "$home" "$((t0 + 60))"
+  [ "$(alert_count "$home")" = 4 ] || fail "an off directive still fired"
+  check "$(render "$home")" '.banners | any(test("switched off"))' "the page did not say alerts are switched off"
+  pass "a desktop alert fires once per age step per question, carries no question text, and the page shows its state"
+}
+
+test_deadline_clock_on_the_card() {
+  local home now set due_set out ask_soon ask_stop ask_out show
+  home=$(make_home clock)
+  printf '%s\n' "$ENABLED" > "$home/config/bridge.json"
+  now=$(date +%s)
+  # Held 23 h 59 min ago with the earliest allowed default, 24 h after the hold:
+  # a one-minute test clock.
+  set=$(date -u -d "@$((now - 86340))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$((now - 86340))" +%Y-%m-%dT%H:%M:%SZ)
+  due_set=$(date -u -d "@$((now + 60))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$((now + 60))" +%Y-%m-%dT%H:%M:%SZ)
+  for id in ws-soon ws-stop; do
+    tasks_in "$home" add "$id" "Pick the button label" --repo web-shop --kind captain
+    jq -n --arg at "$due_set" '{schema:"fm-captain-question.v1",close:"done",
+      about:"The shop button needs a label.",purpose:"Your pick sets the label; until then the old one stays.",
+      question:"Which button label?",
+      options:[{value:"order",label:"Order now",detail:"Short and clear, which is why it is recommended."},
+               {value:"buy",label:"Add to basket",detail:"Longer."}],
+      recommendation:"order",scope:["copy"],default_eligible:"small-reversible",default_at:$at}' > "$home/ctx.json"
+    in_home "$home" env FM_CAPTAIN_HOLD_NOW="$set" "$ROOT/bin/fm-captain-hold.sh" hold "$id" --reason "Pick a label." \
+      --context-file "$home/ctx.json" >/dev/null || fail "could not hold $id with an hour default"
+  done
+  tasks_in "$home" add ws-out "Tell customers about the sale" --repo web-shop --kind captain
+  jq '.scope = ["outward-facing"] | del(.default_eligible, .default_at)' "$home/ctx.json" > "$home/ctx-out.json"
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-out --reason "Mail customers?" --context-file "$home/ctx-out.json" >/dev/null \
+    || fail "could not hold the outward-facing question"
+  in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
+  ask_soon=$(ask_for "$home" '.task == "ws-soon"')
+  ask_stop=$(ask_for "$home" '.task == "ws-stop"')
+  ask_out=$(ask_for "$home" '.task == "ws-out"')
+  check "$(feed "$home" '[.asks[] | select(.task == "ws-soon") | .default][0]')" \
+    '.state == "pending" and .due_epoch == '"$((now + 60))"' and .label == "Order now"' "the card did not carry the countdown"
+  out=$(render "$home" "$now")
+  check "$out" '(.cards["'"$ask_soon"'"].text | test("Goes ahead with the recommended answer \\(Order now\\) in 60 s, marked as not your words"))
+    and (.cards["'"$ask_out"'"].text | test("Cannot go ahead without you: this is outward-facing"))' \
+    "the page did not show the countdown or why a call cannot default"
+
+  # Stop the clock: the page queues a request for Firstmate, route names the verb.
+  out=$(render "$home" "$now" "@$ask_stop:stop-clock")
+  check "$out" '.queued[0].data == {schema:"fm-bridge-stop-clock.v1", ask:"'"$ask_stop"'"}
+    and (.cards["'"$ask_stop"'"].text | test("Stop queued"))' "stop the clock did not queue its request"
+  capture "$TMP_ROOT/stop.result" "$(printf '%s' "$out" | jq -c '.queued')"
+  [ -z "$(in_home "$home" "$ROOT/bin/fm-procevent-lavish.sh" answers "$TMP_ROOT/stop.result" 2>/dev/null)" ] \
+    || fail "a stop request was handed to the captain-hold intake as an answer"
+  out=$(in_home "$home" "$BRIDGE" route "$ask_stop") || fail "route refused a current hold"
+  assert_contains "$out" "stop-clock: bin/fm-captain-hold.sh stop-clock ws-stop" "route did not name the stop-clock verb"
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" stop-clock ws-stop --source "captain on the Bridge" >/dev/null \
+    || fail "stop-clock refused a pending default"
+  in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
+  ask_stop=$(ask_for "$home" '.task == "ws-stop"')
+  check "$(render "$home" "$now")" '.cards["'"$ask_stop"'"].text | test("You stopped the clock")' "a stopped clock was not shown"
+
+  # One minute later only the running clock is due, and it applies as not the captain's words.
+  out=$(in_home "$home" env FM_CAPTAIN_HOLD_NOW="$(date -u -d "@$((now + 120))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$((now + 120))" +%Y-%m-%dT%H:%M:%SZ)" \
+    "$ROOT/bin/fm-captain-hold.sh" defaults-due)
+  [ "$(printf '%s\n' "$out" | cut -f1)" = ws-soon ] || fail "defaults-due did not list exactly the running clock: $out"
+  in_home "$home" env FM_CAPTAIN_HOLD_NOW="$(date -u -d "@$((now + 120))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$((now + 120))" +%Y-%m-%dT%H:%M:%SZ)" \
+    "$ROOT/bin/fm-captain-hold.sh" answer ws-soon --deadline-default >/dev/null || fail "the due default could not be applied"
+  show=$(cd "$home" && tasks-axi show ws-soon --full)
+  assert_contains "$show" "Deadline default (not the captain's words):" "the applied default is not labelled"
+  in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
+  check "$(feed "$home" '[.asks[].task]')" 'index("ws-soon") == null and index("ws-stop") != null and index("ws-out") != null' \
+    "the applied default did not leave the board, or another call left with it"
+  pass "a card counts down to its default, stops on request, and says why a call can never default"
+}
+
+test_nudge_and_parked_work() {
+  local home now out old young
+  home=$(make_home nudge)
+  printf '%s\n' "$ENABLED" > "$home/config/bridge.json"
+  worker "$home" w1
+  worker "$home" w2
+  now=$(date +%s)
+  printf 'blocked [key=db] [at=%s]: Which database host? | A: Old host | B: New host | rec=B\n' "$((now - 1200))" > "$home/state/w1.status"
+  printf 'needs-decision [key=tone] [at=%s]: Formal or casual tone?\n' "$((now - 300))" > "$home/state/w2.status"
+  tasks_in "$home" add ws-carrier "Which carrier?" --repo web-shop --kind captain
+  tasks_in "$home" add ws-ship "Ship the spring orders" --repo web-shop --kind ship --blocked-by ws-carrier
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --reason "Pick a carrier." >/dev/null || fail "could not hold"
+  in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
+  old=$(ask_for "$home" '.route.key == "db"')
+  young=$(ask_for "$home" '.route.key == "tone"')
+  out=$(render "$home" "$now")
+  check "$out" '(.cards["'"$old"'"].text | test("Waiting on Firstmate 20 min") and test("Nudge Firstmate"))
+    and (.cards["'"$young"'"].text | test("Waiting on Firstmate|Nudge") | not)' \
+    "a question past 15 minutes did not offer a nudge, or a young one did"
+  check "$out" '.text | test("Parked until a question is answered \\(2\\)") and test("Ship the spring orders waits on you")
+    and test("w1 waits on Firstmate for 20 min: Which database host\\?")' "the parked-work list is wrong"
+  out=$(render "$home" "$now" "@$old:nudge")
+  check "$out" '.queued == [.queued[0]] and .queued[0].data == {schema:"fm-bridge-nudge.v1", ask:"'"$old"'"}
+    and (.queued[0].prompt | test("fm-bridge.sh route '"$old"'")) and (.cards["'"$old"'"].text | test("Nudge queued"))' \
+    "a nudge did not queue one routed request"
+  capture "$TMP_ROOT/nudge.result" "$(printf '%s' "$out" | jq -c '.queued')"
+  [ -z "$(in_home "$home" "$ROOT/bin/fm-procevent-lavish.sh" answers "$TMP_ROOT/nudge.result" 2>/dev/null)" ] \
+    || fail "a nudge was handed to the captain-hold intake as an answer"
+  out=$(render "$home" "$now" "!nolavish" "@$old:nudge")
+  check "$out" '.queued == [] and (.cards["'"$old"'"].text | test("only works when the board is open in Lavish"))' \
+    "a nudge without Lavish did not explain itself"
+  pass "a question waiting on Firstmate past 15 minutes offers a routed nudge, and parked work is listed"
+}
+
 fm_test_run test_config_gate test_keyed_question_lifecycle test_hold_answer_path \
   test_secondmate_export_and_names test_never_falsely_green test_redaction_and_escaping \
-  test_digest_and_bounds test_incremental_reads test_refresh_retention test_watcher_tick
+  test_digest_and_bounds test_incremental_reads test_refresh_retention test_watcher_tick \
+  test_alerts_fire_once_per_step test_deadline_clock_on_the_card test_nudge_and_parked_work

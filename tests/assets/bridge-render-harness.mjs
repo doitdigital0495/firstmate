@@ -5,6 +5,8 @@
 // Usage: node bridge-render-harness.mjs <bridge.html> [now-epoch] [spec...]
 // A spec `<ask-id>=<option-value>[:<note>]` (empty value for a note-only
 // answer) fills that card's form and submits it with window.lavish present;
+// a spec `@<ask-id>:<action>` clicks that card's button carrying
+// data-action=<action> (nudge, stop-clock);
 // `!nolavish` (first) runs the page without window.lavish.
 // Prints one JSON document:
 //   { fresh, stale, staleBanner, banners:[text], stats:[text],
@@ -86,6 +88,15 @@ const root = ids.root;
 const cardOf = (ask) => { let hit = null; root.walk((n) => { if (n.tagName === "article" && n.getAttribute("data-ask") === ask) hit = n; }); return hit; };
 for (const spec of specs) {
   if (spec.startsWith("!")) continue;
+  if (spec.startsWith("@")) {
+    const [ask, action] = spec.slice(1).split(":");
+    const c = cardOf(ask);
+    if (!c) { console.error("no card " + ask); process.exit(3); }
+    const btn = c.querySelectorAll("button").find((b) => b.getAttribute("data-action") === action && !b.hidden);
+    if (!btn) { console.error("no " + action + " button on " + ask); process.exit(4); }
+    btn.dispatchEvent(new Ev("click"));
+    continue;
+  }
   const at = spec.indexOf("=");
   const ask = spec.slice(0, at);
   let rest = spec.slice(at + 1), note = "";

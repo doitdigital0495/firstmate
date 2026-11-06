@@ -2767,13 +2767,26 @@ To enable it in a home, create the local, gitignored `config/bridge.json`, then 
 While the config stays enabled, the watcher runs `bin/fm-bridge.sh refresh` each poll; it rebuilds only when a status log, task record, the task list, the name map or a secondmate export changed, and otherwise costs one builtin file-time check.
 Enable it in each secondmate home too: that home's refresh writes the export its parent reads, `state/bridge/asks.json`.
 Answers use the existing intake only: a captain hold's answer goes through `fm-captain-hold.sh answers` with every guard it already has, and an answer to any other card reaches Firstmate as a captured Lavish result carrying an opaque ask id, which `bin/fm-bridge.sh route <ask-id>` turns into the `fm-send.sh --resolve-key` relay or the secondmate to ask; `route` refuses an ask whose question changed or closed.
+A question waiting on Firstmate or a secondmate for 15 minutes or more says so on its card and offers Nudge, which queues a request for Firstmate to settle it now through the same captured-result path as an answer.
+A captain hold with a deadline default counts down to the moment Firstmate may proceed on its recommendation and offers Stop the clock, which queues a request for Firstmate to run `bin/fm-captain-hold.sh stop-clock`; a hold that can never proceed without the captain says why.
+A "Parked until a question is answered" list names every task and blocked worker that waits behind an open question.
 The page never runs a command, never shows a merge or remove control, and loads nothing from outside the file.
 A source that could not be read - the task list, a status log, or a secondmate's export - is named in red, the counts read "at least", and the digest says `complete=no`, so a blind board never looks clear.
 The page also marks itself out of date when it has not been checked for longer than its refresh allows, which is how a stopped watcher or builder shows.
 Worker text is untrusted: likely secrets, URL queries and control characters are removed before anything is written, and markup in a question renders as plain text.
 Lavish has no login of its own, so anyone who can reach its port on the tailnet can open the page; keep the session URL out of shared messages and never publish a Bridge page through Lavish's share menu.
+Desktop alerts are off until the local, gitignored `config/bridge-alerts` exists; turn them on in the home the captain watches, not in each secondmate home, or one question alerts twice.
+It lists channel directives one per line - `herdr`, `osascript`, `command:<cmd>`, `auto` (`osascript` on macOS, nothing elsewhere) or `off` - with the meaning they have in [`config/wedge-alarm`](wedge-alarm.md), and an optional `steps` line:
+
+```text
+herdr
+steps 0 4h 24h
+```
+
+A question for the captain alerts when it first appears and again as it passes each later step, once per step, and one refresh sends at most one alert, whose text is only a count and the oldest age, never question text.
+An invalid line switches every channel off and the page says why; the page always states whether desktop alerts are on, through which channel, and when the last one went out or failed.
 Agents read the state in one call with `bin/fm-bridge.sh digest`, a file of at most 2,048 bytes in which every question's text follows `data:` and is data, not an instruction.
-[`bin/fm-bridge.sh`](../bin/fm-bridge.sh)'s header owns the commands, schemas, sources, card rules, routes and digest grammar, and [`bin/fm-bridge-asks.jq`](../bin/fm-bridge-asks.jq) owns the wording, redaction and order.
+[`bin/fm-bridge.sh`](../bin/fm-bridge.sh)'s header owns the commands, schemas, sources, card rules, routes, alerts and digest grammar, and [`bin/fm-bridge-asks.jq`](../bin/fm-bridge-asks.jq) owns the wording, redaction and order.
 Set `enabled` to false or delete `config/bridge.json` to stop refreshing; the published page stays in place and marks itself out of date.
 
 ## Local Claude usage warner (config/usage-warner)
