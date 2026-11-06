@@ -290,6 +290,30 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/plan-review-gate/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/plan-review-gate/references/buildable.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/plan-review-gate/references/claims.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/plan-review-gate/references/coldread.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/plan-review-gate/references/reuse.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/plan-review-gate/references/reviewer-contract.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/process-event-sources/SKILL.md",
       "audience": "agent-runtime"
     },
