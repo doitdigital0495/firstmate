@@ -184,6 +184,13 @@ beacon_desc=$FM_SUP_BEACON_DESC
 fm_watcher_supervision_verdict "$STATE" "$WATCH" "$GRACE" "$FM_HOME" "$FM_ROOT"
 watcher_healthy=$FM_WATCHER_VERDICT_OK
 watcher_down_reason=$FM_WATCHER_VERDICT_REASON
+# The opt-in Bridge normally refreshes from the watcher's poll; while that
+# watcher is down, guarded commands keep it current instead (detached, silent,
+# and a no-op unless config/bridge.json exists).
+if [ "$watcher_healthy" = false ] && [ "$READ_ONLY" -eq 0 ] && [ -e "$CONFIG/bridge.json" ]; then
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+    "$SCRIPT_DIR/fm-bridge.sh" refresh </dev/null >/dev/null 2>&1 &
+fi
 if [ "$needed" = false ]; then
   # Leave the unhealthy state (nothing riding on the watcher): clear so a later
   # work or X-mode need + stale combination is a fresh episode even if the

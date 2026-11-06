@@ -12,7 +12,7 @@
 //   { fresh, stale, staleBanner, banners:[text], stats:[text],
 //     sections:[{title, count, asks:[id]}], groups:[{title, asks:[id]}],
 //     cards:{<ask>:{text, queued, status}}, text, queued:[{prompt, tag, text, data}],
-//     sources:text }
+//     sources:text, fleet:{homes:[{label, open, text}], rows:[{title, flags, text}], banners:[text], text} }
 import { readFileSync } from "node:fs";
 
 const [file, nowArg, ...specs] = process.argv.slice(2);
@@ -143,6 +143,17 @@ root.walk((n) => {
   if (n.tagName !== "article") return;
   const status = n.querySelectorAll("span").filter((s) => s.getAttribute("role") === "status").map((s) => s.textContent).join("");
   out.cards[n.getAttribute("data-ask")] = { text: visible(n), queued: /is-queued/.test(n.className), status };
+});
+out.fleet = { homes: [], rows: [], banners: [], text: "" };
+root.walk((n) => {
+  if (n.tagName === "section" && /\bfleet\b/.test(n.className)) {
+    out.fleet.text = visible(n);
+    n.children.forEach((b) => { if (b.tagName === "div" && /\bbanner\b/.test(b.className) && !b.hidden) out.fleet.banners.push(visible(b)); });
+  }
+  if (n.getAttribute && n.getAttribute("data-home") !== null) out.fleet.homes.push({ label: n.getAttribute("data-home"), open: !!n.open, text: visible(n) });
+  if (n.getAttribute && n.getAttribute("data-row") !== null) {
+    out.fleet.rows.push({ title: n.getAttribute("data-row"), flags: (n.getAttribute("data-flags") || "").split(",").filter(Boolean), text: visible(n) });
+  }
 });
 out.text = ids.fresh.textContent + " " + visible(root);
 process.stdout.write(JSON.stringify(out) + "\n");

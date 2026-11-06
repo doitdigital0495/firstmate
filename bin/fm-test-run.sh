@@ -1903,7 +1903,7 @@ families_for_changed_path() {
     bin/fm-live-board.sh|bin/fm-live-board-template.html|bin/fm-live-board-projects.jq)
       printf '%s\n' __script__:fm-live-board.test.sh
       ;;
-    bin/fm-bridge.sh|bin/fm-bridge-template.html|bin/fm-bridge-asks.jq|tests/assets/bridge-render-harness.mjs)
+    bin/fm-bridge.sh|bin/fm-bridge-template.html|bin/fm-bridge-asks.jq|bin/fm-bridge-fleet.sh|bin/fm-bridge-fleet.jq|tests/assets/bridge-render-harness.mjs)
       printf '%s\n' __script__:bridge.test.sh
       ;;
     bin/fm-live-board-prs.sh|bin/fm-live-board-prs.jq)
