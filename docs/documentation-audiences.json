@@ -178,6 +178,30 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/fmx-respond/references/attachments-and-voice.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/fmx-respond/references/authority-and-requests.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/fmx-respond/references/completion-follow-up.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/fmx-respond/references/notes-and-activation.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/fmx-respond/references/procedure.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/fmx-respond/references/promised-final.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/harness-adapters/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -287,6 +311,26 @@
     },
     {
       "path": ".agents/skills/stow/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/stow/references/knowledge-sweep.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/stow/references/memory-tiers.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/stow/references/offload.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/stow/references/receipt-and-cascade.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/stow/references/startup-memory-pass.md",
       "audience": "agent-runtime"
     },
     {
@@ -699,6 +743,14 @@
     },
     {
       "path": ".agents/skills/operational-home-layout/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/operational-home-layout/references/config.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/operational-home-layout/references/state.md",
       "audience": "agent-runtime"
     },
     {
