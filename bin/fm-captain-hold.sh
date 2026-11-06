@@ -26,6 +26,7 @@
 #   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release] [--expected-lifecycle <identity>]
 #   fm-captain-hold.sh answer <task-id> --deadline-default
 #   fm-captain-hold.sh defaults-due
+#   fm-captain-hold.sh stop-clock <task-id> --source <provenance>
 #   fm-captain-hold.sh contexts   (pure canonical-backlog JSON codec on stdin)
 #   fm-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
 #   fm-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
@@ -113,15 +114,33 @@
 # board marks it as needing a plain-language explanation.
 # DEADLINE DEFAULT: a context may also carry scope (a nonempty unique list from
 # product, copy, outward-facing, irreversible, money, security),
-# default_eligible (exactly "small-reversible") and default_date (YYYY-MM-DD).
-# The marker and the date come together, and they require a recommendation and
-# a scope of only product or copy; `hold` refuses anything else, including a
-# date that is not later than today unless that exact date is already published.
-# A stored context that breaks the rule reads as invalid, so it never comes due.
-# The date is the captain's last day to answer: the call comes due the UTC day
-# after it, and only while it is still open and not deferred to a later `--until`.
-# `defaults-due` lists those calls as
-# `<task-id>\t<date>\t<value>\t<label>\t<close>\t<title>` and changes nothing.
+# default_eligible (exactly "small-reversible") and exactly one deadline:
+# default_date (YYYY-MM-DD, day level) or default_at (YYYY-MM-DDTHH:MM:SSZ,
+# hour level). The marker and the deadline come together, and they require a
+# recommendation and a scope of only product or copy; `hold` refuses anything
+# else, including a default_date that is not later than today or a default_at
+# less than 24 hours after the hold-set stamp, unless that exact deadline is
+# already published. A stored context that breaks the rule reads as invalid, so
+# it never comes due.
+# EFFECT CHECK: independently of the declared scope, `hold` refuses a default
+# whose recommended option or question names an effect a default may never
+# carry (merging, pushing, publishing, sending, deleting, spending, access,
+# credentials, customers and the like; the word list lives in
+# fm_question_default_effect in bin/fm-captain-question-context.jq), and on
+# read such a call never comes due, so a self-labelled small call cannot
+# proceed without the captain. A false match only keeps the call waiting.
+# A default_date is the captain's last day to answer: the call comes due the
+# UTC day after it. A default_at comes due at that instant. Either way it is
+# due only while the call is still open, not deferred to a later `--until`, and
+# its clock was not stopped.
+# `stop-clock` stops this lifecycle's deadline default for good: it appends one
+# `Captain deadline default stopped: <lifecycle> at <stamp> by <provenance>`
+# line to the active header under the task-control lock, after which the call
+# never comes due and only an answer settles it. It is idempotent, needs an
+# open captain call whose active context carries a default, and a later hold
+# of the same task starts a new lifecycle the stop does not cover.
+# `defaults-due` lists due calls as
+# `<task-id>\t<deadline>\t<value>\t<label>\t<close>\t<title>` and changes nothing.
 # `answer --deadline-default` is the only way to apply one: it rechecks that the
 # call is due, generates the words itself, and records them through the same
 # guarded answer path under a label that says they are not the captain's. It uses
@@ -918,7 +937,7 @@ load_question_context() {  # <path>; sets QUESTION_CONTEXT
     fm_question_json_decode | fm_question_default_problem // "ok"' "$1" 2>/dev/null)" in
     marker) fail "a deadline default needs default_eligible set to exactly \"small-reversible\" together with default_date" ;;
     missing) fail "a deadline default needs all of recommendation, default_date and scope" ;;
-    date) fail "default_date must be a real YYYY-MM-DD date" ;;
+    date) fail "a deadline default needs exactly one of default_date (a real YYYY-MM-DD date) or default_at (a real YYYY-MM-DDTHH:MM:SSZ UTC time)" ;;
     excluded) fail "a call with outward-facing, irreversible, money or security scope can never carry a deadline default; it waits for the captain" ;;
     scope) fail "a deadline default is only for small reversible product or copy calls: scope may name only product or copy" ;;
   esac
@@ -936,6 +955,11 @@ load_question_context() {  # <path>; sets QUESTION_CONTEXT
     option) fail "every option needs a \"detail\" telling a non-technical manager what happens when he picks it" ;;
     *) fail "cannot check the question context's plain-language explanation" ;;
   esac
+  local effect
+  effect=$(printf '%s' "$QUESTION_CONTEXT" | jq -r -L "$SCRIPT_DIR" 'include "fm-captain-question-context";
+    if .default_eligible == null then "" else fm_question_default_effect // "" end') \
+    || fail "cannot check the deadline default's effect"
+  [ -z "$effect" ] || fail "a deadline default can never carry this effect ($effect); the call waits for the captain"
 }
 
 write_hold_set_stamp() {  # <id> <shown-body> <stamp> <preserve> [<normalized-context>]
@@ -1297,18 +1321,28 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
   printf '%s %s %s\n' "$id" "$how" "$origin_state"
 }
 
-# A default whose date already passed would apply before the captain ever saw it.
-# A repeat of the date already published on this active call is not a new promise.
+# A default whose deadline already passed would apply before the captain ever
+# saw it, so a day must be later than today and an hour stamp at least 24 hours
+# after the hold-set stamp. A repeat of the deadline already published on this
+# active call is not a new promise.
 require_future_default_date() {  # <hold-set> <preserve> <shown-body>; reads QUESTION_CONTEXT
-  local date published=''
+  local date at published=''
   [ -n "$QUESTION_CONTEXT" ] || return 0
   date=$(printf '%s' "$QUESTION_CONTEXT" | jq -r '.default_date // ""')
-  [ -n "$date" ] || return 0
+  at=$(printf '%s' "$QUESTION_CONTEXT" | jq -r '.default_at // ""')
+  [ -n "$date$at" ] || return 0
   if [ "$2" = 1 ]; then
-    published=$(context_for_body "$(decode_shown_value "$3")" | jq -r '.context.default_date // ""') || published=''
+    published=$(context_for_body "$(decode_shown_value "$3")" \
+      | jq -r '.context.default_date // .context.default_at // ""') || published=''
   fi
-  [ "$date" = "$published" ] || [[ "$date" > "${1%%T*}" ]] \
-    || fail "default_date must be later than today so the captain can see it first: $date"
+  if [ -n "$date" ]; then
+    [ "$date" = "$published" ] || [[ "$date" > "${1%%T*}" ]] \
+      || fail "default_date must be later than today so the captain can see it first: $date"
+    return 0
+  fi
+  [ "$at" = "$published" ] \
+    || jq -ne --arg at "$at" --arg set "$1" '($at | fromdateiso8601) >= (($set | fromdateiso8601) + 86400)' >/dev/null \
+    || fail "default_at must be at least 24 hours after the hold is set so the captain can see it first: $at"
 }
 
 command_hold() {
@@ -1560,10 +1594,11 @@ remove_interrupted_answer_stamp() {  # <task-id>
   rm -f -- "$tmp"
 }
 
-# The pending default of a call firstmate may proceed on today, as JSON; nonzero
-# otherwise. A date gate the captain set himself still defers it.
-deadline_default_due() {  # <task-show-output> <today-YYYY-MM-DD>
-  local show=$1 today=$2 hold_until body
+# The pending default of a call firstmate may proceed on now, as JSON; nonzero
+# otherwise. A date gate the captain set himself still defers it, and a stopped
+# clock ends it.
+deadline_default_due() {  # <task-show-output> <now-YYYY-MM-DDTHH:MM:SSZ>
+  local show=$1 now=$2 today=${2%%T*} hold_until body
   [ "$(show_field "$show" state)" != "done" ] || return 1
   [ "$(show_field_value "$show" hold_kind)" = captain ] || return 1
   hold_until=$(show_field_value "$show" hold_until)
@@ -1572,11 +1607,11 @@ deadline_default_due() {  # <task-show-output> <today-YYYY-MM-DD>
     *) if [[ "$hold_until" > "$today" ]]; then return 1; fi ;;
   esac
   body=$(decode_shown_value "$(show_field "$show" body)") || return 1
-  context_for_body "$body" | jq -ce -L "$SCRIPT_DIR" --arg today "$today" \
+  context_for_body "$body" | jq -ce -L "$SCRIPT_DIR" --arg now "$now" \
     'include "fm-captain-question-context";
-     select(.status == "ready") | .lifecycle as $lifecycle | .context
+     select(.status == "ready" and .default_stopped == null) | .lifecycle as $lifecycle | .context
      | .close as $close | fm_question_default_pending
-     | select(. != null and .date < $today) | . + {close:$close,lifecycle:$lifecycle}'
+     | select(. != null and .due_at <= $now) | . + {close:$close,lifecycle:$lifecycle}'
 }
 
 # Build the arguments `answer --deadline-default` runs with. An interrupted close
@@ -1587,21 +1622,21 @@ DEADLINE_DECISION_FILE=
 DEADLINE_DECISION_RELEASE=0
 DEADLINE_DECISION_LIFECYCLE=
 prepare_deadline_default() {  # <task-id>
-  local id=$1 show today pending words
+  local id=$1 show now pending words
   require_context_codec
   require_tasks_axi
   task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
   show=$TASK_SHOW_OUTPUT
-  today=${FM_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
-  today=${today%%T*}
-  pending=$(deadline_default_due "$show" "$today") \
+  now=${FM_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  pending=$(deadline_default_due "$show" "$now") \
     || pending=$(context_for_body "$(decode_shown_value "$(show_field "$show" body)")" | jq -ce -L "$SCRIPT_DIR" \
-      --arg today "$today" 'include "fm-captain-question-context";
+      --arg now "$now" 'include "fm-captain-question-context";
         select(.status == "stale") | .context | .close as $close | .lifecycle as $lifecycle
-        | fm_question_default_pending | select(. != null and .date < $today)
+        | fm_question_default_pending | select(. != null and .due_at <= $now)
         | . + {close:$close,lifecycle:$lifecycle}') \
-    || fail "task $id has no deadline default due: it is answered, deferred, not eligible, or its date has not passed"
-  words=$(printf '%s' "$pending" | jq -r '"The captain had not answered by the end of \(.date) UTC, so Firstmate proceeded on its recommendation: \(.label) (\(.value)). These are not the captain'"'"'s words."')
+    || fail "task $id has no deadline default due: it is answered, deferred, stopped, not eligible, or its deadline has not passed"
+  words=$(printf '%s' "$pending" | jq -r '(if (.date | test("T")) then "by \(.date[11:16]) UTC on \(.date[:10])" else "by the end of \(.date) UTC" end) as $by
+    | "The captain had not answered \($by), so Firstmate proceeded on its recommendation: \(.label) (\(.value)). These are not the captain'"'"'s words."')
   DEADLINE_DECISION_LIFECYCLE=$(printf '%s' "$pending" | jq -r .lifecycle)
   [ "$(printf '%s' "$pending" | jq -r .close)" != release ] || DEADLINE_DECISION_RELEASE=1
   DEADLINE_DECISION_FILE=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-captain-hold-default.XXXXXX") \
@@ -2539,19 +2574,18 @@ EOF
 }
 
 command_defaults_due() {
-  local ids id today pending
+  local ids id now pending
   [ "$#" -eq 0 ] || { usage >&2; exit 2; }
   # A read-only listing on a per-wake path, like `diverged`: what it cannot read
   # stays undue, so a default only ever proceeds on a record it read in full.
   command -v tasks-axi >/dev/null 2>&1 || return 0
   require_context_codec
-  today=${FM_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
-  today=${today%%T*}
+  now=${FM_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
   ids=$(open_captain_task_ids) || return 0
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     task_show "$id" || continue
-    pending=$(deadline_default_due "$TASK_SHOW_OUTPUT" "$today") || continue
+    pending=$(deadline_default_due "$TASK_SHOW_OUTPUT" "$now") || continue
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" \
       "$(printf '%s' "$pending" | jq -r .date)" "$(printf '%s' "$pending" | jq -r .value)" \
       "$(sanitize_field "$(printf '%s' "$pending" | jq -r .label)")" \
@@ -2560,6 +2594,65 @@ command_defaults_due() {
   done <<EOF
 $ids
 EOF
+}
+
+# Stop this lifecycle's deadline default (see the header). The line goes
+# directly under the active context, so a later answer moves it below the
+# resolution with the rest of the header and it never outlives its lifecycle.
+command_stop_clock() {
+  local id=${1:-} source='' body read lifecycle stamp context_line rest tmp
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --source) [ "$#" -ge 2 ] && [ -n "$2" ] || fail "--source requires provenance text"; shift; source=$1 ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug task-id "$id"
+  [ -n "$source" ] || fail "--source is required: say who stopped the clock and through which channel"
+  validate_one_line source "$source"
+  [ "${#source}" -le 200 ] || fail "--source must be at most 200 characters"
+  require_context_codec
+  acquire_task_control_lock "$id"
+  require_tasks_axi
+  command_open "$id" || fail "task $id is not an open captain call; there is no clock to stop"
+  task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
+  body=$(decode_shown_value "$(show_field "$TASK_SHOW_OUTPUT" body)") \
+    || fail "could not decode the existing body for $id"
+  read=$(context_for_body "$body") || fail "cannot read the question context of $id"
+  [ "$(printf '%s' "$read" | jq -r .status)" = ready ] \
+    || fail "task $id has no readable question context, so it carries no deadline default"
+  [ "$(printf '%s' "$read" | jq -r '.context.default_eligible // ""')" = small-reversible ] \
+    || fail "task $id carries no deadline default; nothing to stop"
+  lifecycle=$(printf '%s' "$read" | jq -r .lifecycle)
+  if [ "$(printf '%s' "$read" | jq -r '.default_stopped // ""')" != "" ]; then
+    printf 'stopped: %s (already, at %s)\n' "$id" "$(printf '%s' "$read" | jq -r .default_stopped)"
+    return 0
+  fi
+  stamp=${FM_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  case "$body" in
+    "Captain hold set: "*$'\n''Captain question context: '*) : ;;
+    *) fail "task $id does not carry its active context where the owner wrote it; owner review required" ;;
+  esac
+  context_line=${body#*$'\n'}
+  rest=''
+  case "$context_line" in *$'\n'*) rest=${context_line#*$'\n'} ;; esac
+  context_line=${context_line%%$'\n'*}
+  tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-captain-hold-stop.XXXXXX") || fail "cannot stage the stopped clock"
+  if ! printf '%s\n%s\nCaptain deadline default stopped: %s at %s by %s\n%s\n' \
+      "${body%%$'\n'*}" "$context_line" "$lifecycle" "$stamp" "$source" "$rest" > "$tmp" \
+    || ! tasks_axi update "$id" --body-file "$tmp" --archive-body >/dev/null; then
+    rm -f -- "$tmp"
+    fail "could not record the stopped clock on $id"
+  fi
+  rm -f -- "$tmp"
+  task_show "$id" || fail "task $id disappeared while stopping its clock"
+  [ "$(context_for_body "$(decode_shown_value "$(show_field "$TASK_SHOW_OUTPUT" body)")" \
+    | jq -r '.status + " " + (.default_stopped // "")')" = "ready $stamp" ] \
+    || fail "task $id did not retain a readable stopped clock; owner review required"
+  printf 'stopped: %s\n' "$id"
 }
 
 # Still an open captain call? Exit 0 yes, 1 no, 2 cannot tell (see the header).
@@ -2648,6 +2741,7 @@ case "${1:-}" in
   open) shift; command_open "$@" ;;
   diverged) shift; command_diverged "$@" ;;
   defaults-due) shift; command_defaults_due "$@" ;;
+  stop-clock) shift; command_stop_clock "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;

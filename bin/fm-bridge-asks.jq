@@ -3,6 +3,10 @@
 # export, digest). This file owns only the wording and ordering rules below; it
 # reads nothing and is never run on its own.
 
+# The deadline-default rules are owned by bin/fm-captain-hold.sh; its codec says
+# whether and when a call proceeds without the captain.
+include "fm-captain-question-context";
+
 # Free text from a worker or another home is untrusted data. Strip control
 # characters, cut likely secrets and URL queries, collapse whitespace, then cap.
 def br_redact($cap):
@@ -31,6 +35,31 @@ def br_names($ids; $names):
 def br_text($ids; $names; $cap): br_redact($cap) | br_names($ids; $names);
 
 def br_human_id: gsub("[-_.]+"; " ");
+
+# A hold's deadline default as the card shows it, or null when it has none:
+#   pending  goes ahead with the recommendation at due_epoch unless answered
+#   stopped  the captain stopped the clock; only an answer settles it
+#   blocked  its recommendation names an effect a default may never carry
+#   never    its scope keeps it waiting for the captain
+def br_default($qc; $c):
+  if $c == null then null
+  elif ($c.default_eligible // null) == "small-reversible" then
+    ($c | fm_question_default_pending) as $p
+    | if ($qc.default_stopped // null) != null then {state: "stopped", due_epoch: null, label: null, reason: null}
+      elif $p == null then {state: "blocked", due_epoch: null, label: null, reason: ($c | fm_question_default_effect)}
+      else {state: "pending", due_epoch: ($p.due_at | fromdateiso8601), label: $p.label, reason: null} end
+  elif any(($c.scope // [])[]; IN("outward-facing", "irreversible", "money", "security")) then
+    {state: "never", due_epoch: null, label: null,
+     reason: ([($c.scope // [])[] | select(IN("outward-facing", "irreversible", "money", "security"))] | join(", "))}
+  else null end;
+
+# An exported default is untrusted: keep only the known shape.
+def br_default_import:
+  if type == "object" and (.state | IN("pending", "stopped", "blocked", "never")) then
+    {state, due_epoch: (.due_epoch | if type == "number" then . else null end),
+     label: (.label | if type == "string" then .[0:120] else null end),
+     reason: (.reason | if type == "string" then .[0:120] else null end)}
+  else null end;
 
 # The optional question line grammar:
 #   <question> | A: <option> | B: <option> | rec=A | blocks=<what waits>
@@ -98,7 +127,7 @@ def br_feed:
                        then "This question's stored details are \($qc.status // "unreadable"); Firstmate must re-ask it before it can be answered here."
                        else null end),
          deferred_until: (if $r.hold_bucket == "dated" then $r.hold_until else null end),
-         default_date: (if ($c.default_eligible // null) == "small-reversible" then $c.default_date else null end),
+         default: br_default($qc; $c),
          scope: ($c.scope // []),
          approve: (($c.close // "") == "release"),
          away_note: (if (($c.close // "") == "release") and $in.away
@@ -127,7 +156,7 @@ def br_feed:
          recommendation: $p.recommendation, close: null, lifecycle: null,
          answer: "bridge", answer_note: null,
          blocks_text: ($p.blocks_text // null | if . then T(200) else null end),
-         verb: $k.verb, deferred_until: null, default_date: null, scope: [], approve: false, away_note: null,
+         verb: $k.verb, deferred_until: null, default: null, scope: [], approve: false, away_note: null,
          priority: ($by_id[$k.task].priority // null | if . == null then null else (tonumber? // null) end),
          blocks: blockers($k.task),
          flags: ([if $k.has_meta == false and ($from_sm | not) then "worker-gone" else empty end]) }
@@ -156,7 +185,9 @@ def br_feed:
          recommendation: ($a.recommendation // null | if type == "string" then . else null end),
          close: null, lifecycle: null, answer: "bridge", answer_note: null,
          blocks_text: null, deferred_until: ($a.deferred_until // null | if type == "string" then .[0:10] else null end),
-         default_date: null, scope: [], approve: ($a.approve == true), away_note: null,
+         default: ($a.default // null | br_default_import
+           | if . == null then null
+             else .label |= (if . == null then null else T(120) end) | .reason |= (if . == null then null else T(120) end) end), scope: [], approve: ($a.approve == true), away_note: null,
          priority: null,
          blocks: [($a.blocks // [] | if type == "array" then .[0:8] else [] end)[] | select(type == "string") | T(120)],
          flags: [] }
@@ -205,7 +236,7 @@ def br_export:
   {schema: "fm-bridge-export.v1", generated_epoch, complete,
    asks: [.asks[] | select(.route.kind != "export")
      | {route, who, source, asker, asked_epoch, asked_estimated, question, about, purpose,
-        options, recommendation, deferred_until, approve, blocks}]};
+        options, recommendation, deferred_until, approve, blocks, default}]};
 
 def br_age($now):
   if . == null then "?" else ($now - .) as $s

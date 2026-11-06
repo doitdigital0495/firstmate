@@ -1416,6 +1416,28 @@ test_inbox_listing_command_is_safe_on_empty_inbox() {
   pass "fm-brief: inbox listing is silent on empty/absent inbox and numerically ordered"
 }
 
+# Contract: rule 6 tells every worker to raise a blocking question at once, in
+# the one-line shape the Bridge turns into a one-tap card, and to start nothing
+# the answer could undo before it stops.
+test_workers_raise_a_question_the_moment_it_blocks() {
+  local home id brief
+  home="$TMP_ROOT/raise-home"
+  mkdir -p "$home/data" "$home/config"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-raise-ship some-proj --mode direct-PR >/dev/null 2>&1 \
+    || fail "fm-brief.sh ship scaffold exited non-zero"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-raise-scout some-proj --scout >/dev/null 2>&1 \
+    || fail "fm-brief.sh scout scaffold exited non-zero"
+  for id in brief-raise-ship brief-raise-scout; do
+    brief="$home/data/$id/brief.md"
+    assert_grep "Raise it the moment the question blocks your next step, before investigating further" "$brief" \
+      "$id: rule 6 does not tell the worker to raise at once"
+    assert_grep '| A: <option> | B: <option> | rec=A | blocks=<what waits>' "$brief" \
+      "$id: rule 6 does not carry the one-tap question shape"
+    assert_grep "never start anything the answer could undo" "$brief" "$id: rule 6 lets the worker run ahead of the answer"
+  done
+  pass "fm-brief: every worker raises a blocking question at once in the Bridge's one-tap shape"
+}
+
 # Contract: a waiting worker spends no turns. A decision wait ends the turn, an
 # external wait sleeps in one bounded blocking shell command sized per harness,
 # and a waiting worker neither polls its inbox nor polls a pipeline between holds.
@@ -1983,6 +2005,7 @@ test_scout_lavish_line_follows_presentation_floor
 test_every_brief_names_the_lavish_opener
 test_inbox_listing_command_is_safe_on_empty_inbox
 test_workers_wait_without_spending_turns
+test_workers_raise_a_question_the_moment_it_blocks
 test_wait_no_turns_absent_keeps_the_previous_brief
 test_inbox_guidance_explains_marked_body_terminator
 test_home_brief_include_is_appended_last

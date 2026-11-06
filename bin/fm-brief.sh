@@ -505,6 +505,12 @@ if [ -e "$CONFIG/wait-no-turns" ]; then
 fi
 INBOX_SECTION=${INBOX_SECTION%$'\n'}
 
+# Rule 6's raise-on-block sentence, shared by the scout and ship templates. The
+# line grammar is the one bin/fm-bridge.sh parses into a pickable Bridge card.
+# shellcheck disable=SC2016 # Backticks are literal Markdown in the brief.
+RAISE_ON_BLOCK_RULE='   Raise it the moment the question blocks your next step, before investigating further, as `needs-decision [key=<slug>] [at=<epoch>]: <question> | A: <option> | B: <option> | rec=A | blocks=<what waits>`, so it can be answered with one tap; a question that does not fit that shape still goes out at once in plain words.
+   Before you stop, you may finish work the answer cannot change, but never start anything the answer could undo.'
+
 # How a crewmate or scout waits. Every model turn resends the whole context, so
 # a wait must cost no turns: a decision wait ends the turn, and an external
 # wait sleeps in one bounded blocking shell command sized to the harness.
@@ -512,7 +518,7 @@ INBOX_SECTION=${INBOX_SECTION%$'\n'}
 IFS= read -r -d '' WAIT_SECTION <<'EOF' || true
 # Waiting
 Every turn you take resends your whole context, so a wait must cost no turns.
-After you append `needs-decision:` or `blocked:`, end your turn at once: do not check the inbox, the status file, or anything else, because the answer arrives as a terminal message that starts your next turn.
+After you append `needs-decision:` or `blocked:` and finish only what rule 6 lets you finish, end your turn at once: do not check the inbox, the status file, or anything else, because the answer arrives as a terminal message that starts your next turn.
 Wait on anything external - a pipeline gate, PR checks - with ONE blocking shell command that returns when the state changes: `no-mistakes axi run` or `respond` with `--wait`, `gh pr checks <pr> --watch`, or `until <condition>; do sleep 30; done` for anything else.
 Never spend turns on `sleep` followed by a status check, and never background a command in order to poll it.
 In Claude Code that `until` loop in a single Bash call is the sanctioned foreground wait: when the harness refuses a sleep-then-check command and points you at backgrounding instead, reissue the wait as the loop rather than accepting the background.
@@ -796,6 +802,7 @@ $CREWMATE_PAUSE_INSTRUCTIONS
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
    For standing answers and captain-facing report questions, route to firstmate, which applies \`ask-user-authority\`.
+$RAISE_ON_BLOCK_RULE
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
@@ -889,6 +896,7 @@ $CREWMATE_PAUSE_INSTRUCTIONS
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
    For standing answers and captain-facing report questions, route to firstmate, which applies \`ask-user-authority\`, except any standing answer your Definition of done has you settle yourself.
 $ASK_USER_BLOCK
+$RAISE_ON_BLOCK_RULE
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
