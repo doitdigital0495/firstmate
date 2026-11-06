@@ -161,6 +161,8 @@
 # Environment:
 #   FM_JEVD_SOCKET selects the private socket (default XDG state jev-gate/jevd.sock).
 #   FM_QUOTA_READ_DEADLINE (45) is the deadline on all of a worker choice's reads.
+#   FM_QUOTA_SHARED_READ_TTL and FM_QUOTA_LOCK_WAIT_SECONDS tune the single-flight
+#     reads parallel starts share (bin/fm-quota-axi-lib.sh).
 #   FM_DISPATCH_QUOTA_WAIT_SECONDS can only shorten that, and pipeline's 30 seconds.
 #   FM_DISPATCH_QUOTA_ATTEMPTS bounds quota gathers (default 1000, 1..1000).
 #   FM_DISPATCH_QUOTA_BACKOFF_MS sets pipeline's initial backoff (1500, 250..30000 ms).
@@ -643,14 +645,16 @@ gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapsh
   fresh=$(mktemp) || { printf 'mktemp failed'; return 1; }
   cache=$(fm_quota_recent_file "$STATE")
   mapfile -t canon < <(fm_dispatch_store_key "$DEFAULT_CLAUDE_STORE" "$DEFAULT_PI_STORE" "${CODEX_HOME:-$HOME/.codex}")
-  CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "$DEFAULT_CLAUDE_STORE") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "$DEFAULT_PI_STORE") fm_dispatch_bounded quota-axi --json > "$fresh" 2>/dev/null
-  fm_quota_json_valid < "$fresh" || ok=0
+  CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "$DEFAULT_CLAUDE_STORE") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "$DEFAULT_PI_STORE") \
+    fm_quota_shared_read "$cache" json "$fresh" "${canon[0]}" "${canon[1]}" "${canon[2]}" -- fm_dispatch_bounded quota-axi --json || ok=0
   if ! fm_dispatch_recent_read "$cache" "$fresh" "$ok" "${canon[@]}"; then
     rm -f "$fresh"
     return 1
   fi
   mv "$fresh" "$QUOTA"
 }
+# Pipeline mode's evidence loop exists to see a new reading, so it never reuses one.
+[ "$MODE" = worker ] || FM_QUOTA_SHARED_READ_TTL=0
 if [ "$SQ" = false ] && [ "$MODE" = worker ]; then
   # Nothing read and nothing cached is an unknown quota: an empty snapshot leaves
   # every home candidate unmeasured instead of stopping the choice.
@@ -668,8 +672,8 @@ gather_account_snapshot() {  # <account>: refresh ACCOUNT_QUOTAS[account] from i
   local -a canon=()
   recent_cache=$(fm_quota_recent_file "$STATE")
   mapfile -t canon < <(fm_dispatch_store_key "${stores[0]}" "${stores[1]}" "${stores[2]}")
-  CODEX_HOME=$(fm_account_read_store codex "${stores[2]}") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "${stores[1]}") CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "${stores[0]}") fm_dispatch_bounded quota-axi --json > "$account_quota" 2>/dev/null
-  fm_quota_json_valid < "$account_quota" || read_ok=0
+  CODEX_HOME=$(fm_account_read_store codex "${stores[2]}") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "${stores[1]}") CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "${stores[0]}") \
+    fm_quota_shared_read "$recent_cache" json "$account_quota" "${canon[0]}" "${canon[1]}" "${canon[2]}" -- fm_dispatch_bounded quota-axi --json || read_ok=0
   if ! fm_dispatch_recent_read "$recent_cache" "$account_quota" "$read_ok" "${canon[@]}"; then
     ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" '. + {($a): {key: $key, failed: true}}' <<<"$ACCOUNT_QUOTAS")
   else
@@ -1314,6 +1318,7 @@ fm_dispatch_warm_zai() {  # the named Z.ai warm-up, at most once per resolution
 if [ "$MODE" = worker ] && [ "$quota_attempts" -lt "$QUOTA_ATTEMPTS" ] && [ "$(date +%s)" -lt "$QUOTA_DEADLINE" ] \
   && jq -e '(.status == "clear" or .status == "incomplete") and any(.candidates[]?; ((.unreadable // false) or (.incomplete // false)) and .provider == "zai")' <<<"$RESULT" >/dev/null 2>&1; then
   fm_dispatch_warm_zai
+  FM_QUOTA_SHARED_READ_TTL=0  # the re-read exists to see what the warm-up opened
   if jq -e 'any(.candidates[]?; ((.unreadable // false) or (.incomplete // false)) and .provider == "zai" and .profile.account == null)' <<<"$RESULT" >/dev/null 2>&1; then
     gather_home_quota >/dev/null || true
   fi

@@ -312,3 +312,136 @@ fm_quota_recent_merge() {
       else {schemaVersion: (.schemaVersion // 5), generatedAt: (now | todate), providers: $rows} end' <<<"$cached" 2>/dev/null
   fi
 }
+
+# ---- single-flight reads -------------------------------------------------------
+# Parallel starts share one provider read per login. state/quota-single-flight/
+# holds the one lock and reads.json, the latest attempt per read mode and login
+# ("<mode>|<slot>|<canonical store>", slot 0 Claude, 1 Pi, 2 Codex): when it was made
+# and the rows it returned, measured or not, so a waiter sees the same rate limit or
+# credential failure the reader saw. It is apart from the last-good cache because
+# only lock holders write it and it is never evidence past its window. A login attempted
+# within FM_QUOTA_SHARED_READ_TTL seconds (default 120, the shared fetch gate's own
+# window; 0 never reuses) is not read again. FM_QUOTA_LOCK_WAIT_SECONDS (default
+# FM_QUOTA_READ_DEADLINE) bounds one process's total lock wait; past it the read
+# goes on as failed, so a stuck holder never blocks a start. Without flock (macOS)
+# reads are not serialized, but finished attempts are still reused.
+FM_QUOTA_SHARED_READ_TTL=${FM_QUOTA_SHARED_READ_TTL:-120}
+case "$FM_QUOTA_SHARED_READ_TTL" in '' | *[!0-9]*) FM_QUOTA_SHARED_READ_TTL=120 ;; esac
+FM_QUOTA_LOCK_WAIT_LEFT=${FM_QUOTA_LOCK_WAIT_SECONDS:-$FM_QUOTA_READ_DEADLINE}
+case "$FM_QUOTA_LOCK_WAIT_LEFT" in '' | *[!0-9]*) FM_QUOTA_LOCK_WAIT_LEFT=$FM_QUOTA_READ_DEADLINE ;; esac
+
+# shellcheck disable=SC2016  # jq program text
+FM_QUOTA_READS_JQ='
+  def owned($none): [range(0; 3) as $slot | {slot: $slot, store: $stores[$slot]} |
+    select(.store != "" and .store != "-" and .store != $none)];
+  def read_key($mode): "\($mode)|\(.slot)|\(.store)";
+  def slot_of($p): if $p.provider == "claude" then 0 elif $p.provider == "codex" then 2 else 1 end;'
+
+# fm_quota_flight_dir <cache-file>: the directory beside quota-last-good/.
+fm_quota_flight_dir() { printf '%s/quota-single-flight\n' "$(dirname "$(dirname "$1")")"; }
+
+# fm_quota_lock_take <cache-file> [<max-seconds>]: hold the read lock on fd 9, or
+# rc 1 once the wait runs out. A read must close fd 9 (9>&-) so that only this
+# process holds the lock and its death frees it. fm_quota_lock_drop releases it.
+fm_quota_lock_take() {
+  local dir wait=$FM_QUOTA_LOCK_WAIT_LEFT started
+  [ "${2:-$wait}" -ge "$wait" ] || wait=$2
+  [ "$wait" -gt 0 ] || wait=0
+  dir=$(fm_quota_flight_dir "$1")
+  mkdir -p "$dir" 2>/dev/null || true
+  chmod 700 "$dir" 2>/dev/null || true
+  command -v flock >/dev/null 2>&1 || return 0
+  { exec 9>"$dir/lock"; } 2>/dev/null || return 0
+  started=$(date -u +%s)
+  if ! flock -w "$wait" 9; then
+    exec 9>&-
+    FM_QUOTA_LOCK_WAIT_LEFT=0
+    printf 'quota read: another start held the lock past this wait; going on with quota unknown\n' >&2
+    return 1
+  fi
+  FM_QUOTA_LOCK_WAIT_LEFT=$(( FM_QUOTA_LOCK_WAIT_LEFT - ($(date -u +%s) - started) ))
+  [ "$FM_QUOTA_LOCK_WAIT_LEFT" -gt 0 ] || FM_QUOTA_LOCK_WAIT_LEFT=0
+}
+fm_quota_lock_drop() { exec 9>&-; }
+
+# fm_quota_read_logins <claude> <pi> <codex>: one "<slot>|<store>" line per login.
+fm_quota_read_logins() {
+  local stores
+  stores=$(jq -cn --arg c "$1" --arg p "$2" --arg x "$3" '[$c, $p, $x]')
+  jq -nr --argjson stores "$stores" --arg none "${FM_ACCOUNT_NO_STORE:-}" "$FM_QUOTA_READS_JQ"'
+    owned($none)[] | "\(.slot)|\(.store)"'
+}
+
+# fm_quota_reads_save <cache-file> <mode> <snapshot-file|""> <claude> <pi> <codex>:
+# remember this attempt for every login the read owned; no snapshot means it failed.
+# The caller holds the lock.
+fm_quota_reads_save() {
+  local file mode=$2 snap=${3:-/dev/null} now tmp stores doc=/dev/null
+  file=$(fm_quota_flight_dir "$1")/reads.json
+  stores=$(jq -cn --arg c "$4" --arg p "$5" --arg x "$6" '[$c, $p, $x]')
+  now=$(date -u +%s)
+  [ ! -f "$file" ] || doc=$file
+  tmp=$(mktemp "$file.XXXXXX") || return 0
+  if jq -cn --argjson now "$now" --argjson stores "$stores" --arg mode "$mode" --arg none "${FM_ACCOUNT_NO_STORE:-}" \
+      --slurpfile doc "$doc" --slurpfile snap "$snap" "$FM_QUOTA_READS_JQ"'
+      ($snap[0] // {}) as $s |
+      reduce owned($none)[] as $o (($doc[0] // {});
+        . + {($o | read_key($mode)): {at: $now, schemaVersion: ($s.schemaVersion // null),
+          rows: [($s.providers // [])[] | select(slot_of(.) == $o.slot)]}})' > "$tmp" 2>/dev/null; then
+    chmod 600 "$tmp"; mv -f "$tmp" "$file"
+  else
+    rm -f "$tmp"
+  fi
+  return 0
+}
+
+# fm_quota_reads_reuse <cache-file> <mode> <claude> <pi> <codex>: stdout a snapshot
+# from attempts still inside the window, "failed" when they returned no rows, or
+# nothing when any login the read owns still needs its own read. The rows stay
+# exactly as they were read: a share of one read is that read, not a stale reading.
+fm_quota_reads_reuse() {
+  local file now stores
+  file=$(fm_quota_flight_dir "$1")/reads.json
+  [ "$FM_QUOTA_SHARED_READ_TTL" -gt 0 ] && [ -f "$file" ] || return 0
+  stores=$(jq -cn --arg c "$3" --arg p "$4" --arg x "$5" '[$c, $p, $x]')
+  now=$(date -u +%s)
+  jq -r --argjson now "$now" --argjson ttl "$FM_QUOTA_SHARED_READ_TTL" --argjson stores "$stores" --arg mode "$2" \
+      --arg none "${FM_ACCOUNT_NO_STORE:-}" "$FM_QUOTA_READS_JQ"'
+    . as $reads | [owned($none)[] | $reads[read_key($mode)]] as $seen |
+    def fresh: . != null and ($now - .at) >= 0 and ($now - .at) <= $ttl;
+    if ($seen | length) == 0 or (all($seen[]; fresh) | not) then empty
+    elif ([$seen[].rows[]] | length) == 0 then "failed"
+    else {schemaVersion: ([$seen[].schemaVersion | select(. != null)] | first // 5), generatedAt: (now | todate),
+      providers: [$seen[].rows[]]} | tojson
+    end' "$file" 2>/dev/null
+}
+
+# fm_quota_shared_read <cache-file> <mode> <out-file> <claude> <pi> <codex> -- <read command...>:
+# one holder of the lock reads and records the attempt; the others then reuse it.
+# rc 0 with a valid snapshot in <out-file>, judged by the report and not the exit
+# status (quota-axi exits 1 with a full report when every provider failed); rc 1
+# when the read failed, a reused attempt had failed, or the lock wait ran out.
+fm_quota_shared_read() {
+  local cache=$1 mode=$2 out=$3 sc=$4 sp=$5 sx=$6 reused
+  shift 7
+  fm_quota_lock_take "$cache" || return 1
+  reused=$(fm_quota_reads_reuse "$cache" "$mode" "$sc" "$sp" "$sx")
+  if [ "$reused" = failed ]; then
+    fm_quota_lock_drop
+    return 1
+  fi
+  if [ -n "$reused" ] && printf '%s\n' "$reused" | fm_quota_json_valid; then
+    printf '%s\n' "$reused" > "$out"
+    fm_quota_lock_drop
+    return 0
+  fi
+  "$@" > "$out" 2>/dev/null 9>&- || true
+  if fm_quota_json_valid < "$out"; then
+    fm_quota_reads_save "$cache" "$mode" "$out" "$sc" "$sp" "$sx"
+    fm_quota_lock_drop
+    return 0
+  fi
+  fm_quota_reads_save "$cache" "$mode" "" "$sc" "$sp" "$sx"
+  fm_quota_lock_drop
+  return 1
+}

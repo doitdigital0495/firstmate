@@ -1096,6 +1096,81 @@ test_read_deadline_reuses_last_good() {
   pass "read deadline: a last good reading answers for an unreadable store and says so"
 }
 
+test_single_flight_record() {
+  local home fakebin out rc i holder lock started
+  local -a starts=()
+  home=$(make_home flight)
+  fakebin=$home/quota-fake/fakebin
+  mkdir -p "$fakebin"
+  cat > "$fakebin/quota-axi" <<SH
+#!/usr/bin/env bash
+printf '%s %s %s\n' "\$CLAUDE_CONFIG_DIR" "\$PI_CODING_AGENT_DIR" "\$CODEX_HOME" >> "$home/calls"
+sleep 0.2
+[ ! -e "$home/fail-reads" ] || exit 1
+cat -- "$TMP_ROOT/snap-base.json"
+SH
+  chmod +x "$fakebin/quota-axi"
+  # Seven store triples over four logins: the default triple covers three seats.
+  printf '%s\n' '{"crossAccount":{"enabled":true},"accounts":{
+    "claude1":{"provider":"claude","claude":"~/.claude"},"claude2":{"provider":"claude","claude":"~/.claude2"},"claude3":{"provider":"claude","claude":"~/.claude3"},
+    "codex1":{"provider":"codex","codex":"~/.codex","pi":"~/.pi/agent"},"codex2":{"provider":"codex","codex":"~/.codex2","pi":"~/.pi/agent"},
+    "glm":{"provider":"zai","pi":"~/.pi/agent"}}}' > "$home/config/accounts.json"
+  mkdir -p "$home/user-home/.claude" "$home/user-home/.claude2" "$home/user-home/.claude3" "$home/user-home/.codex" "$home/user-home/.codex2" "$home/user-home/.pi/agent"
+  out=$(run_record "$home" "$fakebin" FM_QUOTA_SHARED_READ_TTL=120); rc=$?
+  expect_code 0 "$rc" "one record reads: $out"
+  assert_equals 4 "$(wc -l < "$home/calls" | tr -d ' ')" 'seven triples read four logins'
+  jq -e '([.accounts[] | select(.account == "claude1") | .providers[] | del(.plan, .planSource)]) ==
+    ([.accounts[] | select(.account == "default") | .providers[] | select(.provider == "claude") | del(.plan, .planSource)]) and
+    ([.accounts[] | select(.account == "claude1") | .providers[]] | length) == 1' \
+    "$(newest_record "$home")" >/dev/null || fail 'a seat on the default login shows the default login rows'
+
+  # Parallel starts: every record exists on its own, four reads between them.
+  rm -rf "$home/state/quota-last-good" "$home/state/quota-single-flight" "$home/state/quota-intake" "$home/calls"
+  for i in 1 2 3 4 5 6; do
+    run_record "$home" "$fakebin" FM_QUOTA_SHARED_READ_TTL=120 FM_QUOTA_READ_DEADLINE=300 > "$home/out-$i" 2>&1 &
+    starts+=("$!")
+  done
+  rc=0
+  for i in "${starts[@]}"; do wait "$i" || rc=1; done
+  expect_code 0 "$rc" "every parallel record passes: $(cat "$home"/out-*)"
+  assert_equals 4 "$(wc -l < "$home/calls" | tr -d ' ')" 'six parallel records share four reads'
+  assert_equals 4 "$(sort -u "$home/calls" | wc -l | tr -d ' ')" 'no login is read twice'
+  assert_equals 6 "$(find "$home/state/quota-intake" -name 'quota-*.json' | wc -l | tr -d ' ')" 'each start keeps its own record'
+
+  # A failed attempt is shared too: a locked login is not hit again by each seat.
+  rm -rf "$home/state/quota-last-good" "$home/state/quota-single-flight" "$home/calls"
+  : > "$home/fail-reads"
+  out=$(run_record "$home" "$fakebin" FM_QUOTA_SHARED_READ_TTL=120 FM_QUOTA_READ_DEADLINE=300); rc=$?
+  assert_equals 4 "$(wc -l < "$home/calls" | tr -d ' ')" "a failed login is not read again: $out"
+  jq -e 'all(.accounts[]; .readStatus == "failed")' "$(newest_record "$home")" >/dev/null || fail 'every failed read is recorded'
+  rm -f "$home/fail-reads"
+
+  # A stuck holder costs one bounded wait, then every store goes on as unknown.
+  if ! command -v flock >/dev/null 2>&1; then
+    pass 'single flight: logins are read once and failures shared (no flock on this host, stuck holder skipped)'
+    return 0
+  fi
+  rm -rf "$home/state/quota-last-good" "$home/state/quota-single-flight" "$home/calls"
+  mkdir -p "$home/state/quota-single-flight"
+  lock=$home/state/quota-single-flight/lock
+  flock "$lock" sleep 120 &
+  holder=$!
+  while flock -n "$lock" true; do sleep 0.05; done
+  started=$SECONDS
+  out=$(run_record "$home" "$fakebin" FM_QUOTA_SHARED_READ_TTL=120 FM_QUOTA_LOCK_WAIT_SECONDS=2); rc=$?
+  expect_code 0 "$rc" "a stuck holder still leaves a record: $out"
+  [ $((SECONDS - started)) -lt 60 ] || fail 'a stuck holder held up the record'
+  [ ! -e "$home/calls" ] || fail 'a start read past a held lock'
+  assert_contains "$out" 'going on with quota unknown' 'the timeout is named'
+  jq -e 'all(.accounts[]; .readStatus == "unreadable")' "$(newest_record "$home")" >/dev/null || fail 'every store is recorded as unread'
+  pkill -P "$holder" sleep 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  out=$(run_record "$home" "$fakebin" FM_QUOTA_SHARED_READ_TTL=120); rc=$?
+  expect_code 0 "$rc" "a freed lock reads again: $out"
+  [ -s "$home/calls" ] || fail 'a freed lock did not read'
+  pass 'single flight: logins are read once across seats and parallel records, failures are shared, a stuck holder times out to unknown'
+}
+
 # --- 8. the real spawn and relaunch gates ------------------------------------
 
 test_real_spawn_gate() {
@@ -1517,6 +1592,7 @@ test_read_deadline_delays_no_other_read
 test_read_deadline_without_a_runner
 test_read_deadline_reuses_last_good
 test_provider_row_filter
+test_single_flight_record
 test_real_spawn_gate
 test_worker_pin_record_covers_the_pinned_store
 test_gate_symlinked_store_matches_its_target
