@@ -8,6 +8,7 @@
 #   fm-procevent-lavish.sh silent <result-file>
 #   fm-procevent-lavish.sh answers <result-file>
 #   fm-procevent-lavish.sh reconciles <result-file>
+#   fm-procevent-lavish.sh actions <result-file>
 #   fm-procevent-lavish.sh read <result-file>
 #   fm-procevent-lavish.sh reply <artifact.html> <reply-file>
 #   fm-procevent-lavish.sh source-id <artifact.html>
@@ -118,6 +119,11 @@
 # form. Malformed content or a declared/parsed count mismatch prints a diagnostic
 # to stderr and exits 3, even if valid choices were already printed to stdout;
 # callers must not treat that output as a complete extraction.
+#
+# `actions` prints, one JSON object per line ({"data":{...},"text":"..."}), the
+# Context data of each `choice` row whose schema is fm-bridge-action.v1: a Bridge
+# Remove or Restore press. It reports them and stops; bin/fm-bridge-intake.sh
+# owns every rule about what they mean. Same partial-output contract as `answers`.
 #
 # `read` is the presentation command summarized above; keyed intake remains
 # the separate `answers` contract described here.
@@ -891,6 +897,36 @@ cmd_reply() {
 cmd_answers() { cmd_choice_rows answers "$@"; }
 cmd_reconciles() { cmd_choice_rows reconciles "$@"; }
 
+cmd_actions() {
+  local file=${1-}
+  [ -n "$file" ] || usage
+  [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
+  perl -MJSON::PP -e "$(lavish_result_parser)"'
+    use strict; use warnings;
+    my ($path) = @ARGV;
+    my ($form, $want, $items, $malformed) = lavish_result($path, "prompts");
+    defined $form or exit 1;
+    my $json = JSON::PP->new->canonical(1);
+    for my $item (@$items) {
+      my %f = %$item;
+      next unless defined $f{tag} && $f{tag} eq "choice";
+      my $prompt = $f{prompt};
+      next unless defined $prompt && $prompt =~ /Context data:\s*(\{.*\})/s;
+      my $data = eval { decode_json($1) };
+      next unless ref($data) eq "HASH" && defined($data->{schema}) && !ref($data->{schema})
+        && $data->{schema} eq "fm-bridge-action.v1";
+      my $text = defined $f{text} ? $f{text} : "";
+      $text =~ s/[\x00-\x1f\x7f]/ /g;
+      print $json->encode({data => $data, text => substr($text, 0, 512)}), "\n";
+    }
+    if ($malformed || @$items != $want) {
+      print STDERR "error: the result is not fully accounted for: declared $want, parsed ",
+        scalar(@$items), ", malformed $malformed\n";
+      exit 3;
+    }
+  ' "$file"
+}
+
 # Present one already-captured result for a handler. Body lines are prefixed
 # so a captain-supplied string cannot forge a section label. A freeform message
 # is printed before the count line and before any annotation, because that is
@@ -1000,6 +1036,7 @@ case "${1-}" in
   silent)    shift; cmd_silent "$@" ;;
   answers)   shift; cmd_answers "$@" ;;
   reconciles) shift; cmd_reconciles "$@" ;;
+  actions)   shift; cmd_actions "$@" ;;
   read)      shift; cmd_read "$@" ;;
   reply)     shift; cmd_reply "$@" ;;
   ''|-h|--help|help) usage ;;

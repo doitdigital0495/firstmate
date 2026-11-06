@@ -95,6 +95,28 @@ details.group > div { padding: 2px 10px 4px; }
 .st-working { color: var(--sea); } .st-blocked, .st-failed, .st-unknown { color: var(--rust); } .st-parked { color: var(--gold); }
 .usage li { margin: 3px 0; font-size: 0.88rem; }
 .usage { padding-left: 18px; margin: 4px 0; }
+/* Tasks (slice 3): rows open to an explainer; Select several removes many at once. */
+.tk-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 8px; }
+.tk-tools input[type=search] { flex: 1 1 160px; min-width: 0; margin: 0; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg-inset); }
+.pill { padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg-inset); color: var(--text-muted); font-size: 0.82rem; cursor: pointer; }
+.pill.on { border-color: var(--gold); color: var(--text-strong); background: var(--gold-soft); }
+.tk { border-bottom: 1px solid var(--line-soft); padding: 6px 2px; overflow-wrap: anywhere; }
+.tk:last-child { border-bottom: 0; }
+.tk-head { display: flex; gap: 8px; align-items: flex-start; }
+.tk-head input[type=checkbox] { margin-top: 4px; accent-color: var(--gold); width: 18px; height: 18px; flex: none; }
+.tk-open { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; color: var(--text); }
+.tk-open b { color: var(--text-strong); font-weight: 600; }
+.tk-open .meta { margin-top: 2px; }
+.tk-body { margin: 6px 0 2px 26px; font-size: 0.88rem; }
+.tk-body p { margin: 3px 0; }
+.tk-body b { color: var(--text-muted); font-weight: 600; }
+.tk.is-pending { opacity: 0.6; }
+.tk-sel { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin: 8px 0; padding: 8px 10px; border: 1px solid var(--gold); border-radius: 10px; background: var(--bg-raised); }
+.tk-sel b { color: var(--text-strong); margin-right: auto; }
+.confirm { margin: 8px 0; padding: 10px 12px; border: 1px solid var(--gold); border-radius: 10px; background: var(--bg-card); }
+.confirm h3 { margin: 0 0 6px; font-size: 1rem; color: var(--text-strong); }
+.confirm ul { margin: 4px 0 8px; padding-left: 18px; font-size: 0.88rem; }
+.btn.danger { border-color: var(--rust); background: var(--rust-soft); }
 @media (min-width: 720px) { .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 </style>
 </head>
@@ -574,6 +596,311 @@ __FM_BRIDGE_DATA__
     root.appendChild(box);
   }
   if (data.fleet) renderFleet(data.fleet);
+
+  /* Tasks: every open task, opened to say what it is and where it came from.
+     Remove and Restore queue one Lavish choice per press; Firstmate's intake
+     (bin/fm-bridge-intake.sh) applies it through bin/fm-forget.sh, which
+     re-checks every guard, and its receipt shows here after the next build. */
+  function renderTasks(tasks) {
+    var box = el("div", "tasks");
+    box.setAttribute("id", "tasks");
+    root.appendChild(box);
+    var h = el("h2", "", "Tasks ");
+    box.appendChild(h);
+    if (!tasks || tasks.read === "failed" || !Array.isArray(tasks.rows)) {
+      h.appendChild(el("small", "", "(unknown)"));
+      box.appendChild(el("div", "banner bad", "The task list could not be read, so no tasks are shown. This is not an empty list."));
+      return;
+    }
+    var rows = tasks.rows;
+    var c = tasks.counts || {};
+    h.appendChild(el("small", "", "(" + (c.open || 0) + " open" + (c.suggested ? ", " + c.suggested + " suggested" : "") + ")"));
+    if (c.nosource) box.appendChild(el("p", "hint", c.nosource + " of " + c.open + " open tasks do not record where they came from."));
+    var byId = {};
+    rows.forEach(function (r) { byId[r.id] = r; });
+    var state = { filter: "all", group: "project", query: "", selecting: false, selected: {}, open: {}, pending: {} };
+    var filters = [["all", "All", rows.length], ["you", "Needs you", c.you], ["ready", "Ready", c.ready],
+      ["waiting", "Waits on other work", c.waiting], ["later", "Put off", c.later], ["held", "Set aside", c.held],
+      ["started", "Being worked on", c.started], ["suggested", "Suggested", c.suggested]];
+    var tools = el("div", "tk-tools");
+    box.appendChild(tools);
+    var pills = [];
+    filters.forEach(function (f) {
+      if (f[0] !== "all" && !f[2]) return;
+      var b = el("button", "pill", f[1] + " " + (f[2] || 0));
+      b.type = "button"; b.setAttribute("data-act", "filter"); b.setAttribute("data-id", f[0]);
+      b.addEventListener("click", function () { state.filter = f[0]; draw(); });
+      pills.push([f[0], b]);
+      tools.appendChild(b);
+    });
+    var tools2 = el("div", "tk-tools");
+    box.appendChild(tools2);
+    var search = document.createElement("input");
+    search.type = "search"; search.name = "task-search"; search.placeholder = "Search tasks"; search.setAttribute("aria-label", "Search tasks");
+    search.setAttribute("data-act", "search");
+    search.addEventListener("input", function () { state.query = String(search.value || "").toLowerCase(); draw(); });
+    tools2.appendChild(search);
+    var gProject = el("button", "pill", "By project"), gOrigin = el("button", "pill", "By where it came from");
+    [[gProject, "project"], [gOrigin, "origin"]].forEach(function (g) {
+      g[0].type = "button"; g[0].setAttribute("data-act", "group"); g[0].setAttribute("data-id", g[1]);
+      g[0].addEventListener("click", function () { state.group = g[1]; draw(); });
+      tools2.appendChild(g[0]);
+    });
+    var selBtn = el("button", "pill", "Select several");
+    selBtn.type = "button"; selBtn.setAttribute("data-act", "select-mode");
+    selBtn.addEventListener("click", function () { state.selecting = !state.selecting; if (!state.selecting) state.selected = {}; draw(); });
+    tools2.appendChild(selBtn);
+    var notice = el("div", "banner warn"); notice.hidden = true; notice.setAttribute("role", "status");
+    box.appendChild(notice);
+    var confirmBox = el("div", "confirm"); confirmBox.hidden = true;
+    box.appendChild(confirmBox);
+    var list = el("div");
+    box.appendChild(list);
+    var bar = el("div", "tk-sel"); bar.hidden = true;
+    box.appendChild(bar);
+
+    function shown() {
+      return rows.filter(function (r) {
+        if (state.pending[r.id]) return true;
+        if (state.filter !== "all" && r.lane !== state.filter) return false;
+        if (!state.query) return true;
+        return (r.title + " " + r.what + " " + r.id + " " + r.project + " " + r.origin.label).toLowerCase().indexOf(state.query) >= 0;
+      });
+    }
+    function selectedIds() { return Object.keys(state.selected).filter(function (k) { return state.selected[k]; }); }
+    function noun(n, one, many) { return n + " " + (n === 1 ? one : many); }
+    function detail(parent, label, text) {
+      var p = el("p"); p.appendChild(el("b", "", label + ": ")); p.appendChild(document.createTextNode(text)); parent.appendChild(p);
+    }
+    function row(r) {
+      var d = el("div", "tk" + (state.pending[r.id] ? " is-pending" : ""));
+      d.setAttribute("data-task", r.id);
+      var head = el("div", "tk-head");
+      d.appendChild(head);
+      if (state.selecting) {
+        var cb = document.createElement("input");
+        cb.type = "checkbox"; cb.checked = !!state.selected[r.id]; cb.setAttribute("data-act", "pick"); cb.setAttribute("data-id", r.id);
+        cb.setAttribute("aria-label", "Select " + r.title);
+        if (r.keep || state.pending[r.id]) { cb.disabled = true; cb.title = r.keep_text || "Already queued"; }
+        cb.addEventListener("change", function () { state.selected[r.id] = !!cb.checked; drawBar(); });
+        head.appendChild(cb);
+      }
+      var open = el("button", "tk-open");
+      open.type = "button"; open.setAttribute("data-act", "open"); open.setAttribute("data-id", r.id);
+      open.setAttribute("aria-expanded", state.open[r.id] ? "true" : "false");
+      open.appendChild(el("b", "", r.title));
+      var meta = el("div", "meta");
+      meta.appendChild(el("span", "chip" + (r.lane === "you" ? " age" : ""), r.why));
+      if (r.age_days !== null && r.age_days !== undefined) meta.appendChild(el("span", "chip", r.age_days === 0 ? "added today" : "added " + noun(r.age_days, "day", "days") + " ago"));
+      if (r.kind === "suggestion") meta.appendChild(el("span", "chip", "suggestion"));
+      if (state.pending[r.id]) meta.appendChild(el("span", "chip flag", "removal queued"));
+      open.appendChild(meta);
+      open.addEventListener("click", function () { state.open[r.id] = !state.open[r.id]; draw(); });
+      head.appendChild(open);
+      if (state.open[r.id]) {
+        var b = el("div", "tk-body");
+        detail(b, "What it is", r.what);
+        detail(b, "Where it came from", r.origin.label);
+        detail(b, "Why it is waiting", r.why + (r.hold_reason && r.lane !== "you" ? " (" + r.hold_reason + ")" : ""));
+        if (r.needs.length) detail(b, "Needs first", r.needs.map(function (n) { return n.title + (n.state === "done" ? " (finished)" : n.state === "gone" ? " (no longer listed)" : ""); }).join("; "));
+        if (r.needed_by.length) detail(b, "Needed by", r.needed_by.map(function (n) { return n.title; }).join("; "));
+        if (r.pr) detail(b, "Pull request", r.pr);
+        if (r.report) detail(b, "Report", r.report);
+        detail(b, "Id", (r.id_text || r.id) + (r.created ? ", added " + r.created : "") + (r.project !== "No project" ? ", project " + r.project : ""));
+        if (r.keep) {
+          b.appendChild(el("p", "hint", "Cannot be removed: " + r.keep_text));
+        } else if (!state.pending[r.id]) {
+          var rm = el("button", "btn quiet", r.kind === "suggestion" ? "Remove this suggestion" : "Remove from Firstmate's memory");
+          rm.type = "button"; rm.setAttribute("data-act", "remove-one"); rm.setAttribute("data-id", r.id);
+          rm.addEventListener("click", function () { ask([r.id]); });
+          b.appendChild(rm);
+        }
+        d.appendChild(b);
+      }
+      return d;
+    }
+    function groupKey(r) { return state.group === "origin" ? r.origin.group : r.project; }
+    function draw() {
+      pills.forEach(function (p) { p[1].className = "pill" + (state.filter === p[0] ? " on" : ""); });
+      gProject.className = "pill" + (state.group === "project" ? " on" : "");
+      gOrigin.className = "pill" + (state.group === "origin" ? " on" : "");
+      selBtn.className = "pill" + (state.selecting ? " on" : "");
+      selBtn.textContent = state.selecting ? "Done selecting" : "Select several";
+      clear(list);
+      var vis = shown();
+      if (!vis.length) { list.appendChild(el("p", "empty", rows.length ? "No task matches this filter." : "No open tasks.")); drawBar(); return; }
+      var order = [], groups = {};
+      vis.forEach(function (r) { var k = groupKey(r); if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(r); });
+      order.forEach(function (k) {
+        var g = el("details", "group");
+        g.open = true; g.setAttribute("open", "");
+        var s = el("summary", "", k + " (" + groups[k].length + ")");
+        g.appendChild(s);
+        var inner = el("div");
+        if (state.selecting) {
+          var free = groups[k].filter(function (r) { return !r.keep && !state.pending[r.id]; });
+          if (free.length) {
+            var all = el("button", "pill", "Select all " + free.length + " in " + k);
+            all.type = "button"; all.setAttribute("data-act", "select-group"); all.setAttribute("data-id", k);
+            all.addEventListener("click", function () { free.forEach(function (r) { state.selected[r.id] = true; }); draw(); });
+            inner.appendChild(all);
+          }
+        }
+        groups[k].forEach(function (r) { inner.appendChild(row(r)); });
+        g.appendChild(inner);
+        list.appendChild(g);
+      });
+      drawBar();
+    }
+    function drawBar() {
+      bar.hidden = !state.selecting;
+      if (!state.selecting) return;
+      clear(bar);
+      var n = selectedIds().length;
+      bar.appendChild(el("b", "", n + " selected"));
+      var allShown = el("button", "btn quiet", "Select all shown");
+      allShown.type = "button"; allShown.setAttribute("data-act", "select-shown");
+      allShown.addEventListener("click", function () { shown().forEach(function (r) { if (!r.keep && !state.pending[r.id]) state.selected[r.id] = true; }); draw(); });
+      bar.appendChild(allShown);
+      var none = el("button", "btn quiet", "Clear");
+      none.type = "button"; none.setAttribute("data-act", "select-none");
+      none.addEventListener("click", function () { state.selected = {}; draw(); });
+      bar.appendChild(none);
+      var go = el("button", "btn danger", "Remove " + n + " selected");
+      go.type = "button"; go.setAttribute("data-act", "remove-selected"); go.disabled = n === 0;
+      go.addEventListener("click", function () { if (selectedIds().length) ask(selectedIds()); });
+      bar.appendChild(go);
+    }
+    /* The confirmation lists every task before anything changes: what goes now
+       and what stays, with why. A task another open task needs stays unless
+       that task goes too; fm-forget.sh decides the same again under its locks. */
+    function plan(ids) {
+      var go = {}, kept = [];
+      ids.forEach(function (id) { if (byId[id] && !byId[id].keep && !state.pending[id]) go[id] = true; else if (byId[id]) kept.push([id, byId[id].keep_text || "It is already queued."]); });
+      var changed = true;
+      while (changed) {
+        changed = false;
+        Object.keys(go).forEach(function (id) {
+          var stays = (byId[id].needed_by || []).filter(function (d) { return !go[d.id]; });
+          if (stays.length) {
+            delete go[id]; changed = true;
+            kept.push([id, (tasks.needed_text || "Another open task still needs it; select that task too.") + " (needed by: " + stays.map(function (d) { return d.title; }).join("; ") + ")"]);
+          }
+        });
+      }
+      return { go: ids.filter(function (id) { return go[id]; }), kept: kept };
+    }
+    function ask(ids) {
+      var p = plan(ids);
+      clear(confirmBox);
+      confirmBox.hidden = false;
+      confirmBox.appendChild(el("h3", "", p.go.length ? "Remove " + noun(p.go.length, "task", "tasks") + " from Firstmate's memory?" : "Nothing here can be removed"));
+      if (p.go.length) {
+        confirmBox.appendChild(el("p", "hint", "Removed now (" + p.go.length + "):"));
+        var ul = el("ul");
+        p.go.forEach(function (id) { ul.appendChild(el("li", "", byId[id].title + (byId[id].kind === "suggestion" ? " (suggestion)" : ""))); });
+        confirmBox.appendChild(ul);
+      }
+      if (p.kept.length) {
+        confirmBox.appendChild(el("p", "hint", "Kept (" + p.kept.length + "):"));
+        var ul2 = el("ul");
+        p.kept.forEach(function (k) { ul2.appendChild(el("li", "", byId[k[0]].title + " - " + k[1])); });
+        confirmBox.appendChild(ul2);
+      }
+      if (p.go.length) confirmBox.appendChild(el("p", "hint", "They leave every list. Each one stays restorable for " + (tasks.keep_days || 90) + " days under Removed, one by one or all together."));
+      var foot = el("div", "foot");
+      var status = el("span", "err"); status.setAttribute("role", "status");
+      if (p.go.length) {
+        var yes = el("button", "btn danger", "Remove " + noun(p.go.length, "task", "tasks"));
+        yes.type = "button"; yes.setAttribute("data-act", "confirm-remove");
+        yes.addEventListener("click", function () {
+          if (p.go.length > 200) { status.textContent = "At most 200 tasks per press; select fewer."; return; }
+          if (!(window.lavish && window.lavish.queuePrompt)) { status.textContent = "Remove only works when this board is open in Lavish."; return; }
+          var batch = "b" + nowSec().toString(36) + "-" + Math.floor(Math.random() * 1679616).toString(36);
+          var items = p.go.map(function (id) { return byId[id].rev ? { id: id, rev: byId[id].rev } : { id: id }; });
+          var titles = p.go.map(function (id) { return byId[id].title; });
+          window.lavish.queuePrompt("Bridge remove of " + noun(p.go.length, "task", "tasks") + " (batch " + batch + "): " + titles.join("; ").slice(0, 600)
+            + ". Apply with bin/fm-bridge-intake.sh <this result file>.",
+            { tag: "choice", text: "Remove " + noun(p.go.length, "task", "tasks"), element: confirmBox,
+              data: { schema: "fm-bridge-action.v1", action: "remove", batch: batch, items: items } });
+          p.go.forEach(function (id) { state.pending[id] = true; state.selected[id] = false; });
+          confirmBox.hidden = true;
+          notice.hidden = false;
+          notice.textContent = "Removal of " + noun(p.go.length, "task", "tasks") + " is queued in Lavish (batch " + batch + "). Firstmate applies it and checks every task again; the result shows under Last results.";
+          draw();
+        });
+        foot.appendChild(yes);
+      }
+      var no = el("button", "btn quiet", p.go.length ? "Cancel" : "Close");
+      no.type = "button"; no.setAttribute("data-act", "cancel-remove");
+      no.addEventListener("click", function () { confirmBox.hidden = true; });
+      foot.appendChild(no);
+      foot.appendChild(status);
+      confirmBox.appendChild(foot);
+    }
+    draw();
+
+    /* Removed: restorable for the keep window, by batch or one by one. */
+    var removed = Array.isArray(tasks.removed) ? tasks.removed : [];
+    if (removed.length) {
+      var rd = el("details", "group");
+      rd.appendChild(el("summary", "", "Removed, restorable for " + (tasks.keep_days || 90) + " days (" + removed.length + ")"));
+      var rin = el("div");
+      var batches = [], byBatch = {};
+      removed.forEach(function (r) { if (!byBatch[r.batch]) { byBatch[r.batch] = []; batches.push(r.batch); } byBatch[r.batch].push(r); });
+      function queueRestore(batch, items, label, where) {
+        if (!(window.lavish && window.lavish.queuePrompt)) { where.textContent = "Restore only works when this board is open in Lavish."; return false; }
+        window.lavish.queuePrompt("Bridge restore of " + label + " (batch " + batch + "). Apply with bin/fm-bridge-intake.sh <this result file>.",
+          { tag: "choice", text: "Restore " + label, element: rin,
+            data: { schema: "fm-bridge-action.v1", action: "restore", batch: batch, items: items } });
+        where.textContent = "Restore of " + label + " is queued in Lavish.";
+        return true;
+      }
+      batches.forEach(function (bid) {
+        var list2 = byBatch[bid];
+        var when = new Date(list2[0].removed_epoch * 1000).toISOString().slice(0, 10);
+        var head = el("div", "foot");
+        head.appendChild(el("b", "", "Removed " + when + " (" + list2.length + ")"));
+        var st = el("span", "hint"); st.setAttribute("role", "status");
+        if (list2.length > 1) {
+          var allBtn = el("button", "btn quiet", "Restore all " + list2.length);
+          allBtn.type = "button"; allBtn.setAttribute("data-act", "restore-batch"); allBtn.setAttribute("data-id", bid);
+          allBtn.addEventListener("click", function () { if (queueRestore(bid, [], noun(list2.length, "task", "tasks"), st)) allBtn.disabled = true; });
+          head.appendChild(allBtn);
+        }
+        head.appendChild(st);
+        rin.appendChild(head);
+        var ul = el("ul");
+        list2.forEach(function (r) {
+          var li = el("li", "", r.title + " ");
+          var one = el("button", "btn quiet", "Restore");
+          one.type = "button"; one.setAttribute("data-act", "restore-one"); one.setAttribute("data-id", r.id);
+          var st1 = el("span", "hint");
+          one.addEventListener("click", function () { if (queueRestore(bid, [{ id: r.id }], "\"" + r.title + "\"", st1)) one.disabled = true; });
+          li.appendChild(one); li.appendChild(st1);
+          ul.appendChild(li);
+        });
+        rin.appendChild(ul);
+      });
+      rd.appendChild(rin);
+      box.appendChild(rd);
+    }
+    var receipts = Array.isArray(tasks.receipts) ? tasks.receipts : [];
+    if (receipts.length) {
+      var lr = el("details", "group");
+      lr.appendChild(el("summary", "", "Last results (" + receipts.length + ")"));
+      var lin = el("div");
+      receipts.forEach(function (r) {
+        lin.appendChild(el("p", "hint", ago(nowSec() - r.at) + " ago"));
+        var ul = el("ul");
+        r.lines.slice(0, 60).forEach(function (l) { ul.appendChild(el("li", /^kept|refused/.test(l) ? "err" : "", l)); });
+        lin.appendChild(ul);
+      });
+      lr.appendChild(lin);
+      box.appendChild(lr);
+    }
+  }
+  renderTasks(data.tasks);
 
   var src = el("div", "sources");
   src.appendChild(el("b", "", "Sources: " + (data.sources ? data.sources.ok + " of " + data.sources.total + " read" : "unknown")));

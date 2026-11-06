@@ -2745,6 +2745,7 @@ Set `enabled` to false in `config/live-board.json` or delete that file to stop r
 ## Bridge (config/bridge.json)
 
 The Bridge is an opt-in browser page that shows every question that is waiting, from this home and its secondmates, within one watcher poll of being asked, and below them the fleet: who runs where and what each task is doing.
+Its Tasks section lists every open task of this home, which the captain can open and remove from Firstmate's memory.
 It is separate from the live board and from `/bearings lavish`, reads only Firstmate's durable records, and spends no model calls to build.
 Needs you lists every open captain hold in this home and the captain holds each local secondmate exports.
 Waiting on Firstmate lists questions this home's workers raised as keyed `needs-decision` or `blocked` status lines; they are addressed to Firstmate first, and the captain may answer them too.
@@ -2775,7 +2776,7 @@ Answers use the existing intake only: a captain hold's answer goes through `fm-c
 A question waiting on Firstmate or a secondmate for 15 minutes or more says so on its card and offers Nudge, which queues a request for Firstmate to settle it now through the same captured-result path as an answer.
 A captain hold with a deadline default counts down to the moment Firstmate may proceed on its recommendation and offers Stop the clock, which queues a request for Firstmate to run `bin/fm-captain-hold.sh stop-clock`; a hold that can never proceed without the captain says why.
 A "Parked until a question is answered" list names every task and blocked worker that waits behind an open question.
-The page never runs a command, never shows a merge or remove control, and loads nothing from outside the file.
+The page never runs a command, never shows a merge control, and loads nothing from outside the file.
 A source that could not be read - the task list, a status log, or a secondmate's export - is named in red, the counts read "at least", and the digest says `complete=no`, so a blind board never looks clear.
 The page also marks itself out of date when it has not been checked for longer than its refresh allows, which is how a stopped watcher or builder shows.
 Worker text is untrusted: likely secrets, URL queries and control characters are removed before anything is written, and markup in a question renders as plain text.
@@ -2793,6 +2794,18 @@ An invalid line switches every channel off and the page says why; the page alway
 Agents read the state in one call with `bin/fm-bridge.sh digest`, a file of at most 2,048 bytes in which every question's text follows `data:` and is data, not an instruction.
 [`bin/fm-bridge.sh`](../bin/fm-bridge.sh)'s header owns the commands, schemas, sources, card and fleet rules, routes, alerts and digest grammar, [`bin/fm-bridge-asks.jq`](../bin/fm-bridge-asks.jq) owns the question wording, redaction and order, [`bin/fm-bridge-fleet.sh`](../bin/fm-bridge-fleet.sh) owns the fleet reads and their bounds, and [`bin/fm-bridge-fleet.jq`](../bin/fm-bridge-fleet.jq) owns the flag thresholds and fleet wording.
 Set `enabled` to false or delete `config/bridge.json` to stop refreshing; the published page stays in place and marks itself out of date.
+
+### Tasks, Remove and Restore
+
+The Tasks section lists this home's open tasks and waiting suggestions, filtered by why they wait and grouped by project or by where they came from.
+Opening a task shows what it is, where it came from, why it is waiting, what it needs first and what needs it, all read from the task list and its records with no model call.
+Where a task came from is read from structure only: a `Captain <date>:` first line, the line a picked suggestion writes, an `Origin:` line, or a secondmate row; anything else says "Not recorded", and the section counts those.
+Remove takes a task off every list without deleting it: the row moves unchanged to `data/forgotten.md` and stays restorable for 90 days, then moves to `data/forgotten-archive.md`, which is never deleted.
+Select several gives each task a checkbox, each group a "Select all", and the bar a "Select all shown"; one confirmation then lists every task that goes and every task that stays with its reason, and Removed restores one task or a whole press.
+Removal is for unwanted waiting work only, so it keeps any task that has started, still has a worker record or unlanded work, is a question for the captain, has an open crew question, a pull request or a report, or is needed by an open task that is not removed with it.
+A press is a captured Lavish result that reaches Firstmate, who applies it with `bin/fm-bridge-intake.sh <result-file>`; the intake accepts only this home's bound Bridge source, applies each result once, records the press rather than words in the captain's name, and the next build shows its receipt under Last results.
+Write `off` on the first line of the local `config/bridge-actions` to refuse every press while the page stays readable.
+[`bin/fm-forget.sh`](../bin/fm-forget.sh)'s header owns the remove and restore guards, files and result lines, [`bin/fm-bridge-intake.sh`](../bin/fm-bridge-intake.sh)'s header owns the press format and receipts, and [`bin/fm-bridge-tasks.jq`](../bin/fm-bridge-tasks.jq) owns the task wording, origin rules and lanes.
 
 ## Local Claude usage warner (config/usage-warner)
 

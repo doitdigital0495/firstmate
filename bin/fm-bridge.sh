@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fm-bridge.sh - build, refresh, open and export this home's Bridge: one
-# captain-facing page of every open question and of the fleet, read from
-# durable records with zero model calls.
+# captain-facing page of every open question, the fleet and this home's open
+# tasks, read from durable records with zero model calls.
 #
 # Usage:
 #   fm-bridge.sh build
@@ -72,6 +72,7 @@
 #                  stale and is named; it is never shown as "no questions".
 #   <name> export  each local secondmate's state/bridge/asks.json (EXPORT). The
 #                  Bridge never opens another home's status logs.
+#   task details   `fm-forget.sh feed` (TASKS).
 # A source that is not ok turns the headline from a count into "at least N"
 # with the unread sources named in red, and the digest says complete=no.
 #
@@ -101,8 +102,8 @@
 # The page also lists parked work: every task behind an open card and every
 # worker whose keyed line is `blocked`. All free text is redacted
 # (bin/fm-bridge-asks.jq br_redact: control characters, key blocks, bearer
-# tokens, common token prefixes, long hex or base64 runs and URL queries) and
-# capped before it is written anywhere.
+# tokens, common token prefixes, long hex or base64 runs, URL queries and
+# Lavish session ids) and capped before it is written anywhere.
 #
 # ANSWERS. The page never calls a command. A captain hold with ready context
 # queues one Lavish `choice` carrying fm-bearings-answer.v1 with the task id,
@@ -122,6 +123,18 @@
 # key and raise time, or hold lifecycle), so a re-raised or re-held question
 # gets a new id and `route` refuses the old one.
 #
+# TASKS. The feed's `tasks` object (fm-bridge-tasks.v1, projected by
+# bin/fm-bridge-tasks.jq from `fm-forget.sh feed` and the newest
+# `fm-bridge-intake.sh receipts`) lists this home's open rows and waiting
+# suggestions, each with its revision, lane, origin, explainer, both-way links
+# and, when it cannot be removed, the keep reason fm-forget.sh gives; the
+# removed list; and the receipts. A Remove or Restore press on the page queues
+# one Lavish `choice` carrying fm-bridge-action.v1 (bin/fm-bridge-intake.sh owns
+# that schema and applies it); the page never changes anything itself. The
+# digest gains one `tasks open=N ready=N ...` line after the `asks` line. The
+# forgotten files, the suggestion list and state/bridge-requests are inputs, so
+# a press shows on the next poll after it is applied.
+#
 # EXPORT. state/bridge/asks.json is fm-bridge-export.v1: generated_epoch,
 # complete, and this home's own cards (never ones it imported) with their
 # routes. A parent treats it as untrusted: regular file, not a symlink, at most
@@ -132,6 +145,7 @@
 # DIGEST. state/bridge/digest.txt, at most 2048 bytes, written atomically:
 #   bridge v1 checked=<UTC time> sources=<ok>/<total>
 #   asks you=N firstmate=N secondmates=N relayed=N moot=N oldest=<age> complete=yes|no
+#   tasks open=N ready=N waiting=N later=N held=N you=N started=N suggested=N nosource=N removed=N
 #   - <who> <age> <ask-id> data: <question>     (one per open card, oldest
 #                                                 rank first, then "+N more")
 #   source <state> data: <label>                (each source not read)
@@ -478,6 +492,23 @@ collect_exports() {  # <work-dir>
   done < "$w/secondmates.jsonl"
 }
 
+# TASKS: this home's task list, removed list and waiting suggestions through
+# bin/fm-forget.sh feed, plus the newest intake receipts.
+collect_tasks() {  # <work-dir>
+  local w=$1
+  if fm_run_timed 30 env FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+      "$SCRIPT_DIR/fm-forget.sh" feed > "$w/forget.json" 2>/dev/null \
+    && jq -e '.schema == "fm-forget-feed.v1"' "$w/forget.json" >/dev/null 2>&1; then
+    source_line "$w/sources.jsonl" "task details" ok
+  else
+    printf 'null\n' > "$w/forget.json"
+    source_line "$w/sources.jsonl" "task details" failed "the task list could not be read for the Tasks section"
+  fi
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+    "$SCRIPT_DIR/fm-bridge-intake.sh" receipts --json > "$w/receipts.json" 2>/dev/null \
+    || printf '{"receipts":[]}\n' > "$w/receipts.json"
+}
+
 collect_watcher() {  # <work-dir>
   local w=$1
   # shellcheck source=bin/fm-supervision-lib.sh
@@ -512,6 +543,7 @@ collect_feed() {  # <work-dir> <refresh-seconds>
   collect_backlog "$w"
   collect_keyed "$w"
   collect_exports "$w"
+  collect_tasks "$w"
   collect_watcher "$w"
   collect_fleet "$w"
   { [ -e "$STATE/.afk-contract" ] || [ -e "$STATE/.afk" ]; } && away=true
@@ -520,13 +552,16 @@ collect_feed() {  # <work-dir> <refresh-seconds>
     --slurpfile names "$w/names.json" --slurpfile backlog "$w/backlog.json" \
     --slurpfile keyed "$w/keyed.json" --slurpfile exports "$w/exports.json" \
     --slurpfile watcher "$w/watcher.json" \
+    --slurpfile forget "$w/forget.json" --slurpfile receipts "$w/receipts.json" --arg today "$(date -u +%Y-%m-%d)" \
     --rawfile sources "$w/sources.jsonl" --rawfile sms "$w/secondmates.jsonl" --rawfile notes "$w/notes.txt" '
-    include "fm-bridge-asks";
+    include "fm-bridge-asks"; include "fm-bridge-tasks";
     {now:$now, refresh_seconds:$refresh, away:$away, names:$names[0], backlog:$backlog[0],
      keyed:$keyed[0], exports:$exports[0], watcher:$watcher[0],
      sources:[$sources | split("\n")[] | select(length > 0) | fromjson],
      secondmates:[$sms | split("\n")[] | select(length > 0) | fromjson],
-     notes:[$notes | split("\n")[] | select(length > 0)]} | br_feed' > "$w/feed0.json" \
+     notes:[$notes | split("\n")[] | select(length > 0)]}
+    | br_feed + {tasks: ({forget:$forget[0], receipts:$receipts[0], now:$now, today:$today,
+        sm_ids:[$sms | split("\n")[] | select(length > 0) | fromjson | .id], names:$names[0]} | br_tasks)}' > "$w/feed0.json" \
     || return 1
   jq -L "$SCRIPT_DIR" --slurpfile fin "$w/fleet-in.json" --slurpfile names "$w/names.json" \
     --slurpfile backlog "$w/backlog.json" --rawfile sms "$w/secondmates.jsonl" '
@@ -711,7 +746,7 @@ write_digest() {  # <work-dir> <feed>
     else
       more=$((more + 1))
     fi
-  done < <(jq -r -L "$SCRIPT_DIR" 'include "fm-bridge-asks"; include "fm-bridge-fleet"; br_digest_lines as $l | $l[0], bf_digest_line, $l[1:][]' "$feed")
+  done < <(jq -r -L "$SCRIPT_DIR" 'include "fm-bridge-asks"; include "fm-bridge-fleet"; include "fm-bridge-tasks"; br_digest_lines as $l | $l[0], bf_digest_line, br_tasks_digest_lines[], $l[1:][]' "$feed")
   [ "$more" -eq 0 ] || body="$body+$more more"$'\n'
   hash=$(printf '%s' "$body" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-12)
   end="bridge-end hash=$hash"
@@ -814,7 +849,8 @@ inputs_dirty() {
   local f home
   [ -f "$STAMP" ] || return 0
   [ "$(input_signature)" = "$(cat "$STAMP" 2>/dev/null)" ] || return 0
-  for f in "$STATE"/*.status "$STATE"/*.meta "$DATA/backlog.md" "$NAMES_FILE" "$CONFIG_FILE"; do
+  for f in "$STATE"/*.status "$STATE"/*.meta "$DATA/backlog.md" "$NAMES_FILE" "$CONFIG_FILE" \
+    "$DATA/forgotten.md" "$DATA/suggestions.jsonl" "$STATE/bridge-requests"; do
     [ "$f" -nt "$STAMP" ] && return 0
   done
   if [ -f "$BSTATE/secondmate-homes" ]; then

@@ -8,7 +8,8 @@
 include "fm-captain-question-context";
 
 # Free text from a worker or another home is untrusted data. Strip control
-# characters, cut likely secrets and URL queries, collapse whitespace, then cap.
+# characters, cut likely secrets, URL queries and Lavish session ids (a session
+# URL is the page's only access secret), collapse whitespace, then cap.
 def br_redact($cap):
   tostring
   | gsub("[\u0000-\u001f\u007f]"; " ")
@@ -18,6 +19,7 @@ def br_redact($cap):
   | gsub("\\b(sk|rk|pk)-[A-Za-z0-9_-]{8,}"; "[redacted]")
   | gsub("\\b(gh[pousr]_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,}|xox[a-z]-[A-Za-z0-9-]{6,}|tskey-[A-Za-z0-9-]{8,}|AKIA[A-Z0-9]{12,})"; "[redacted]")
   | gsub("(?<u>https?://[^\\s?#]+)[?#][^\\s]*"; "\(.u)")
+  | gsub("/session/[A-Za-z0-9_-]{8,}"; "/session/[redacted]")
   | gsub("\\b[A-Fa-f0-9]{32,}\\b"; "[redacted]")
   | gsub("[A-Za-z0-9+_=]{32,}"; "[redacted]")
   | gsub("(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{40,}"; "[redacted]")
