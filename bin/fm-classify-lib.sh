@@ -1364,7 +1364,10 @@ EOF
 # nothing were open.
 #
 # Not a pure status-file read: this writes/rewrites the sibling cursor file as a
-# side effect (state/.<task>.open-decisions-cursor), the library's second
+# side effect (state/.<task>.open-decisions-cursor; a reader that sets
+# FM_OPEN_DECISIONS_CURSOR_DIR keeps its own cursors, span scratch and read
+# chunks in that directory instead, so it shares no cursor with the watcher
+# and writes nothing beside the status file), the library's second
 # documented exception to the pure-read rule after crew_absorb_class. The write
 # is atomic (temp file + rename), so a crash between calls leaves either the
 # prior cursor or the new one, never a partial one. bin/fm-wake-drain.sh calls
@@ -1375,7 +1378,7 @@ EOF
 # re-derives from whatever offset actually landed on disk.
 _fm_open_decisions_cursor_path() {  # <status-file>
   local f=$1 dir base
-  dir=$(dirname "$f")
+  dir=${FM_OPEN_DECISIONS_CURSOR_DIR:-$(dirname "$f")}
   base=$(basename "$f")
   printf '%s/.%s.open-decisions-cursor' "$dir" "${base%.status}"
 }

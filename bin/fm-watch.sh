@@ -3690,6 +3690,22 @@ live_board_refresh_detached() {
   LIVE_BOARD_PID=$!
 }
 
+# The opt-in Bridge (bin/fm-bridge.sh) is a third side-band publication of the
+# same kind: refresh decides from config/bridge.json and one builtin input check
+# whether anything is due, so an idle poll pays a detached no-op.
+BRIDGE_PID=
+bridge_refresh_detached() {
+  if [ -n "$BRIDGE_PID" ]; then
+    if kill -0 "$BRIDGE_PID" 2>/dev/null; then
+      return 0
+    fi
+    wait "$BRIDGE_PID" 2>/dev/null || true
+    BRIDGE_PID=
+  fi
+  "$SCRIPT_DIR/fm-bridge.sh" refresh </dev/null >/dev/null 2>&1 &
+  BRIDGE_PID=$!
+}
+
 RECONCILE_REQUEST_PID=
 reconcile_requests_pending() {
   local request
@@ -4024,6 +4040,9 @@ while :; do
   fi
   if [ -f "$CONFIG/live-board.json" ]; then
     live_board_refresh_detached
+  fi
+  if [ -f "$CONFIG/bridge.json" ]; then
+    bridge_refresh_detached
   fi
   # Opt-in lane capacity facts: off costs one file test.
   if [ -e "$CONFIG/lane-capacity" ] && [ "$(age_of "$STATE/lane-capacity.json")" -ge 30 ]; then

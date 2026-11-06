@@ -21,6 +21,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-bearings-snapshot.sh` | Project the bounded remote-ledger fleet snapshot to compact TOON; `--include-prs` adds live GitHub enrichment |
 | `fm-live-board-snapshot.sh` | Project this home's opt-in live-board input to the separate browser board JSON (schema `fm-live-board.v1`), never a Bearings mode |
 | `fm-live-board.sh`       | Build, refresh, and open this home's opt-in live project board page with guarded Captain's Call decisions |
+| `fm-bridge.sh`           | Build, refresh, open and export this home's opt-in Bridge page of every waiting question, its agent digest, and the route for each answer |
 | `fm-live-board-prs.sh`   | Read each project's recent pull requests and the runs their merges started, and which listed environments each merge has reached, read-only, for the live board's timelines and environment strips |
 | `fm-lavish-open.sh`      | Open a Lavish page in the captain's browser and report whether the launch failed      |
 | `fm-lavish-board-lib.sh` | Shared serve, prove-live, bind, and arm sequence for captain-facing Lavish boards     |

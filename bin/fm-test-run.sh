@@ -434,7 +434,7 @@ family_for_basename() {
       ;;
     fm-bearings-board-render.test.sh|fm-bearings-snapshot.test.sh|fm-contributions.test.sh|\
     fm-fleet-snapshot-view.test.sh|fm-live-board-snapshot.test.sh|fm-home-summary-refresh.test.sh|\
-    fm-live-board.test.sh|fm-live-board-prs.test.sh)
+    fm-live-board.test.sh|fm-live-board-prs.test.sh|bridge.test.sh)
       printf '%s\n' snapshot-bearings
       ;;
     fm-backend-cmux.test.sh|fm-backend-cmux-smoke.test.sh)
@@ -1659,6 +1659,7 @@ families_for_changed_path() {
     bin/fm-watch*|bin/fm-classify-lib.sh)
       printf '%s\n' watcher-wake-lock
       printf '%s\n' "__script__:fm-backend-t3code.test.sh"
+      printf '%s\n' __script__:bridge.test.sh
       ;;
     bin/fm-wake*|bin/fm-inactive-reconcile.sh|\
     bin/fm-daemon*|bin/fm-turnend-guard*|bin/fm-guard.sh)
@@ -1902,6 +1903,9 @@ families_for_changed_path() {
     bin/fm-live-board.sh|bin/fm-live-board-template.html|bin/fm-live-board-projects.jq)
       printf '%s\n' __script__:fm-live-board.test.sh
       ;;
+    bin/fm-bridge.sh|bin/fm-bridge-template.html|bin/fm-bridge-asks.jq|tests/assets/bridge-render-harness.mjs)
+      printf '%s\n' __script__:bridge.test.sh
+      ;;
     bin/fm-live-board-prs.sh|bin/fm-live-board-prs.jq)
       # The pull request collector and its rules feed the snapshot and the page.
       printf '%s\n' __script__:fm-live-board-prs.test.sh
@@ -1915,10 +1919,11 @@ families_for_changed_path() {
       printf '%s\n' __script__:fm-live-board.test.sh
       ;;
     bin/fm-lavish-board-lib.sh)
-      # The shared serve/bind/arm sequence behind both captain-facing boards.
+      # The shared serve/bind/arm sequence behind the captain-facing boards.
       printf '%s\n' __script__:fm-bearings-board.test.sh
       printf '%s\n' __script__:fm-bearings-board-render.test.sh
       printf '%s\n' __script__:fm-live-board.test.sh
+      printf '%s\n' __script__:bridge.test.sh
       ;;
     bin/fm-install-herdr.sh|bin/fm-install-treehouse.sh|bin/fm-herdr-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit
