@@ -15,3 +15,5 @@ __pycache__/
 
 .tools/
 /remote-root/
+/CLAUDE.local.md
+/.CLAUDE.local.md.*

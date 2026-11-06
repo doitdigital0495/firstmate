@@ -1093,6 +1093,8 @@ Portable shard evidence and coverage rules are in [fm-test-portable-shards.md](f
 ## Captain Preferences (data/captain.md / data/captain-shared.md)
 
 Domain-local preferences for one captain's fleet live locally in each home's `data/captain.md`; it is gitignored and printed in the session-start context digest after `data/projects.md` and optional `data/secondmates.md`.
+On a Claude primary home, locked bootstrap also creates the gitignored `CLAUDE.local.md`, whose `@`-imports load `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md` into every turn, so a compaction re-emit points at these files instead of reprinting them.
+Bootstrap never overwrites an existing `CLAUDE.local.md`; it reports a `CAPTAIN_IMPORTS` line when that file lacks the three import lines, and `bin/fm-captain-imports-lib.sh` owns the file's content and rules.
 Before changing it, inspect the current file and curate the matching bullet in place under the internal [`stow` skill's](../.agents/skills/stow/SKILL.md) tiering and archive contract; add a new bullet only for a genuinely new durable preference.
 
 Shared captain preferences that apply across secondmate domains live only in the primary home's optional `data/captain-shared.md`.

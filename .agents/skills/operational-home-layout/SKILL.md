@@ -10,6 +10,7 @@ metadata:
 
 ```
 AGENTS.md            this file (CLAUDE.md is a real @AGENTS.md pointer to it)
+CLAUDE.local.md      primary home only; LOCAL, gitignored Claude @-imports of data/captain.md, data/captain-shared.md, and data/learnings.md, created by locked bootstrap when absent (bin/fm-captain-imports-lib.sh)
 CONTRIBUTING.md      contributor workflow and repo conventions
 README.md            public overview and development notes
 .github/workflows/   shared CI and PR enforcement, committed

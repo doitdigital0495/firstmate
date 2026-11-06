@@ -396,7 +396,27 @@ test_literal_paths_in_rendered_snippets() {
   pass "snippets preserve literal ampersands, quotes and spaces in paths across primary harnesses"
 }
 
+# The bounded context re-emit carries only the current-state lines and the
+# exact command that prints the rest; that command must reproduce the block.
+test_state_only_prints_state_and_the_full_block_command() {
+  local out cmd full home="$TMP_ROOT/state-only"
+  mkdir -p "$home/config"
+  out=$(FM_HOME="$home" "$RENDER" --harness claude --read-only 0 --afk 1 --afk-mode quiet --x-mode 0 --state-only)
+  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: claude" "state-only heading missing"
+  assert_contains "$out" "- Quiet mode: active" "state-only dropped a current-state line"
+  assert_not_contains "$out" "Mode: Claude Stop-hook-owned supervision." "state-only printed the harness procedure"
+  cmd=$(printf '%s\n' "$out" | sed -n 's/^Full operating block (procedure for this harness): bin\/fm-supervision-instructions.sh //p')
+  [ -n "$cmd" ] || fail "state-only did not print the full-block command: $out"
+  # shellcheck disable=SC2086 # The printed flags are word-split on purpose.
+  full=$(FM_HOME="$home" "$RENDER" $cmd)
+  [ "$full" = "$(FM_HOME="$home" "$RENDER" --harness claude --read-only 0 --afk 1 --afk-mode quiet --x-mode 0)" ] \
+    || fail "the printed full-block command does not reproduce the full block"
+  assert_contains "$full" "Mode: Claude Stop-hook-owned supervision." "the printed command did not print the procedure"
+  pass "state-only mode prints the current state and a command that reproduces the full block"
+}
+
 test_literal_paths_in_rendered_snippets
+test_state_only_prints_state_and_the_full_block_command
 test_supervision_host_protocol_on_a_claude_home_unless_off
 test_supervision_host_protocol_on_every_arm_owner
 test_selected_harness_block_only
