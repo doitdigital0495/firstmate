@@ -49,6 +49,8 @@ export PATH="$FAKEBIN:$PATH" QUOTA_FIXTURE="$QUOTA" QUOTA_CALL_LOG="$TMP_ROOT/qu
 unset FM_QUOTA_INTAKE_TEST_BYPASS
 export FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE="$HOME_DIR/state" FM_CONFIG_OVERRIDE="$HOME_DIR/config" FM_DATA_OVERRIDE="$HOME_DIR/data" FM_JEVD_SOCKET="$SOCKET"
 export FM_DISPATCH_QUOTA_ATTEMPTS=2 FM_DISPATCH_QUOTA_BACKOFF_MS=250 FM_DISPATCH_QUOTA_WAIT_SECONDS=20 FM_JEVD_SOCKET_WAIT_SECONDS=0
+# Sequential resolves would otherwise debit each other through the burst spreader.
+export FM_DISPATCH_BURST_WINDOW_SECONDS=0
 # Captain words come only from these two records; the tests own both.
 export FM_LAVISH_STATE="$TMP_ROOT/lavish-state.json" FM_JEVD_AUDIT_JOURNAL=0 FM_JEVD_AUDIT_LOG="$TMP_ROOT/jevd.log"
 MIRROR="$HOME_DIR/state/.host-mirror.jsonl"
