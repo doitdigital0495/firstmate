@@ -17,6 +17,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-session-lock-ancestry)
+fm_test_hide_proc "$TMP_ROOT"
 fm_git_identity fmtest fmtest@example.invalid
 
 LIB="$ROOT/bin/fm-session-lock-lib.sh"
@@ -774,6 +775,83 @@ test_cygwin_ps_without_o_still_resolves_a_local_harness() {
     || fail "a harness in the local process table was not resolved when ps rejected -o"
   [ "$got" = 700 ] || fail "expected the untagged local harness pid 700, got '$got'"
   pass "session-lock: a harness in the local process table resolves untagged when ps has no -o option"
+}
+
+# --- /proc fast path: equivalence with procps -------------------------------
+
+# Print fm_ps_comm, fm_ps_args, and fm_ps_ppid of every pid argument, one
+# "<pid>|<comm>|<args>|<ppid>|<rcs>" line each, with the real /proc visible.
+proc_identity_rows() {  # <path> <pid>...
+  local path=$1
+  shift
+  env -u FM_PROC_ROOT_OVERRIDE PATH="$path" bash -c '
+    . "$0"
+    for pid in "$@"; do
+      c=$(fm_ps_comm "$pid"); rc=$?
+      a=$(fm_ps_args "$pid"); ra=$?
+      p=$(fm_ps_ppid "$pid"); rp=$?
+      printf "%s|%s|%s|%s|%s%s%s\n" "$pid" "$c" "$a" "$p" "$rc" "$ra" "$rp"
+    done
+  ' "$LIB" "$@"
+}
+
+# The same rows read straight from procps, the reference the fast path mirrors.
+ps_identity_rows() {  # <pid>...
+  local pid
+  for pid in "$@"; do
+    printf '%s|%s|%s|%s|000\n' "$pid" "$(ps -o comm= -p "$pid")" "$(ps -o args= -p "$pid")" \
+      "$(ps -o ppid= -p "$pid" | tr -d ' ')"
+  done
+}
+
+# Wrong identity here breaks lock ownership, so the /proc reads must agree with
+# procps exactly - including a command name carrying spaces and parentheses,
+# which is what the stat parser has to strip through - and must provably be the
+# path taken, not a silent fall-through to ps.
+test_proc_identity_matches_ps() {
+  local dir fakebin odd holder child self expected got
+  if [ ! -r /proc/$$/stat ] || ! ps -o comm= -p $$ >/dev/null 2>&1; then
+    pass "session-lock: /proc identity equivalence not applicable without Linux /proc and procps"
+    return 0
+  fi
+  dir="$TMP_ROOT/proc-equivalence"
+  fakebin=$(fm_fakebin "$dir")
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/ps"
+  chmod +x "$fakebin/ps"
+  odd="$dir/od) (d x"
+  ln -s "$(command -v bash)" "$odd"
+  "$odd" -c 'sleep 60; :' "arg with  spaces" "(paren)" &
+  holder=$!
+  child=
+  for _ in $(seq 1 50); do
+    child=$(ps -o pid= --ppid "$holder" 2>/dev/null | tr -d ' ')
+    [ -n "$child" ] && break
+    sleep 0.1
+  done
+  [ -n "$child" ] || { kill "$holder" 2>/dev/null; fail "the fixture child never started"; }
+  self=$$
+
+  expected=$(ps_identity_rows "$holder" "$child" "$self" 1)
+  case "$expected" in *"|od) (d x|"*) ;; *) kill "$holder"; fail "fixture is vacuous: ps did not report the odd command name: $expected" ;; esac
+  got=$(proc_identity_rows "$PATH" "$holder" "$child" "$self" 1)
+  [ "$got" = "$expected" ] || { kill "$holder"; fail "/proc identity diverged from ps:
+expected:
+$expected
+got:
+$got"; }
+  # With every ps call failing, only /proc can still produce these answers.
+  got=$(proc_identity_rows "$fakebin:$PATH" "$holder" "$child" "$self" 1)
+  [ "$got" = "$expected" ] || { kill "$holder"; fail "the /proc path was not taken (ps was needed):
+$got"; }
+  # Hiding /proc with ps failing leaves nothing to answer from.
+  got=$(FM_PROC_ROOT_OVERRIDE="$dir/no-proc" PATH="$fakebin:$PATH" bash -c '. "$0"; fm_ps_comm "$1"' "$LIB" "$holder") \
+    && { kill "$holder"; fail "an absent /proc did not fall back to ps: '$got'"; }
+  kill "$holder" 2>/dev/null
+  wait "$holder" 2>/dev/null
+  # A dead pid fails all three questions on both paths.
+  got=$(proc_identity_rows "$PATH" "$holder")
+  [ "$got" = "$holder||||111" ] || fail "a dead pid was not reported dead by every reader: $got"
+  pass "session-lock: /proc comm, args, and ppid match procps, and the fast path is the one taken"
 }
 
 # --- end-to-end layer: the real Stop auto-arm in real process trees ----------
@@ -1593,6 +1671,7 @@ test_windows_clear_rekeys_the_lock_under_the_same_pid
 test_tagged_lock_is_inert_off_windows
 test_windows_task_lease_follows_a_tagged_lock_holder
 test_cygwin_ps_without_o_still_resolves_a_local_harness
+test_proc_identity_matches_ps
 test_e2e_version_named_session_claims_the_home
 test_e2e_daemon_parented_session_claims_the_home
 test_e2e_daemon_parented_version_named_session_keeps_its_lock

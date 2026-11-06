@@ -39,6 +39,7 @@ set -u
 SESSION_START="$ROOT/bin/fm-session-start.sh"
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 TMP_ROOT=$(fm_test_tmproot fm-session-start-tests)
+fm_test_hide_proc "$TMP_ROOT"
 SESSION_START_TEST_HARNESS_PID=$$
 SESSION_START_SECOND_MATE_ID="fmtest-sm-${TMP_ROOT##*.}"
 SESSION_START_SECOND_MATE_TMP="/tmp/fm-$SESSION_START_SECOND_MATE_ID"
@@ -2257,6 +2258,10 @@ EOF
   assert_contains "$out" "STARTUP TRUNCATED - SESSION START HIT ITS" "a truncated session start did not say so"
   assert_contains "$out" "RUNTIME BOUND" "the truncation banner did not name the bound it hit"
   assert_contains "$out" 'stopped during the "bootstrap" stage' "the truncation banner did not name the incomplete stage"
+  assert_contains "$out" "Stage entered at (seconds after start): lock@0s role@" \
+    "the truncation banner did not report when each stage was entered"
+  printf '%s\n' "$out" | grep -qE 'Stage entered at .* bootstrap@[0-9]+s$' \
+    || fail "the stage timeline did not end at the stage in progress: $out"
   assert_contains "$out" "RECONCILE these stages" "the truncation banner did not tell the agent what to reconcile"
   assert_contains "$out" "wake-queue supervision-instructions read-once fleet-state network-checks context next-step" \
     "the truncation banner did not list every stage that never ran"

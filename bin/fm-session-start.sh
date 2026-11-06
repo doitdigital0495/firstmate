@@ -283,9 +283,12 @@ done
 # that one as never emitted. Keep it in the exact order the digest prints.
 SESSION_START_STAGES='lock role bootstrap wake-queue supervision-instructions read-once fleet-state network-checks context next-step'
 
+# Each breadcrumb line is "<stage> <seconds since the child started>", appended,
+# so the last line names the stage in progress and the whole file is the stage
+# timeline the banner reports when a slow stage hits the bound.
 stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
   [ -n "${FM_SESSION_START_STAGE_FILE:-}" ] || return 0
-  printf '%s\n' "$1" > "$FM_SESSION_START_STAGE_FILE" 2>/dev/null || true
+  printf '%s %s\n' "$1" "$SECONDS" >> "$FM_SESSION_START_STAGE_FILE" 2>/dev/null || true
 }
 
 # shellcheck source=bin/fm-timeout-lib.sh
@@ -331,7 +334,8 @@ if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
   # other status means the child died or was killed mid-stage, which truncates
   # silently when unbanned - the parent must banner it, never exit 0 around it.
   if [ "$SESSION_START_RC" -ne 0 ]; then
-    SESSION_START_LAST_STAGE=$(cat "$SESSION_START_STAGE_FILE" 2>/dev/null) || SESSION_START_LAST_STAGE=
+    SESSION_START_TIMELINE=$(awk 'NF { printf "%s%s@%ss", sep, $1, $2; sep = " " }' "$SESSION_START_STAGE_FILE" 2>/dev/null) || SESSION_START_TIMELINE=
+    SESSION_START_LAST_STAGE=$(awk 'NF { last = $1 } END { print last }' "$SESSION_START_STAGE_FILE" 2>/dev/null) || SESSION_START_LAST_STAGE=
     [ -n "$SESSION_START_LAST_STAGE" ] || SESSION_START_LAST_STAGE=unknown
     SESSION_START_PENDING=$(
       printf '%s\n' "$SESSION_START_STAGES" | tr ' ' '\n' |
@@ -347,6 +351,8 @@ if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
     fi
     printf '●  It stopped during the "%s" stage, so everything above is COMPLETE\n' "$SESSION_START_LAST_STAGE"
     printf '●  only up to that point.\n'
+    [ -z "$SESSION_START_TIMELINE" ] \
+      || printf '●  Stage entered at (seconds after start): %s\n' "$SESSION_START_TIMELINE"
     printf '●  RECONCILE these stages before acting on anything they would have shown:\n'
     printf '●    %s\n' "${SESSION_START_PENDING% }"
     printf '●  Rerun bin/fm-session-start.sh now to finish taking the helm. If it truncates\n'

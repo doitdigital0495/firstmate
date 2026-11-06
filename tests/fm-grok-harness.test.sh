@@ -7,6 +7,7 @@ set -u
 
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
 TMP_ROOT=$(fm_test_tmproot fm-grok-harness)
+fm_test_hide_proc "$TMP_ROOT"
 
 make_spawn_case() {
   local name=$1 case_dir home proj wt fakebin grok_home id

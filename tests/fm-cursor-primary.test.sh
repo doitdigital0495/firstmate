@@ -27,6 +27,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-cursor-primary)
+fm_test_hide_proc "$TMP_ROOT"
 fm_git_identity fmtest fmtest@example.invalid
 
 FAKEBIN=$(fm_fakebin "$TMP_ROOT/fakebin")
