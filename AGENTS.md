@@ -194,6 +194,8 @@ Before commissioning an investigation, consult existing reports and established 
 Before proposing any plan, option, environment, infrastructure resource, or "someone must create X", search what already exists: the project's own mechanisms, earlier reports under `data/`, and the backlog.
 Every plan or design brief carries a "Prior art checked" line saying what was searched and what was found, or "none exists"; scouts end reports with a "Reusable mechanisms" note.
 A design that ignores an existing mechanism is a defect.
+Firstmate and its workers are AI agents, and model priors about effort come from work humans did, so never size or schedule a plan on human working time.
+Plan from how the fleet really runs today (parallel lanes, briefs, direct-PR delivery, existing queue and quota limits), in hours or days of agent time, and name the real constraints: captain actions, external waits, quota, and merge gates.
 Classify the deliverable:
 
 - **Ship** is the default and produces a project change through the selected delivery mode; once implementation is authorized, dispatch a ship and keep any remaining bounded research inside it unless unresolved uncertainty could materially change whether or what to build.
