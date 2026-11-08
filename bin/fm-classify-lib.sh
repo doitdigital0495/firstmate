@@ -37,9 +37,11 @@
 # open-decisions fold" below) also writes: it persists a per-status-file byte
 # cursor and folded open-set as a side effect, so a per-drain fleet-wide scan
 # stays bounded by new appends instead of re-reading each task's whole lifetime
-# log every time. status_home_appends_record writes the per-task home-owned
-# append ledger (see "home-owned status-append ledger" below) so the wake scan
-# can treat this home's own bookkeeping bytes as already owned.
+# log every time; status_own_open_decisions reads through it for the same
+# reason, so its per-pass callers write that cursor too.
+# status_home_appends_record writes the per-task home-owned append ledger (see
+# "home-owned status-append ledger" below) so the wake scan can treat this
+# home's own bookkeeping bytes as already owned.
 # crew_worktree_written_since reads the task's meta file and walks a bounded slice
 # of its worktree instead of a status file, so callers run it only at the moment
 # they would otherwise escalate.
@@ -1114,9 +1116,14 @@ EOF
 # it keeps working, so the task is not waiting on any of them. Pending-reply
 # recovery and a fire-and-forget retry ring consult this set and leave a task
 # alone while it is non-empty.
+# Those callers run inside the watcher's poll pass, once per pending record or
+# window, so the set comes from the cursor-backed fold below, which costs only
+# the bytes appended since the last call. Re-folding the whole log per call
+# made one pass take tens of minutes on a long secondmate log with many held
+# records, which starved the liveness beacon the turn-end guard reads.
 status_own_open_decisions() {  # <status-file>
   local line prefix
-  status_open_decisions "$1" | while IFS= read -r line || [ -n "$line" ]; do
+  status_open_decisions_incremental "$1" | while IFS= read -r line || [ -n "$line" ]; do
     for prefix in ${FM_CLASSIFY_RESERVED_KEY_PREFIXES:-$FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT} remote-reply-continuity- captain-hold-; do
       case "$line" in "$prefix"*) continue 2 ;; esac
     done

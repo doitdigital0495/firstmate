@@ -40,6 +40,8 @@
 #      caps at 120 characters without splitting one under any caller locale
 #  20. Status scans over a long log stay one pass, so a tick's cost does not
 #      grow a fork per status line, and keep their exact verdicts
+#  21. A recovery held by the mate's own open decision reads a long log once
+#      per change, not once per held record, so a pass stays short
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -247,6 +249,76 @@ test_recovery_waits_while_the_mate_has_an_open_decision() {
   unset FM_PENDING_REPLY_SEND_HOOK
   unset FM_CONFIG_OVERRIDE
   pass "recovery never pokes a mate waiting on its own decision, and runs once it closes"
+}
+
+held_now_ms() {
+  perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'
+}
+
+# The watcher re-checks every held record on each poll pass, so the hold must
+# read a long mate log once per change, not once per record: refolding the
+# whole log for each of dozens of held records once stretched a single pass to
+# about half an hour, the liveness beacon went stale, and the turn-end guard
+# reported supervision off all night. The first hold pays the fold; every later
+# hold over the unchanged log must cost a small fraction of refolding it per
+# record, and each verdict stays exact.
+test_held_recoveries_fold_a_long_log_once() {
+  local home state corr hook_log pairs=250 records=12 first rest start i
+  local -a corrs=()
+  home=$(setup_parent held-long-log)
+  state="$home/state"
+  hook_log="$TMP_ROOT/held-long-log-hook.log"
+  : > "$hook_log"
+  export FM_PENDING_REPLY_NOW=2500
+  mkdir -p "$home/config"
+  : > "$home/config/wait-no-turns"
+  FM_CONFIG_OVERRIDE="$home/config"
+  # Invoked indirectly through FM_PENDING_REPLY_SEND_HOOK.
+  # shellcheck disable=SC2329
+  held_long_hook() {
+    printf '%s\n' "$1" >> "$hook_log"
+  }
+  export -f held_long_hook
+  export FM_PENDING_REPLY_SEND_HOOK=held_long_hook
+  awk -v n="$pairs" 'BEGIN { for (i = 1; i <= n; i++) {
+    printf "needs-decision [key=q%d] [at=%d]: question %d?\n", i, 1000 + i, i
+    printf "resolved [key=q%d] [at=%d]: answered %d\n", i, 1000 + i, i } }' > "$state/hibit.status"
+  printf 'needs-decision [key=scope]: narrow or wide?\n' >> "$state/hibit.status"
+  for i in $(seq 1 "$records"); do
+    corr=$(fm_pending_reply_create "$home" "$state" hibit "held request $i")
+    fm_pending_reply_mark_delivered "$state" "$corr"
+    fm_pending_reply_observe_busy "$state" "$corr" busy
+    fm_pending_reply_observe_busy "$state" "$corr" idle
+    corrs+=("$corr")
+  done
+
+  start=$(held_now_ms)
+  if fm_pending_reply_send_recovery "$state" "${corrs[0]}" 2>/dev/null; then
+    fail "the first held record must wait while the mate waits on its own decision"
+  fi
+  first=$(( $(held_now_ms) - start ))
+  start=$(held_now_ms)
+  for corr in "${corrs[@]:1}" "${corrs[@]}"; do
+    if fm_pending_reply_send_recovery "$state" "$corr" 2>/dev/null; then
+      fail "a held record must stay unattempted while the decision is open"
+    fi
+  done
+  rest=$(( $(held_now_ms) - start ))
+  [ ! -s "$hook_log" ] || fail "a held recovery poked a mate waiting on its decision"
+  for corr in "${corrs[@]}"; do
+    [ "$(phase_of "$state" "$corr")" = awaiting_report ] \
+      || fail "a held record must stay awaiting_report, got $(phase_of "$state" "$corr")"
+  done
+  [ "$rest" -le $((first * 5)) ] \
+    || fail "$((records * 2 - 1)) holds over an unchanged ${pairs}-pair log took ${rest}ms against ${first}ms for the first fold: each hold still refolds the whole log"
+
+  printf 'resolved [key=scope]: answered: narrow\n' >> "$state/hibit.status"
+  fm_pending_reply_send_recovery "$state" "${corrs[0]}" \
+    || fail "a held recovery should send once the appended line closes the decision"
+  [ "$(wc -l < "$hook_log" | tr -d ' ')" = 1 ] || fail "expected exactly one recovery send after the close"
+  unset FM_PENDING_REPLY_SEND_HOOK
+  unset FM_CONFIG_OVERRIDE
+  pass "held recoveries fold a long mate log once per change, not once per record"
 }
 
 # Without the flag, an open decision does not hold the recovery.
@@ -2195,6 +2267,7 @@ test_summary_keeps_accents_and_caps_by_character() {
 test_normal_correlated_reply_resolves_once
 test_completed_turn_no_report_triggers_one_recovery
 test_recovery_waits_while_the_mate_has_an_open_decision
+test_held_recoveries_fold_a_long_log_once
 test_recovery_sends_during_an_open_decision_without_the_flag
 test_recovery_grace_measures_from_turn_completion
 test_recovery_fresh_status_read_resolves_before_firing
