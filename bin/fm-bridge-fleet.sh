@@ -248,7 +248,7 @@ scan_home() {  # <work-dir> <home-state-dir> <home-id> <parent-id> <depth> <loca
     # One TSV row; tabs inside a field would shift columns, so fold them.
     printf '%s\t' "$id" "$kind" "$(meta_field "$f" harness)" "$(meta_field "$f" model)" "$(meta_field "$f" seat)" \
       "$(meta_field "$f" claude_config_dir)" "$remote" "$home" "$crew" "$(meta_field "$f" pr)" \
-      "$(busy_ts "$hs/$id.busy-state")" | tr '\t\n' '\037 ' >> "$rows"
+      "$(busy_ts "$hs/$id.busy-state")" "$(meta_field "$f" project)" "$(meta_field "$f" projects)" | tr '\t\n' '\037 ' >> "$rows"
     printf '%s\n' "${stats:-$'\t\t\t\t\t\t\t'}" >> "$rows"
     if [ "$kind" = secondmate ]; then
       # A non-whitespace separator: read would merge empty tab-separated fields.
@@ -269,11 +269,11 @@ scan_home() {  # <work-dir> <home-state-dir> <home-id> <parent-id> <depth> <loca
      beacon_epoch:($beacon | tonumber? // null),
      summary_valid:(if $valid == "" then null else ($valid == "true") end),
      total:$total,
-     rows:[$rows | split("\n")[] | select(length > 0) | split("\u001f") | .[0:11] as $m
-       | ((.[11] // "") | split("\t")) as $s
+     rows:[$rows | split("\n")[] | select(length > 0) | split("\u001f") | .[0:13] as $m
+       | ((.[13] // "") | split("\t")) as $s
        | {id:$m[0], kind:($m[1] | str), harness:$m[2], model:$m[3], seat:($m[4] | str), dir:($m[5] | str),
           remote:($m[6] != ""), home_path:($m[7] | str), crew_id:($m[8] | str), meta_pr:$m[9],
-          busy_epoch:($m[10] | num), has_status:(($s[0] // "") != "" or ($s[2] // "") != ""),
+          busy_epoch:($m[10] | num), project:$m[11], projects:$m[12], has_status:(($s[0] // "") != "" or ($s[2] // "") != ""),
           last_epoch:($s[0] | num), last_estimated:(($s[1] // "") == "mtime"),
           verb:($s[2] | str), report_epoch:($s[3] | num),
           lines_24h:(($s[4] | num) // 0), repeat_1h:(($s[5] | num) // 0), median_gap:($s[6] | num),

@@ -11,11 +11,14 @@
 // Any other `@<data-act>[=<data-id>]` spec clicks the first enabled element carrying
 // those attributes (a checkbox toggles and fires change); `@search=<text>`
 // types into the task search. Specs run in order.
+// `@project=<name>` (or `@project=all`) picks a project chip.
 // Prints one JSON document:
 //   { fresh, stale, staleBanner, banners:[text], stats:[text],
-//     sections:[{title, count, asks:[id]}], groups:[{title, asks:[id]}],
+//     projects:[{id, text, on}],
+//     sections:[{title, count, asks:[id], projects:[{project, hidden, asks:[id]}]}],
+//     groups:[{title, asks:[id]}] (asks under a hidden project group left out),
 //     cards:{<ask>:{text, queued, status}}, text, queued:[{prompt, tag, text, data}],
-//     sources:text, fleet:{homes:[{label, open, text}], rows:[{title, flags, text}], banners:[text], text},
+//     sources:text, fleet:{homes:[{label, open, text}], rows:[{title, flags, text, project, shown}], banners:[text], text},
 //     tasks:{text, rows:[{id, text, pending}], confirm, notice} }
 import { readFileSync } from "node:fs";
 
@@ -61,6 +64,7 @@ class N {
     });
   }
   walk(fn) { this.children.forEach((c) => { fn(c); c.walk(fn); }); }
+  walkShown(fn) { this.children.forEach((c) => { if (c.hidden) return; fn(c); c.walkShown(fn); }); }
   querySelectorAll(sel) { const out = []; this.walk((n) => { if (n.matches(sel)) out.push(n); }); return out; }
 }
 const ids = {};
@@ -145,7 +149,10 @@ function visible(n) {
   return n._text + n.children.map(visible).join(n.tagName === "ul" || n.tagName === "div" ? " " : "");
 }
 const out = { fresh: ids.fresh.textContent, stale: /is-stale/.test(ids.fresh.className), staleBanner: "",
-  banners: [], stats: [], sections: [], groups: [], cards: {}, queued, text: "", sources: "" };
+  banners: [], stats: [], projects: [], sections: [], groups: [], cards: {}, queued, text: "", sources: "" };
+root.walk((n) => {
+  if (n.getAttribute("data-act") === "project") out.projects.push({ id: n.getAttribute("data-id"), text: n.textContent, on: /\bon\b/.test(n.className) });
+});
 let current = null;
 root.children.forEach((n) => {
   if (n.tagName === "div" && /\bbanner\b/.test(n.className)) {
@@ -154,17 +161,22 @@ root.children.forEach((n) => {
   } else if (n.className === "stats") {
     out.stats = n.children.map((s) => visible(s));
   } else if (n.tagName === "h2") {
-    current = { title: n._text.trim(), count: n.children.map((c) => c.textContent).join(""), asks: [] };
+    current = { title: n._text.trim(), count: n.children.map((c) => c.textContent).join(""), asks: [], projects: [] };
     out.sections.push(current);
   } else if (n.tagName === "article") {
     current.asks.push(n.getAttribute("data-ask"));
+  } else if (n.tagName === "div" && /\bpgroup\b/.test(n.className) && current) {
+    const pg = { project: n.getAttribute("data-project"), hidden: !!n.hidden, asks: [] };
+    n.walk((x) => { if (x.tagName === "article") pg.asks.push(x.getAttribute("data-ask")); });
+    current.projects.push(pg);
+    if (!pg.hidden) current.asks.push(...pg.asks);
   } else if (n.tagName === "details") {
     const g = { title: n.children[0].textContent, asks: [] };
-    n.walk((x) => { if (x.tagName === "article") g.asks.push(x.getAttribute("data-ask")); });
+    n.walkShown((x) => { if (x.tagName === "article") g.asks.push(x.getAttribute("data-ask")); });
     out.groups.push(g);
   } else if (n.className === "sources") {
     out.sources = visible(n);
-  } else if (n.tagName === "p" && current) {
+  } else if (n.tagName === "p" && current && !n.hidden) {
     current.empty = n.textContent;
   }
 });
@@ -174,6 +186,8 @@ root.walk((n) => {
   out.cards[n.getAttribute("data-ask")] = { text: visible(n), queued: /is-queued/.test(n.className), status };
 });
 out.fleet = { homes: [], rows: [], banners: [], text: "" };
+const shownIn = (n) => { for (let x = n; x; x = x.parentNode) if (x.hidden) return false; return true; };
+const projectOf = (n) => { for (let x = n; x; x = x.parentNode) if (x.getAttribute && x.getAttribute("data-project") !== null) return x.getAttribute("data-project"); return null; };
 root.walk((n) => {
   if (n.tagName === "section" && /\bfleet\b/.test(n.className)) {
     out.fleet.text = visible(n);
@@ -181,7 +195,8 @@ root.walk((n) => {
   }
   if (n.getAttribute && n.getAttribute("data-home") !== null) out.fleet.homes.push({ label: n.getAttribute("data-home"), open: !!n.open, text: visible(n) });
   if (n.getAttribute && n.getAttribute("data-row") !== null) {
-    out.fleet.rows.push({ title: n.getAttribute("data-row"), flags: (n.getAttribute("data-flags") || "").split(",").filter(Boolean), text: visible(n) });
+    out.fleet.rows.push({ title: n.getAttribute("data-row"), flags: (n.getAttribute("data-flags") || "").split(",").filter(Boolean), text: visible(n),
+      project: projectOf(n), shown: shownIn(n) });
   }
 });
 let tasksNode = null;

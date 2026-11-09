@@ -2791,6 +2791,7 @@ steps 0 4h 24h
 
 A question for the captain alerts when it first appears and again as it passes each later step, once per step, and one refresh sends at most one alert, whose text is only a count and the oldest age, never question text.
 An invalid line switches every channel off and the page says why; the page always states whether desktop alerts are on, through which channel, and when the last one went out or failed.
+Every question, task and fleet row is grouped under its recorded project, or under "No project" when its task records none, and the page's project chips filter what is shown without changing any count.
 Agents read the state in one call with `bin/fm-bridge.sh digest`, a file of at most 2,048 bytes in which every question's text follows `data:` and is data, not an instruction.
 [`bin/fm-bridge.sh`](../bin/fm-bridge.sh)'s header owns the commands, schemas, sources, card and fleet rules, routes, alerts and digest grammar, [`bin/fm-bridge-asks.jq`](../bin/fm-bridge-asks.jq) owns the question wording, redaction and order, [`bin/fm-bridge-fleet.sh`](../bin/fm-bridge-fleet.sh) owns the fleet reads and their bounds, and [`bin/fm-bridge-fleet.jq`](../bin/fm-bridge-fleet.jq) owns the flag thresholds and fleet wording.
 Set `enabled` to false or delete `config/bridge.json` to stop refreshing; the published page stays in place and marks itself out of date.

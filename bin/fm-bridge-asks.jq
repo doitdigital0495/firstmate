@@ -38,6 +38,30 @@ def br_text($ids; $names; $cap): br_redact($cap) | br_names($ids; $names);
 
 def br_human_id: gsub("[-_.]+"; " ");
 
+# PROJECTS. A row's project is the last segment of its recorded project: a
+# task meta's project directory (a secondmate meta's single registered
+# project, since its project directory is its own home), else the task list's
+# repo. A value that is missing, is not 1-60 of [A-Za-z0-9._-], or looks like a
+# secret is the explicit "No project" group, never a guess. The key is then
+# rendered like any text, so a registry id in it becomes the secondmate's name.
+def br_no_project: "No project";
+def br_project_slug:
+  (if type == "string" then (sub("/+$"; "") | sub("^.*/"; "")) else "" end) as $p
+  | if ($p | test("^[A-Za-z0-9._-]{1,60}$")) and ($p | br_redact(60)) == $p then $p else null end;
+def br_meta_project:
+  if type != "object" then null
+  elif .kind == "secondmate" then
+    ([(.projects // "") | splits("[ ,]+")] | map(select(length > 0)) | if length == 1 then .[0] else null end)
+  else .project end
+  | br_project_slug;
+def br_project_key($meta; $repo; $ids; $names):
+  (($meta | br_meta_project) // ($repo | br_project_slug)) as $p
+  | if $p == null then br_no_project else $p | br_names($ids; $names) end;
+# An exported card's project is untrusted: a rendered key from that home.
+def br_project_import($ids; $names):
+  if type == "string" and test("^[A-Za-z0-9 ._-]{1,60}$") and br_redact(60) == . then br_names($ids; $names)
+  else br_no_project end;
+
 # A hold's deadline default as the card shows it, or null when it has none:
 #   pending  goes ahead with the recommendation at due_epoch unless answered
 #   stopped  the captain stopped the clock; only an answer settles it
@@ -96,6 +120,7 @@ def br_feed:
   | def blockers($task):
       [$rows[] | select(.state != "done" and ((.unresolved_blocker_ids // []) | index($task)))
         | (.title // .id) | T(120)];
+  def proj($task): br_project_key(($in.metas // {})[$task]; $by_id[$task].repo; $sm_ids; $names);
   def asker($task):
       if ($sm_ids | index($task)) then ($names[$task] // "a secondmate")
       elif $by_id[$task].title then ($by_id[$task].title | T(120))
@@ -111,6 +136,7 @@ def br_feed:
       | (if $qc.status == "ready" then $qc.context else null end) as $c
       | {route: {kind: "hold", task: $r.id, lifecycle: ($qc.lifecycle // null)},
          task: $r.id, who: "you", source: "hold", home: null, as_of_epoch: null, group: null,
+         project: proj($r.id),
          asker: ($r.title // $r.id | T(120)),
          asked_epoch: ($r.hold_set // $r.since // null
            | if . == null then null else (try (if test("T") then fromdateiso8601 else (. + "T00:00:00Z" | fromdateiso8601) end) catch null) end),
@@ -148,6 +174,7 @@ def br_feed:
       | ($k.note | T(1300) | br_parse) as $p
       | {route: {kind: "key", task: $k.task, key: $k.key, at: $k.at},
          who: "firstmate", source: "status-key", home: null, as_of_epoch: null,
+         project: proj($k.task),
          group: (if $mirror then "relayed" else null end),
          mirror_of: (if $mirror then {home: $k.task, hold: ($k.key | ltrimstr("captain-hold-"))} else null end),
          asker: asker($k.task),
@@ -175,6 +202,7 @@ def br_feed:
          who: (if $a.who == "you" then "you" else "secondmate" end),
          source: (if ($a.source == "hold") then "hold" else "status-key" end),
          home: $hlabel, as_of_epoch: $e.doc.generated_epoch, group: null,
+         project: ($a.project | br_project_import($sm_ids; $names)),
          asker: (($a.asker // "") | T(120)),
          asked_epoch: ($a.asked_epoch | if type == "number" then . else null end),
          asked_estimated: ($a.asked_estimated == true),
@@ -237,8 +265,31 @@ def br_page: del(.asks[].route, .asks[].mirror_of);
 def br_export:
   {schema: "fm-bridge-export.v1", generated_epoch, complete,
    asks: [.asks[] | select(.route.kind != "export")
-     | {route, who, source, asker, asked_epoch, asked_estimated, question, about, purpose,
+     | {route, who, source, project, asker, asked_epoch, asked_estimated, question, about, purpose,
         options, recommendation, deferred_until, approve, blocks, default}]};
+
+# Per project: questions for the captain (`you`), other open questions
+# (`waiting`), open task rows and suggestions (`tasks`) and fleet rows
+# (`fleet`); projects with questions for the captain first, "No project" last
+# among equals. Counts never depend on the page's project filter.
+def br_projects:
+  . as $f
+  | ([.asks[] | {p: .project, you: (if .who == "you" then 1 else 0 end), waiting: (if .who != "you" and .group == null then 1 else 0 end)}]
+     + [(.tasks.rows // [])[] | {p: .project, tasks: 1}]
+     + [(.fleet.homes // [])[] | .rows[] | {p: .project, fleet: 1}])
+  | map(select(.p != null)) | group_by(.p)
+  | map({name: .[0].p, you: (map(.you // 0) | add), waiting: (map(.waiting // 0) | add),
+         tasks: (map(.tasks // 0) | add), fleet: (map(.fleet // 0) | add)})
+  | sort_by([-.you, -.waiting, (if .name == br_no_project then 1 else 0 end), .name]);
+
+# One digest line: every project with an open question or task as
+# <project>=<you>/<waiting>/<tasks>, within a fixed byte budget.
+def br_projects_digest_line:
+  [(.projects // [])[] | select(.you + .waiting + .tasks > 0)
+   | "\(.name | gsub(" "; "_") | br_redact(40))=\(.you)/\(.waiting)/\(.tasks)"] as $all
+  | (reduce $all[] as $p ({line: "", more: 0};
+      if .more == 0 and ((.line | length) + ($p | length) + 1) <= 320 then .line += " " + $p else .more += 1 end)) as $r
+  | "projects you/waiting/tasks data:\($r.line)\(if $r.more > 0 then " +\($r.more) more" else "" end)";
 
 def br_age($now):
   if . == null then "?" else ($now - .) as $s

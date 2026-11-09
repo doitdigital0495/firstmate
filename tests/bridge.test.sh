@@ -598,6 +598,68 @@ test_nudge_and_parked_work() {
   pass "a question waiting on Firstmate past 15 minutes offers a routed nudge, and parked work is listed"
 }
 
+# --- slice 7: projects -------------------------------------------------------
+
+test_projects_group_and_filter() {
+  local home sm now out all
+  home=$(make_home projects)
+  printf '%s\n' "$ENABLED" > "$home/config/bridge.json"
+  sm=$(secondmate_world "$home")
+  printf '{"schema":"fm-bridge-names.v1","names":{"%s":"Harbor"}}\n' "$REG" > "$home/config/bridge-names.json"
+  # One exported card carries its home's project; the other is an older export's card without one.
+  jq '.asks[0].project = "harbor-site"' "$sm/state/bridge/asks.json" > "$sm/asks.tmp" && mv "$sm/asks.tmp" "$sm/state/bridge/asks.json"
+  fm_write_meta "$home/state/w-alpha.meta" 'kind=ship' 'harness=claude' "project=$home/projects/alpha"
+  fm_write_meta "$home/state/w-loose.meta" 'kind=ship' 'harness=claude'
+  fm_write_meta "$home/state/w-odd.meta" 'kind=ship' 'harness=claude' 'project=/srv/has a space'
+  now=$(date +%s)
+  printf 'needs-decision [key=port] [at=%s]: Which port for alpha?\n' "$((now - 600))" > "$home/state/w-alpha.status"
+  printf 'needs-decision [key=tone] [at=%s]: Formal or casual?\n' "$((now - 500))" > "$home/state/w-loose.status"
+  printf 'needs-decision [key=odd] [at=%s]: Where does this go?\n' "$((now - 400))" > "$home/state/w-odd.status"
+  tasks_in "$home" add ws-carrier "Which carrier?" --repo web-shop --kind captain
+  tasks_in "$home" add a-docs "Write the alpha docs" --repo alpha
+  tasks_in "$home" add loose "A task with no project"
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --reason "Pick a carrier." >/dev/null || fail "could not hold"
+  in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
+  out=$(feed "$home" '.')
+  # shellcheck disable=SC2016 # jq variables, not shell ones
+  check "$out" '([.asks[] | {k: (.route.key // .route.task), p: .project}] | sort_by(.k)) as $a
+    | ($a | map(select(.k == "port"))[0].p) == "alpha" and ($a | map(select(.k == "tone"))[0].p) == "No project"
+    and ($a | map(select(.k == "odd"))[0].p) == "No project" and ($a | map(select(.k == "ws-carrier"))[0].p) == "web-shop"
+    and ([.asks[] | select(.home == "Harbor" and .who == "you")][0].project) == "harbor-site"
+    and ([.asks[] | select(.home == "Harbor" and .who != "you")][0].project) == "No project"
+    and all(.asks[]; (.project | type) == "string")' \
+    "a card did not get its recorded project, or an unresolvable one was guessed instead of No project"
+  check "$out" '[.tasks.rows[] | {(.id): .project}] | add | .["ws-carrier"] == "web-shop" and .["a-docs"] == "alpha" and .loose == "No project"' \
+    "a task row did not carry its task list repo, or a row without one was not No project"
+  check "$out" '[.fleet.homes[].rows[] | {(.title): .project}] | add | .["w alpha"] == "alpha" and .["w loose"] == "No project"' \
+    "a fleet row did not carry its meta project"
+  # shellcheck disable=SC2016 # jq variables, not shell ones
+  check "$out" '(.projects | map(.name)) as $n | ($n[0:2] | sort) == ["harbor-site","web-shop"]
+    and (.projects | map(.you) | . == (sort | reverse)) and ($n | index("No project")) != null and ($n | index("alpha")) != null
+    and ((.projects | map(.you) | add) == .counts.you)' \
+    "projects with questions for the captain did not come first, or a project count went missing"
+  grep -q '^projects you/waiting/tasks data: .*harbor-site=1/0/0.*web-shop=1/0/1' "$home/state/bridge/digest.txt" \
+    || fail "the digest has no per-project line: $(cat "$home/state/bridge/digest.txt")"
+  [ "$(wc -c < "$home/state/bridge/digest.txt")" -le 2048 ] || fail "the digest grew past 2048 bytes"
+  jq -e '.asks | all(has("project"))' "$home/state/bridge/asks.json" >/dev/null || fail "the export does not carry each card's project"
+  all=$(render "$home" "$now")
+  check "$all" '(.projects | map(.id)) == (["all"] + ('"$(feed "$home" '[.projects[].name]')"')) and (.projects[0].on)
+    and ([.sections[] | .projects[] | select(.hidden)] == [])' \
+    "the chip bar did not list All and every project, or All hid a group"
+  out=$(render "$home" "$now" @project=alpha)
+  check "$out" '(.projects | map(select(.on) | .id)) == ["alpha"]
+    and ([.sections[].asks[]] | length) == 1 and (.text | contains("Other projects also have questions for you: harbor-site 1, web-shop 1"))
+    and ([.fleet.rows[] | select(.shown) | .title] == ["w alpha"])
+    and ([.tasks.rows[].id] == ["a-docs"])' \
+    "picking a project did not filter every section to it while naming the questions it hides"
+  check "$out" '.stats == '"$(printf '%s' "$all" | jq -c '.stats')"' and (.projects | map(.text)) == '"$(printf '%s' "$all" | jq -c '.projects | map(.text)')" \
+    "picking a project changed what is counted as open"
+  out=$(render "$home" "$now" @project=alpha @project=all)
+  check "$out" '([.sections[].asks[]] | length) == ('"$(printf '%s' "$all" | jq '[.sections[].asks[]] | length')"')' \
+    "choosing All again did not bring every card back"
+  pass "every card, task and fleet row is grouped by its recorded project or No project, and a project filter hides no count"
+}
+
 # --- slice 2: the fleet ------------------------------------------------------
 
 # A crew-state stand-in: answers from $FM_HOME/crew/<id> and logs each call.
@@ -898,4 +960,4 @@ fm_test_run test_config_gate test_keyed_question_lifecycle test_hold_answer_path
   test_alerts_fire_once_per_step test_deadline_clock_on_the_card test_nudge_and_parked_work \
   test_fleet_flags_and_crew_cache test_fleet_usage_never_triggers_quota test_fleet_hierarchy \
   test_fleet_failure_is_visible test_guard_refreshes_without_watcher \
-  test_tasks_feed_and_page test_intake_applies_remove_and_restore
+  test_tasks_feed_and_page test_intake_applies_remove_and_restore test_projects_group_and_filter
