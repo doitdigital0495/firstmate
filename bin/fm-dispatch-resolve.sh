@@ -101,8 +101,8 @@
 #   (Europe/Amsterdam), else FM_DISPATCH_FIVE_HOUR_OFFHOURS_PERCENT (5). With
 #   no other seat able to start the guard is waived and the line says so.
 #   Each clear worker resolution appends "<epoch> <account|home:provider>
-#   <cost>" to $STATE/dispatch-burst-ledger, the cost per provider from
-#   FM_DISPATCH_BURST_COSTS (claude=1.3,codex=2.6,zai=2.0); a debit fades
+#   <cost>" to $STATE/dispatch-burst-ledger, one cost for every provider from
+#   FM_DISPATCH_BURST_COST (2.0); a debit fades
 #   linearly to 0 over FM_DISPATCH_BURST_WINDOW_SECONDS (1800; 0 turns it
 #   off), and the seat ranks on spendPriority * ((pct - debit) / pct) ^ 0.8.
 #   FM_DISPATCH_NOW_EPOCH pins the clock for both. docs/configuration.md
@@ -769,18 +769,14 @@ case "$TIE_RR" in '' | *[!0-9]*) TIE_RR=0 ;; esac
 fm_dispatch_now() {  # epoch seconds; FM_DISPATCH_NOW_EPOCH pins it
   case "${FM_DISPATCH_NOW_EPOCH:-}" in '' | *[!0-9]*) date +%s ;; *) printf '%s' "$FM_DISPATCH_NOW_EPOCH" ;; esac
 }
-fm_dispatch_burst_cost() {  # <provider>: the assumed weekly points one start costs
-  local pair cost=''
-  for pair in ${BURST_COSTS//,/ }; do
-    [ "${pair%%=*}" = "$1" ] || continue
-    cost=${pair#*=}
-  done
-  [[ "$cost" =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 1
-  printf '%s' "$cost"
+fm_dispatch_burst_cost() {  # the assumed weekly points one start costs, any provider
+  [[ "$BURST_COST" =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 1
+  printf '%s' "$BURST_COST"
 }
 NOW_EPOCH=$(fm_dispatch_now)
 FIVE_HOUR_GUARD=$(FM_DISPATCH_NOW_EPOCH=$NOW_EPOCH fm_dr_five_hour_guard)
-BURST_COSTS=${FM_DISPATCH_BURST_COSTS:-claude=1.3,codex=2.6,zai=2.0}
+# Measured intake supports no provider-specific order, so one cost debits all.
+BURST_COST=${FM_DISPATCH_BURST_COST:-2.0}
 BURST_WINDOW=$(fm_dispatch_clamp_int "${FM_DISPATCH_BURST_WINDOW_SECONDS:-}" 1800 0 86400)
 BURST_LEDGER=$STATE/dispatch-burst-ledger
 # Recent debits per seat, each fading linearly to nothing over the window.
@@ -802,7 +798,7 @@ fm_dispatch_burst_record() {
   [ "$BURST_WINDOW" -gt 0 ] && [ "$SQ" != true ] || return 0
   IFS=$'\t' read -r seat provider < <(jq -r '.chosen | [(.profile.account // ("home:" + (.provider // ""))), (.provider // "")] | @tsv' <<<"$RESULT") || return 0
   [ -n "$provider" ] && [ -n "$seat" ] || return 0
-  cost=$(fm_dispatch_burst_cost "$provider") || return 0
+  cost=$(fm_dispatch_burst_cost) || return 0
   mkdir -p "$STATE" 2>/dev/null || return 0
   last=$(tail -n 1 "$BURST_LEDGER" 2>/dev/null | awk '{ print $1 }')
   case "$last" in

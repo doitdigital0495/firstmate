@@ -1930,13 +1930,13 @@ A five-hour window without a reset, an idle or unreadable one, and a seat with n
 The guard runs before the reserve and seat tier holds, so a guarded seat holds no later tier and never opens a `fallback_only` reserve.
 It never empties a choice: when no other seat could start, the guarded seats compete as before and their lines read `eligible, five-hour guard waived: ...`.
 The burst spreader debits the seat of every clear worker resolution in `state/dispatch-burst-ledger`, so starts in quick succession spread over the seats furthest behind pace instead of all landing on one.
-A debit is the assumed weekly points one start costs: 1.3 on a Claude seat, 2.6 on Codex and 2.0 on Z.ai.
+A debit is the assumed weekly points one start costs: 2.0 for every provider, because measured intake supports no provider-specific order.
 It fades linearly to nothing over 30 minutes, by which time the worker's real use shows in fresh quota readings, and a ledger whose newest debit has faded starts again from empty.
 A debited seat ranks on its `spendPriority` scaled as if those points were already spent, `spendPriority * ((remaining - debit) / remaining) ^ 0.8`, and its candidate line shows `burst_debit=<points>pt/<n>start(s) ranks=<score>`.
 The receipt keeps the published `spendPriority` and the note names each debit; exact ties and the round-robin compare the debited score.
 Resolutions that run at the same moment read the ledger before either writes, so they can still pick the same seat.
 `FM_DISPATCH_FIVE_HOUR_WORKDAY_PERCENT` (20), `FM_DISPATCH_FIVE_HOUR_OFFHOURS_PERCENT` (5), `FM_DISPATCH_WORKDAY_TZ` (`Europe/Amsterdam`) and `FM_DISPATCH_WORKDAY_HOURS` (`08-18`) tune the guard.
-`FM_DISPATCH_BURST_COSTS` (`claude=1.3,codex=2.6,zai=2.0`) and `FM_DISPATCH_BURST_WINDOW_SECONDS` (1800, 0 turns the spreader off) tune the spreader, and a provider without a cost is never debited.
+`FM_DISPATCH_BURST_COST` (2.0) and `FM_DISPATCH_BURST_WINDOW_SECONDS` (1800, 0 turns the spreader off) tune the spreader, and every provider is debited the same cost.
 
 ### Pipeline seat rows
 
