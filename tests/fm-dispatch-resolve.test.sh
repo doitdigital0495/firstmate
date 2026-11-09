@@ -64,6 +64,21 @@ write_response() {
 }
 run() { code=0; out=$("$TOOL" "$@" 2>&1) || code=$?; }
 latest() { find "$HOME_DIR/state/dispatch-receipt" -name 'dispatch-*.json' | sort | tail -1; }
+# The reservation is an account rule, independent of harness, provider, or reserve flag.
+cp "$RULES" "$TMP_ROOT/reservation-rules"
+for location in rule default; do
+  for reserve in false true; do
+    jq --arg location "$location" --argjson reserve "$reserve" '
+      (if $location == "rule" then .rules[0].use else .default end) |=
+        {harness:"pi", provider:"claude", model:"anthropic/claude-sonnet", account:"claude3", fallback_only:$reserve}
+    ' "$TMP_ROOT/reservation-rules" > "$RULES"
+    run preview --json
+    expect_code 2 "$code" "claude3 $location profile is rejected: $out"
+    assert_contains "$out" 'claude3 is reserved for firstmate and secondmates; ordinary worker rules and default must not use account claude3' 'reservation error names the rule'
+  done
+done
+cp "$TMP_ROOT/reservation-rules" "$RULES"
+pass 'preview --json rejects claude3 worker rows and default, including fallback_only'
 start_stub() {
   python3 "$ROOT/tests/jevd-dispatch-stub.py" "$SOCKET" "$RESPONSE" "$LOG" &
   SERVER=$!
@@ -170,7 +185,7 @@ rm -rf "$HOME_DIR/state/quota-last-good"
 run "$BRIEF" --task pager
 assert_contains "$out" 'status: clear' "an unknown quota starts without the captain: $out"
 assert_contains "$out" 'eligible, quota unknown: provider claude unmeasured' 'the chosen seat is marked quota unknown'
-assert_contains "$out" 'first declared seat of its tier and strongest class, without waiting' 'the note says why this seat'
+assert_contains "$out" 'by round-robin within its tier and strongest class, without waiting' 'the note says why this seat'
 assert_contains "$out" 'receipt: dispatch-' 'the start gets its receipt'
 rm -f "$TMP_ROOT/unknown-calls"
 FM_DISPATCH_QUOTA_BACKOFF_MS=30000 FM_DISPATCH_QUOTA_WAIT_SECONDS=45 QUOTA_CALL_LOG="$TMP_ROOT/unknown-calls" run "$BRIEF" --task pager
@@ -189,7 +204,7 @@ QUOTA_HANG_READ=1 QUOTA_CALL_LOG="$TMP_ROOT/hang-calls" FM_QUOTA_READ_DEADLINE=1
 assert_contains "$out" 'status: clear' "a hung read still starts: $out"
 [ "$((SECONDS - hang_started))" -lt 12 ] || fail 'a hung quota read escaped the read deadline'
 cp "$TMP_ROOT/quota-backup" "$QUOTA"
-pass 'escalate goes to a captain pick; an unknown quota starts on the first declared seat without waiting, including slow reads'
+pass 'escalate goes to a captain pick; an unknown quota starts by round-robin without waiting, including slow reads'
 # Exercise quota ranking and fail-closed policies via the socket interface.
 cp "$RULES" "$TMP_ROOT/original-rules"
 cp "$QUOTA" "$TMP_ROOT/original-quota"
@@ -352,21 +367,21 @@ pass 'shared_quota resolves declared order with no quota snapshot, and rejects n
 # healthy same-family seat or another family's candidate. With a registry
 # present every profile names a registered account (S1), so with_accounts
 # binds the rows this case does not exercise.
-mkdir -p "$TMP_ROOT/claude1-seat" "$TMP_ROOT/claude2-seat" "$TMP_ROOT/claude3-seat" "$TMP_ROOT/codex1-pi"
-jq -n --arg c1 "$TMP_ROOT/claude1-seat" --arg c2 "$TMP_ROOT/claude2-seat" --arg g "$TMP_ROOT/claude3-seat" --arg pi "$TMP_ROOT/codex1-pi" \
-  '{crossAccount:{enabled:true},accounts:{claude1:{claude:$c1},claude2:{claude:$c2},claude3:{claude:$g},codex1:{pi:$pi}}}' > "$HOME_DIR/config/accounts.json"
+mkdir -p "$TMP_ROOT/claude1-seat" "$TMP_ROOT/claude2-seat" "$TMP_ROOT/claude-reserve-seat" "$TMP_ROOT/codex1-pi"
+jq -n --arg c1 "$TMP_ROOT/claude1-seat" --arg c2 "$TMP_ROOT/claude2-seat" --arg g "$TMP_ROOT/claude-reserve-seat" --arg pi "$TMP_ROOT/codex1-pi" \
+  '{crossAccount:{enabled:true},accounts:{claude1:{claude:$c1},claude2:{claude:$c2},"claude-reserve":{claude:$g},codex1:{pi:$pi}}}' > "$HOME_DIR/config/accounts.json"
 with_accounts() { jq '.rules[1].use.account = "claude1" | .default.account = "claude1"'; }
 seat_quota() {  # <weekly-remaining> <spend-priority> <runway> <session-remaining>
   jq -cn --argjson r7 "$1" --argjson sp "$2" --arg runway "$3" --argjson r5 "$4" \
     '{schemaVersion:5,generatedAt:"2030-01-01T00:00:00Z",providers:[{provider:"claude",plan:"Team",state:{status:"fresh"},windows:[{id:"five_hour",kind:"session",percentRemaining:$r5,resetsAt:"2030-01-02T00:00:00Z"},{id:"seven_day",kind:"weekly",percentRemaining:$r7,resetsAt:"2030-01-04T00:00:00Z"}],quotaSemantics:{status:"known",effectiveAvailability:[{scope:"all_models",status:"known",effectivePercentRemaining:([$r5,$r7]|min),boundedBy:["five_hour","seven_day"],runway:{status:$runway},selection:{spendPriority:$sp}}]}}]}'
 }
 seat_quota 80 1 through_reset 90 > "$TMP_ROOT/claude2-quota.json"
-seat_quota 70 5 through_reset 90 > "$TMP_ROOT/claude3-quota.json"
-QUOTA_FIXTURE_MAP=$(jq -cn --arg c2 "$TMP_ROOT/claude2-seat" --arg g "$TMP_ROOT/claude3-seat" \
-  --arg cf "$TMP_ROOT/claude2-quota.json" --arg gf "$TMP_ROOT/claude3-quota.json" '{($c2):$cf,($g):$gf}')
+seat_quota 70 5 through_reset 90 > "$TMP_ROOT/claude-reserve-quota.json"
+QUOTA_FIXTURE_MAP=$(jq -cn --arg c2 "$TMP_ROOT/claude2-seat" --arg g "$TMP_ROOT/claude-reserve-seat" \
+  --arg cf "$TMP_ROOT/claude2-quota.json" --arg gf "$TMP_ROOT/claude-reserve-quota.json" '{($c2):$cf,($g):$gf}')
 export QUOTA_FIXTURE_MAP
-reserve_rules() {  # rule_1 pool: sonnet on the claude2 seat plus haiku on the claude3 seat
-  jq '.rules[0].use = [{"harness":"claude","model":"sonnet","account":"claude2","reasoning_class":1},{"harness":"claude","model":"haiku","account":"claude3","reasoning_class":1}]' \
+reserve_rules() {  # rule_1 pool: sonnet on the claude2 seat plus haiku on the claude-reserve seat
+  jq '.rules[0].use = [{"harness":"claude","model":"sonnet","account":"claude2","reasoning_class":1},{"harness":"claude","model":"haiku","account":"claude-reserve","reasoning_class":1}]' \
     "$TMP_ROOT/original-rules" | with_accounts > "$RULES"
 }
 reserve_rules
@@ -375,7 +390,7 @@ run "$BRIEF" --task pager
 assert_not_contains "$out" 'fallback_only' 'an unset fallback_only changes nothing'
 receipt=$(latest)
 assert_equals haiku "$(jq -r .profile.model "$receipt")" 'unset flag keeps the spendPriority argmax'
-assert_equals claude3 "$(jq -r .profile.account "$receipt")" 'unset flag keeps the declared account'
+assert_equals claude-reserve "$(jq -r .profile.account "$receipt")" 'unset flag keeps the declared account'
 jq '.rules[0].use[1].fallback_only = true' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
 run "$BRIEF" --task pager
 assert_contains "$out" 'status: clear' "a held reserve still clears: $out"
@@ -388,7 +403,7 @@ run "$BRIEF" --task pager
 assert_contains "$out" 'eligible, reserve pick: every non-fallback claude seat is at its limit' 'picked line states the reserve and why'
 receipt=$(latest)
 assert_equals haiku "$(jq -r .profile.model "$receipt")" 'a fully used weekly window releases the reserve'
-assert_equals claude3 "$(jq -r .profile.account "$receipt")" 'the reserve launches on its declared account'
+assert_equals claude-reserve "$(jq -r .profile.account "$receipt")" 'the reserve launches on its declared account'
 assert_contains "$(jq -r .rationale "$receipt")" 'reserve pick' 'the receipt rationale states the reserve pick'
 seat_quota 5 1 exhausted_now 90 > "$TMP_ROOT/claude2-quota.json"
 run "$BRIEF" --task pager
@@ -397,7 +412,7 @@ seat_quota 80 1 through_reset 0 > "$TMP_ROOT/claude2-quota.json"
 run "$BRIEF" --task pager
 assert_contains "$out" 'status: captain-pick' 'an exhausted session window alone never releases the reserve'
 assert_contains "$out" 'fallback_only reserve held' 'the held reserve is disclosed while asking the captain'
-assert_contains "$out" '--account claude3  class=1  remaining=70%  spendPriority=5  -> not eligible: fallback_only reserve held' 'the pick card marks the held reserve'
+assert_contains "$out" '--account claude-reserve  class=1  remaining=70%  spendPriority=5  -> not eligible: fallback_only reserve held' 'the pick card marks the held reserve'
 seat_quota 80 1 exhausted_now 0 > "$TMP_ROOT/claude2-quota.json"
 run "$BRIEF" --task pager
 assert_contains "$out" 'fallback_only reserve held' "a runway exhausted on the session window alone never releases the reserve: $out"
@@ -412,13 +427,13 @@ write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}' rule_1
 run "$BRIEF" --task pager
 assert_equals pi "$(jq -r .profile.harness "$(latest)")" 'another family candidate still outranks the reserve'
 assert_contains "$out" 'eligible, reserve pick: every non-fallback claude seat is at its limit' 'the activated reserve stays disclosed when not chosen'
-jq '.shared_quota = true | .rules[0].use = [{"harness":"claude","account":"claude3","fallback_only":true,"reasoning_class":1}]' "$TMP_ROOT/original-rules" | with_accounts > "$RULES"
+jq '.shared_quota = true | .rules[0].use = [{"harness":"claude","account":"claude-reserve","fallback_only":true,"reasoning_class":1}]' "$TMP_ROOT/original-rules" | with_accounts > "$RULES"
 write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}' rule_1_1
 run "$BRIEF" --task pager
 assert_contains "$out" 'status: clear' 'a lone reserve under the shared-quota opt-out still resolves'
 assert_not_contains "$out" '; ok' 'a reserve pick never leaks a placeholder reason'
-assert_equals claude3 "$(jq -r .profile.account "$(latest)")" 'the shared-quota reserve launches on its declared account'
-jq '.rules[0].use = [{"harness":"claude","model":"sonnet","account":"claude2","reasoning_class":1},{"harness":"claude","model":"haiku","account":"claude3","fallback_only":"yes","reasoning_class":1}]' "$TMP_ROOT/original-rules" | with_accounts > "$RULES"
+assert_equals claude-reserve "$(jq -r .profile.account "$(latest)")" 'the shared-quota reserve launches on its declared account'
+jq '.rules[0].use = [{"harness":"claude","model":"sonnet","account":"claude2","reasoning_class":1},{"harness":"claude","model":"haiku","account":"claude-reserve","fallback_only":"yes","reasoning_class":1}]' "$TMP_ROOT/original-rules" | with_accounts > "$RULES"
 run "$BRIEF" --task pager
 expect_code 2 "$code" 'a non-boolean fallback_only is a configuration error'
 assert_contains "$out" 'fallback_only must be true or false when present' 'the fallback_only error is actionable'
@@ -434,12 +449,12 @@ printf '#!/usr/bin/env bash\n[ "$1" = list-windows ] && printf "@77\\n"\n' > "$T
 chmod +x "$TMP_ROOT/weekly-bin/tmux"
 printf 'window=@77\nseat=claude2\nharness=claude\nmodel=opus\neffort=max\n' > "$HOME_DIR/state/weekly-live.meta"
 printf 'window=@78\nseat=claude2\nharness=claude\n' > "$HOME_DIR/state/weekly-dead.meta"
-printf 'window=@77\nseat=claude3\nharness=claude\n' > "$HOME_DIR/state/weekly-other.meta"
+printf 'window=@77\nseat=claude-reserve\nharness=claude\n' > "$HOME_DIR/state/weekly-other.meta"
 jq '.rules[0].use = [{harness:"claude",model:"sonnet",account:"claude2",reasoning_class:1}] |
   .weekly_guard = {max_used_percent:98,reserve_percent:1,reserve_by_plan:{"claude:Team":1.3}}' "$TMP_ROOT/original-rules" | with_accounts > "$RULES"
 # Restore the private registry and account snapshots from the reserve fixtures.
-jq -n --arg c1 "$TMP_ROOT/claude1-seat" --arg c2 "$TMP_ROOT/claude2-seat" --arg g "$TMP_ROOT/claude3-seat" \
-  '{crossAccount:{enabled:true},accounts:{claude1:{claude:$c1},claude2:{claude:$c2},claude3:{claude:$g}}}' > "$HOME_DIR/config/accounts.json"
+jq -n --arg c1 "$TMP_ROOT/claude1-seat" --arg c2 "$TMP_ROOT/claude2-seat" --arg g "$TMP_ROOT/claude-reserve-seat" \
+  '{crossAccount:{enabled:true},accounts:{claude1:{claude:$c1},claude2:{claude:$c2},"claude-reserve":{claude:$g}}}' > "$HOME_DIR/config/accounts.json"
 QUOTA_FIXTURE_MAP=$(jq -cn --arg c2 "$TMP_ROOT/claude2-seat" --arg cf "$TMP_ROOT/claude2-quota.json" '{($c2):$cf}')
 export QUOTA_FIXTURE_MAP
 weekly_run() { PATH="$TMP_ROOT/weekly-bin:$PATH" run "$BRIEF" --task weekly-queued; }
@@ -763,4 +778,41 @@ assert_equals true "$(jq '[.workers[].measured] | all(. == false)' <<< "$out")" 
 diff -r "$TMP_ROOT/preview-state" "$HOME_DIR/state" >/dev/null || fail 'fallback preview changed shared state'
 cp "$TMP_ROOT/preview-quota" "$QUOTA"
 pass 'preview covers rules and default and reads last-good evidence without any state write'
+# Reverse declaration order across providers: neither it nor a preview may
+# change the stable rotation, and default rows use the same unknown fallback.
+jq '.providers |= map(.state={status:"rate_limited"} | .windows=[] | .quotaSemantics={status:"unknown",effectiveAvailability:[]})' "$QUOTA" > "$TMP_ROOT/neutral-quota"
+cp "$TMP_ROOT/neutral-quota" "$QUOTA"
+rm -rf "$HOME_DIR/state/quota-last-good"
+# Real starts must see this fixture, not a still-fresh single-flight attempt.
+export FM_QUOTA_SHARED_READ_TTL=0
+cat > "$RULES" <<'JSON'
+{"rules":[{"when":"Any work","use":[{"harness":"codex","model":"gpt-5.4","reasoning_class":2},{"harness":"claude","model":"sonnet","reasoning_class":2},{"harness":"claude","model":"haiku","reasoning_class":1}]}],"default":[{"harness":"codex","model":"gpt-5.4","reasoning_class":2},{"harness":"claude","model":"sonnet","reasoning_class":2}]}
+JSON
+for slot in 0 1; do
+  printf '%s\n' "$slot" > "$HOME_DIR/state/dispatch-tie-round-robin"
+  cp -R "$HOME_DIR/state" "$TMP_ROOT/neutral-state-$slot"
+  run preview --json
+  expect_code 0 "$code" "all-unknown preview succeeds: $out"
+  expected=claude; [ "$slot" = 0 ] || expected=codex
+  assert_equals "$expected $expected" "$(jq -r '[.workers[].pick.harness] | join(" ")' <<< "$out")" 'round-robin chooses across providers, not array order, in rule and default'
+  assert_equals true "$(jq '[.workers[] | .quota_unknown and .tie_round_robin] | all' <<< "$out")" 'unknown rotation is logged'
+  assert_contains "$(jq -r '.workers[0].tie_break' <<< "$out")" "round-robin slot $((slot + 1)) of 2" 'slot is disclosed'
+  diff -r "$TMP_ROOT/neutral-state-$slot" "$HOME_DIR/state" >/dev/null || fail 'unknown preview changed state'
+  jq '.rules[0].use |= reverse | .default |= reverse' "$RULES" > "$TMP_ROOT/reversed-rules"
+  mv "$TMP_ROOT/reversed-rules" "$RULES"
+  run preview --json
+  assert_equals "$expected $expected" "$(jq -r '[.workers[].pick.harness] | join(" ")' <<< "$out")" 'reversing arrays does not change the rotation'
+done
+printf '0\n' > "$HOME_DIR/state/dispatch-tie-round-robin"
+write_response rule_1 0.95 '{"rule_1":0.95,"default":0.05}'
+# Earlier transport-failure cases stopped the stub. Preview does not need it,
+# but this must be a real routed start, not a successful captain-pick response.
+start_stub
+run "$BRIEF" --task neutral
+expect_code 0 "$code" "unknown worker starts: $out"
+assert_contains "$out" 'status: clear' 'unknown worker actually starts instead of parking a captain pick'
+assert_contains "$out" 'receipt: dispatch-' 'unknown worker writes a launch receipt'
+assert_equals 1 "$(< "$HOME_DIR/state/dispatch-tie-round-robin")" 'a real unknown worker start advances rotation'
+assert_contains "$out" 'tie_break: quota unknown; round-robin slot 1 of 2' 'real unknown start logs the slot'
+pass 'preview --json proves all-unknown worker and default rotation is provider-neutral, order-independent and read-only; real starts advance'
 echo '# all fm-dispatch-resolve tests passed'

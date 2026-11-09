@@ -52,7 +52,7 @@
 #   is never selected or treated as healthy; a skipped pool with a named warm-up
 #   (zai-window-warm for Z.ai) still gets that warm-up and one re-read first.
 #   With no rankable candidate the same warm-up and re-read run without any wait,
-#   and anything still unknown starts on the first declared seat of the open tier
+#   and anything still unknown starts by logged round-robin in the open tier
 #   and strongest reasoning class, marked quota unknown (captain 2026-11-05: an
 #   unknown quota never blocks a start).
 #
@@ -159,7 +159,7 @@
 #                 a union with a missing class goes to the captain, never hand-picked
 #   incomplete -> no candidate is rankable and quota window evidence is not fully
 #                 known. Never waited on in worker mode: it resolves clear on the
-#                 first declared seat with `quota unknown` on its line, and goes to
+#                 round-robin seat with `quota unknown` on its line, and goes to
 #                 the captain only when a rule requires approval or nothing is left
 #                 to start on
 #   captain-pick -> Jev is down or answered unusably after one retry (a missing
@@ -380,6 +380,7 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   elif any((.rules // [])[]; type != "object") then "each rule must be an object"
   elif any((.rules // [])[]; (.when | type) != "string" or (.when | length) == 0) then "each rule needs non-empty when"
   elif any((.rules // [])[]; (profiles(.use) | length) == 0) then "each rule needs at least one use profile"
+  elif any(((.rules // [])[] | profiles(.use)[]), profiles(.default)[]; .account == "claude3") then "claude3 is reserved for firstmate and secondmates; ordinary worker rules and default must not use account claude3"
   elif any((.rules // [])[]; has("approval") and .approval != "captain") then "approval must be \"captain\" when present"
   elif any((.rules // [])[]; has("min_confidence") and ((.min_confidence | type) != "number" or .min_confidence < 0 or .min_confidence > 1)) then "min_confidence must be a number from 0 through 1 when present"
   elif any((.rules // [])[]; has("select") and ((.select | type) != "string" or (.select | length) == 0)) then "select must be a non-empty string"
@@ -1144,6 +1145,15 @@ FM_DR_SEAT_JQ='
   def reset_epoch($c): ($c.binding_reset // null) as $r | if ($r | type) == "string" then ($r | try fromdateiso8601 catch null) else null end;
   # A worker burst debit (rank_priority) ranks in place of the published score.
   def rank_priority: (.rank_priority // .spendPriority);
+  # No measured quota can rank these seats: rotate in the same stable account
+  # order as exact ties, without inventing a score or reset preference.
+  def unknown_winner:
+    sort_by([(.profile.account // ""), .profile.harness, (.profile.model // ""), (.profile.effort // "")]) as $ordered |
+    if ($ordered | length) == 0 then {winner: null}
+    else ($rr % ($ordered | length)) as $slot |
+      {winner: $ordered[$slot], round_robin: (($ordered | length) > 1),
+       tie_break: "quota unknown; round-robin slot \($slot + 1) of \($ordered | length) -> \($ordered[$slot] | seat_label)"}
+    end;
   def rank_winner:
     . as $ranked |
     ($ranked | max_by(rank_priority)) as $best |
@@ -1226,7 +1236,7 @@ fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
     ([$open[] | select(.eligible and ((.unranked // false) | not))]) as $ready |
     ([$ready[] | select(short_runway(.) | not)]) as $lasting |
     (if ($lasting | length) > 0 then $lasting else $ready end) as $ranked |
-    (if ($ready | length) == 0 then {winner: ($open | first), measured: false}
+    (if ($ready | length) == 0 then ($open | group_by(seat_rank(.profile)) | first | unknown_winner) + {measured: false}
      elif $sq then {winner: ($ready | first), measured: true}
      else ($ranked | rank_winner) + {measured: true} end) as $tb |
     ($tb.winner) as $w |
@@ -1235,7 +1245,7 @@ fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
     {status: "ok", step: $step, seat: $w.profile.account, harness: $w.profile.harness, model: ($w.profile.model // null), effort: ($w.profile.effort // null),
      provider: ($w.provider // null), pool: $w.profile.pool, tier: $w.profile.seat_tier, reasoning_class: $w.profile.reasoning_class, measured: $tb.measured,
      reason: ("pool \($w.profile.pool) tier \($w.profile.seat_tier): " +
-       (if ($tb.measured | not) then "quota unreadable, first seat of the open tier"
+       (if ($tb.measured | not) then "quota unreadable, round-robin in the open tier"
         elif $sq then "quota ranking off, declared order"
         else "best spendPriority of \($ranked | length) seat(s)" end) +
        (if ($short | length) > 0 and ($lasting | length) > 0 then "; \($short | join(", ")) will not last to reset" else "" end) +
@@ -1470,8 +1480,8 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       end
     end
   end) as $out |
-  # An unknown quota never blocks a start: the first declared seat of the open
-  # tier starts marked quota unknown, and fm-quota-intake.sh logs that start.
+  # An unknown quota never blocks a start: rotate within the open tier,
+  # marked quota unknown, and fm-quota-intake.sh logs that start.
   # Only a known stop or a rule that requires approval reaches the captain.
   (if $out.status == "incomplete" and $final and (($sel.escalate // null) == null) then
     ([$out.candidates[]? | select((.incomplete // false) or (.eligible // false))]) as $open |
@@ -1480,15 +1490,17 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     (if ($pool | length) > 0 and ($pool | all((.profile.reasoning_class | type) == "number"))
      then ($pool | map(.profile.reasoning_class) | max) as $top | [$pool[] | select(.profile.reasoning_class == $top)]
      else $pool end
-     | sort_by((.reserve // false), seat_rank(.profile)) | first) as $seat |
+     | group_by([(.reserve // false), seat_rank(.profile)]) | first // [] | unknown_winner) as $tb |
+    ($tb.winner) as $seat |
     if $seat == null then $out
     else
       ($seat | del(.incomplete, .windows_missing) + {eligible: true, quota_unknown: true, reason: "quota unknown: \(.reason)"}) as $started |
       (if $ambiguous then ([$union_ids[] | . as $id | (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | select(index($seat.profile)) | $id] | first) else $sel.source end) as $seat_row |
       ($out | del(.reason, .incomplete, .quota_attempts, .warmups)) + {
         status: "clear", quota_unknown: true, chosen: $started, row: $seat_row,
-        note: "quota unknown on every candidate: starting on \($seat | seat_label), the first declared seat of its tier and strongest class, without waiting",
+        note: "quota unknown on every candidate: starting on \($seat | seat_label), by round-robin within its tier and strongest class, without waiting",
         candidates: [$out.candidates[] | if .profile == $seat.profile then $started else . end]}
+      + {tie_break: $tb.tie_break, tie_round_robin: ($tb.round_robin // false)}
     end
    else $out end) as $out |
   # Jev answered but code cannot dispatch it: the captain picks from the table.

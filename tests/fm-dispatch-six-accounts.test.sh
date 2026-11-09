@@ -11,7 +11,7 @@
 #   R11 a rate-limited read reuses that store's last good reading under 30 min
 #   S4  a credential failure is named as such, never as unknown quota
 #   T   seat_tier strict order, per-delivery tiers, and their reserve and class rules
-#   U   an unreadable candidate is skipped while another is readable; with none readable the first seat starts quota unknown
+#   U   an unreadable candidate is skipped while another is readable; with none readable a round-robin seat starts quota unknown
 #   P   pipeline mode: fixed row per step, pools, weekly floor, live five-hour window
 #   A   provider-aware, symlink-canonical seat lookup and the one-shot migration
 set -u
@@ -34,7 +34,7 @@ QDIR="$TMP_ROOT/quota"
 SERVER=''
 cleanup() { [ -z "$SERVER" ] || kill "$SERVER" 2>/dev/null || true; rm -rf "$TMP_ROOT"; }
 trap cleanup EXIT
-mkdir -p "$STORES"/claude1 "$STORES"/claude2 "$STORES"/claude3 "$STORES"/codex1 "$STORES"/pi "$QDIR"
+mkdir -p "$STORES"/claude1 "$STORES"/claude2 "$STORES"/claude-reserve "$STORES"/codex1 "$STORES"/pi "$QDIR"
 printf '# Task\n## Captain%s intent\nFix the pager.\n## Firstmate spec\nOne page per call.\n' "'" > "$BRIEF"
 
 # The fake quota-axi answers per store: the Claude store's name, else the Codex
@@ -70,7 +70,7 @@ set_quota() { snap "$2" "$3" "$4" "${5:-through_reset}" "${6:-2030-01-04T00:00:0
 reset_quota() {
   set_quota claude1 claude 70 1
   set_quota claude2 claude 60 2
-  set_quota claude3 claude 95 9
+  set_quota claude-reserve claude 95 9
   set_quota codex1 codex 50 1
   set_quota pi zai 90 5
   rm -rf "$HOME_DIR/state/quota-last-good"
@@ -81,7 +81,7 @@ cat > "$ACCOUNTS" <<JSON
 {"crossAccount":{"enabled":true},"accounts":{
  "claude1":{"provider":"claude","claude":"$STORES/claude1","plans":{"claude":"Max 20x"}},
  "claude2":{"provider":"claude","claude":"$STORES/claude2","plans":{"claude":"Ultra"}},
- "claude3":{"provider":"claude","claude":"$STORES/claude3","plans":{"claude":"Team premium"}},
+ "claude-reserve":{"provider":"claude","claude":"$STORES/claude-reserve","plans":{"claude":"Team premium"}},
  "codex1":{"provider":"codex","codex":"$STORES/codex1","pi":"$STORES/pi","plans":{"codex":"Pro 5x"}},
  "glm":{"provider":"zai","pi":"$STORES/pi","plans":{"zai":"Pro 6x"}}}}
 JSON
@@ -91,7 +91,7 @@ cat > "$RULES" <<'JSON'
   {"when":"Writing and reporting","use":[
     {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","reasoning_class":2},
     {"harness":"claude","model":"sonnet","effort":"high","account":"claude2","reasoning_class":2},
-    {"harness":"claude","model":"sonnet","effort":"high","account":"claude3","fallback_only":true,"reasoning_class":2},
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude-reserve","fallback_only":true,"reasoning_class":2},
     {"harness":"pi","provider":"zai","model":"zai/glm-5.3","effort":"high","account":"glm","reasoning_class":2}]},
   {"when":"Front-end design","never_providers":["zai"],"use":[
     {"harness":"claude","model":"opus","effort":"high","account":"claude1","reasoning_class":2},
@@ -99,7 +99,7 @@ cat > "$RULES" <<'JSON'
   {"when":"Read-only investigation","use":[
     {"harness":"claude","model":"haiku","effort":"low","account":"claude1","reasoning_class":1},
     {"harness":"claude","model":"haiku","effort":"low","account":"claude2","reasoning_class":1},
-    {"harness":"claude","model":"haiku","effort":"low","account":"claude3","fallback_only":true,"reasoning_class":1}]}],
+    {"harness":"claude","model":"haiku","effort":"low","account":"claude-reserve","fallback_only":true,"reasoning_class":1}]}],
  "default":[
   {"harness":"claude","model":"opus","effort":"medium","account":"claude1","reasoning_class":2},
   {"harness":"claude","model":"opus","effort":"medium","account":"claude2","reasoning_class":2}]}
@@ -113,7 +113,7 @@ export FM_DISPATCH_QUOTA_ATTEMPTS=1 FM_DISPATCH_QUOTA_BACKOFF_MS=250 FM_DISPATCH
 # Sequential resolves would debit each other; section G turns the spreader on.
 export FM_DISPATCH_BURST_WINDOW_SECONDS=0
 # The supervisor's own login is the home pin store, as on a real home.
-export CLAUDE_CONFIG_DIR="$STORES/claude3" PI_CODING_AGENT_DIR="$STORES/pi" CODEX_HOME="$STORES/codex1"
+export CLAUDE_CONFIG_DIR="$STORES/claude-reserve" PI_CODING_AGENT_DIR="$STORES/pi" CODEX_HOME="$STORES/codex1"
 write_response() {
   jq -n --slurpfile rules "$RULES" --arg choice "$1" --argjson confidence "$2" --argjson probabilities "$3" '
     def profiles: if type == "array" then . else [.] end;
@@ -159,53 +159,53 @@ reset_quota
 run "$BRIEF" --task six
 assert_contains "$out" 'status: clear' "investigation routes: $out"
 assert_contains "$(chosen)" "--account 'claude2'" 'the higher spendPriority worker seat wins'
-assert_contains "$out" 'not eligible: fallback_only reserve held: non-fallback claude seats not at their limit (claude:haiku@claude1, claude:haiku@claude2)' 'claude3 is held while the worker seats have room'
+assert_contains "$out" 'not eligible: fallback_only reserve held: non-fallback claude seats not at their limit (claude:haiku@claude1, claude:haiku@claude2)' 'claude-reserve is held while the worker seats have room'
 set_quota claude1 claude 70 1 exhausted_now
 run "$BRIEF" --task six
 assert_contains "$(chosen)" "--account 'claude2'" 'one worker seat at limit is not enough'
 assert_contains "$out" 'fallback_only reserve held: non-fallback claude seats not at their limit (claude:haiku@claude2)' 'only the seat with room is named'
 set_quota claude2 claude 0 2
 run "$BRIEF" --task six
-assert_contains "$(chosen)" "--account 'claude3'" "claude3 is picked when both worker seats are at limit: $out"
+assert_contains "$(chosen)" "--account 'claude-reserve'" "claude-reserve is picked when both worker seats are at limit: $out"
 assert_contains "$out" 'reserve pick: every non-fallback claude seat is at its limit' 'the reserve pick is visible'
 "$ROOT/bin/fm-account-routing.sh" off >/dev/null
 run "$BRIEF" --task six
 assert_contains "$out" 'status: captain-pick' 'routing off goes to the captain with a reason, no guessed route'
 assert_contains "$out" 'cross-account routing disabled or account not registered' 'the reason is named'
-assert_not_contains "$(chosen)" 'claude3' 'routing off never concentrates work on claude3'
+assert_not_contains "$(chosen)" 'claude-reserve' 'routing off never concentrates work on claude-reserve'
 "$ROOT/bin/fm-account-routing.sh" on >/dev/null
 reset_quota
 reset_quota
-jq '.providers[0] |= (.state = {status:"rate_limited", error:"Claude quota endpoint rate limited"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$QDIR/claude3.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/claude3.json"
+jq '.providers[0] |= (.state = {status:"rate_limited", error:"Claude quota endpoint rate limited"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$QDIR/claude-reserve.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/claude-reserve.json"
 run "$BRIEF" --task six
 assert_contains "$out" 'status: clear' "a held reserve with unknown quota does not stall the choice: $out"
 assert_contains "$(chosen)" "--account 'claude2'" 'the worker seats still decide'
 reset_quota
-pass 'C2 and S9: the claude3 reserve opens only when claude1 and claude2 are both at limit, never with routing off, and never stalls while held'
+pass 'C2 and S9: the claude-reserve reserve opens only when claude1 and claude2 are both at limit, never with routing off, and never stalls while held'
 
 # ---- T: seat tiers ---------------------------------------------------------------
-# The worker order: claude1, claude2, claude3 reserve, then other families. A
+# The worker order: claude1, claude2, claude-reserve reserve, then other families. A
 # stronger or better-funded candidate of a later tier never wins while an
 # earlier seat has capacity.
 cat > "$RULES" <<'JSON'
 {"model_notes":{"claude":"claude line","codex":"codex line","zai":"glm line"},
- "seat_tiers_by_delivery":{"no-mistakes":{"claude2":1,"claude1":2,"claude3":3}},
+ "seat_tiers_by_delivery":{"no-mistakes":{"claude2":1,"claude1":2,"claude-reserve":3}},
  "rules":[
   {"when":"Multi-file implementation","use":[
     {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","seat_tier":1,"reasoning_class":3},
     {"harness":"claude","model":"opus","effort":"medium","account":"claude1","seat_tier":1,"reasoning_class":4},
     {"harness":"claude","model":"opus","effort":"medium","account":"claude2","seat_tier":2,"reasoning_class":4},
-    {"harness":"claude","model":"opus","effort":"medium","account":"claude3","seat_tier":3,"fallback_only":true,"reasoning_class":4},
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude-reserve","seat_tier":3,"fallback_only":true,"reasoning_class":4},
     {"harness":"pi","provider":"codex","model":"openai-codex/gpt-6.1-sol","effort":"xhigh","account":"codex1","seat_tier":4,"reasoning_class":5},
     {"harness":"pi","provider":"zai","model":"zai/glm-5.3","effort":"high","account":"glm","seat_tier":4,"reasoning_class":3}]},
   {"when":"Orchestration","use":[
-    {"harness":"claude","model":"sonnet","effort":"high","account":"claude3","seat_tier":1,"reasoning_class":3},
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude-reserve","seat_tier":1,"reasoning_class":3},
     {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","seat_tier":2,"reasoning_class":3},
     {"harness":"claude","model":"sonnet","effort":"high","account":"claude2","seat_tier":3,"reasoning_class":3}]},
   {"when":"Read-only investigation","use":[
     {"harness":"claude","model":"haiku","effort":"low","account":"claude1","seat_tier":1,"reasoning_class":1},
     {"harness":"claude","model":"haiku","effort":"low","account":"claude2","seat_tier":2,"reasoning_class":1},
-    {"harness":"claude","model":"haiku","effort":"low","account":"claude3","seat_tier":3,"fallback_only":true,"reasoning_class":1},
+    {"harness":"claude","model":"haiku","effort":"low","account":"claude-reserve","seat_tier":3,"fallback_only":true,"reasoning_class":1},
     {"harness":"pi","provider":"codex","model":"openai-codex/gpt-6-luna","effort":"xhigh","account":"codex1","seat_tier":4,"reasoning_class":5}]}]}
 JSON
 reset_quota
@@ -216,7 +216,7 @@ assert_contains "$(chosen)" "--model 'opus'" "keep-strongest decides inside the 
 assert_contains "$(chosen)" "--account 'claude1'" 'the first tier wins although claude2 has the higher spendPriority'
 assert_contains "$out" 'not eligible: seat_tier held: an earlier seat still has capacity (claude:sonnet@claude1, claude:opus@claude1)' 'a held candidate names the open tier'
 assert_not_contains "$(tail -1 "$LOG")" 'seat_tier' 'Jev never sees a seat tier'
-set_quota claude3 claude 95 9
+set_quota claude-reserve claude 95 9
 jq '.providers[0] |= (.state = {status:"rate_limited", error:"limited"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$QDIR/claude2.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/claude2.json"
 run "$BRIEF" --task six
 assert_contains "$out" 'status: clear' "a held later tier with unknown quota does not stall the choice: $out"
@@ -241,23 +241,23 @@ cp "$TMP_ROOT/tier-rules" "$RULES"
 # An unreadable seat is no capacity for a reserve to protect.
 set_quota claude2 claude 0 2 exhausted_now
 run "$BRIEF" --task six
-assert_contains "$(chosen)" "--account 'claude3'" "the reserve opens past an unreadable and a full seat: $out"
+assert_contains "$(chosen)" "--account 'claude-reserve'" "the reserve opens past an unreadable and a full seat: $out"
 assert_contains "$out" 'seat is at its limit (weekly window at or above 100% used or runway exhausted_now) or unreadable' 'the reserve says why it opened'
 # So is an expired login.
 reset_quota
 jq '.providers[0] |= (.state = {status:"auth_required", error:"claude_credential_unavailable"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$QDIR/claude1.json" > "$QDIR/next" && mv "$QDIR/next" "$QDIR/claude1.json"
 set_quota claude2 claude 0 2 exhausted_now
 run "$BRIEF" --task six
-assert_contains "$(chosen)" "--account 'claude3'" "the reserve opens past an expired login and a full seat: $out"
+assert_contains "$(chosen)" "--account 'claude-reserve'" "the reserve opens past an expired login and a full seat: $out"
 # A later unreadable tier stays held, and nothing readable stays incomplete.
 reset_quota
 unreadable claude1
-unreadable claude3
+unreadable claude-reserve
 run "$BRIEF" --task six
 assert_contains "$(chosen)" "--account 'claude2'" "the open tier decides: $out"
 assert_contains "$out" 'fallback_only reserve held' 'a later unreadable reserve stays held'
 reset_quota
-for seat in claude1 claude2 claude3 codex1 pi; do unreadable "$seat"; done
+for seat in claude1 claude2 claude-reserve codex1 pi; do unreadable "$seat"; done
 run "$BRIEF" --task six
 assert_contains "$out" 'status: clear' "nothing readable still starts: $out"
 assert_contains "$out" 'eligible, quota unknown: provider codex unmeasured (unknown, rate limited)' 'the seat says quota unknown and why'
@@ -267,7 +267,7 @@ assert_contains "$(chosen)" "--account 'codex1'" "the first seat of the stronges
 assert_not_contains "$out" 'seat_tier held' 'no unreadable tier hides a later one'
 # Every login bad is known, not unknown: nothing starts.
 reset_quota
-for seat in claude1 claude2 claude3 codex1 pi; do
+for seat in claude1 claude2 claude-reserve codex1 pi; do
   jq '.providers[0] |= (.state = {status:"auth_required", error:"signed out"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$QDIR/$seat.json" > "$TMP_ROOT/seat-auth.json"
   cp "$TMP_ROOT/seat-auth.json" "$QDIR/$seat.json"
 done
@@ -302,6 +302,11 @@ assert_contains "$(chosen)" "--account 'claude2'" "an absent warm-up never stall
 cp "$TMP_ROOT/tier-rules" "$RULES"
 write_response rule_1 0.95 "$worker"
 # Parallel starts read each login once: the same calls as one start, not four times them.
+# Isolate the three-login assertion from unrelated provider stores and warm-ups.
+cp "$RULES" "$TMP_ROOT/before-flight-rules"
+jq '.rules = [.rules[0] | .use |= map(select(.account == "claude1" or .account == "claude2"))] | del(.default)' "$RULES" > "$TMP_ROOT/flight-rules"
+mv "$TMP_ROOT/flight-rules" "$RULES"
+write_response rule_1 0.95 '{"rule_1":0.95,"default":0.05}'
 reset_quota
 # Earlier cases left attempts here; this one starts cold.
 rm -rf "$HOME_DIR/state/quota-single-flight"
@@ -324,16 +329,18 @@ done
 assert_equals 3 "$(grep -c '^--json$' "$TMP_ROOT/parallel-starts")" 'four parallel starts share the three resolver reads'
 assert_equals 3 "$(grep -c '^--full --json$' "$TMP_ROOT/parallel-starts")" 'four parallel starts share the three intake reads'
 reset_quota
-pass 'U: an unreadable candidate is skipped while another is readable; none readable starts the first seat; bad logins do not'
+cp "$TMP_ROOT/before-flight-rules" "$RULES"
+write_response rule_1 0.95 "$worker"
+pass 'U: an unreadable candidate is skipped while another is readable; none readable rotates; bad logins do not'
 reset_quota
 set_quota claude1 claude 0 1 exhausted_now
 run "$BRIEF" --task six
 assert_contains "$(chosen)" "--account 'claude2'" "claude2 is the first fallback: $out"
 set_quota claude2 claude 0 2 exhausted_now
 run "$BRIEF" --task six
-assert_contains "$(chosen)" "--account 'claude3'" "claude3 comes before another family, unlike a tierless reserve: $out"
+assert_contains "$(chosen)" "--account 'claude-reserve'" "claude-reserve comes before another family, unlike a tierless reserve: $out"
 assert_contains "$out" 'reserve pick: every non-fallback claude seat is at its limit' 'the reserve decision stays visible'
-set_quota claude3 claude 0 9 exhausted_now
+set_quota claude-reserve claude 0 9 exhausted_now
 run "$BRIEF" --task six
 assert_contains "$(chosen)" "--harness 'pi'" "another family is the last fallback: $out"
 assert_contains "$(chosen)" "--model 'openai-codex/gpt-6.1-sol'" 'keep-strongest and spendPriority still decide inside a shared tier'
@@ -351,13 +358,13 @@ run "$TMP_ROOT/nm-brief.md" --task six
 assert_contains "$(chosen)" "--account 'claude1'" "a no-mistakes ship falls back to claude1: $out"
 set_quota claude1 claude 0 1 exhausted_now
 run "$TMP_ROOT/nm-brief.md" --task six
-assert_contains "$(chosen)" "--account 'claude3'" "and then to the claude3 reserve: $out"
+assert_contains "$(chosen)" "--account 'claude-reserve'" "and then to the claude-reserve reserve: $out"
 reset_quota
 # The orchestration row defaults to the supervisor seat, then the worker seats.
 write_response rule_2 0.95 '{"rule_1":0.02,"rule_2":0.95,"rule_3":0.02,"default":0.01}'
 run "$BRIEF" --task six
-assert_contains "$(chosen)" "--account 'claude3'" "orchestration defaults to claude3: $out"
-set_quota claude3 claude 0 9 exhausted_now
+assert_contains "$(chosen)" "--account 'claude-reserve'" "orchestration defaults to claude-reserve: $out"
+set_quota claude-reserve claude 0 9 exhausted_now
 run "$BRIEF" --task six
 assert_contains "$(chosen)" "--account 'claude1'" 'orchestration falls back to claude1'
 set_quota claude1 claude 0 1 exhausted_now
@@ -506,7 +513,7 @@ cat > "$RULES" <<'JSON'
 {"rules":[{"when":"Writing and reporting","use":[
    {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","reasoning_class":2},
    {"harness":"claude","model":"sonnet","effort":"high","account":"claude2","reasoning_class":2},
-   {"harness":"claude","model":"sonnet","effort":"high","account":"claude3","fallback_only":true,"reasoning_class":2},
+   {"harness":"claude","model":"sonnet","effort":"high","account":"claude-reserve","fallback_only":true,"reasoning_class":2},
    {"harness":"codex","model":"gpt-6.1-sol","effort":"high","account":"codex1","reasoning_class":2}]}],
  "default":[{"harness":"claude","model":"opus","effort":"medium","account":"claude1","reasoning_class":2}]}
 JSON
@@ -576,7 +583,7 @@ grun "$DAY"
 assert_contains "$out" 'status: clear' "unreadable seats beside a guarded one still start: $out"
 assert_contains "$(chosen)" "--account 'claude2'" 'the only known seat starts with the guard waived'
 guard_quota
-for key in claude1 claude2 claude3 codex1; do unreadable "$key"; done
+for key in claude1 claude2 claude-reserve codex1; do unreadable "$key"; done
 grun "$DAY"
 assert_contains "$out" 'status: clear' "unknown quota on every seat still starts by day: $out"
 assert_contains "$out" 'quota unknown' 'the start is marked quota unknown'
@@ -588,7 +595,7 @@ burst_quota() {
   set_quota claude1 claude 96 1.4632; no_five_hour claude1
   set_quota claude2 claude 24 1.4854
   five_hour claude2 '.percentRemaining = 89 | .resetsAt = "2030-01-01T06:00:00Z"'
-  set_quota claude3 claude 76 0.322
+  set_quota claude-reserve claude 76 0.322
   set_quota codex1 codex 99 1.1242; no_five_hour codex1
   rm -f "$LEDGER"
 }
@@ -626,7 +633,7 @@ pass 'G: a burst of worker starts spreads over the furthest-behind seats and the
 
 # ---- P: pipeline seat rows -------------------------------------------------------
 # The fixed row per no-mistakes step: pool 1 is claude1 and claude2, pool 2 is
-# claude3 above its weekly floor and then the Codex seats. A healthy glm seat with
+# claude-reserve above its weekly floor and then the Codex seats. A healthy glm seat with
 # the most room stays out, because no row may list a banned provider.
 mkdir -p "$STORES/codex2"
 cp "$ACCOUNTS" "$TMP_ROOT/accounts-original"
@@ -638,13 +645,13 @@ cat > "$RULES" <<'JSON'
   {"steps":["review","test","ci","rebase","fixes"],"never_providers":["zai"],"use":[
     {"harness":"claude","model":"opus","effort":"medium","account":"claude1","pool":1,"seat_tier":1,"reasoning_class":4},
     {"harness":"claude","model":"opus","effort":"medium","account":"claude2","pool":1,"seat_tier":1,"reasoning_class":4},
-    {"harness":"claude","model":"opus","effort":"medium","account":"claude3","pool":2,"seat_tier":2,"reasoning_class":4,"weekly_floor_percent":20},
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude-reserve","pool":2,"seat_tier":2,"reasoning_class":4,"weekly_floor_percent":20},
     {"harness":"codex","model":"gpt-6.1-sol","effort":"medium","account":"codex1","pool":2,"seat_tier":3,"reasoning_class":4},
     {"harness":"codex","model":"gpt-6.1-sol","effort":"medium","account":"codex2","pool":2,"seat_tier":3,"reasoning_class":4}]},
   {"steps":["document","pr"],"never_providers":["zai"],"use":[
     {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","pool":1,"seat_tier":1,"reasoning_class":3},
     {"harness":"claude","model":"sonnet","effort":"high","account":"claude2","pool":1,"seat_tier":1,"reasoning_class":3},
-    {"harness":"claude","model":"sonnet","effort":"high","account":"claude3","pool":2,"seat_tier":2,"reasoning_class":3,"weekly_floor_percent":20},
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude-reserve","pool":2,"seat_tier":2,"reasoning_class":3,"weekly_floor_percent":20},
     {"harness":"codex","model":"gpt-6.1-sol","effort":"low","account":"codex1","pool":2,"seat_tier":3,"reasoning_class":3},
     {"harness":"codex","model":"gpt-6.1-sol","effort":"low","account":"codex2","pool":2,"seat_tier":3,"reasoning_class":3}]}]}
 JSON
@@ -653,7 +660,7 @@ pipeline_quota() {
   reset_quota
   set_quota claude1 claude 70 1.3
   set_quota claude2 claude 60 1.2
-  set_quota claude3 claude 80 0.2
+  set_quota claude-reserve claude 80 0.2
   set_quota codex1 codex 90 0.8
   set_quota codex2 codex 90 0.7
 }
@@ -696,7 +703,7 @@ pipe review
 assert_equals claude2 "$(pfield .seat)" '96% used plus the new start reserve reaches the weekly gate'
 set_quota claude2 claude 2 8
 pipe review
-assert_equals claude3 "$(pfield .seat)" 'both pool 1 seats weekly-full open the next tier'
+assert_equals claude-reserve "$(pfield .seat)" 'both pool 1 seats weekly-full open the next tier'
 pipeline_quota
 # Force a full tie so a real dispatch would advance the rotation.
 set_quota claude2 claude 70 1.3
@@ -800,42 +807,42 @@ pipe review
 assert_equals claude2 "$(pfield .seat)" 'the same limit with no published reset does not hold the seat'
 pass 'P: a five-hour limit holds a pipeline seat only when its reset is published'
 
-# Pool 2 opens only when pool 1 has no room, and claude3 comes first inside it.
+# Pool 2 opens only when pool 1 has no room, and claude-reserve comes first inside it.
 pipeline_quota
 five_hour_out claude1 2030-01-01T05:00:00Z
 pipe review
 assert_equals '1 claude2' "$(pfield '"\(.pool) \(.seat)"')" 'one pool 1 seat with room keeps pool 1'
 five_hour_out claude2 2030-01-01T06:00:00Z
 pipe review
-assert_equals '2 claude3 opus medium' "$(pfield '"\(.pool) \(.seat) \(.model) \(.effort)"')" 'claude3 above its floor beats Codex despite a lower spendPriority'
+assert_equals '2 claude-reserve opus medium' "$(pfield '"\(.pool) \(.seat) \(.model) \(.effort)"')" 'claude-reserve above its floor beats Codex despite a lower spendPriority'
 assert_contains "$(pfield .reason)" 'pool 1 has no seat with room' 'opening pool 2 is stated'
-pass 'P: pool 2 opens on an empty pool 1, even on five-hour limits, claude3 first'
+pass 'P: pool 2 opens on an empty pool 1, even on five-hour limits, claude-reserve first'
 
-# The claude3 weekly floor: weekly room decides, and a low five-hour row does not trip it.
+# The claude-reserve weekly floor: weekly room decides, and a low five-hour row does not trip it.
 pipeline_quota
 five_hour_out claude1 2030-01-01T05:00:00Z
 five_hour_out claude2 2030-01-01T06:00:00Z
-set_quota claude3 claude 21 0.2
+set_quota claude-reserve claude 21 0.2
 pipe review
-assert_equals claude3 "$(pfield .seat)" 'above the floor claude3 still runs'
-set_quota claude3 claude 20 0.2
+assert_equals claude-reserve "$(pfield .seat)" 'above the floor claude-reserve still runs'
+set_quota claude-reserve claude 20 0.2
 pipe review
-assert_equals '2 codex1 codex gpt-6.1-sol medium' "$(pfield '"\(.pool) \(.seat) \(.harness) \(.model) \(.effort)"')" 'at the floor claude3 stops and Codex runs at the class effort'
-assert_contains "$(pfield '.candidates[] | select(.seat == "claude3") | .reason')" 'weekly floor: 20% left, stops at 20%' 'the floor stop is named'
-set_quota claude3 claude 80 0.2
-tweak claude3 '.windows[0].percentRemaining = 15 | .quotaSemantics.effectiveAvailability[0].effectivePercentRemaining = 15'
+assert_equals '2 codex1 codex gpt-6.1-sol medium' "$(pfield '"\(.pool) \(.seat) \(.harness) \(.model) \(.effort)"')" 'at the floor claude-reserve stops and Codex runs at the class effort'
+assert_contains "$(pfield '.candidates[] | select(.seat == "claude-reserve") | .reason')" 'weekly floor: 20% left, stops at 20%' 'the floor stop is named'
+set_quota claude-reserve claude 80 0.2
+tweak claude-reserve '.windows[0].percentRemaining = 15 | .quotaSemantics.effectiveAvailability[0].effectivePercentRemaining = 15'
 pipe review
-assert_equals claude3 "$(pfield .seat)" 'a low five-hour row never trips the weekly floor'
-set_quota claude3 claude 20 0.2
+assert_equals claude-reserve "$(pfield .seat)" 'a low five-hour row never trips the weekly floor'
+set_quota claude-reserve claude 20 0.2
 pipe document
 assert_equals 'codex1 low 3' "$(pfield '"\(.seat) \(.effort) \(.reasoning_class)"')" 'Codex takes the step class of its row'
-pass 'P: claude3 stops at its weekly floor, on the weekly window only'
+pass 'P: claude-reserve stops at its weekly floor, on the weekly window only'
 
 # Both pools empty: one line per seat with its reset, no downgrade, no GLM.
 pipeline_quota
 five_hour_out claude1 2030-01-01T05:00:00Z
 five_hour_out claude2 2030-01-01T06:00:00Z
-set_quota claude3 claude 10 0.2 through_reset 2030-01-07T00:00:00Z
+set_quota claude-reserve claude 10 0.2 through_reset 2030-01-07T00:00:00Z
 set_quota codex1 codex 0 0.8 through_reset 2030-01-08T00:00:00Z
 set_quota codex2 codex 0 0.7 through_reset 2030-01-09T00:00:00Z
 pipe review
@@ -846,7 +853,7 @@ assert_contains "$(pfield .reason)" 'quota exhausted' 'the outcome uses the reco
 assert_equals '5' "$(printf '%s\n' "$perr" | wc -l | tr -d ' ')" "one line per seat: $perr"
 assert_contains "$perr" 'claude1 (pool 1) has no room, resets 2030-01-01T05:00:00Z' 'a five-hour seat names its five-hour reset'
 assert_contains "$perr" 'claude2 (pool 1) has no room, resets 2030-01-01T06:00:00Z' 'each seat names its own reset'
-assert_contains "$perr" 'claude3 (pool 2) has no room, resets 2030-01-07T00:00:00Z: weekly floor: 10% left' 'a floored seat names its weekly reset'
+assert_contains "$perr" 'claude-reserve (pool 2) has no room, resets 2030-01-07T00:00:00Z: weekly floor: 10% left' 'a floored seat names its weekly reset'
 assert_contains "$perr" 'codex1 (pool 2) has no room, resets 2030-01-08T00:00:00Z' 'a Codex seat names its reset'
 assert_contains "$perr" 'codex2 (pool 2) has no room, resets 2030-01-09T00:00:00Z' 'every Codex seat is listed'
 assert_not_contains "$pout$perr" 'glm' 'no GLM seat is offered'
@@ -860,17 +867,31 @@ assert_equals 'claude1 true' "$(pfield '"\(.seat) \(.measured)"')" 'a measured s
 pipeline_quota
 rate_limited claude1
 rate_limited claude2
+printf '1\n' > "$HOME_DIR/state/dispatch-tie-round-robin"
+cp "$RULES" "$TMP_ROOT/unknown-pipeline-rules"
+# Put the expected winner last: array order must not select the seat.
+jq '.pipeline_rows[].use |= sort_by(if .account == "claude2" then 1 else 0 end)' "$RULES" > "$TMP_ROOT/unknown-order"
+mv "$TMP_ROOT/unknown-order" "$RULES"
+run preview --json
+expect_code 0 "$code" "unknown pipeline preview succeeds: $out"
+assert_equals claude2 "$(jq -r '.noMistakes[] | select(.step == "review") | .pick.seat' <<< "$out")" 'preview rotates within the open tier, not array order'
+assert_equals 1 "$(< "$HOME_DIR/state/dispatch-tie-round-robin")" 'pipeline preview does not advance rotation'
 pipe review
 expect_code 0 "$code" "both unreadable still resolve: $perr"
-assert_equals '1 claude1 false' "$(pfield '"\(.pool) \(.seat) \(.measured)"')" 'both unreadable: the first seat of the tier, marked unmeasured, pool 2 stays shut'
+assert_equals '1 claude2 false' "$(pfield '"\(.pool) \(.seat) \(.measured)"')" 'both unreadable: round-robin stays in pool 1 and marks unmeasured'
+assert_contains "$(pfield .tie_break)" 'quota unknown; round-robin slot 2 of 2' 'the slot is logged'
+assert_equals 2 "$(< "$HOME_DIR/state/dispatch-tie-round-robin")" 'unknown pipeline start advances rotation'
+pipe review
+assert_equals claude1 "$(pfield .seat)" 'the next unknown start rotates to the other seat'
+cp "$TMP_ROOT/unknown-pipeline-rules" "$RULES"
 assert_contains "$(pfield .reason)" 'quota unreadable' 'the reason says so'
 pipeline_quota
 five_hour_out claude1 2030-01-01T05:00:00Z
 five_hour_out claude2 2030-01-01T06:00:00Z
-rate_limited claude3
+rate_limited claude-reserve
 pipe review
-assert_equals 'codex1' "$(pfield .seat)" 'an unreadable weekly floor never lets claude3 fail open'
-assert_contains "$(pfield '.candidates[] | select(.seat == "claude3") | .reason')" 'weekly floor 20% is unverifiable' 'that is named'
+assert_equals 'codex1' "$(pfield .seat)" 'an unreadable weekly floor never lets claude-reserve fail open'
+assert_contains "$(pfield '.candidates[] | select(.seat == "claude-reserve") | .reason')" 'weekly floor 20% is unverifiable' 'that is named'
 pipeline_quota
 cat > "$FAKEBIN/quota-axi-hung" <<'SH'
 #!/usr/bin/env bash
@@ -879,6 +900,7 @@ SH
 chmod +x "$FAKEBIN/quota-axi-hung"
 cp "$FAKEBIN/quota-axi" "$FAKEBIN/quota-axi-real"
 cp "$FAKEBIN/quota-axi-hung" "$FAKEBIN/quota-axi"
+printf '0\n' > "$HOME_DIR/state/dispatch-tie-round-robin"
 started=$(date +%s)
 code=0; pout=$(FM_DISPATCH_QUOTA_WAIT_SECONDS=900 FM_DISPATCH_QUOTA_ATTEMPTS=1000 "$TOOL" pipeline --step review 2>/dev/null) || code=$?
 elapsed=$(( $(date +%s) - started ))
@@ -937,8 +959,8 @@ reset_quota
 pass 'P: malformed rows, unknown steps and unroutable seats are configuration errors'
 
 # ---- A: seat lookup and migration ------------------------------------------------
-ln -s "$STORES/claude3" "$STORES/claude3-alias"
-assert_equals claude3 "$(acct fm_account_seat_for_store "$ACCOUNTS" claude "$STORES/claude3-alias")" 'a symlinked alias names its target seat'
+ln -s "$STORES/claude-reserve" "$STORES/claude-reserve-alias"
+assert_equals claude-reserve "$(acct fm_account_seat_for_store "$ACCOUNTS" claude "$STORES/claude-reserve-alias")" 'a symlinked alias names its target seat'
 assert_equals '' "$(acct fm_account_seat_for_store "$ACCOUNTS" pi "$STORES/pi")" 'a shared Pi store names no seat without a provider'
 assert_equals glm "$(acct fm_account_seat_for_store "$ACCOUNTS" pi "$STORES/pi" zai)" 'the zai provider names the glm seat'
 assert_equals codex1 "$(acct fm_account_seat_for_store "$ACCOUNTS" pi "$STORES/pi" codex)" 'the codex provider names the codex1 seat'
@@ -947,15 +969,15 @@ jq '.accounts.dup = {"provider":"zai","pi":"'"$STORES"'/pi/"}' "$ACCOUNTS" > "$T
 assert_contains "$(acct fm_account_registry_problems "$TMP_ROOT/dup.json")" 'both declare provider zai on pi store' 'two seats on one login are reported'
 out=$("$ROOT/bin/fm-account-routing.sh" audit 2>&1); code=$?
 expect_code 1 "$code" "the audit fails on a coverage gap: $out"
-assert_contains "$out" 'gap: rule 2 claude:opus/high lacks claude account(s) claude3' 'a rung missing a provider account is named'
+assert_contains "$out" 'gap: rule 2 claude:opus/high lacks claude account(s) claude-reserve' 'a rung missing a provider account is named'
 assert_contains "$out" 'single point: provider zai has one account (glm)' 'a single-account provider is noted'
 assert_not_contains "$out" 'gap: rule 1' 'a fully covered rule is not reported'
 RC="$TMP_ROOT/recent.json"
 snap claude 40 3 > "$TMP_ROOT/good.json"
-qlib fm_quota_recent_save "$RC" "$TMP_ROOT/good.json" "$STORES/claude3" "$STORES/pi" "$STORES/codex1"
+qlib fm_quota_recent_save "$RC" "$TMP_ROOT/good.json" "$STORES/claude-reserve" "$STORES/pi" "$STORES/codex1"
 jq '.providers[0] |= (.state = {status:"rate_limited"} | .windows = [] | .quotaSemantics = {status:"unknown", effectiveAvailability:[]})' "$TMP_ROOT/good.json" > "$TMP_ROOT/limited.json"
-assert_equals 3 "$(qlib fm_quota_recent_merge "$RC" "$TMP_ROOT/limited.json" "$STORES/claude3" - - | jq '.providers[0].quotaSemantics.effectiveAvailability[0].selection.spendPriority')" \
-  'a Claude row read through the home default answers for the claude3 seat on the same login'
+assert_equals 3 "$(qlib fm_quota_recent_merge "$RC" "$TMP_ROOT/limited.json" "$STORES/claude-reserve" - - | jq '.providers[0].quotaSemantics.effectiveAvailability[0].selection.spendPriority')" \
+  'a Claude row read through the home default answers for the claude-reserve seat on the same login'
 assert_equals null "$(qlib fm_quota_recent_merge "$RC" "$TMP_ROOT/limited.json" "$STORES/claude2" - - | jq '.providers[0].reusedReading')" \
   'another login never borrows that reading'
 pass 'A: provider-aware, symlink-canonical seat lookup and registry problems'
@@ -969,10 +991,10 @@ STATE_DIR="$HOME_DIR/state"
 printf 'harness=claude\nmodel=opus\naccount=legacy\nseat=legacy\nclaude_config_dir=%s\n' "$OLD/claude-old" > "$STATE_DIR/m-claude.meta"
 printf 'harness=pi\nmodel=openai-codex/gpt-6.1-sol\naccount=legacy\npi_agent_dir=%s\ncodex_home=%s\n' "$OLD/pi-old/agent" "$OLD/codex-old" > "$STATE_DIR/m-codex.meta"
 printf 'harness=pi\nmodel=zai/glm-5.3\npi_agent_dir=%s\n' "$STORES/pi" > "$STATE_DIR/m-zai.meta"
-printf 'harness=claude\nmodel=sonnet\nclaude_config_dir=%s\n' "$STORES/claude3" > "$STATE_DIR/m-unnamed.meta"
+printf 'harness=claude\nmodel=sonnet\nclaude_config_dir=%s\n' "$STORES/claude-reserve" > "$STATE_DIR/m-unnamed.meta"
 printf '%s\n' "$OLD/pi-old/agent" 'openai-codex' > "$HOME_DIR/config/pi-account"
 chmod 600 "$STATE_DIR"/m-*.meta
-args=(--id legacy:claude=claude3 --id legacy:codex=codex1 --id -:claude=claude1 --id -:zai=glm
+args=(--id legacy:claude=claude-reserve --id legacy:codex=codex1 --id -:claude=claude1 --id -:zai=glm
       --path "$OLD/codex-old=$STORES/codex1" --path "$OLD/pi-old/agent=$STORES/pi")
 before=$(cat "$STATE_DIR/m-claude.meta")
 out=$("$MIG" "${args[@]}" 2>&1); code=$?
@@ -989,9 +1011,9 @@ assert_equals "$before" "$(cat "$STATE_DIR/m-claude.meta")" 'the refusal writes 
 out=$("$MIG" "${args[@]}" --apply 2>&1); code=$?
 expect_code 0 "$code" "apply after the drain: $out"
 assert_contains "$out" 'applied 5 file change(s)' 'the apply reports its count'
-has_line 'account=claude3' "$STATE_DIR/m-claude.meta" 'the old Claude id becomes claude3'
-has_line 'seat=claude3' "$STATE_DIR/m-claude.meta" 'the seat follows'
-has_line "claude_config_dir=$STORES/claude3" "$STATE_DIR/m-claude.meta" 'the store follows the new seat'
+has_line 'account=claude-reserve' "$STATE_DIR/m-claude.meta" 'the old Claude id becomes claude-reserve'
+has_line 'seat=claude-reserve' "$STATE_DIR/m-claude.meta" 'the seat follows'
+has_line "claude_config_dir=$STORES/claude-reserve" "$STATE_DIR/m-claude.meta" 'the store follows the new seat'
 has_line 'account=codex1' "$STATE_DIR/m-codex.meta" 'the same old id splits by provider'
 has_line "pi_agent_dir=$STORES/pi" "$STATE_DIR/m-codex.meta" 'the launch store is the new seat store'
 has_line "codex_home=$STORES/codex1" "$STATE_DIR/m-codex.meta" 'other store keys follow the path map'

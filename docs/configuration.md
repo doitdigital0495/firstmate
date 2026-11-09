@@ -1854,7 +1854,7 @@ An absent `account` keeps the home seat only in a home without `config/accounts.
 
 **Supervisor reserve and provider bans**
 
-- In a six-account home the supervisor's own login (claude3) sits on worker rows as a `fallback_only` reserve (see the field above): it is held while claude1 or claude2 still has weekly capacity and picked only when no other candidate is rankable; a seat whose quota is unreadable or whose credential failed does not count as capacity. A held reserve is out of the choice, so its own quota, known or not, never makes the choice incomplete. Add a profile `floor` on the seven-day scope to cap how far the reserve may drain that login.
+- The claude3 account is reserved for firstmate and secondmates and is rejected in ordinary worker rules and the default, including `fallback_only` profiles.
 - A rule `never_providers` is a non-empty array of provider IDs that rule's work may never run on, such as `["zai"]` on front-end design. A rule that lists a profile of a provider it bans is a configuration error, and when an ambiguous union pulls profiles of a banned provider in from another rule, those candidates read `provider <id> is banned for this work (never_providers)` and are never chosen.
 - `bin/fm-account-routing.sh audit` reports any rung that lists fewer accounts of a provider than the registry declares for it, and notes a provider served by a single account.
 
@@ -1878,7 +1878,7 @@ The declared value must be a boolean; anything else is an actionable configurati
 
 **Fallback-only reserve tier**
 
-An optional per-profile boolean `"fallback_only": true` marks a candidate as a reserve seat, such as a Claude seat the captain keeps for firstmate and secondmate work.
+An optional per-profile boolean `"fallback_only": true` marks a worker-eligible candidate as a reserve seat.
 A reserve candidate is eligible only when no non-fallback candidate of the same provider family is still available, where a seat counts as at its limit only when its weekly (7d) window is at or above 100% used or a runway reporting `exhausted_now` is limited by that window.
 Only the weekly window counts: an exhausted session (5h) window alone never releases the reserve, because the weekly allowance is the real limit on such seats.
 Once eligible, the reserve candidate still ranks below every non-fallback candidate, so it is picked only when no non-fallback candidate is rankable, including candidates of other provider families.
@@ -1964,7 +1964,7 @@ Inside the open tier, a seat projected to run out within 90 minutes loses to a s
 That runway test never opens a later tier: if every open seat is short, they still compete on spendPriority.
 
 Quota evidence gets at most 30 seconds in total, including the first reads, and `FM_DISPATCH_QUOTA_WAIT_SECONDS` can only shorten that.
-After that, a measured seat of the open tier wins; otherwise that tier's first seat is returned with `measured` false.
+After that, a measured seat of the open tier wins; otherwise the logged round-robin chooses within that tier, independent of declaration order, with `measured` false.
 Unreadable quota never opens a later pool, and a seat whose weekly floor cannot be read is out rather than running unchecked.
 
 | Exit | stdout | Meaning |
@@ -2096,7 +2096,7 @@ A configured [worker account pin](#worker-account-pin-configclaude-account-confi
 The selected store is pinned per harness (`CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, or `CODEX_HOME`), and the task record retains all three paths for a relaunch that does not name a new `--account`, even after routing is switched off.
 Without `--account`, a first Pi or Codex launch records an ambient `PI_CODING_AGENT_DIR` or `CODEX_HOME` and relaunches on it; when none is set, nothing is recorded and the worker keeps inheriting the pane's store as before.
 With no pin present, all of this registered cross-account behaviour is unchanged; a task record that carries no store is unbound, so a pin added later may redirect it (see [Failures, reporting, and inheritance](#failures-reporting-and-inheritance)).
-Quota ranking uses one `quota-axi` snapshot for the default store and one environment-pinned snapshot per distinct canonical named store triple, then compares applicable `spendPriority` across the union; the only reserve is a declared profile `floor`, and the supervisor's login is protected by `fallback_only` reserve profiles (see "Crew dispatch profiles").
+Quota ranking uses one `quota-axi` snapshot for the default store and one environment-pinned snapshot per distinct canonical named store triple, then compares applicable `spendPriority` across the union; see "Crew dispatch profiles" for worker account exclusions and reserve profiles.
 
 **Renaming accounts.** `bin/fm-account-migrate.sh` rewrites task records (`state/*.meta`) and worker pin files for a registry rename in one step: `--id <old>:<provider>=<new>` maps the account a record names (or `-` for none) per provider family and moves the record's launch store to the new seat's store, so a relaunch lands on the new seat, and `--path <old>=<new>` rewrites store paths in records and pins. It is a dry run without `--apply`, refuses `--apply` while any process still runs with an old store in `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR` or `CODEX_HOME`, copies every changed file under `state/account-migrate/pre-<stamp>/` first, and changes nothing when re-run.
 Unmeasurable Team-seat five-hour quota remains disclosed uncertainty, not healthy headroom.
@@ -2289,7 +2289,7 @@ A provider whose state is `auth_required` makes only that candidate ineligible a
 A provider row that a read could not measure for any other reason (rate limited, stale, unavailable, or the read failed outright) reuses that provider's last good reading of the same canonical store from the cache intake and the resolver share (`state/quota-last-good/shared.json`) while it is at most `FM_QUOTA_RECENT_MAX_AGE` (86400) seconds old; the candidate line then shows `reading_age=<s>s (recent reading reused)`, a reused exhausted reading excludes only until that window's own reset time, and nothing older is used. The readings live privately under `state/quota-last-good/`.
 A row whose own status is not known, an unmeasured provider, a profile floor whose scope row is unmeasured, a candidate with no applicable row, or a window without a percent or reset makes that candidate unreadable; it is never ranked, selected, or treated as healthy because its limits are unknown.
 While any candidate of the choice is rankable, an unreadable candidate prints `not eligible: quota unreadable, skipped: <reason>` with its missing windows, and the receipt rationale names it.
-When no candidate is rankable, an unknown quota never blocks the start: the first declared seat of the open tier and strongest reasoning class resolves `clear` with `eligible, quota unknown: <reason>` on its line, and its receipt is written as usual.
+When no candidate is rankable, an unknown quota never blocks the start: the logged round-robin chooses within the open tier and strongest reasoning class, independent of declaration order, and resolves `clear` with `eligible, quota unknown: <reason>` on its line and its receipt written as usual.
 A profile's `quota_scope` binds the candidate to that named quota-axi row in addition to its account-wide and model rows; a declared scope with no row beside otherwise complete evidence leaves the candidate eligible but unranked.
 The resolver prints its preferred-family decision while retaining evidence for every candidate.
 If preferred candidates remain eligible but none is rankable, it escalates instead of selecting another family, and it never introduces candidates outside the matched rule or its existing default fallback.
