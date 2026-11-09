@@ -32,8 +32,8 @@ def bf_age_words($now):
   | if $s < 90 then "\($s)s" elif $s < 5400 then "\(($s / 60) | floor)m"
     elif $s < 172800 then "\(($s / 3600) | floor)h" else "\(($s / 86400) | floor)d" end end;
 
-# One row. $ctx: {now, crew, open_ids, titles, local, T}.
-def bf_row($now; $crew; $open; $titles; $is_local; $ids; $names):
+# One row. $repos: the task list's repo per id, used for local rows only.
+def bf_row($now; $crew; $open; $titles; $repos; $is_local; $ids; $names):
   . as $r
   | def T($cap): br_text($ids; $names; $cap);
   (if $r.crew_id != null then ($crew[$r.crew_id] // null) else null end) as $c
@@ -49,6 +49,8 @@ def bf_row($now; $crew; $open; $titles; $is_local; $ids; $names):
   | ((($st.detail // "") | bf_pr_url) // ($r.meta_pr | bf_pr_url) // ($r.text | bf_pr_url)) as $pr
   | {title: (if $is_local and $titles[$r.id] then $titles[$r.id] else ($r.id | br_human_id) end | T(120)),
      kind: ($r.kind // "worker"),
+     project: br_project_key({kind: $r.kind, project: $r.project, projects: $r.projects};
+       (if $is_local then $repos[$r.id] else null end); $ids; $names),
      secondmate: ($r.kind == "secondmate"),
      state: $state, stage: ($state | bf_state_words),
      read_from: (if $st.source == "own-report" then "its own last report" elif $st.source == "none" then "nothing"
@@ -105,6 +107,7 @@ def bf_fleet($backlog; $sm_ids; $names):
   | $in.now as $now
   | ([$backlog[] | select(.state != "done") | .id]) as $open
   | ([$backlog[] | {key: .id, value: (.title // .id)}] | from_entries) as $titles
+  | ([$backlog[] | {key: .id, value: .repo}] | from_entries) as $repos
   | ($sm_ids + [$in.homes[] | .rows[] | select(.kind == "secondmate") | .id] + [$in.homes[] | .id | select(. != null)] | unique) as $ids
   | def T($cap): br_text($ids; $names; $cap);
   def hlabel($id): if $id == null then "Firstmate" else ($names[$id] // "a secondmate") end;
@@ -118,7 +121,7 @@ def bf_fleet($backlog; $sm_ids; $names):
        beacon_age: (if $h.beacon_epoch == null then null else $now - $h.beacon_epoch end),
        inventory_inconsistent: ($h.summary_valid == false),
        total: $h.total,
-       rows: [$h.rows[] | bf_row($now; $in.crew; $open; $titles; $h.local; $ids; $names)]}
+       rows: [$h.rows[] | bf_row($now; $in.crew; $open; $titles; $repos; $h.local; $ids; $names)]}
     | .rows |= sort_by([(if (.flags | length) + (bf_time_flags($now) | length) > 0 then 0 else 1 end),
                         ({"blocked": 0, "unknown": 1, "failed": 2, "parked": 3, "working": 4, "paused": 5, "done": 6}[.state] // 7),
                         -(.last_epoch // 0)])

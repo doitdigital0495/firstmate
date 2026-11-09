@@ -135,9 +135,22 @@
 # forgotten files, the suggestion list and state/bridge-requests are inputs, so
 # a press shows on the next poll after it is applied.
 #
+# PROJECTS. Every card, task row, suggestion and fleet row carries `project`:
+# the last path segment of its task meta's `project=` (a secondmate meta's one
+# registered `projects=` entry), else the task list's `repo`. A value that is
+# missing, is not 1-60 of [A-Za-z0-9._-] or looks like a secret is the explicit
+# "No project" group, never a guess. An exported card keeps its own home's
+# project; an export card without one is "No project". The feed's `projects`
+# list (bin/fm-bridge-asks.jq br_projects) counts per project the questions for
+# the captain, the other open questions, the task rows and the fleet rows,
+# projects with questions for the captain first. The page shows a chip per
+# project with its captain count and groups every section under project
+# headers; picking a chip filters every section in the page only, never the
+# counts, and names any other project's questions for the captain.
+#
 # EXPORT. state/bridge/asks.json is fm-bridge-export.v1: generated_epoch,
 # complete, and this home's own cards (never ones it imported) with their
-# routes. A parent treats it as untrusted: regular file, not a symlink, at most
+# routes and projects. A parent treats it as untrusted: regular file, not a symlink, at most
 # 262144 bytes and 500 cards, the right schema, every string re-redacted and
 # capped; a home whose export is missing, invalid or not on this machine is
 # named as not read, and each imported card shows how old the export is.
@@ -146,6 +159,9 @@
 #   bridge v1 checked=<UTC time> sources=<ok>/<total>
 #   asks you=N firstmate=N secondmates=N relayed=N moot=N oldest=<age> complete=yes|no
 #   tasks open=N ready=N waiting=N later=N held=N you=N started=N suggested=N nosource=N removed=N
+#   projects you/waiting/tasks data: <project>=N/N/N ...  (each project with an
+#                                                 open question or task, at most
+#                                                 320 bytes, then "+N more")
 #   - <who> <age> <ask-id> data: <question>     (one per open card, oldest
 #                                                 rank first, then "+N more")
 #   source <state> data: <label>                (each source not read)
@@ -357,11 +373,14 @@ collect_metas() {  # <work-dir>
   local w=$1 f id kind home
   : > "$w/secondmates.jsonl"
   : > "$w/metas.txt"
+  : > "$w/metas.jsonl"
   for f in "$STATE"/*.meta; do
     [ -f "$f" ] && [ ! -L "$f" ] && [ -r "$f" ] || continue
     id=${f##*/}; id=${id%.meta}
     printf '%s\n' "$id" >> "$w/metas.txt"
     kind=$(meta_field "$f" kind)
+    jq -cn --arg id "$id" --arg kind "$kind" --arg project "$(meta_field "$f" project)" \
+      --arg projects "$(meta_field "$f" projects)" '{id:$id, kind:$kind, project:$project, projects:$projects}' >> "$w/metas.jsonl"
     [ "$kind" = secondmate ] || continue
     home=$(meta_field "$f" home)
     jq -cn --arg id "$id" --arg home "$home" '{id:$id, home:$home}' >> "$w/secondmates.jsonl"
@@ -428,7 +447,7 @@ collect_backlog() {  # <work-dir>
   local w=$1 backlog="$DATA/backlog.md" cache="$BSTATE/backlog.json" age
   if [ -f "$cache" ] && [ ! -L "$cache" ] && age=$(file_age "$cache") && [ "$age" -lt "$FULL_EVERY" ] \
     && { [ ! -e "$backlog" ] || [ ! "$backlog" -nt "$cache" ]; } \
-    && jq -e 'type == "array"' "$cache" >/dev/null 2>&1; then
+    && jq -e 'type == "array" and all(.[]; has("repo"))' "$cache" >/dev/null 2>&1; then
     cp -- "$cache" "$w/backlog.json"
     source_line "$w/sources.jsonl" "task list" ok "unchanged since the last read"
     return 0
@@ -437,7 +456,7 @@ collect_backlog() {  # <work-dir>
       FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-fleet-snapshot.sh" --contribution-input \
       > "$w/contribution.json" 2>/dev/null \
     && jq -c '[.backlog.records[]? | select(.structured == true and .state != "done")
-        | {id, title, state, priority, hold_kind, hold_reason, hold_until, hold_set, hold_bucket, since,
+        | {id, title, repo, state, priority, hold_kind, hold_reason, hold_until, hold_set, hold_bucket, since,
            unresolved_blocker_ids, question_context}]' "$w/contribution.json" > "$w/backlog.json" 2>/dev/null; then
     if ! { cp -- "$w/backlog.json" "$cache.tmp.$$" && mv -f -- "$cache.tmp.$$" "$cache"; }; then
       rm -f -- "$cache.tmp.$$"
@@ -553,21 +572,24 @@ collect_feed() {  # <work-dir> <refresh-seconds>
     --slurpfile keyed "$w/keyed.json" --slurpfile exports "$w/exports.json" \
     --slurpfile watcher "$w/watcher.json" \
     --slurpfile forget "$w/forget.json" --slurpfile receipts "$w/receipts.json" --arg today "$(date -u +%Y-%m-%d)" \
-    --rawfile sources "$w/sources.jsonl" --rawfile sms "$w/secondmates.jsonl" --rawfile notes "$w/notes.txt" '
+    --rawfile sources "$w/sources.jsonl" --rawfile sms "$w/secondmates.jsonl" --rawfile notes "$w/notes.txt" \
+    --rawfile metas "$w/metas.jsonl" '
     include "fm-bridge-asks"; include "fm-bridge-tasks";
-    {now:$now, refresh_seconds:$refresh, away:$away, names:$names[0], backlog:$backlog[0],
+    ([$metas | split("\n")[] | select(length > 0) | fromjson | {key: .id, value: .}] | from_entries) as $metas
+    | {now:$now, refresh_seconds:$refresh, away:$away, names:$names[0], backlog:$backlog[0], metas:$metas,
      keyed:$keyed[0], exports:$exports[0], watcher:$watcher[0],
      sources:[$sources | split("\n")[] | select(length > 0) | fromjson],
      secondmates:[$sms | split("\n")[] | select(length > 0) | fromjson],
      notes:[$notes | split("\n")[] | select(length > 0)]}
     | br_feed + {tasks: ({forget:$forget[0], receipts:$receipts[0], now:$now, today:$today,
-        sm_ids:[$sms | split("\n")[] | select(length > 0) | fromjson | .id], names:$names[0]} | br_tasks)}' > "$w/feed0.json" \
+        sm_ids:[$sms | split("\n")[] | select(length > 0) | fromjson | .id], names:$names[0], metas:$metas} | br_tasks)}' > "$w/feed0.json" \
     || return 1
   jq -L "$SCRIPT_DIR" --slurpfile fin "$w/fleet-in.json" --slurpfile names "$w/names.json" \
     --slurpfile backlog "$w/backlog.json" --rawfile sms "$w/secondmates.jsonl" '
     include "fm-bridge-asks"; include "fm-bridge-fleet";
     .fleet = (if $fin[0].failed then {read:"failed", error:($fin[0].failed | br_redact(200))}
-      else ($fin[0] | bf_fleet($backlog[0]; [$sms | split("\n")[] | select(length > 0) | fromjson | .id]; $names[0])) end)' \
+      else ($fin[0] | bf_fleet($backlog[0]; [$sms | split("\n")[] | select(length > 0) | fromjson | .id]; $names[0])) end)
+    | .projects = br_projects' \
     "$w/feed0.json" > "$w/feed0f.json" && mv -f -- "$w/feed0f.json" "$w/feed0.json" || return 1
   perl -MJSON::PP -MDigest::SHA=sha256_hex -e '
     use strict; use warnings;
@@ -746,7 +768,7 @@ write_digest() {  # <work-dir> <feed>
     else
       more=$((more + 1))
     fi
-  done < <(jq -r -L "$SCRIPT_DIR" 'include "fm-bridge-asks"; include "fm-bridge-fleet"; include "fm-bridge-tasks"; br_digest_lines as $l | $l[0], bf_digest_line, br_tasks_digest_lines[], $l[1:][]' "$feed")
+  done < <(jq -r -L "$SCRIPT_DIR" 'include "fm-bridge-asks"; include "fm-bridge-fleet"; include "fm-bridge-tasks"; br_digest_lines as $l | $l[0], bf_digest_line, br_tasks_digest_lines[], br_projects_digest_line, $l[1:][]' "$feed")
   [ "$more" -eq 0 ] || body="$body+$more more"$'\n'
   hash=$(printf '%s' "$body" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-12)
   end="bridge-end hash=$hash"

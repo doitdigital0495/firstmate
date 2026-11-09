@@ -57,7 +57,7 @@ def bt_age($today_epoch):
   then ((($today_epoch - ((. + "T00:00:00Z") | fromdateiso8601)) / 86400) | floor | if . < 0 then 0 else . end)
   else null end;
 
-# Input: {forget: fm-forget-feed.v1 or null, receipts, now, today, sm_ids, names}.
+# Input: {forget: fm-forget-feed.v1 or null, receipts, now, today, sm_ids, names, metas}.
 def br_tasks:
   . as $in
   | ($in.sm_ids // []) as $ids | ($in.names // {}) as $names
@@ -79,7 +79,7 @@ def br_tasks:
       | ($r.body | bt_what($r.hold_reason)) as $what
       | {kind: "task", id: $r.id, id_text: ($r.id | T(160)), rev: $r.rev, state: $r.state,
          title: ($titles[$r.id] | if . == "" then ($r.id | bt_human) else . end | T(200)),
-         project: (($r.repo // "") | if . == "" then "No project" else T(60) end),
+         project: br_project_key(($in.metas // {})[$r.id]; $r.repo; $ids; $names),
          lane: $lane.lane, why: $lane.why,
          hold_reason: ($r.hold_reason // null | if . then T(300) else null end),
          origin: {kind: $origin.kind, label: ($origin.label | T(200)), group: ($origin.group | T(200))},
@@ -96,7 +96,7 @@ def br_tasks:
       | . as $s
       | {kind: "suggestion", id: $s.id, id_text: $s.id, rev: null, state: "suggested",
          title: (($s.title // $s.id) | T(200)),
-         project: (($s.repo // "") | if . == "" then "No project" else T(60) end),
+         project: br_project_key(null; $s.repo; $ids; $names),
          lane: "suggested", why: "Suggested, not on the list yet",
          hold_reason: null,
          origin: (($titles[$s.origin // ""] // (($s.origin // "") | bt_human)) as $o

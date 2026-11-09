@@ -117,6 +117,13 @@ details.group > div { padding: 2px 10px 4px; }
 .confirm h3 { margin: 0 0 6px; font-size: 1rem; color: var(--text-strong); }
 .confirm ul { margin: 4px 0 8px; padding-left: 18px; font-size: 0.88rem; }
 .btn.danger { border-color: var(--rust); background: var(--rust-soft); }
+/* Projects (slice 7): a chip per project, and project headers inside every section. */
+.projbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0 4px; }
+.projbar > span { color: var(--text-muted); font-size: 0.82rem; margin-right: 2px; }
+.pill b { color: var(--text-faint); font-weight: 600; margin-left: 4px; }
+.pill.has-you b { color: var(--gold); }
+.ph { margin: 12px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--line-soft); color: var(--text-muted); font-size: 0.84rem; font-weight: 600; overflow-wrap: anywhere; }
+.pgroup:first-child > .ph, details.group .pgroup > .ph { margin-top: 4px; }
 @media (min-width: 720px) { .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 </style>
 </head>
@@ -205,6 +212,99 @@ __FM_BRIDGE_DATA__
   stat("", counts.secondmates || 0, "wait on a secondmate");
   stat("", (counts.relayed || 0) + (counts.moot || 0), "relayed or probably settled");
   root.appendChild(stats);
+
+  /* Projects: one chip per project with its count of questions for you. The
+     bar never filters itself, so a project left out of the current choice can
+     never hide a question; the choice lives in this page only and changes no
+     count. Every section groups its rows under project headers, projects with
+     questions for you first (the feed's order). */
+  var NO_PROJECT = "No project";
+  var projects = Array.isArray(data.projects) ? data.projects : [];
+  var projOrder = projects.map(function (p) { return p.name; });
+  var projState = { pick: "all" };
+  var projNodes = [], projEmpties = [], projHooks = [], projChips = [];
+  function projOf(x) { return (x && typeof x.project === "string" && x.project) || NO_PROJECT; }
+  function projRank(name) { var i = projOrder.indexOf(name); return i < 0 ? projOrder.length : i; }
+  function byProject(list) {
+    var order = [], m = {};
+    list.forEach(function (x) { var k = projOf(x); if (!m[k]) { m[k] = []; order.push(k); } m[k].push(x); });
+    order.sort(function (a, b) { return projRank(a) - projRank(b) || (a < b ? -1 : (a > b ? 1 : 0)); });
+    return order.map(function (k) { return [k, m[k]]; });
+  }
+  /* Rows of one section under project headers; returns the groups so the
+     section can say when the chosen project has nothing in it. */
+  function projGroups(parent, list, fill) {
+    var made = byProject(list).map(function (pair) {
+      var g = el("div", "pgroup");
+      g.setAttribute("data-project", pair[0]);
+      g.appendChild(el("p", "ph", pair[0] + " (" + pair[1].length + ")"));
+      pair[1].forEach(function (x) { fill(g, x); });
+      parent.appendChild(g);
+      projNodes.push(g);
+      return g;
+    });
+    if (made.length) {
+      var none = el("p", "empty");
+      none.hidden = true;
+      parent.appendChild(none);
+      projEmpties.push({ note: none, groups: made });
+    }
+    return made;
+  }
+  var projBar = el("div", "projbar");
+  projBar.setAttribute("role", "group");
+  projBar.setAttribute("aria-label", "Show one project");
+  projBar.appendChild(el("span", "", "Projects:"));
+  var projNote = el("div", "banner warn");
+  projNote.hidden = true;
+  projNote.setAttribute("role", "status");
+  var projKept = document.createElement("input");
+  projKept.type = "hidden"; projKept.name = "project-filter"; projKept.value = "";
+  function projChip(id, label, you) {
+    var b = el("button", "pill" + (you ? " has-you" : ""), label);
+    b.type = "button"; b.setAttribute("data-act", "project"); b.setAttribute("data-id", id);
+    b.appendChild(el("b", "", (complete ? "" : "at least ") + you));
+    b.title = (complete ? "" : "at least ") + you + (you === 1 ? " question needs you" : " questions need you");
+    b.addEventListener("click", function () { pickProject(id); });
+    projChips.push([id, b]);
+    projBar.appendChild(b);
+  }
+  if (projects.length) {
+    projChip("all", "All", counts.you || 0);
+    projects.forEach(function (p) { projChip(p.name, p.name, p.you || 0); });
+    projBar.appendChild(projKept);
+    root.appendChild(projBar);
+    root.appendChild(projNote);
+  }
+  function validPick(v) { return v === "all" || projOrder.indexOf(v) >= 0; }
+  function pickProject(id) {
+    projState.pick = validPick(id) ? id : "all";
+    projKept.value = projState.pick === "all" ? "" : projState.pick;
+    announce(projKept);
+    try { if (window.sessionStorage) window.sessionStorage.setItem("fm-bridge-project", projKept.value); } catch (e) { /* page-local only */ }
+    applyProject();
+  }
+  function applyProject() {
+    var pick = projState.pick, all = pick === "all";
+    projChips.forEach(function (c) {
+      c[1].className = "pill" + (c[1].className.indexOf("has-you") >= 0 ? " has-you" : "") + (c[0] === pick ? " on" : "");
+      c[1].setAttribute("aria-pressed", c[0] === pick ? "true" : "false");
+    });
+    projNodes.forEach(function (g) { g.hidden = !all && g.getAttribute("data-project") !== pick; });
+    projEmpties.forEach(function (e) {
+      e.note.hidden = all || e.groups.some(function (g) { return !g.hidden; });
+      e.note.textContent = "Nothing here for " + pick + ".";
+    });
+    if (all) { projNote.hidden = true; }
+    else {
+      var elsewhere = projects.filter(function (p) { return p.name !== pick && p.you > 0; });
+      projNote.hidden = false;
+      projNote.textContent = "Showing only " + pick + "." + (elsewhere.length
+        ? " Other projects also have questions for you: " + elsewhere.map(function (p) { return p.name + " " + p.you; }).join(", ") + ". Choose All to see everything."
+        : " No other project has a question for you.");
+    }
+    projHooks.forEach(function (f) { f(); });
+  }
 
   /* Desktop alerts: say plainly whether this page is the only signal. */
   (function () {
@@ -437,14 +537,14 @@ __FM_BRIDGE_DATA__
     h.appendChild(el("small", "", "(" + (complete ? "" : "at least ") + list.length + ")"));
     root.appendChild(h);
     if (!list.length) { root.appendChild(el("p", "empty", complete ? emptyText : "None shown, but some sources could not be read.")); return; }
-    list.forEach(function (q) { root.appendChild(card(q)); });
+    projGroups(root, list, function (g, q) { g.appendChild(card(q)); });
   }
   function group(title, list) {
     if (!list.length) return;
     var d = el("details", "group");
     d.appendChild(el("summary", "", title + " (" + list.length + ")"));
     var inner = el("div");
-    list.forEach(function (q) { inner.appendChild(card(q)); });
+    projGroups(inner, list, function (g, q) { g.appendChild(card(q)); });
     d.appendChild(inner);
     root.appendChild(d);
   }
@@ -468,21 +568,23 @@ __FM_BRIDGE_DATA__
     if (q.group) return;
     var age = q.asked_epoch ? ago(nowSec() - q.asked_epoch) : "unknown time";
     var who = q.who === "you" ? "you" : (q.who === "firstmate" ? "Firstmate" : (q.home || "a secondmate"));
-    if (q.verb === "blocked") parked.push({ what: q.asker || "A task", q: q, who: who, age: age });
-    (q.blocks || []).forEach(function (b) { parked.push({ what: b, q: q, who: who, age: age }); });
-    if (!(q.blocks || []).length && q.blocks_text) parked.push({ what: q.blocks_text, q: q, who: who, age: age });
+    var pj = projOf(q);
+    if (q.verb === "blocked") parked.push({ what: q.asker || "A task", q: q, who: who, age: age, project: pj });
+    (q.blocks || []).forEach(function (b) { parked.push({ what: b, q: q, who: who, age: age, project: pj }); });
+    if (!(q.blocks || []).length && q.blocks_text) parked.push({ what: q.blocks_text, q: q, who: who, age: age, project: pj });
   });
   if (parked.length) {
     var pd = el("details", "group");
     pd.appendChild(el("summary", "", "Parked until a question is answered (" + parked.length + ")"));
-    var pl = el("ul", "parked");
-    parked.forEach(function (p) {
+    var pin = el("div");
+    projGroups(pin, parked, function (g, p) {
+      var pl = g.fmList || (g.fmList = g.appendChild(el("ul", "parked")));
       var li = el("li");
       li.appendChild(el("b", "", p.what));
       li.appendChild(document.createTextNode(" waits on " + p.who + " for " + p.age + ": " + p.q.question));
       pl.appendChild(li);
     });
-    pd.appendChild(pl);
+    pd.appendChild(pin);
     root.appendChild(pd);
   }
   /* Fleet: who runs where. bin/fm-bridge-fleet.jq owns stages, flags and
@@ -566,12 +668,12 @@ __FM_BRIDGE_DATA__
       if (hm.inventory_inconsistent) inner.appendChild(el("p", "hint", "Its own home summary says its inventory is inconsistent; rows below come from its task records."));
       var open = rows.filter(function (r) { return r.state !== "done" || rowFlags(r, now).length; });
       var done = rows.filter(function (r) { return open.indexOf(r) < 0; });
-      open.forEach(function (r) { inner.appendChild(fleetRow(r, now)); });
+      projGroups(inner, open, function (g, r) { g.appendChild(fleetRow(r, now)); });
       if (done.length) {
         var dd = el("details", "group");
         dd.appendChild(el("summary", "", "Finished (" + done.length + ")"));
         var di = el("div");
-        done.forEach(function (r) { di.appendChild(fleetRow(r, now)); });
+        projGroups(di, done, function (g, r) { g.appendChild(fleetRow(r, now)); });
         dd.appendChild(di);
         inner.appendChild(dd);
       }
@@ -662,6 +764,7 @@ __FM_BRIDGE_DATA__
     function shown() {
       return rows.filter(function (r) {
         if (state.pending[r.id]) return true;
+        if (projState.pick !== "all" && projOf(r) !== projState.pick) return false;
         if (state.filter !== "all" && r.lane !== state.filter) return false;
         if (!state.query) return true;
         return (r.title + " " + r.what + " " + r.id + " " + r.project + " " + r.origin.label).toLowerCase().indexOf(state.query) >= 0;
@@ -719,7 +822,7 @@ __FM_BRIDGE_DATA__
       }
       return d;
     }
-    function groupKey(r) { return state.group === "origin" ? r.origin.group : r.project; }
+    function groupKey(r) { return state.group === "origin" ? r.origin.group : projOf(r); }
     function draw() {
       pills.forEach(function (p) { p[1].className = "pill" + (state.filter === p[0] ? " on" : ""); });
       gProject.className = "pill" + (state.group === "project" ? " on" : "");
@@ -728,9 +831,10 @@ __FM_BRIDGE_DATA__
       selBtn.textContent = state.selecting ? "Done selecting" : "Select several";
       clear(list);
       var vis = shown();
-      if (!vis.length) { list.appendChild(el("p", "empty", rows.length ? "No task matches this filter." : "No open tasks.")); drawBar(); return; }
+      if (!vis.length) { list.appendChild(el("p", "empty", rows.length ? (projState.pick !== "all" ? "No task in " + projState.pick + " matches this filter." : "No task matches this filter.") : "No open tasks.")); drawBar(); return; }
       var order = [], groups = {};
       vis.forEach(function (r) { var k = groupKey(r); if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(r); });
+      if (state.group === "project") order.sort(function (a, b) { return projRank(a) - projRank(b) || (a < b ? -1 : (a > b ? 1 : 0)); });
       order.forEach(function (k) {
         var g = el("details", "group");
         g.open = true; g.setAttribute("open", "");
@@ -839,6 +943,7 @@ __FM_BRIDGE_DATA__
       confirmBox.appendChild(foot);
     }
     draw();
+    projHooks.push(draw);
 
     /* Removed: restorable for the keep window, by batch or one by one. */
     var removed = Array.isArray(tasks.removed) ? tasks.removed : [];
@@ -909,6 +1014,18 @@ __FM_BRIDGE_DATA__
   (data.notes || []).forEach(function (n) { sl.appendChild(el("li", "", n)); });
   src.appendChild(sl);
   root.appendChild(src);
+
+  /* The remembered project: Lavish restores the hidden field after a live
+     reload; a plain reload falls back to this tab's session storage. */
+  var startPick = "";
+  try { startPick = (window.sessionStorage && window.sessionStorage.getItem("fm-bridge-project")) || ""; } catch (e) { startPick = ""; }
+  projState.pick = validPick(startPick) ? startPick : "all";
+  projKept.value = projState.pick === "all" ? "" : projState.pick;
+  applyProject();
+  syncers.push(function () {
+    var v = String(projKept.value || "") || "all";
+    if (validPick(v) && v !== projState.pick) { projState.pick = v; applyProject(); }
+  });
 
   function syncAll() { syncers.forEach(function (f) { f(); }); }
   syncAll();
