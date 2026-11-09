@@ -12,7 +12,7 @@
 #   S4  a credential failure is named as such, never as unknown quota
 #   T   seat_tier strict order, per-delivery tiers, and their reserve and class rules
 #   U   an unreadable candidate is skipped while another is readable; with none readable a round-robin seat starts quota unknown
-#   P   pipeline mode: fixed row per step, pools, weekly floor, live five-hour window
+#   P   pipeline mode: fixed row per step, pools, per-tier reasoning class, weekly floor, live five-hour window
 #   A   provider-aware, symlink-canonical seat lookup and the one-shot migration
 set -u
 # shellcheck source=tests/lib.sh
@@ -937,7 +937,7 @@ bad_rows() {  # <jq edit> <expected text> <what>
 }
 bad_rows '.pipeline_rows[0].use += [{"harness":"pi","provider":"zai","model":"zai/glm-5.3","effort":"high","account":"glm","pool":2,"seat_tier":4,"reasoning_class":4}]' 'spends provider zai, which never_providers bans' 'a GLM seat in a row'
 bad_rows 'del(.pipeline_rows[0].never_providers)' 'needs never_providers' 'a row without never_providers'
-bad_rows '.pipeline_rows[0].use[3].reasoning_class = 3' 'share one reasoning_class' 'a fallback that lowers the class'
+bad_rows '.pipeline_rows[0].use[3].reasoning_class = 3' 'seat_tier 3 must share one reasoning_class' 'a mixed class inside one tier'
 bad_rows '.pipeline_rows[0].use[2].seat_tier = 1' 'pool 2 seat_tier values must all follow pool 1' 'a pool 2 seat inside the pool 1 tier'
 bad_rows '.pipeline_rows[0].use[2].fallback_only = true' 'must not set fallback_only' 'fallback_only in a row'
 bad_rows '.pipeline_rows[0].use[2].weekly_floor_percent = "20"' 'weekly_floor_percent must be a number' 'a malformed floor'
@@ -957,6 +957,60 @@ cp "$TMP_ROOT/rules-original" "$RULES"
 pipeline_quota
 reset_quota
 pass 'P: malformed rows, unknown steps and unroutable seats are configuration errors'
+
+# The captain's no-mistakes ladder: claude1/claude2 tier 1, codex1/codex2 tier 2,
+# glm tier 3 one class below. Classes are checked per seat tier, so the row is
+# valid, the GLM tier opens only once every earlier tier is full, and a mixed
+# class inside one tier is still refused.
+jq '.pipeline_rows = [{"steps":["review"],"never_providers":["anthropic"],"use":[
+     {"harness":"claude","model":"opus","effort":"medium","account":"claude1","pool":1,"seat_tier":1,"reasoning_class":4},
+     {"harness":"claude","model":"opus","effort":"medium","account":"claude2","pool":1,"seat_tier":1,"reasoning_class":4},
+     {"harness":"codex","model":"gpt-6.1-sol","effort":"medium","account":"codex1","pool":2,"seat_tier":2,"reasoning_class":4},
+     {"harness":"codex","model":"gpt-6.1-sol","effort":"medium","account":"codex2","pool":2,"seat_tier":2,"reasoning_class":4},
+     {"harness":"pi","provider":"zai","model":"zai/glm-5.3","effort":"high","account":"glm","pool":2,"seat_tier":3,"reasoning_class":3}]}]' "$TMP_ROOT/rules-pipeline" > "$RULES"
+jq --arg store "$STORES" '.accounts.codex2 = {provider:"codex",codex:"\($store)/codex2",pi:"\($store)/pi",plans:{codex:"Business"}}' "$TMP_ROOT/accounts-original" > "$ACCOUNTS"
+pipeline_quota
+pipe review
+assert_equals 'ok claude1' "$(pfield '"\(.status) \(.seat)"')" 'the ladder starts at tier 1'
+five_hour_out claude1 2030-01-01T05:00:00Z
+five_hour_out claude2 2030-01-01T06:00:00Z
+pipe review
+assert_equals 'codex1 4' "$(pfield '"\(.seat) \(.reasoning_class)"')" 'an empty tier 1 opens tier 2, not the GLM tier'
+five_hour_out codex1 2030-01-01T07:00:00Z
+pipe review
+assert_equals 'codex2 2' "$(pfield '"\(.seat) \(.tier)"')" 'a half-full tier 2 stays inside tier 2'
+five_hour_out codex2 2030-01-01T08:00:00Z
+pipe review
+assert_equals 'ok glm pi zai/glm-5.3 high 3 2 3' "$(pfield '"\(.status) \(.seat) \(.harness) \(.model) \(.effort) \(.reasoning_class) \(.pool) \(.tier)"')" 'every earlier tier full runs the class 3 GLM stage'
+assert_contains "$(pfield .reason)" 'pool 2 tier 3' 'the reason names the GLM tier'
+pipeline_quota
+five_hour_out claude1 2030-01-01T05:00:00Z
+five_hour_out claude2 2030-01-01T06:00:00Z
+rate_limited codex1
+rate_limited codex2
+printf '1\n' > "$HOME_DIR/state/dispatch-tie-round-robin"
+pipe review
+expect_code 0 "$code" "unreadable tier 2 still resolves: $pout $perr"
+assert_equals 'codex2 2 false' "$(pfield '"\(.seat) \(.tier) \(.measured)"')" 'unreadable tier 2 quota never opens the GLM tier'
+pipeline_quota
+five_hour_out claude1 2030-01-01T05:00:00Z
+five_hour_out claude2 2030-01-01T06:00:00Z
+five_hour_out codex1 2030-01-01T07:00:00Z
+five_hour_out codex2 2030-01-01T08:00:00Z
+run preview --json
+expect_code 0 "$code" "the ladder preview succeeds: $out"
+assert_equals '3 glm 3 3' "$(jq -r '.noMistakes[] | select(.step == "review") | "\(.ladder | length) \(.pick.seat) \(.reasoning_class) \(.tier)"' <<< "$out")" 'preview shows the GLM stage of the three-tier ladder'
+assert_equals 'claude1,claude2 codex1,codex2 glm' "$(jq -r '.noMistakes[] | select(.step == "review") | (.ladder | map(.seats | join(",")) | join(" "))' <<< "$out")" 'the preview ladder lists every tier in order'
+jq '.pipeline_rows[0].use[3].reasoning_class = 3' "$RULES" > "$TMP_ROOT/ladder-mixed"
+cp "$TMP_ROOT/ladder-mixed" "$RULES"
+pipe review
+expect_code 2 "$code" "a mixed class inside one tier is a configuration error: $pout"
+assert_contains "$perr" 'seat_tier 2 must share one reasoning_class' 'the mixed tier is named'
+cp "$TMP_ROOT/accounts-original" "$ACCOUNTS"
+cp "$TMP_ROOT/rules-original" "$RULES"
+pipeline_quota
+reset_quota
+pass 'P: a class 3 GLM tier follows the class 4 tiers, opened only when they are full'
 
 # ---- A: seat lookup and migration ------------------------------------------------
 ln -s "$STORES/claude-reserve" "$STORES/claude-reserve-alias"

@@ -295,7 +295,11 @@ fm_account_pipeline_problems() {
            ([.use[] | select(.pool == 2) | .seat_tier] | min) as $first_two |
            (if $first_two != null and $last_one != null and $first_two <= $last_one then "\($w) pool 2 seat_tier values must all follow pool 1" else empty end)
          else empty end),
-        (if ([.use[].reasoning_class] | unique | length) > 1 then "\($w) profiles must share one reasoning_class, so no fallback lowers the step" else empty end),
+        # Classes may step down between tiers (a class 4 row may close with a
+        # class 3 GLM tier), but a tier must share one class so no fallback
+        # inside it lowers the step.
+        (.use | group_by(.seat_tier)[] | select((map(.reasoning_class) | unique | length) > 1)
+          | "\($w) profiles of seat_tier \(.[0].seat_tier) must share one reasoning_class, so no fallback lowers the step"),
         (if (.use | map(.account) | length) != (.use | map(.account) | unique | length) then "\($w) must not list an account twice" else empty end)
       end;
     if type != "object" or (has("pipeline_rows") | not) then empty
