@@ -1954,7 +1954,7 @@ Each row declares these fields, and every one is required unless marked optional
 | `use` | The row's profiles, each with `harness`, `account`, and optional `model` and `effort`, plus the three fields below. |
 | Profile `pool` | `1` or `2`. Pool 2 is used only when pool 1 has no seat with room. Every `seat_tier` of pool 2 must follow every `seat_tier` of pool 1. |
 | Profile `seat_tier` | The strict order described in [Seat tiers](#crew-dispatch-profiles-configcrew-dispatchjson); seats that share a tier compete on quota. `seat_tiers_by_delivery` does not apply here. |
-| Profile `reasoning_class` | A number that every profile of the row must share, so no fallback lowers the step. |
+| Profile `reasoning_class` | A number that every profile of the same `seat_tier` must share, so no fallback inside a tier lowers the step; later tiers may step down, so a row can close with a weaker class such as a class 3 GLM tier under class 4 tiers. |
 | Profile `weekly_floor_percent` | Optional. The seat stops once its weekly room left is at or below this percent. |
 
 `fallback_only` is refused in a row, because its reserve test would hold a seat until the earlier seats reach their weekly limit and so skip it when they are only out on a five-hour window.
