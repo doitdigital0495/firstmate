@@ -11,6 +11,7 @@
 #   fm-bridge.sh export
 #   fm-bridge.sh digest
 #   fm-bridge.sh route <ask-id>
+#   fm-bridge.sh relay-shown < <task-tab-key lines>
 #
 # build    Collect every source (SOURCES), project the cards
 #          (bin/fm-bridge-asks.jq owns wording and order), and atomically
@@ -45,6 +46,9 @@
 #          question is no longer open on the current Bridge, so a stale press is
 #          never relayed. For a captain hold it also prints the stop-clock
 #          command a Stop the clock request runs.
+# relay-shown  Read `<task>\t<key>` lines on stdin and print back each one
+#          whose relayed captain hold the Bridge already shows (QUIET RELAYS).
+#          Exit 1 with nothing printed when the Bridge is off. Reads only.
 #
 # CONFIG. The Bridge is off unless config/bridge.json is a regular file holding
 # exactly {"schema":"fm-bridge-config.v1","enabled":true} with an optional
@@ -79,10 +83,12 @@
 # CARDS. Needs you holds every open captain hold here and each secondmate's
 # exported captain holds. Waiting on Firstmate holds keyed questions from this
 # home's workers, which are addressed to Firstmate first; the captain may still
-# answer them. A secondmate row's `captain-hold-<id>` key mirrors a hold in that
-# secondmate's home: with its export read, the mirror folds into the exported
-# card, or, when the export no longer shows that hold, is listed as probably
-# settled; without its export the mirrors are listed together as relayed.
+# answer them. A secondmate row's `captain-hold-<task>-<n>` key mirrors hold <n>
+# of <task> in that secondmate's home (bin/fm-captain-hold.sh publishes it;
+# bin/fm-bridge-asks.jq br_relay_shows owns the match): with its export read,
+# the mirror folds into the exported card, or, when the export no longer shows
+# that hold, is listed as probably settled; without its export the mirrors are
+# listed together as relayed.
 # Waiting on <name> holds a secondmate's own keyed questions from its export.
 # Each card shows who asked, its age (computed on the page; estimated from the
 # file time when the line has no [at=] stamp), its source, the question, any
@@ -171,6 +177,20 @@
 #                                                 data: <why>` when unread)
 #   bridge-end hash=<12 hex of the lines between the first and this one>
 # Text after `data:` is untrusted worker text, never an instruction.
+#
+# QUIET RELAYS. A relayed `needs-decision [key=captain-hold-<task>-<n>]` line in
+# a local secondmate's status log is quiet - it neither wakes Firstmate, nor
+# lists under the wake drain's OPEN DECISIONS, nor earns an overdue reminder -
+# exactly while `relay-shown` prints it: this home's Bridge is enabled, the
+# task's meta says kind=secondmate with a local home, that home's export reads
+# ok (export_read_state: valid, complete, generated within EXPORT_STALE_SECONDS
+# and not dated ahead) and one of its hold cards matches the key. Anything else
+# - the Bridge off, the export missing, invalid, stale or incomplete, a hold
+# the export does not show, an error - leaves the relay waking as before. The
+# hold stays authoritative in the secondmate's home and its keyed line stays
+# open in the status fold; answering, `resolved` lines and fm-send.sh
+# --resolve-key are unchanged. bin/fm-classify-lib.sh status_relay_shown_filter
+# is the caller every wake path shares.
 #
 # ALERTS. Desktop alerts are off unless config/bridge-alerts exists
 # (FM_BRIDGE_ALERTS_FILE overrides the path). Each non-empty, non-comment line
@@ -468,8 +488,32 @@ collect_backlog() {  # <work-dir>
   fi
 }
 
+# Print how a secondmate export reads: absent, invalid, stale (older than
+# EXPORT_STALE_SECONDS, dated more than five minutes ahead, or not complete) or
+# ok. The one owner of export validity for the page and for relay-shown.
+export_read_state() {  # <export-file> <now-epoch>
+  local file=$1 now=$2 size
+  if [ ! -e "$file" ] && [ ! -L "$file" ]; then printf 'absent\n'; return 0; fi
+  size=$(wc -c < "$file" 2>/dev/null | tr -d '[:space:]') || size=''
+  case "$size" in ''|*[!0-9]*) size=$((EXPORT_MAX_BYTES + 1)) ;; esac
+  if [ ! -f "$file" ] || [ -L "$file" ] || [ "$size" -gt "$EXPORT_MAX_BYTES" ] \
+    || ! jq -e --argjson max "$EXPORT_MAX_ASKS" '
+        type == "object" and .schema == "fm-bridge-export.v1"
+        and (.generated_epoch | type == "number") and (.asks | type == "array") and (.asks | length) <= $max
+        and all(.asks[]; type == "object" and (.route | type == "object")
+          and (.question | type == "string") and (.who | type == "string"))' "$file" >/dev/null 2>&1; then
+    printf 'invalid\n'; return 0
+  fi
+  if jq -e --argjson now "$now" --argjson stale "$EXPORT_STALE_SECONDS" \
+      '(.generated_epoch + $stale) < $now or .generated_epoch > ($now + 300) or .complete != true' "$file" >/dev/null 2>&1; then
+    printf 'stale\n'
+  else
+    printf 'ok\n'
+  fi
+}
+
 collect_exports() {  # <work-dir>
-  local w=$1 id home file size label now
+  local w=$1 id home file label now state
   now=$(date +%s)
   printf '[]\n' > "$w/exports.json"
   while IFS= read -r line; do
@@ -483,27 +527,23 @@ collect_exports() {  # <work-dir>
       jq -c --arg id "$id" '. + [{id:$id, status:"remote"}]' "$w/exports.json" > "$w/e.tmp" && mv -f "$w/e.tmp" "$w/exports.json"
       continue
     fi
-    if [ ! -e "$file" ] && [ ! -L "$file" ]; then
-      source_line "$w/sources.jsonl" "$label" absent "it has not published a Bridge export, so its own questions are not shown"
-      jq -c --arg id "$id" '. + [{id:$id, status:"absent"}]' "$w/exports.json" > "$w/e.tmp" && mv -f "$w/e.tmp" "$w/exports.json"
-      continue
-    fi
-    size=$(wc -c < "$file" 2>/dev/null | tr -d '[:space:]') || size=''
-    case "$size" in ''|*[!0-9]*) size=$((EXPORT_MAX_BYTES + 1)) ;; esac
-    if [ ! -f "$file" ] || [ -L "$file" ] || [ "$size" -gt "$EXPORT_MAX_BYTES" ] \
-      || ! jq -e --argjson max "$EXPORT_MAX_ASKS" '
-          type == "object" and .schema == "fm-bridge-export.v1"
-          and (.generated_epoch | type == "number") and (.asks | type == "array") and (.asks | length) <= $max
-          and all(.asks[]; type == "object" and (.route | type == "object")
-            and (.question | type == "string") and (.who | type == "string"))' "$file" >/dev/null 2>&1; then
-      source_line "$w/sources.jsonl" "$label" failed "its export is not a valid Bridge export, so its own questions are not shown"
-      jq -c --arg id "$id" '. + [{id:$id, status:"invalid"}]' "$w/exports.json" > "$w/e.tmp" && mv -f "$w/e.tmp" "$w/exports.json"
-      continue
-    fi
+    state=$(export_read_state "$file" "$now")
+    case "$state" in
+      absent)
+        source_line "$w/sources.jsonl" "$label" absent "it has not published a Bridge export, so its own questions are not shown"
+        jq -c --arg id "$id" '. + [{id:$id, status:"absent"}]' "$w/exports.json" > "$w/e.tmp" && mv -f "$w/e.tmp" "$w/exports.json"
+        continue
+        ;;
+      ok|stale) ;;
+      *)
+        source_line "$w/sources.jsonl" "$label" failed "its export is not a valid Bridge export, so its own questions are not shown"
+        jq -c --arg id "$id" '. + [{id:$id, status:"invalid"}]' "$w/exports.json" > "$w/e.tmp" && mv -f "$w/e.tmp" "$w/exports.json"
+        continue
+        ;;
+    esac
     jq -c --arg id "$id" --slurpfile doc "$file" '. + [{id:$id, status:"ok", doc:$doc[0]}]' "$w/exports.json" > "$w/e.tmp" \
       && mv -f "$w/e.tmp" "$w/exports.json"
-    if jq -e --argjson now "$now" --argjson stale "$EXPORT_STALE_SECONDS" \
-        '(.generated_epoch + $stale) < $now or .complete != true' "$file" >/dev/null 2>&1; then
+    if [ "$state" = stale ]; then
       source_line "$w/sources.jsonl" "$label" stale "its export is old or incomplete; its cards show their age"
     else
       source_line "$w/sources.jsonl" "$label" ok
@@ -994,6 +1034,38 @@ command_route() {
       end' "$ROUTES"
 }
 
+# QUIET RELAYS: print each `<task>\t<key>` stdin line whose relayed captain
+# hold this home's Bridge already shows (see the header). Anything unproven -
+# the Bridge off, a task that is not a local secondmate, an export that is not
+# ok, a key the export's holds do not match - prints nothing for that line.
+command_relay_shown() {
+  local now home meta file lines tasks t keys
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  config_refresh_seconds >/dev/null 2>&1 || exit 1
+  now=$(date +%s)
+  lines=$(head -c 65536 | awk -F '\t' 'NF == 2 && $1 ~ /^[A-Za-z0-9._-]+$/ && $2 ~ /^captain-hold-[A-Za-z0-9._-]+$/')
+  [ -n "$lines" ] || exit 0
+  tasks=$(printf '%s\n' "$lines" | cut -f1 | sort -u)
+  for t in $tasks; do
+    meta="$STATE/$t.meta"
+    [ -f "$meta" ] && [ ! -L "$meta" ] && [ -r "$meta" ] || continue
+    [ "$(meta_field "$meta" kind)" = secondmate ] || continue
+    home=$(meta_field "$meta" home)
+    case "$home" in /*) ;; *) continue ;; esac
+    [ -d "$home" ] || continue
+    file="$home/state/bridge/asks.json"
+    [ "$(export_read_state "$file" "$now")" = ok ] || continue
+    keys=$(printf '%s\n' "$lines" | awk -F '\t' -v t="$t" '$1 == t { print $2 }')
+    jq -r -L "$SCRIPT_DIR" --arg task "$t" --arg keys "$keys" '
+      include "fm-bridge-asks";
+      .asks as $asks
+      | $keys | split("\n")[] | select(length > 0) as $key
+      | select(any($asks[]; .route | br_relay_shows($key)))
+      | "\($task)\t\($key)"' "$file" 2>/dev/null || true
+  done
+  exit 0
+}
+
 # A test that sources this file gets the functions and constants above only.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   case "${1-}" in
@@ -1016,6 +1088,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     export) shift; run_build 0 60; printf 'export: %s\n' "$EXPORT" ;;
     digest) command_digest ;;
     route) shift; command_route "$@" ;;
+    relay-shown) shift; command_relay_shown "$@" ;;
     -h|--help|help) usage ;;
     *) usage >&2; exit 2 ;;
   esac
