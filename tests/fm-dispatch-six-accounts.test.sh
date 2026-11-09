@@ -606,16 +606,16 @@ for ((i = 0; i < 20; i++)); do
   picks+=("$(chosen | sed -n "s/.*--account '\([^']*\)'.*/\1/p")")
   [ "$i" -ne 1 ] || second=$out
 done
-assert_equals 'claude1=15 claude2=5' "$(printf '%s\n' "${picks[@]}" | sort | uniq -c | awk '{ printf "%s%s=%s", sep, $2, $1; sep = " " }')" "a burst of 20 spreads as in scenario 6: ${picks[*]}"
+assert_equals 'claude1=15 claude2=4 codex1=1' "$(printf '%s\n' "${picks[@]}" | sort | uniq -c | awk '{ printf "%s%s=%s", sep, $2, $1; sep = " " }')" "a burst of 20 spreads over the furthest-behind seats: ${picks[*]}"
 assert_equals claude2 "${picks[0]}" 'the first start of the burst takes the furthest-behind seat'
-assert_contains "$second" 'burst_debit=1.3pt/1start(s) ranks=1.4207' "the debited seat shows its adjusted score: $second"
-assert_contains "$second" 'burst debit: claude:sonnet@claude2 1.4854 -> 1.4207 after 1 recent start(s)' 'the note names the debit'
+assert_contains "$second" 'burst_debit=2pt/1start(s) ranks=1.3855' "the debited seat shows its adjusted score: $second"
+assert_contains "$second" 'burst debit: claude:sonnet@claude2 1.4854 -> 1.3855 after 1 recent start(s)' 'the note names the debit'
 assert_equals 1.4854 "$(jq -r '.candidates[] | select(.account == "claude2") | .spendPriority' "$(latest)")" 'the receipt keeps the published spendPriority'
 assert_equals 20 "$(wc -l < "$LEDGER" | tr -d ' ')" 'every clear start is debited once'
 brun "$((DAY + 1800))"
 assert_contains "$(chosen)" "--account 'claude2'" "a debit is gone once its window has passed: $out"
 assert_not_contains "$out" 'burst_debit=' 'no faded debit is shown'
-assert_equals "$((DAY + 1800)) claude2 1.3" "$(cat "$LEDGER")" 'a ledger of faded debits starts fresh'
+assert_equals "$((DAY + 1800)) claude2 2.0" "$(cat "$LEDGER")" 'a ledger of faded debits starts fresh'
 printf '%s claude2 1.3\n' "$DAY" > "$LEDGER"
 brun "$((DAY + 900))"
 assert_contains "$out" 'burst_debit=0.65pt/1start(s)' "a debit fades linearly inside its window: $out"
@@ -624,12 +624,40 @@ printf '%s claude2 50\n' "$DAY" > "$LEDGER"
 FM_DISPATCH_NOW_EPOCH=$DAY run "$BRIEF" --task burst
 assert_contains "$(chosen)" "--account 'claude2'" "a zero window turns the spreader off: $out"
 rm -f "$LEDGER"
-FM_DISPATCH_BURST_COSTS='claude=0.5,codex=2.6,zai=2.0' brun "$DAY"
-assert_equals "$DAY claude2 0.5" "$(tail -n 1 "$LEDGER")" 'the per-provider cost is overridable'
+FM_DISPATCH_BURST_COST=0.5 brun "$DAY"
+assert_equals "$DAY claude2 0.5" "$(tail -n 1 "$LEDGER")" 'the uniform cost is overridable'
 rm -f "$LEDGER"
 reset_quota
 cp "$TMP_ROOT/rules-original" "$RULES"
 pass 'G: a burst of worker starts spreads over the furthest-behind seats and the debit fades with its window'
+
+# Equal seats on different providers rank identically after a burst: the debit
+# counts starts, never the provider, so two equal-quota seats alternate.
+rm -f "$LEDGER"
+printf '0\n' > "$HOME_DIR/state/dispatch-tie-round-robin"
+reset_quota
+set_quota claude1 claude 50 1; no_five_hour claude1
+set_quota pi zai 50 1; no_five_hour pi
+cat > "$RULES" <<'JSON'
+{"rules":[{"when":"Any work","label":"Any work label","use":[
+   {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","reasoning_class":2},
+   {"harness":"pi","provider":"zai","model":"zai/glm-5.3","effort":"high","account":"glm","reasoning_class":2}]}],
+ "default":[{"harness":"claude","model":"opus","effort":"medium","account":"claude1","reasoning_class":2}]}
+JSON
+write_response rule_1 0.95 '{"rule_1":0.95,"default":0.05}'
+brun "$DAY"
+assert_contains "$(chosen)" "--account 'claude1'" "the first start takes the first of two equal seats: $out"
+brun "$DAY"
+assert_contains "$(chosen)" "--account 'glm'" "the debited claude seat loses to the equal zai seat: $out"
+assert_contains "$(line_of claude1)" 'burst_debit=2pt/1start(s)' "the debit counts the start on any provider: $out"
+assert_contains "$(line_of glm)" 'account=glm' "the equal zai seat is listed: $out"
+assert_not_contains "$(line_of glm)" 'burst_debit=' "the undebited equal seat keeps its published score: $out"
+assert_equals "$(printf '%s claude1 2.0\n%s glm 2.0\n' "$DAY" "$DAY")" "$(cat "$LEDGER")" 'equal starts on claude and zai are debited the same cost'
+rm -f "$LEDGER"
+reset_quota
+cp "$TMP_ROOT/rules-original" "$RULES"
+write_response rule_1 0.95 '{"rule_1":0.95,"default":0.05}'
+pass 'G: equal seats on different providers rank identically after a burst'
 
 # ---- P: pipeline seat rows -------------------------------------------------------
 # The fixed row per no-mistakes step: pool 1 is claude1 and claude2, pool 2 is
