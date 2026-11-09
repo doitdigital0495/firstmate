@@ -77,6 +77,28 @@ def br_parse:
           blocks_text: $blocks, parsed: true}
     else {question: ., options: [], recommendation: null, blocks_text: null, parsed: false} end;
 
+# Does an export hold route (a card's .route) match the hold a
+# `captain-hold-<rest>` relay key names?
+# bin/fm-captain-hold.sh publishes `captain-hold-<task>-<n>`, where <n> is the
+# hold's resolution count plus one and its lifecycle is `<stamp>#<n - 1>`; a
+# key without a trailing `-<n>` names the task alone. When the card carries a
+# lifecycle, the occurrence must match it, so an older occurrence's relay never
+# folds into a newer hold. Shared by the feed join below and
+# `fm-bridge.sh relay-shown`, so the page and the watcher agree on "shown".
+def br_relay_shows($key):
+  if ($key | type) != "string" or ($key | startswith("captain-hold-") | not) then false
+  else
+  ($key | ltrimstr("captain-hold-")) as $rest
+  | ([{task: $rest, occ: null}]
+     + ([$rest | capture("^(?<t>.+)-(?<n>[1-9][0-9]{0,8})$")]
+        | map({task: .t, occ: (.n | tonumber)}))) as $cands
+  | type == "object" and .kind == "hold" and (.task | type) == "string"
+    and (. as $r | any($cands[]; . as $c
+      | $c.task == $r.task
+        and ($c.occ == null or ($r.lifecycle | type) != "string"
+             or ($r.lifecycle | endswith("#\($c.occ - 1)")))))
+  end;
+
 def br_rank_who: {"you": 0, "firstmate": 1, "secondmate": 2}[.] // 3;
 
 def br_sort:
@@ -149,7 +171,7 @@ def br_feed:
       | {route: {kind: "key", task: $k.task, key: $k.key, at: $k.at},
          who: "firstmate", source: "status-key", home: null, as_of_epoch: null,
          group: (if $mirror then "relayed" else null end),
-         mirror_of: (if $mirror then {home: $k.task, hold: ($k.key | ltrimstr("captain-hold-"))} else null end),
+         mirror_of: (if $mirror then {home: $k.task, key: $k.key} else null end),
          asker: asker($k.task),
          asked_epoch: $k.at, asked_estimated: ($k.at_source != "stamp"),
          question: ($p.question | T(600)),
@@ -199,16 +221,16 @@ def br_feed:
   # Join mirrors to the export they mirror: a mirror of a hold the export still
   # shows folds into that card; one whose home was read but no longer shows the
   # hold is likely settled; one whose home was not read stays visible.
-  | ($imported | map(select(.route.inner.kind == "hold") | "\(.route.home)\t\(.route.inner.task)")) as $exported_holds
   | [ $keyed[] | . as $c
       | if $c.mirror_of == null then $c
         elif ($exp[$c.mirror_of.home].status // "absent") != "ok" then $c
-        elif ($exported_holds | index("\($c.mirror_of.home)\t\($c.mirror_of.hold)")) then empty
+        elif any($imported[]; .route.home == $c.mirror_of.home and (.route.inner | br_relay_shows($c.mirror_of.key))) then empty
         else $c | .group = "moot" | .flags += ["likely-moot"] end
     ] as $keyed_joined
-  | ([ $keyed[] | select(.mirror_of != null) | "\(.mirror_of.home)\t\(.mirror_of.hold)" ]) as $mirrored
+  | [ $keyed[] | select(.mirror_of != null) | .mirror_of ] as $mirrored
   | [ $imported[] | . as $c
-      | if ($mirrored | index("\($c.route.home)\t\($c.route.inner.task)")) then $c | .flags += ["relayed"] else $c end ] as $imported_flagged
+      | if any($mirrored[]; .key as $k | .home == $c.route.home and ($c.route.inner | br_relay_shows($k)))
+        then $c | .flags += ["relayed"] else $c end ] as $imported_flagged
 
   | ($holds + $keyed_joined + $imported_flagged | br_sort) as $asks
   | ($in.sources) as $sources

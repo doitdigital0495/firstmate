@@ -2746,7 +2746,7 @@ open_decision_reminder_tick() {  # [now-epoch], for deterministic clock callers
   local cap=${FM_OPEN_DECISION_BACKOFF_MAX_SECS:-14400} value
   local f task open key verb opened note exclude ledger rows='' old=''
   local old_task old_key old_opened old_last old_delay last delay
-  local due_task='' due_key='' due_opened='' due_delay='' tmp reason
+  local due_task='' due_key='' due_opened='' due_delay='' tmp reason quiet='' quiet_checked=''
   OPEN_DECISION_REMINDER=
   [ -e "$CONFIG/open-decision-reminders" ] || return 0
   for value in "$threshold" "$cap"; do
@@ -2787,6 +2787,20 @@ EOF
       [ "$last" -eq 0 ] || [ "$((now - last))" -ge "$delay" ] || continue
       status_is_paused_or_captain_held "$(status_declared_wait_line "$f")" && continue
       task_captain_call_open "$task" && continue
+      # A quiet relay (bin/fm-bridge.sh header, QUIET RELAYS) is never due; the
+      # Bridge check runs once per log, and only for an overdue relay key.
+      if [ "$verb" = needs-decision ]; then
+        case "$key" in
+          captain-hold-?*)
+            if [ "$quiet_checked" != "$task" ]; then
+              quiet_checked=$task
+              quiet=$(printf '%s\n' "$open" | awk -F '\t' '$2 == "needs-decision" { print $1 }' \
+                | status_relay_shown_filter "$f")
+            fi
+            case $'\n'"$quiet"$'\n' in *$'\n'"$key"$'\n'*) continue ;; esac
+            ;;
+        esac
+      fi
       if [ -z "$due_opened" ] || [ "$opened" -lt "$due_opened" ]; then
         due_task=$task; due_key=$key; due_opened=$opened; due_delay=$delay
         if [ "$last" -ne 0 ]; then
@@ -3375,18 +3389,24 @@ fm_wait_tmp_cleanup() {
 # route those - and only those - signal rows as main-only
 # (docs/pi-supervision-branch.md). Stale and heartbeat rows retain their existing
 # eligibility rules.
+# Also populates FM_SIGNAL_QUIET_FILES with the files whose new span was only
+# quiet relays (bin/fm-bridge.sh header, QUIET RELAYS): such a span is the
+# parent channel's copy of a hold the Bridge already shows, not a turn boundary
+# of the mate, so the caller absorbs it without the working proof.
 signal_files_actionable() {  # <status-file> ...
-  local f task record rest endpoint ident needs_decision rc found=1
+  local f task record rest endpoint ident needs_decision quiet_only rc found=1
   FM_SIGNAL_SURFACE_ENDPOINTS=''
   FM_SIGNAL_NEEDS_DECISION_FILES=''
+  FM_SIGNAL_QUIET_FILES=''
   for f in "$@"; do
     case "$f" in *.status) ;; *) continue ;; esac
     [ -e "$f" ] || [ -L "$f" ] || continue
     task=$(basename "$f"); task="${task%.status}"
-    record=''; needs_decision=0
+    record=''; needs_decision=0; quiet_only=0
     status_span_first_actionable_record "$f" \
-      "$(fm_wake_signal_seen_size "$STATE" "$f")" record needs_decision
+      "$(fm_wake_signal_seen_size "$STATE" "$f")" record needs_decision quiet_only
     rc=$?
+    [ "$rc" -ne 1 ] || [ "$quiet_only" -ne 1 ] || FM_SIGNAL_QUIET_FILES="${FM_SIGNAL_QUIET_FILES} ${f}"
     [ "$rc" -eq 1 ] && [ -z "$record" ] && continue
     if [ "$rc" -eq 2 ]; then
       # Could not classify this log. Surface it rather than absorbing it, and
@@ -4358,9 +4378,15 @@ EOF
     # status span, and the capture only once the authoritative verdict comes up short.
     FM_SIGNAL_SURFACE_ENDPOINTS=''
     FM_SIGNAL_NEEDS_DECISION_FILES=''
+    FM_SIGNAL_QUIET_FILES=''
     # shellcheck disable=SC2086  # $files is a space-separated status-path list (ids carry no spaces)
     signal_files_actionable $files
     signal_actionable=$?
+    # The files left for the working proof: every one but a quiet-relay-only span.
+    proof_files=''
+    for f in $files; do
+      case " $FM_SIGNAL_QUIET_FILES " in *" $f "*) ;; *) proof_files="$proof_files $f" ;; esac
+    done
     # A decision-owned file's queued row payload is marked "needs-decision:"
     # instead of the ordinary "signal:" below (other files in the same batch
     # keep the ordinary payload). The wake reason line itself, and every
@@ -4373,7 +4399,8 @@ EOF
     # bin/fm-supervise-daemon.sh).
     # shellcheck disable=SC2086  # same space-separated status-path list
     if afk_present || [ "$signal_actionable" -eq 0 ] \
-      || { ! signal_crew_provably_working $files && ! signal_turnend_panes_churned $files; }; then
+      || { [ -n "$proof_files" ] && ! signal_crew_provably_working $proof_files \
+           && ! signal_turnend_panes_churned $proof_files; }; then
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
         file_reason="$reason"

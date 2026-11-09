@@ -2751,6 +2751,7 @@ Needs you lists every open captain hold in this home and the captain holds each 
 Waiting on Firstmate lists questions this home's workers raised as keyed `needs-decision` or `blocked` status lines; they are addressed to Firstmate first, and the captain may answer them too.
 A banner counts those keyed questions that have no question card yet, and a secondmate's own crew questions appear under "Waiting on" that secondmate's name.
 A secondmate's relayed `captain-hold-<id>` lines fold into the card its home exports, are grouped as probably settled when that home no longer lists the hold, and are grouped as relayed when that home's list could not be read.
+While that home's export is fresh and shows the hold, its relayed line does not wake Firstmate, is not listed under the wake drain's open decisions, and earns no overdue reminder; a missing, stale or invalid export, or a hold the export does not show, keeps the line waking as before, and [`bin/fm-bridge.sh`](../bin/fm-bridge.sh)'s header (QUIET RELAYS) owns the rule.
 Each card shows who asked, how long ago, what waits behind it, and the options and recommendation when the question carries them; cards that hold up more work rank first.
 The Fleet section lists Firstmate's watcher and wake queue, then each home as a tree: this home's tasks, each local secondmate and its tasks, down to three levels, read from each home's own task records rather than its capped summary.
 A task row shows its plain stage, its own last report (never a harness label), how long ago it reported, its PR link and its seat.

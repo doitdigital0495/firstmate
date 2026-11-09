@@ -2552,6 +2552,62 @@ EOF
   mv -f "$tmp" "$path" || { rm -f "$tmp"; return 1; }
 }
 
+# Quiet relays (bin/fm-bridge.sh header, QUIET RELAYS, owns the rule): read
+# decision keys on stdin and print the subset that are relayed captain holds
+# this home's Bridge already shows, for the secondmate whose status log is
+# <status-file>. A log whose meta is not kind=secondmate, or a stdin with no
+# `captain-hold-` key, prints nothing without forking; any failure or timeout
+# prints nothing, so an unproven relay keeps every wake and listing it had.
+status_relay_shown_filter() {  # <status-file>  (keys on stdin)
+  local f=$1 dir task keys key input='' cfg out
+  dir=${f%/*}; [ "$dir" != "$f" ] || dir=.
+  task=${f##*/}; task=${task%.status}
+  keys=$(cat)
+  [ -n "$task" ] && [ -f "$dir/$task.meta" ] && [ ! -L "$dir/$task.meta" ] || return 0
+  [ "$(grep '^kind=' "$dir/$task.meta" 2>/dev/null | tail -1 | cut -d= -f2-)" = secondmate ] || return 0
+  while IFS= read -r key; do
+    case "$key" in captain-hold-?*) input="${input}${task}"$'\t'"${key}"$'\n' ;; esac
+  done <<EOF
+$keys
+EOF
+  [ -n "$input" ] || return 0
+  cfg=${FM_CONFIG_OVERRIDE:-${CONFIG:-}}
+  out=$(printf '%s' "$input" | fm_run_timed "${FM_RELAY_SHOWN_TIMEOUT:-10}" \
+    env ${FM_HOME:+FM_HOME="$FM_HOME"} ${cfg:+FM_CONFIG_OVERRIDE="$cfg"} FM_STATE_OVERRIDE="$dir" \
+    "$_FM_CLASSIFY_LIB_DIR/fm-bridge.sh" relay-shown 2>/dev/null) || return 0
+  while IFS=$'\t' read -r _ key; do
+    [ -n "$key" ] && printf '%s\n' "$key"
+  done <<EOF
+$out
+EOF
+  return 0
+}
+
+# Of open-decision rows `<task>\t<key>\t<verb>\t...` (scan_open_decisions_*),
+# print `<task>\t<key>` for each needs-decision row that is a quiet relay, one
+# status_relay_shown_filter call per task that has a candidate.
+open_decisions_quiet_relays() {  # <state> <rows>
+  local state=$1 rows=$2 tasks='' task t key verb rest keys
+  while IFS=$'\t' read -r task key verb rest; do
+    [ "$verb" = needs-decision ] || continue
+    case "$key" in captain-hold-?*) ;; *) continue ;; esac
+    case " $tasks " in *" $task "*) ;; *) tasks="$tasks $task" ;; esac
+  done <<EOF
+$rows
+EOF
+  for task in $tasks; do
+    keys=$(while IFS=$'\t' read -r t key verb rest; do
+        [ "$t" = "$task" ] && [ "$verb" = needs-decision ] && printf '%s\n' "$key"
+      done <<EOF
+$rows
+EOF
+)
+    printf '%s\n' "$keys" | status_relay_shown_filter "$state/$task.status" \
+      | while IFS= read -r key; do [ -n "$key" ] && printf '%s\t%s\n' "$task" "$key"; done
+  done
+  return 0
+}
+
 # Capture the bytes of an append-only status log at or after <start-offset> under
 # one size-and-identity snapshot.
 # The record form produces `<endpoint>\t<identity>\t<events>` and returns 0 when
@@ -2561,6 +2617,10 @@ EOF
 # optional <needs-decision-var>, it also assigns 1 when the span newly surfaces a
 # needs-decision, captain-held declaration, or pending-reply escalation, otherwise
 # 0. This side-band classification never changes the event text.
+# A keyed needs-decision opening that status_relay_shown_filter reports as a
+# quiet relay is not an event and sets neither flag; with optional
+# <quiet-only-var>, it assigns 1 when every non-blank line of the span was such
+# a quiet relay (and at least one was), otherwise 0.
 # It returns 1 after a successful classification with no actionable event; an
 # existing log still produces its committable endpoint and identity, while an absent
 # log is the ordinary empty case and produces no record.
@@ -2623,9 +2683,10 @@ _fm_status_open_decision_origins() {  # <status-file> [<kind>]
   printf '%s' "$origins"
 }
 
-status_span_first_actionable_record() {  # <status-file> <start-offset> [record-var] [needs-decision-var]
-  local f=$1 start=${2:-0} output_var=${3-} needs_var=${4-} size ident cur_ident scratch chunk_file result
+status_span_first_actionable_record() {  # <status-file> <start-offset> [record-var] [needs-decision-var] [quiet-only-var]
+  local f=$1 start=${2:-0} output_var=${3-} needs_var=${4-} quiet_var=${5-} size ident cur_ident scratch chunk_file result
   local line verb key origins='' folded=0 rc=1 failed=0 line_number=0 live_line='' events='' _line _key _fm_span_needs_decision=0
+  local quiet_keys='' quiet_lines=0 other_lines=0
   [ -e "$f" ] || { [ -L "$f" ] && return 2; return 1; }
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 2
   ident=$(_fm_open_decisions_file_ident "$f") || return 2
@@ -2639,6 +2700,7 @@ status_span_first_actionable_record() {  # <status-file> <start-offset> [record-
     if [ -n "$output_var" ]; then
       printf -v "$output_var" '%s' "$result"
       [ -z "$needs_var" ] || printf -v "$needs_var" '%s' 0
+      [ -z "$quiet_var" ] || printf -v "$quiet_var" '%s' 0
     else
       printf '%s' "$result"
     fi
@@ -2652,10 +2714,24 @@ status_span_first_actionable_record() {  # <status-file> <start-offset> [record-
     rm -f "$chunk_file"; return 2;
   }
   [ "$cur_ident" = "$ident" ] || { rm -f "$chunk_file"; return 2; }
+  if grep -q 'captain-hold-' "$chunk_file" 2>/dev/null; then
+    quiet_keys=$(while IFS= read -r line || [ -n "$line" ]; do
+        [ "$(status_line_verb "$line")" = needs-decision ] || continue
+        _fm_decision_key "$line" || true
+        printf '\n'
+      done < "$chunk_file" | status_relay_shown_filter "$f")
+  fi
   # shellcheck disable=SC2094 # The loop and the origin fold below only read the span scratch.
   while IFS= read -r line || [ -n "$line" ]; do
     line_number=$((line_number + 1))
     case "$line" in *[![:space:]]*) ;; *) continue ;; esac
+    if [ -n "$quiet_keys" ] && [ "$(status_line_verb "$line")" = needs-decision ] \
+      && key=$(_fm_decision_key "$line") \
+      && case $'\n'"$quiet_keys"$'\n' in *$'\n'"$key"$'\n'*) true ;; *) false ;; esac; then
+      quiet_lines=$((quiet_lines + 1))
+      continue
+    fi
+    other_lines=$((other_lines + 1))
     if status_is_captain_held "$line"; then
       # A transfer closes the status-log decision and remains non-actionable to
       # stale classification. The side-band marker lets signal routing surface
@@ -2713,6 +2789,13 @@ EOF
   if [ -n "$output_var" ]; then
     printf -v "$output_var" '%s' "$result"
     [ -z "$needs_var" ] || printf -v "$needs_var" '%s' "$_fm_span_needs_decision"
+    if [ -n "$quiet_var" ]; then
+      if [ "$quiet_lines" -gt 0 ] && [ "$other_lines" -eq 0 ]; then
+        printf -v "$quiet_var" '%s' 1
+      else
+        printf -v "$quiet_var" '%s' 0
+      fi
+    fi
   else
     printf '%s' "$result"
   fi
@@ -3005,7 +3088,8 @@ crew_worktree_written_since() {  # <id> <state> <anchor-file>
 # carrying a correlation marker (fm_pending_reply_corr_token, bracketed or not),
 # and any verb this library does not know is parent-directed content the
 # supervisor must read, so it surfaces regardless of how busy the mate is. Only
-# unmarked routine `working:` and `paused:` progress falls through
+# unmarked routine `working:` and `paused:` progress, and a quiet relay
+# (status_relay_shown_filter), falls through
 # to the same provably-working absorb an ordinary crewmate gets, so a healthy
 # mate's progress no longer wakes the primary on every append while an unproven
 # mate still surfaces. The span starts at the classified position its owner
@@ -3014,7 +3098,7 @@ crew_worktree_written_since() {  # <id> <state> <anchor-file>
 # surface more. An unreadable span surfaces. Scoped to .status files - a mate's
 # bare turn-ended ping always used the ordinary provably-working absorb.
 _fm_secondmate_status_new_lines_routine() {  # <status-file> <state>
-  local f=$1 state=$2 start=0 size chunk line verb
+  local f=$1 state=$2 start=0 size chunk line verb key relays='' shown
   if command -v fm_wake_signal_seen_size >/dev/null 2>&1; then
     start=$(fm_wake_signal_seen_size "$state" "$f")
   fi
@@ -3031,10 +3115,22 @@ _fm_secondmate_status_new_lines_routine() {  # <status-file> <state>
     status_line_verb "$line" verb
     case "$verb" in
       working|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}") ;;
+      needs-decision)
+        key=$(_fm_decision_key "$line") || return 1
+        case "$key" in captain-hold-?*) relays="${relays}${key}"$'\n' ;; *) return 1 ;; esac
+        ;;
       *) return 1 ;;
     esac
   done <<EOF
 $chunk
+EOF
+  [ -n "$relays" ] || return 0
+  shown=$(printf '%s' "$relays" | status_relay_shown_filter "$f")
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    case $'\n'"$shown"$'\n' in *$'\n'"$key"$'\n'*) ;; *) return 1 ;; esac
+  done <<EOF
+$relays
 EOF
   return 0
 }
