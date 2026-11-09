@@ -9,6 +9,10 @@
 #   fm-dispatch-resolve.sh pick-card [<CODE>...]  (render the captain's card)
 #   fm-dispatch-resolve.sh picks [--recent]       (pending and answered picks)
 #   fm-dispatch-resolve.sh rows [--json]          (--json: criteria export)
+#   fm-dispatch-resolve.sh preview --json         (read-only live picks; no Jev)
+#     One quota gather bounded at 20 seconds, with read-only last-good fallback.
+#     Uses the dispatch evaluators for every rule, default and pipeline step.
+#     Never writes caches, rotation, burst, intake, receipts or picks, or warms Z.ai.
 #   fm-dispatch-resolve.sh audit [--days <n>] [--problems]
 #   fm-dispatch-resolve.sh overrides [--recent]   (historical log)
 #   fm-dispatch-resolve.sh gate ...     (called by fm-spawn.sh and fm-control.sh)
@@ -108,7 +112,9 @@
 #   step from the top-level "pipeline_rows" row naming that step, with no model
 #   call, brief, receipt, or captain pick. Each profile declares its "pool" and
 #   "seat_tier", so the seat tier hold above keeps every later pool out until the
-#   earlier one has no seat with room. On top of the shared evaluation: an
+#   earlier one has no seat with room. The shared weekly start guard applies
+#   before the tier hold, with the same committed-demand census as workers.
+#   On top of the shared evaluation: an
 #   optional profile "weekly_floor_percent" takes a seat out once its weekly room
 #   left is at or below that percent, and inside the open tier a seat projected
 #   to run out within 90 minutes loses to one that lasts to its reset. Quota
@@ -268,7 +274,12 @@ usage() {
   ' "$0"
 }
 
-MODE=worker STEP=''
+MODE=worker STEP='' PREVIEW=false
+if [ "${1:-}" = preview ]; then
+  PREVIEW=true; MODE=preview; shift
+  [ "${1:-}" = --json ] && [ "$#" -eq 1 ] || die "preview takes --json"
+  shift
+fi
 if [ "${1:-}" = pipeline ]; then MODE=pipeline; shift; fi
 BRIEF='' PROJECT='' TASK_ID='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES='' FORCE_PICK=false
 NEVER_SEND_PATH="$CONFIG/dispatch-never-send"
@@ -286,7 +297,9 @@ done
 
 # ---- inputs --------------------------------------------------------------------
 BRIEF_DELIVERY=''
-if [ "$MODE" = pipeline ]; then
+if [ "$PREVIEW" = true ]; then
+  QUOTA_DEADLINE=$(( $(date +%s) + 20 ))
+elif [ "$MODE" = pipeline ]; then
   [ -n "$STEP" ] || die "pipeline needs --step <step>"
   [ -z "$BRIEF$PROJECT$TASK_ID" ] && [ "$FORCE_PICK" = false ] || die "pipeline takes only --step"
   [ -e "$RULES_PATH" ] || [ -L "$RULES_PATH" ] || die "rules file absent: $RULES_PATH"
@@ -639,7 +652,7 @@ fm_dispatch_recent_read() {
   shift 3
   merged=$(mktemp) || return 1
   if [ "$ok" -eq 1 ]; then
-    fm_quota_recent_save "$cache" "$fresh" "$@"
+    if [ "$PREVIEW" = false ]; then fm_quota_recent_save "$cache" "$fresh" "$@"; fi
     if fm_quota_recent_merge "$cache" "$fresh" "$@" > "$merged" 2>/dev/null && fm_quota_json_valid < "$merged"; then
       mv -f "$merged" "$fresh"
     else
@@ -663,6 +676,19 @@ fm_dispatch_store_key() {  # <claude> <pi> <codex>: canonical store triple
 }
 # Validity decides whether a read counted, not its exit status: quota-axi exits 1
 # with a full report when every provider failed, and that report names a bad login.
+# Preview bypasses single-flight locks/cache writes, but still reads last-good.
+fm_dispatch_quota_read() {
+  if [ "$PREVIEW" = true ]; then
+    local out=$3
+    shift 6
+    [ "$1" = -- ] || return 1
+    shift
+    "$@" > "$out" 2>/dev/null
+    fm_quota_json_valid < "$out"
+  else
+    fm_quota_shared_read "$@"
+  fi
+}
 gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapshot
   local fresh ok=1 cache
   local -a canon=()
@@ -670,7 +696,7 @@ gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapsh
   cache=$(fm_quota_recent_file "$STATE")
   mapfile -t canon < <(fm_dispatch_store_key "$DEFAULT_CLAUDE_STORE" "$DEFAULT_PI_STORE" "${CODEX_HOME:-$HOME/.codex}")
   CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "$DEFAULT_CLAUDE_STORE") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "$DEFAULT_PI_STORE") \
-    fm_quota_shared_read "$cache" json "$fresh" "${canon[0]}" "${canon[1]}" "${canon[2]}" -- fm_dispatch_bounded quota-axi --json || ok=0
+    fm_dispatch_quota_read "$cache" json "$fresh" "${canon[0]}" "${canon[1]}" "${canon[2]}" -- fm_dispatch_bounded quota-axi --json || ok=0
   if ! fm_dispatch_recent_read "$cache" "$fresh" "$ok" "${canon[@]}"; then
     rm -f "$fresh"
     return 1
@@ -679,7 +705,7 @@ gather_home_quota() {  # refresh $QUOTA; a failed read keeps the previous snapsh
 }
 # Pipeline mode's evidence loop exists to see a new reading, so it never reuses one.
 [ "$MODE" = worker ] || FM_QUOTA_SHARED_READ_TTL=0
-if [ "$SQ" = false ] && [ "$MODE" = worker ]; then
+if [ "$SQ" = false ] && [ "$MODE" != pipeline ]; then
   # Nothing read and nothing cached is an unknown quota: an empty snapshot leaves
   # every home candidate unmeasured instead of stopping the choice.
   gather_home_quota || printf '{"providers":[]}\n' > "$QUOTA"
@@ -697,7 +723,7 @@ gather_account_snapshot() {  # <account>: refresh ACCOUNT_QUOTAS[account] from i
   recent_cache=$(fm_quota_recent_file "$STATE")
   mapfile -t canon < <(fm_dispatch_store_key "${stores[0]}" "${stores[1]}" "${stores[2]}")
   CODEX_HOME=$(fm_account_read_store codex "${stores[2]}") PI_CODING_AGENT_DIR=$(fm_account_read_store pi "${stores[1]}") CLAUDE_CONFIG_DIR=$(fm_account_read_store claude "${stores[0]}") \
-    fm_quota_shared_read "$recent_cache" json "$account_quota" "${canon[0]}" "${canon[1]}" "${canon[2]}" -- fm_dispatch_bounded quota-axi --json || read_ok=0
+    fm_dispatch_quota_read "$recent_cache" json "$account_quota" "${canon[0]}" "${canon[1]}" "${canon[2]}" -- fm_dispatch_bounded quota-axi --json || read_ok=0
   if ! fm_dispatch_recent_read "$recent_cache" "$account_quota" "$read_ok" "${canon[@]}"; then
     ACCOUNT_QUOTAS=$(jq -c --arg a "$account" --arg key "$store_key" '. + {($a): {key: $key, failed: true}}' <<<"$ACCOUNT_QUOTAS")
   else
@@ -724,11 +750,12 @@ while IFS= read -r account; do
   fi
   gather_account_snapshot "$account"
 done < <(jq -r --arg mode "$MODE" --arg step "$STEP" '
-  if $mode == "pipeline" then [(.pipeline_rows // [])[] | select(.steps | index($step)) | .use[] | .account] | unique[]
-  else [((.rules // [])[] | .use | if type == "array" then .[] else . end), (.default // empty | if type == "array" then .[] else . end) | .account // empty] | unique[] end' "$RULES")
+  if $mode == "preview" then empty
+  elif $mode == "pipeline" then [(.pipeline_rows // [])[] | select(.steps | index($step)) | .use[] | .account] | unique[]
+  else [((.rules // [])[] | .use | if type == "array" then .[] else . end), (.default // empty | if type == "array" then .[] else . end) | .account // empty] | unique[] end' "$RULES"; if [ "$PREVIEW" = true ] && [ -r "$CONFIG/accounts.json" ]; then jq -r '.accounts | keys[]' "$CONFIG/accounts.json"; fi)
 # Routing off or an unregistered seat is a configuration fact, never quota exhaustion.
-if [ "$MODE" = pipeline ]; then
-  unrouted=$(jq -r --argjson quotas "$ACCOUNT_QUOTAS" --arg step "$STEP" '[(.pipeline_rows // [])[] | select(.steps | index($step)) | .use[] | .account | select($quotas[.] == null)] | unique | join(", ")' "$RULES")
+if [ "$MODE" = pipeline ] || [ "$PREVIEW" = true ]; then
+  unrouted=$(jq -r --argjson quotas "$ACCOUNT_QUOTAS" --arg step "$STEP" --argjson preview "$PREVIEW" '[(.pipeline_rows // [])[] | select($preview or (.steps | index($step))) | .use[] | .account | select($quotas[.] == null)] | unique | join(", ")' "$RULES")
   [ -z "$unrouted" ] || die "pipeline seat not routable (cross-account routing off or account not registered): $unrouted"
 fi
 
@@ -741,14 +768,6 @@ case "$TIE_RR" in '' | *[!0-9]*) TIE_RR=0 ;; esac
 fm_dispatch_now() {  # epoch seconds; FM_DISPATCH_NOW_EPOCH pins it
   case "${FM_DISPATCH_NOW_EPOCH:-}" in '' | *[!0-9]*) date +%s ;; *) printf '%s' "$FM_DISPATCH_NOW_EPOCH" ;; esac
 }
-fm_dispatch_workday() {  # <epoch>: exit 0 inside the declared working day (Mon-Fri)
-  local stamp dow hour
-  stamp=$(TZ=$WORKDAY_TZ date -d "@$1" '+%u %H' 2>/dev/null || TZ=$WORKDAY_TZ date -r "$1" '+%u %H' 2>/dev/null) || return 1
-  read -r dow hour <<<"$stamp"
-  case "$dow$hour" in '' | *[!0-9]*) return 1 ;; esac
-  hour=$((10#$hour))
-  [ "$dow" -le 5 ] && [ "$hour" -ge "$WORKDAY_START" ] && [ "$hour" -lt "$WORKDAY_END" ]
-}
 fm_dispatch_burst_cost() {  # <provider>: the assumed weekly points one start costs
   local pair cost=''
   for pair in ${BURST_COSTS//,/ }; do
@@ -759,24 +778,13 @@ fm_dispatch_burst_cost() {  # <provider>: the assumed weekly points one start co
   printf '%s' "$cost"
 }
 NOW_EPOCH=$(fm_dispatch_now)
-WORKDAY_TZ=${FM_DISPATCH_WORKDAY_TZ:-Europe/Amsterdam}
-WORKDAY_HOURS=${FM_DISPATCH_WORKDAY_HOURS:-08-18}
-[[ "$WORKDAY_HOURS" =~ ^[0-9]{1,2}-[0-9]{1,2}$ ]] || WORKDAY_HOURS=08-18
-WORKDAY_START=$((10#${WORKDAY_HOURS%-*})) WORKDAY_END=$((10#${WORKDAY_HOURS#*-}))
-if fm_dispatch_workday "$NOW_EPOCH"; then
-  GUARD_FLOOR=$(fm_dispatch_clamp_int "${FM_DISPATCH_FIVE_HOUR_WORKDAY_PERCENT:-}" 20 0 100)
-  GUARD_PERIOD="while the captain works (Mon-Fri $WORKDAY_HOURS $WORKDAY_TZ)"
-else
-  GUARD_FLOOR=$(fm_dispatch_clamp_int "${FM_DISPATCH_FIVE_HOUR_OFFHOURS_PERCENT:-}" 5 0 100)
-  GUARD_PERIOD="outside working hours (Mon-Fri $WORKDAY_HOURS $WORKDAY_TZ)"
-fi
-FIVE_HOUR_GUARD=$(jq -cn --argjson floor "$GUARD_FLOOR" --arg period "$GUARD_PERIOD" '{floor: $floor, period: $period}')
+FIVE_HOUR_GUARD=$(FM_DISPATCH_NOW_EPOCH=$NOW_EPOCH fm_dr_five_hour_guard)
 BURST_COSTS=${FM_DISPATCH_BURST_COSTS:-claude=1.3,codex=2.6,zai=2.0}
 BURST_WINDOW=$(fm_dispatch_clamp_int "${FM_DISPATCH_BURST_WINDOW_SECONDS:-}" 1800 0 86400)
 BURST_LEDGER=$STATE/dispatch-burst-ledger
 # Recent debits per seat, each fading linearly to nothing over the window.
 BURST_DEBITS='{}'
-if [ "$MODE" = worker ] && [ "$BURST_WINDOW" -gt 0 ] && [ -s "$BURST_LEDGER" ]; then
+if [ "$MODE" != pipeline ] && [ "$BURST_WINDOW" -gt 0 ] && [ -s "$BURST_LEDGER" ]; then
   BURST_DEBITS=$(awk -v now="$NOW_EPOCH" -v win="$BURST_WINDOW" '
     NF == 3 && $1 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+(\.[0-9]+)?$/ {
       age = now - $1; if (age < 0) age = 0
@@ -806,7 +814,7 @@ fm_dispatch_burst_record() {
 # No calibrated model/effort-to-weekly conversion exists; configuration.md owns
 # the fixed per-plan estimate and the conservative parked-session double count.
 WEEKLY_DEMAND='{}'
-if [ "$MODE" = worker ] && [ "$SQ" != true ]; then
+if [ "$SQ" != true ]; then
   # shellcheck source=bin/fm-backend.sh
   . "$SCRIPT_DIR/fm-backend.sh"
   for meta in "$STATE"/*.meta; do
@@ -861,6 +869,21 @@ FM_DR_SEAT_JQ='
   def prov($p; $lane): quota_row(.; $p; $lane);
   def lane_of($c): quota_lane($c.harness; $c.model);
   def rows($p; $lane): (prov($p; $lane).quotaSemantics.effectiveAvailability // []);
+  def weekly_guard:
+    map(if .eligible and ((.sq // false) | not) then
+      . as $e | (account_quota($e.profile) // {providers: []} |
+        [(prov($e.provider; lane_of($e.profile)).windows // [])[] | select(.id == "seven_day" or .id == "weekly" or .kind == "weekly")] | first) as $w |
+      ($cfg.weekly_guard.max_used_percent // 98) as $limit |
+      ($cfg.weekly_guard.reserve_by_plan[($e.provider + ":" + $e.plan)] // $cfg.weekly_guard.reserve_percent // 2.6) as $reserve |
+      ($demand[($e.profile.account // ("home:" + $e.provider))] // {}) as $d |
+      (($d.running // 0) + ($d.parked // 0)) as $n |
+      if ($w.percentRemaining | type) != "number" then .
+      else . + {weekly_estimate: "\(100 - $w.percentRemaining)%used+\($n * $reserve)%committed+\($reserve)%new/\($limit)%", demand_uncertain: ($d.uncertain // false)} |
+      if (100 - $w.percentRemaining + ($n + 1) * $reserve) >= $limit then
+        del(.unranked) + {eligible:false, weekly_guard:true,
+          reason:"weekly guard: \(100 - $w.percentRemaining)% used + \($n * $reserve)% committed (\($d.running // 0) running, \($d.parked // 0) parked) + \($reserve)% new >= \($limit)%; resets \($w.resetsAt // "unknown")"}
+      else . end end
+    else . end);
   def bare($m): ($m | split("/") | last);
   def provider_of($c): ($c.provider // $pmap[$c.harness] // null);
   def plan_label($v): if ($v | type) == "string" and ($v | length) > 0 and ($v | length) <= 80 and ($v | test("^[[:print:]]+$")) then $v else null end;
@@ -1142,7 +1165,7 @@ FM_DR_SEAT_JQ='
 # receipt, and every pool decision made by the shared seat logic above.
 fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
   jq -cn --arg step "$STEP" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
-    --argjson final "${3:-false}" --arg delivery '' --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
+    --argjson demand "$WEEKLY_DEMAND" --argjson final "${3:-false}" --arg delivery '' --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
   ($rules[0]) as $cfg | ($quota[0]) as $q |
 '"$FM_DR_SEAT_JQ"'
   # The weekly floor reads the weekly window itself, because a row bounded by
@@ -1188,7 +1211,7 @@ fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
     elif ($weekly | type) == "string" then clean_reset($weekly)
     else $emptied end;
   ([($cfg.pipeline_rows // [])[] | select(.steps | index($step))] | first) as $row |
-  ($row.use | map(. as $c | evaluate($c) | apply_weekly_floor | . + {out_reason: .reason}) | seat_tier_hold(true)) as $cands |
+  ($row.use | map(. as $c | evaluate($c) | apply_weekly_floor | . + plan_for($c; provider_of($c))) | weekly_guard | map(. + {out_reason: .reason}) | seat_tier_hold(true)) as $cands |
   def seat_view: {seat: .profile.account, pool: .profile.pool, tier: .profile.seat_tier, eligible: (.eligible // false), reason: .reason,
     remaining: (.pct // null), spendPriority: (.spendPriority // null), runway: (.runway // null)};
   ([$cands[] | select(.incomplete)]) as $incomplete |
@@ -1230,21 +1253,6 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
 '"$FM_DR_SEAT_JQ"'
-  def weekly_guard:
-    map(if .eligible and ((.sq // false) | not) then
-      . as $e | (account_quota($e.profile) // {providers: []} |
-        [provider_windows($e.provider; lane_of($e.profile))[] | select(.id == "seven_day" or .id == "weekly" or .kind == "weekly")] | first) as $w |
-      ($cfg.weekly_guard.max_used_percent // 98) as $limit |
-      ($cfg.weekly_guard.reserve_by_plan[($e.provider + ":" + $e.plan)] // $cfg.weekly_guard.reserve_percent // 2.6) as $reserve |
-      ($demand[($e.profile.account // ("home:" + $e.provider))] // {}) as $d |
-      (($d.running // 0) + ($d.parked // 0)) as $n |
-      if ($w.percentRemaining | type) != "number" then .
-      else . + {weekly_estimate: "\(100 - $w.percentRemaining)%used+\($n * $reserve)%committed+\($reserve)%new/\($limit)%", demand_uncertain: ($d.uncertain // false)} |
-      if (100 - $w.percentRemaining + ($n + 1) * $reserve) >= $limit then
-        del(.unranked) + {eligible:false, weekly_guard:true,
-          reason:"weekly guard: \(100 - $w.percentRemaining)% used + \($n * $reserve)% committed (\($d.running // 0) running, \($d.parked // 0) parked) + \($reserve)% new >= \($limit)%; resets \($w.resetsAt // "unknown")"}
-      else . end end
-    else . end);
   # Five-hour guard (worker starts only): the first five-hour window of a
   # rankable seat that has a published reset and less room than the floor.
   def five_hour_guard_hit($e):
@@ -1493,6 +1501,52 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   else $out end
   end'
 }
+# Preview ends before every dispatch side effect and bounded retry/warm-up loop.
+if [ "$PREVIEW" = true ]; then
+  preview_workers='[]' preview_pipeline='[]'
+  MODE=worker
+  while IFS= read -r row; do
+    jq -cn --arg row "$row" '{answers:{rule:{choice:$row,confidence:1,probabilities:{($row):1}},profile:{choice:"",probabilities:{}}}}' > "$RESP_FILE"
+    result=$(fm_dispatch_resolve_json 1 0 true) || die "preview worker resolution failed"
+    preview_workers=$(jq -cn --argjson all "$preview_workers" --arg id "$row" --argjson result "$result" '$all + [$result + {id:$id}]')
+  done < <(jq -r '(.rules // [] | to_entries[] | "rule_\(.key + 1)"), (if has("default") then "default" else empty end)' "$RULES")
+  MODE=pipeline
+  while IFS= read -r STEP; do
+    result=$(fm_dispatch_pipeline_json 1 0 true) || die "preview pipeline resolution failed"
+    preview_pipeline=$(jq -cn --argjson all "$preview_pipeline" --argjson result "$result" '$all + [$result]')
+  done < <(jq -r '(.pipeline_rows // [])[].steps[]' "$RULES")
+  jq -n --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg sha "$FM_DR_TABLE_SHA" \
+    --argjson workers "$preview_workers" --argjson pipeline "$preview_pipeline" --argjson aq "$ACCOUNT_QUOTAS" \
+    --argjson demand "$WEEKLY_DEMAND" --argjson guard "$FIVE_HOUR_GUARD" --slurpfile rules "$RULES" --slurpfile home "$QUOTA" '
+    def code:
+      if .weekly_guard or ((.reason // "") | startswith("weekly guard:")) then "weekly_guard"
+      elif ((.reason // "") | startswith("seat_tier held:")) then "tier_held"
+      elif .five_hour_guard then "five_hour_guard"
+      elif .unreadable or .incomplete or .unranked or ((.reason // "") | test("unreadable|unmeasured|unverifiable")) then "unreadable"
+      elif .eligible then "best_spend" else "ineligible" end;
+    def pick($p): {seat:($p.account // null), harness:$p.harness, model:($p.model // null), effort:($p.effort // null)};
+    def measured($seat): ((if $seat == null then $home[0] else $aq[$seat].snapshot end).providers // []) | any(.[]; .quotaSemantics.status == "known") and (all(.[]; .reusedReading == null));
+    ($rules[0]) as $cfg |
+    {schemaVersion:1, at:$at, table:{sha256:$sha},
+     guards:{weekly:{maxUsedPercent:($cfg.weekly_guard.max_used_percent // 98), reservePercent:($cfg.weekly_guard.reserve_percent // 2.6), reserveByPlan:($cfg.weekly_guard.reserve_by_plan // {})}, fiveHour:$guard},
+     workers:[$workers[] | .id as $id | .chosen as $chosen | . + {
+       measured:(if $chosen then measured($chosen.profile.account) and (($chosen.quota_unknown // false) | not) else false end),
+       order:([.candidates[]?] | group_by([.profile.seat_tier // 1e9, -(.profile.reasoning_class // 0)]) | map(map(.profile.account // ("home:" + (.provider // "unknown"))))),
+       label:(if $id == "default" then null else $cfg.rules[($id | ltrimstr("rule_") | tonumber)-1].label // null end),
+       pick:(if .chosen then pick(.chosen.profile) else null end),
+       seatsWhy:[.candidates[]? | . + {seat:(.profile.account // null),
+         code:(if .eligible and $chosen and (.profile.reasoning_class // 0) < ($chosen.profile.reasoning_class // 0) then "class_held"
+           elif .eligible and $chosen and .profile != $chosen.profile then "lower_spend" else code end), measured:measured(.profile.account)}]}],
+     noMistakes:[$pipeline[] | .step as $step | ([$cfg.pipeline_rows[] | select(.steps | index($step))] | first) as $row | . + {
+       label:($row.label // null), ladder:($row.use | group_by(.seat_tier) | map({tier:.[0].seat_tier, pool:.[0].pool, seats:map(.account)})), pick:(if .seat then {seat,harness,model,effort} else null end),
+       measured:(.measured and measured(.seat)), seatsWhy:[(.candidates // .seats // [])[] | . + {code:code, measured:measured(.seat)}]}],
+     seats:[$aq | to_entries[] | .key as $seat | (.value.snapshot.providers // [])[] | . as $p |
+       ([.windows[]? | select(.kind == "weekly" or .id == "seven_day" or .id == "weekly")] | first) as $w |
+       ([.windows[]? | select(.kind == "session" or .id == "five_hour")] | first) as $f |
+       {seat:$seat, provider:.provider, measured:measured($seat), weeklyLeft:($w.percentRemaining // null), weeklyResetsAt:($w.resetsAt // null),
+        fiveHourLeft:($f.percentRemaining // null), fiveHourResetsAt:($f.resetsAt // null), committed:($demand[$seat] // {running:0,parked:0})}]}'
+  exit 0
+fi
 RESULT=$(fm_dispatch_resolve_json 1 0) || emit_error "resolution failed"
 quota_attempts=1
 warmups_run=0

@@ -1903,11 +1903,11 @@ A firstmate or secondmate does not launch through `--account`: its seat is the h
 Without either field, behavior is unchanged.
 A value of any other shape is an actionable configuration error reported like any other malformed profile field.
 
-**Worker weekly guard**
+**Weekly start guard**
 
-The optional top-level `weekly_guard` object configures a start-only eligibility gate, enabled by default for workers and scouts, not pipeline rows or shared-quota homes.
+The optional top-level `weekly_guard` object configures a start-only eligibility gate, enabled by default for workers, scouts and pipeline rows, but not shared-quota homes.
 Its `max_used_percent` defaults to 98; a candidate is not eligible when weekly used percent plus committed demand plus one new worker's reserve reaches or exceeds that value.
-The gate reads the account's `seven_day`, `weekly`, or `kind: weekly` window only after the existing complete-window gate; missing or unreadable weekly evidence retains the existing unknown-quota behavior and never becomes a fabricated reading.
+The gate reads the account's `seven_day`, `weekly`, or `kind: weekly` window during shared seat evaluation; missing or unreadable weekly evidence retains the existing unknown-quota behavior and never becomes a fabricated reading.
 It never waives itself, changes running work, or changes the existing usage-limit move of a running worker.
 When no candidate can start and the weekly guard holds a candidate, the resolver prints `status: held`, the `weekly guard: ...` evidence and resets, writes no receipt, and exits 3; the task stays queued for fresh resolution on the next wake or reset rather than asking for a route around the guard.
 
@@ -1958,7 +1958,7 @@ Each row declares these fields, and every one is required unless marked optional
 | Profile `weekly_floor_percent` | Optional. The seat stops once its weekly room left is at or below this percent. |
 
 `fallback_only` is refused in a row, because its reserve test would hold a seat until the earlier seats reach their weekly limit and so skip it when they are only out on a five-hour window.
-Selection uses the same quota evaluation, seat tier hold, spendPriority ranking, and tie-break as worker resolution, with two additions.
+Selection uses the same quota evaluation, weekly start guard (including the same committed-demand census), seat tier hold, spendPriority ranking, and tie-break as worker resolution, with two additions.
 The weekly floor reads the weekly window itself, because a quota row bounded by both windows would also trip on a low five-hour window.
 Inside the open tier, a seat projected to run out within 90 minutes loses to a seat that lasts to its reset, and a five-hour window with no published reset does not count.
 That runway test never opens a later tier: if every open seat is short, they still compete on spendPriority.
@@ -1975,6 +1975,21 @@ Unreadable quota never opens a later pool, and a seat whose weekly floor cannot 
 
 `fm-bootstrap.sh`, `fm-account-routing.sh audit`, and the resolver all report malformed rows, and the resolver refuses both modes while any row is malformed.
 The `P` cases of `tests/fm-dispatch-six-accounts.test.sh` verify seat selection, the pools and weekly floor, the 30-second quota bound, the 90-minute runway filter, and the configuration errors through the resolver's public interface, and `tests/fm-bootstrap.test.sh` verifies the bootstrap report.
+
+**Read-only routing exports**
+
+`bin/fm-dispatch-resolve.sh preview --json` evaluates every rule, the default row and every pipeline step through the dispatch evaluators without contacting Jev.
+A worker preview assumes that row matches at confidence 1; it has no task-specific delivery-tier override.
+Quota gathering is single-pass with a shared 20-second read deadline and read-only last-good fallback; fallback evidence is marked `measured: false`.
+Preview never writes shared quota caches, receipts, pick requests, quota intake, burst debits or tie rotation, and never warms Z.ai.
+Its schema version 1 contains `at`, `table.sha256`, resolved `guards`, per-account quota `seats`, `workers` and `noMistakes` (one entry per step).
+Worker entries retain dispatch evidence and add `id`, nullable display-only rule `label`, `pick` and `seatsWhy`; pipeline entries retain their seat result and add `pick` and `seatsWhy`.
+Each `seatsWhy` entry includes the router's reason text, a presentation `code` and measurement provenance; consumers must not re-rank candidates.
+The answer is a snapshot, not a reservation, so concurrent dispatch and later quota changes can change the next real pick.
+
+`rows --json` remains additive at schema version 1: rows gain nullable `label`; candidates gain nullable `seat_tier`, nullable `pool` and boolean `fallback_only`; top-level `pipelineRows` exports `label`, `steps`, `never_providers` and `candidates`, and `guards` exports resolved weekly and five-hour settings.
+The optional rule `label` is display-only and has no effect on matching or eligibility.
+The agentic-setup cockpit collector and `scripts/test-cockpit-routing-sync.cjs` field whitelist must explicitly adopt these new fields before displaying them; unknown fields may continue to be dropped during rollout.
 
 **Fields applied only by typed resolution**
 

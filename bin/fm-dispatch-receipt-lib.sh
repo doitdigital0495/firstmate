@@ -361,6 +361,32 @@ fm_dr_record_intake() {
     || { printf 'dispatch receipt: quota intake produced no record\n' >&2; return 1; }
 }
 
+# Shared resolved guard settings for dispatch and both read-only exports.
+fm_dr_five_hour_guard() {
+  local now stamp dow hour tz hours start end work off floor period active=false
+  now=${FM_DISPATCH_NOW_EPOCH:-$(date +%s)}
+  tz=${FM_DISPATCH_WORKDAY_TZ:-Europe/Amsterdam}
+  hours=${FM_DISPATCH_WORKDAY_HOURS:-08-18}
+  [[ "$hours" =~ ^[0-9]{1,2}-[0-9]{1,2}$ ]] || hours=08-18
+  start=$((10#${hours%-*})) end=$((10#${hours#*-}))
+  work=$(fm_dr_guard_percent "${FM_DISPATCH_FIVE_HOUR_WORKDAY_PERCENT:-}" 20)
+  off=$(fm_dr_guard_percent "${FM_DISPATCH_FIVE_HOUR_OFFHOURS_PERCENT:-}" 5)
+  stamp=$(TZ=$tz date -d "@$now" '+%u %H' 2>/dev/null || TZ=$tz date -r "$now" '+%u %H' 2>/dev/null) || stamp='7 00'
+  read -r dow hour <<< "$stamp"
+  if [ "$dow" -le 5 ] && [ "$((10#$hour))" -ge "$start" ] && [ "$((10#$hour))" -lt "$end" ]; then
+    active=true; floor=$work; period="while the captain works (Mon-Fri $hours $tz)"
+  else
+    floor=$off; period="outside working hours (Mon-Fri $hours $tz)"
+  fi
+  jq -cn --argjson floor "$floor" --arg period "$period" --argjson work "$work" --argjson off "$off" --arg tz "$tz" --arg hours "$hours" --argjson active "$active" \
+    '{floor:$floor, period:$period, workdayPercent:$work, offhoursPercent:$off, tz:$tz, hours:$hours, workdayNow:$active}'
+}
+fm_dr_guard_percent() {
+  local v=$1
+  case "$v" in ''|*[!0-9]*) v=$2 ;; esac
+  [ "$v" -le 100 ] || v=100
+  printf '%s' "$v"
+}
 fm_dr_cmd_rows() {
   local rows json=0 table
   case "${1:-}" in --json) json=1 ;; '') ;; *) fm_dr_die "unknown rows argument: $1" ;; esac
@@ -370,18 +396,21 @@ fm_dr_cmd_rows() {
     # every row's matching text, gates, and candidates with reasoning_class.
     table=$(fm_dr_table)
     jq -n --argjson rows "$rows" --arg path "$table" --arg sha "$( [ -f "$table" ] && fm_dr_sha256 < "$table")" \
-      --slurpfile t "$( [ -f "$table" ] && printf '%s' "$table" || printf '/dev/null')" '
+      --argjson five "$(fm_dr_five_hour_guard)" --slurpfile t "$( [ -f "$table" ] && printf '%s' "$table" || printf '/dev/null')" '
       def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
       ($t[0] // {}) as $cfg |
       {schemaVersion: 1, table: {path: $path, sha256: $sha}, preferredProvider: ($cfg.preferred_provider // null),
        sharedQuota: ($cfg.shared_quota // false),
+       guards: {weekly:{maxUsedPercent:($cfg.weekly_guard.max_used_percent // 98), reservePercent:($cfg.weekly_guard.reserve_percent // 2.6), reserveByPlan:($cfg.weekly_guard.reserve_by_plan // {})}, fiveHour:$five},
+       pipelineRows: [($cfg.pipeline_rows // [])[] | {label:(.label // null), steps, never_providers, candidates:.use}],
        rows: [$rows[] | .id as $id |
          (if $id == "default" then ($cfg.default // null) else ($cfg.rules[($id | ltrimstr("rule_") | tonumber) - 1]) end) as $raw |
-         {id, sha256, when, approval, minConfidence: (if $id == "default" then null else ($raw.min_confidence // null) end),
+         {id, sha256, when, approval, label: (if $id == "default" then null else ($raw.label // null) end), minConfidence: (if $id == "default" then null else ($raw.min_confidence // null) end),
           floor: (if $id == "default" then null else ($raw.floor // null) end),
           candidates: [(if $id == "default" then profiles($raw) else profiles($raw.use) end)[] |
             {harness, model: (.model // ""), effort: (.effort // ""), account: (.account // ""), provider: (.provider // ""),
-             reasoning_class: (.reasoning_class // null), floor: (.floor // null), quota_scope: (.quota_scope // null)}]}],
+             reasoning_class: (.reasoning_class // null), floor: (.floor // null), quota_scope: (.quota_scope // null),
+             seat_tier:(.seat_tier // null), fallback_only:(.fallback_only // false), pool:(.pool // null)}]}],
        unclassed: ([$rows[] | .id as $id | (if $id == "default" then profiles($cfg.default // null) else profiles($cfg.rules[($id | ltrimstr("rule_") | tonumber) - 1].use) end)[] | select((.reasoning_class | type) != "number")] | length)}'
     return 0
   fi
