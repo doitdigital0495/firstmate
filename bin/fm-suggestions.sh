@@ -198,12 +198,12 @@ do_expire() {
     [ .[] | select(past_due($now; $days)) | .outcome = "expired" | .resolved_at = $now ]' <<<"$list")
   [ "$due" != "[]" ] || { printf '0\n'; return 0; }
   archive=$(read_store "$ARCHIVE") || exit 1
-  merged=$(jq -c --argjson due "$due" '. as $old
+  merged=$(jq -c --slurpfile due <(printf '%s' "$due") '$due[0] as $due | . as $old
     | ($old | map(.id)) as $ids
     | $old + [ $due[] | select(.id as $id | $ids | index($id) | not) ]' <<<"$archive")
   write_store "$ARCHIVE" "$merged"
-  write_store "$LIST" "$(jq -c --argjson due "$due" \
-    '($due | map(.id)) as $ids | [ .[] | select(.id as $id | $ids | index($id) | not) ]' <<<"$list")"
+  write_store "$LIST" "$(jq -c --slurpfile due <(printf '%s' "$due") \
+    '$due[0] as $due | ($due | map(.id)) as $ids | [ .[] | select(.id as $id | $ids | index($id) | not) ]' <<<"$list")"
   jq 'length' <<<"$due"
 }
 
@@ -248,8 +248,8 @@ cmd_add() {
   archive=$(read_store "$ARCHIVE") || exit 1
 
   id="sg-$(hash_of "$origin|$item|$title")"
-  prior=$(jq -r -n --argjson l "$list" --argjson a "$archive" --arg id "$id" --arg o "$origin" --arg n "$item" '
-    first(($l + $a)[] | select(.id == $id or ($n != "" and .origin == $o and .item == ($n | tonumber))))
+  prior=$(jq -r -n --slurpfile l <(printf '%s' "$list") --slurpfile a <(printf '%s' "$archive") --arg id "$id" --arg o "$origin" --arg n "$item" '
+    $l[0] as $l | $a[0] as $a | first(($l + $a)[] | select(.id == $id or ($n != "" and .origin == $o and .item == ($n | tonumber))))
     | [.outcome, .id, (.target // "")] | join(" ")')
   if [ -n "$prior" ]; then
     printf '%s\n' "$prior" | sed 's/ *$//'
@@ -264,8 +264,9 @@ cmd_add() {
      filed_at:$now, resolved_at:null, outcome:"suggested", target:null, seen:1}')
 
   # An earlier record of the same finding; repeats point at their target instead.
-  match=$(jq -c -n --argjson l "$list" --argjson a "$archive" --argjson r "$record" "$JQ_DEFS"'
-    ($r.title | norm) as $t
+  match=$(jq -c -n --slurpfile l <(printf '%s' "$list") --slurpfile a <(printf '%s' "$archive") \
+    --slurpfile r <(printf '%s' "$record") "$JQ_DEFS"'
+    $l[0] as $l | $a[0] as $a | $r[0] as $r | ($r.title | norm) as $t
     | [ ($l + $a)[] | select(.outcome != "repeat")
         | select((.title | norm) == $t
                  or ($r.file_line != "" and .file_line == $r.file_line and .kind == $r.kind)) ]
@@ -281,12 +282,12 @@ cmd_add() {
     "$SCRIPT_DIR/fm-captain-hold.sh" hold "$held_id" --reason "$held_reason" --title "$title" \
       ${repo:+--repo "$repo"} >/dev/null \
       || die "the captain hold for $held_id failed; nothing recorded, so retry this intake"
-    list=$(jq -c --argjson m "${match:-null}" --arg id "$id" --argjson now "$NOW" '
-      if $m == null then . else
+    list=$(jq -c --slurpfile m <(printf '%s' "${match:-null}") --arg id "$id" --argjson now "$NOW" '
+      $m[0] as $m | if $m == null then . else
         map(if .id == $m.id and .outcome == "suggested"
             then .outcome = "repeat" | .target = $id | .resolved_at = $now else . end) end' <<<"$list")
-    write_store "$LIST" "$(jq -c --argjson r "$record" --arg t "$held_id" --argjson now "$NOW" \
-      '. + [$r | .outcome = "escalated" | .target = $t | .resolved_at = $now]' <<<"$list")"
+    write_store "$LIST" "$(jq -c --slurpfile r <(printf '%s' "$record") --arg t "$held_id" --argjson now "$NOW" \
+      '$r[0] as $r | . + [$r | .outcome = "escalated" | .target = $t | .resolved_at = $now]' <<<"$list")"
     printf 'escalated %s %s\n' "$id" "$held_id"
     return 0
   fi
@@ -297,8 +298,8 @@ cmd_add() {
   fi
 
   rows=$(open_rows) || die "cannot read the backlog to de-duplicate; nothing recorded, so retry this intake"
-  row_match=$(jq -r -n --argjson rows "$rows" --argjson r "$record" "$JQ_DEFS"'
-    ($r.title | norm) as $t
+  row_match=$(jq -r -n --slurpfile rows <(printf '%s' "$rows") --slurpfile r <(printf '%s' "$record") "$JQ_DEFS"'
+    $rows[0] as $rows | $r[0] as $r | ($r.title | norm) as $t
     | first($rows[] | select((.title | norm) == $t
         or ((.title + "\n" + .body) | names_ref($r.file_line)))) | .id')
   if [ -n "$row_match" ]; then
@@ -306,7 +307,7 @@ cmd_add() {
     return 0
   fi
 
-  write_store "$LIST" "$(jq -c --argjson r "$record" '. + [$r]' <<<"$list")"
+  write_store "$LIST" "$(jq -c --slurpfile r <(printf '%s' "$record") '$r[0] as $r | . + [$r]' <<<"$list")"
   printf 'suggested %s\n' "$id"
 }
 
@@ -314,8 +315,8 @@ cmd_add() {
 # archived target is left as archived: repeats do not revive what went unpicked.
 record_repeat() {  # <list-json> <record> <target-id> <suggestion-id-or-empty>
   local list=$1 record=$2 target=$3 bump=$4 updated
-  updated=$(jq -c --argjson r "$record" --arg t "$target" --arg b "$bump" --argjson now "$NOW" '
-    map(if .id == $b then .seen = ((.seen // 1) + 1) else . end)
+  updated=$(jq -c --slurpfile r <(printf '%s' "$record") --arg t "$target" --arg b "$bump" --argjson now "$NOW" '
+    $r[0] as $r | map(if .id == $b then .seen = ((.seen // 1) + 1) else . end)
     + [$r | .outcome = "repeat" | .target = $t | .resolved_at = $now]' <<<"$list")
   write_store "$LIST" "$updated"
   printf 'repeat %s %s\n' "$(jq -r .id <<<"$record")" "$target"
@@ -325,13 +326,13 @@ cmd_summary() {
   local json=0 list
   case "${1-}" in --json) json=1 ;; '') ;; *) die "summary: unknown argument $1" 2 ;; esac
   list=$(read_store "$LIST") || exit 1
-  jq -n --argjson l "$list" --argjson now "$NOW" --argjson days "$EXPIRE_DAYS" --argjson json "$json" "$JQ_DEFS"'
-    [ $l[] | select(.outcome == "suggested" and (past_due($now; $days) | not)) ] as $open
+  jq --argjson now "$NOW" --argjson days "$EXPIRE_DAYS" --argjson json "$json" "$JQ_DEFS"'
+    [ .[] | select(.outcome == "suggested" and (past_due($now; $days) | not)) ] as $open
     | ($open | length) as $n
     | (if $n == 0 then null else ($open | map(age_days($now)) | max) end) as $oldest
     | (if $n == 0 then "" else
          "\($n) suggested task\(if $n == 1 then "" else "s" end), oldest \($oldest)d" end) as $line
-    | if $json == 1 then {count:$n, oldest_age_days:$oldest, line:$line} else $line end' \
+    | if $json == 1 then {count:$n, oldest_age_days:$oldest, line:$line} else $line end' <<<"$list" \
     | if [ "$json" = 1 ]; then cat; else jq -r .; fi
 }
 
@@ -472,7 +473,7 @@ cmd_drop() {
       continue
     fi
     record=$(jq -c --argjson now "$NOW" '.outcome = "dropped" | .resolved_at = $now' <<<"$record")
-    archive=$(jq -c --argjson r "$record" 'if any(.[]; .id == $r.id) then . else . + [$r] end' <<<"$archive")
+    archive=$(jq -c --slurpfile r <(printf '%s' "$record") '$r[0] as $r | if any(.[]; .id == $r.id) then . else . + [$r] end' <<<"$archive")
     write_store "$ARCHIVE" "$archive"
     list=$(jq -c --arg id "$id" '[ .[] | select(.id != $id) ]' <<<"$list")
     write_store "$LIST" "$list"
@@ -502,7 +503,7 @@ cmd_restore() {
       continue
     fi
     record=$(jq -c --argjson now "$NOW" '.outcome = "suggested" | .resolved_at = null | .filed_at = $now' <<<"$record")
-    list=$(jq -c --argjson r "$record" 'if any(.[]; .id == $r.id) then . else . + [$r] end' <<<"$list")
+    list=$(jq -c --slurpfile r <(printf '%s' "$record") '$r[0] as $r | if any(.[]; .id == $r.id) then . else . + [$r] end' <<<"$list")
     write_store "$LIST" "$list"
     archive=$(jq -c --arg id "$id" '[ .[] | select(.id != $id) ]' <<<"$archive")
     write_store "$ARCHIVE" "$archive"
@@ -563,8 +564,8 @@ cmd_check() {
   require_jq
   list=$(read_store "$LIST") || exit 1
   archive=$(read_store "$ARCHIVE") || exit 1
-  records=$(jq -c -n --argjson l "$list" --argjson a "$archive" --arg o "$id" \
-    '[($l + $a)[] | select(.origin == $o) | .item]')
+  records=$(jq -c -n --slurpfile l <(printf '%s' "$list") --slurpfile a <(printf '%s' "$archive") --arg o "$id" \
+    '$l[0] as $l | $a[0] as $a | [($l + $a)[] | select(.origin == $o) | .item]')
   for n in $items; do
     jq -e --argjson n "$n" 'index($n) != null' <<<"$records" >/dev/null || missing="$missing $n"
   done
