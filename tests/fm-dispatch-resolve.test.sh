@@ -427,6 +427,85 @@ unset QUOTA_FIXTURE_MAP
 cp "$TMP_ROOT/original-rules" "$RULES"
 cp "$TMP_ROOT/original-quota" "$QUOTA"
 pass 'fallback_only holds a claude reserve until every non-fallback claude seat is at its limit'
+# Weekly start guard counts live per-account workers, not just recent starts.
+mkdir -p "$TMP_ROOT/weekly-bin"
+# shellcheck disable=SC2016 # The private fake expands its own arguments.
+printf '#!/usr/bin/env bash\n[ "$1" = list-windows ] && printf "@77\\n"\n' > "$TMP_ROOT/weekly-bin/tmux"
+chmod +x "$TMP_ROOT/weekly-bin/tmux"
+printf 'window=@77\nseat=claude2\nharness=claude\nmodel=opus\neffort=max\n' > "$HOME_DIR/state/weekly-live.meta"
+printf 'window=@78\nseat=claude2\nharness=claude\n' > "$HOME_DIR/state/weekly-dead.meta"
+printf 'window=@77\nseat=claude3\nharness=claude\n' > "$HOME_DIR/state/weekly-other.meta"
+jq '.rules[0].use = [{harness:"claude",model:"sonnet",account:"claude2",reasoning_class:1}] |
+  .weekly_guard = {max_used_percent:98,reserve_percent:1,reserve_by_plan:{"claude:Team":1.3}}' "$TMP_ROOT/original-rules" | with_accounts > "$RULES"
+# Restore the private registry and account snapshots from the reserve fixtures.
+jq -n --arg c1 "$TMP_ROOT/claude1-seat" --arg c2 "$TMP_ROOT/claude2-seat" --arg g "$TMP_ROOT/claude3-seat" \
+  '{crossAccount:{enabled:true},accounts:{claude1:{claude:$c1},claude2:{claude:$c2},claude3:{claude:$g}}}' > "$HOME_DIR/config/accounts.json"
+QUOTA_FIXTURE_MAP=$(jq -cn --arg c2 "$TMP_ROOT/claude2-seat" --arg cf "$TMP_ROOT/claude2-quota.json" '{($c2):$cf}')
+export QUOTA_FIXTURE_MAP
+weekly_run() { PATH="$TMP_ROOT/weekly-bin:$PATH" run "$BRIEF" --task weekly-queued; }
+write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'
+seat_quota 2.5 1 through_reset 90 > "$TMP_ROOT/claude2-quota.json"
+receipts_before=$(find "$HOME_DIR/state/dispatch-receipt" -name 'dispatch-*.json' | wc -l)
+weekly_run
+expect_code 3 "$code" "all weekly-gated returns no launch: $out"
+assert_contains "$out" 'not eligible: weekly guard: 97.5% used + 1.3% committed (1 running, 0 parked) + 1.3% new >= 98%' 'weekly guard accounts for the live worker and plan reserve'
+assert_contains "$out" 'keep queued and resolve again on the next wake or reset' 'all gated remains queued'
+assert_not_contains "$out" '  profile: --harness' 'all gated emits no launch flags'
+assert_equals "$receipts_before" "$(find "$HOME_DIR/state/dispatch-receipt" -name 'dispatch-*.json' | wc -l)" 'all gated writes no receipt'
+assert_present "$HOME_DIR/state/weekly-live.meta" 'running work untouched'
+seat_quota 5 1 through_reset 90 > "$TMP_ROOT/claude2-quota.json"
+weekly_run
+expect_code 0 "$code" "below threshold starts: $out"
+assert_contains "$out" 'weekly_estimate=95%used+1.3%committed+1.3%new/98%' 'configured plan estimate includes live workers'
+# At 96% a new worker fits alone; the existing worker tips it over.
+seat_quota 4 1 through_reset 90 > "$TMP_ROOT/claude2-quota.json"
+weekly_run
+expect_code 3 "$code" 'running demand tips the seat over the weekly start threshold'
+assert_contains "$out" '96% used + 1.3% committed' 'running demand is independent of burst debits'
+mv "$HOME_DIR/state/weekly-live.meta" "$TMP_ROOT/weekly-live.meta"
+weekly_run
+expect_code 0 "$code" "same seat fits without running demand: $out"
+assert_equals claude2 "$(jq -r .profile.account "$(latest)")" 'below-threshold seat selected'
+# Parked committed demand uses the same fixed plan reserve, even without meta.
+mkdir -p "$TMP_ROOT/claude2-seat/projects/weekly"
+printf '%s\n' "$TMP_ROOT/claude2-seat" > "$HOME_DIR/config/claude-shaped-store"
+jq -cn --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{type:"system",sessionId:"weekly-parked",timestamp:$ts,content:"Usage limit reached; continuing automatically"}' > "$TMP_ROOT/claude2-seat/projects/weekly/session.jsonl"
+weekly_run
+expect_code 3 "$code" "parked committed demand holds a new start: $out"
+assert_contains "$out" '(0 running, 1 parked)' 'the existing committed-demand census contributes a worker reserve'
+rm "$HOME_DIR/config/claude-shaped-store"
+# Exact boundary and configurable ceiling, with no running work.
+seat_quota 3.3 1 through_reset 90 > "$TMP_ROOT/claude2-quota.json"
+weekly_run
+expect_code 3 "$code" 'reaching exactly 98% is gated'
+jq '.providers[0] |= (.windows[1].id = "weekly" | del(.windows[1].kind) | .quotaSemantics.effectiveAvailability[0].boundedBy = ["five_hour","weekly"] | .quotaSemantics.effectiveAvailability[0].selection.spendPriority = null)' "$TMP_ROOT/claude2-quota.json" > "$TMP_ROOT/weekly-alias"
+mv "$TMP_ROOT/weekly-alias" "$TMP_ROOT/claude2-quota.json"
+weekly_run
+expect_code 3 "$code" 'weekly window id is guarded even with no rankable scalar'
+assert_contains "$out" 'not eligible: weekly guard:' 'weekly guard does not need spendPriority to establish ineligibility'
+seat_quota 4 1 through_reset 90 > "$TMP_ROOT/claude2-quota.json"
+jq '.weekly_guard.max_used_percent = 97' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+weekly_run
+expect_code 3 "$code" 'configured weekly ceiling is enforced'
+jq 'del(.weekly_guard.max_used_percent)' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+weekly_run
+expect_code 0 "$code" 'the absent ceiling defaults to 98%'
+jq '.weekly_guard.reserve_percent = -1' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+weekly_run
+expect_code 2 "$code" 'invalid weekly reserve is a config error'
+jq '.weekly_guard.reserve_percent = 1' "$RULES" > "$TMP_ROOT/rules-next"; mv "$TMP_ROOT/rules-next" "$RULES"
+# Missing weekly evidence follows the existing first-gate behavior unchanged.
+jq '.providers[0].windows[1].percentRemaining = null' "$TMP_ROOT/claude2-quota.json" > "$TMP_ROOT/weekly-unreadable"
+mv "$TMP_ROOT/weekly-unreadable" "$TMP_ROOT/claude2-quota.json"
+rm -rf "$HOME_DIR/state/quota-last-good"
+weekly_run
+assert_contains "$out" 'quota unknown' "unreadable weekly retains existing unknown behavior: $out"
+assert_not_contains "$out" 'not eligible: weekly guard' 'no weekly guard from partial evidence'
+rm "$HOME_DIR/state/weekly-dead.meta" "$HOME_DIR/state/weekly-other.meta" "$HOME_DIR/config/accounts.json"
+unset QUOTA_FIXTURE_MAP
+cp "$TMP_ROOT/original-rules" "$RULES"
+cp "$TMP_ROOT/original-quota" "$QUOTA"
+pass 'weekly guard is start-only, counts live account demand, never waives, and preserves unknown behavior'
 # Default-only tables still receive a valid Jev Choice, without degrading.
 jq '{default:.default}' "$TMP_ROOT/original-rules" > "$RULES"
 write_response default 1 '{"default":1}' default_1

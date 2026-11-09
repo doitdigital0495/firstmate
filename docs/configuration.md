@@ -1797,7 +1797,7 @@ Firstmate cannot see which part of a worker's life uses the resource, so the num
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
 Jev chooses the best matching natural-language rule through [typed dispatch resolution](#typed-dispatch-resolution-jevd-socket); code applies deterministic quota and eligibility gates.
-The resolver selects the rule's eligible profile by any declared seat tier, the worker five-hour guard, then spendPriority less any recent burst debit; firstmate reviews it under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only the receipted concrete profile flags to `fm-spawn.sh`.
+The resolver selects the rule's eligible profile by the worker weekly guard, any declared seat tier, the worker five-hour guard, then spendPriority less any recent burst debit; firstmate reviews it under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only the receipted concrete profile flags to `fm-spawn.sh`.
 
 **Spawn requirements**
 
@@ -1902,6 +1902,24 @@ This orders only the worker that drives the delivery: a no-mistakes pipeline's o
 A firstmate or secondmate does not launch through `--account`: its seat is the home identity or a per-secondmate pin, so its row's order names the seat for a [deliberate subscription switch](#deliberate-claude-subscription-switch-and-clean-exit) when the current seat reaches its limit.
 Without either field, behavior is unchanged.
 A value of any other shape is an actionable configuration error reported like any other malformed profile field.
+
+**Worker weekly guard**
+
+The optional top-level `weekly_guard` object configures a start-only eligibility gate, enabled by default for workers and scouts, not pipeline rows or shared-quota homes.
+Its `max_used_percent` defaults to 98; a candidate is not eligible when weekly used percent plus committed demand plus one new worker's reserve reaches or exceeds that value.
+The gate reads the account's `seven_day`, `weekly`, or `kind: weekly` window only after the existing complete-window gate; missing or unreadable weekly evidence retains the existing unknown-quota behavior and never becomes a fabricated reading.
+It never waives itself, changes running work, or changes the existing usage-limit move of a running worker.
+When no candidate can start and the weekly guard holds a candidate, the resolver prints `status: held`, the `weekly guard: ...` evidence and resets, writes no receipt, and exits 3; the task stays queued for fresh resolution on the next wake or reset rather than asking for a route around the guard.
+
+Demand estimate: count live worker endpoints from this home's `state/*.meta`, keyed by the current `seat` (or legacy `account`, or `home:<provider>`), using the recorded backend's existing endpoint-existence reader.
+For a Claude store listed in `config/claude-shaped-store`, also add the committed-demand census's `parkedSessions` count, conservatively counting overlap twice rather than assuming parked work has no remaining cost.
+An unreadable census is disclosed as `parked_demand=unreadable`; its independent admission check remains unchanged.
+No calibrated conversion from model, effort, or the census's one-turn `floorInputTokens` into remaining weekly task cost exists, so all workers, including expensive models and high efforts, reserve the same fixed weekly percentage points for their account plan, without age-based decay.
+`reserve_percent` defaults to 2.6 points per worker; `reserve_by_plan` optionally overrides it by exact `provider:plan` label, using the existing account plan source (declared plan first, quota plan second).
+For example, `"weekly_guard": {"max_used_percent": 98, "reserve_percent": 2.6, "reserve_by_plan": {"claude:Max": 1.3}}` reserves 1.3 points per running, parked, or proposed worker on a Claude Max account and 2.6 elsewhere, including unknown plans.
+All numeric values must be greater than zero and at most 100.
+The candidate line shows `weekly_estimate=<used>%used+<committed>%committed+<reserve>%new/<limit>%`, separately from published `spendPriority` and the burst spreader.
+This is a conservative fixed reserve, not a guarantee that any task fits or a forecast against resets; concurrent resolutions can still observe the same census before either launch creates metadata.
 
 **Worker five-hour guard and burst spreader**
 

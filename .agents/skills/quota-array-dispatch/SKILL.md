@@ -201,7 +201,9 @@ Report duplicate concrete profiles as a configuration error.
 Establish an inspectable likely-completion horizon for the work before accepting a full-task launch.
 Read `runway` from every applicable `quota[]` bound: `through_reset` passes the generic feasibility check because the window refills without exhausting; never compare its `resetsAt` with the completion horizon as though reset were an exhaustion deadline.
 `exhausted_now` is zero, and `projected_exhaustion` uses the matching `exhaustion[]` row's `usableRunwaySeconds`.
-Captain rule: a projected exhaustion never ranks a candidate down or refuses it; only `exhausted_now` excludes. When known runway is shorter than the full-task horizon, plan checkpoints in the brief instead of refusing, so a worker that hits the limit can move to another account of the same class.
+Captain rule: a projected exhaustion never ranks a candidate down or refuses it; only `exhausted_now` excludes on runway evidence.
+The start-only [worker weekly guard](../../../docs/configuration.md#crew-dispatch-profiles-configcrew-dispatchjson) is a separate eligibility gate; a held answer stays queued, never routed around.
+When known runway is shorter than the full-task horizon, plan checkpoints in the brief instead of refusing, so a worker that hits the limit can move to another account of the same class.
 Unknown or unmeasurable runway cannot prove feasibility: it must already have been resolved by the bounded warm-up and retry above, or that candidate stays out as unreadable.
 Do not invent a generic percentage floor, and honor an explicit captain floor for a candidate when one exists.
 

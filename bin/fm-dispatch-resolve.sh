@@ -135,7 +135,7 @@
 #
 # Output (stdout, TOON-style block):
 #   dispatch-resolve:
-#     status: clear | captain-pick
+#     status: clear | captain-pick | held
 #     model/latency_ms/tokens, rule (when excerpt) and confidence, probabilities
 #     fallback: <runner-up rule taken when the picked rule missed its own floor>
 #     reason: <why the status is not clear>
@@ -165,8 +165,11 @@
 #                 the verified answer into a receipt. --captain-pick asks for
 #                 the same request even when Jev's answer is dispatchable: the
 #                 captain's per-task override, still decided only by his words.
+#   held     -> weekly guard leaves no startable candidate; keep queued for the
+#               next wake/reset, no pick or receipt, exit 3. Configuration and
+#               the demand estimate are owned by docs/configuration.md.
 #   Only clear and pick write receipts; every other outcome leaves launch refused.
-#   Outcomes exit 0 for inspection; callers must require a printed receipt.
+#   Other outcomes exit 0 for inspection; callers must require a printed receipt.
 #   Failure to write a receipt or a pick request exits 3, as does `pick` when
 #   it refuses or the captain answered wait.
 #   Exit 2 only for a usage or configuration error (unreadable brief, an
@@ -354,6 +357,12 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   if type != "object" then "top-level value must be an object"
   elif has("preferred_provider") and (provider_id(.preferred_provider) | not) then "preferred_provider must be a lowercase provider ID (for example codex)"
   elif has("shared_quota") and (.shared_quota | type) != "boolean" then "shared_quota must be true or false when present"
+  elif has("weekly_guard") and (
+    (.weekly_guard | type) != "object" or
+    (.weekly_guard | has("max_used_percent") and ((.max_used_percent | type) != "number" or .max_used_percent <= 0 or .max_used_percent > 100)) or
+    (.weekly_guard | has("reserve_percent") and ((.reserve_percent | type) != "number" or .reserve_percent <= 0 or .reserve_percent > 100)) or
+    (.weekly_guard | has("reserve_by_plan") and ((.reserve_by_plan | type) != "object" or any(.reserve_by_plan[]; type != "number" or . <= 0 or . > 100)))
+  ) then "weekly_guard needs max_used_percent, reserve_percent and reserve_by_plan values greater than 0 and at most 100"
   elif has("rules") and (.rules | type) != "array" then "rules must be an array"
   elif any((.rules // [])[]; type != "object") then "each rule must be an object"
   elif any((.rules // [])[]; (.when | type) != "string" or (.when | length) == 0) then "each rule needs non-empty when"
@@ -793,6 +802,54 @@ fm_dispatch_burst_record() {
   esac
   printf '%s %s %s\n' "$NOW_EPOCH" "$seat" "$cost" >> "$BURST_LEDGER" 2>/dev/null || true
 }
+# Weekly demand is a start-only reserve, independent of the fading burst rank.
+# No calibrated model/effort-to-weekly conversion exists; configuration.md owns
+# the fixed per-plan estimate and the conservative parked-session double count.
+WEEKLY_DEMAND='{}'
+if [ "$MODE" = worker ] && [ "$SQ" != true ]; then
+  # shellcheck source=bin/fm-backend.sh
+  . "$SCRIPT_DIR/fm-backend.sh"
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    backend=$(fm_backend_of_meta "$meta")
+    target=$(fm_backend_target_of_meta "$meta")
+    [ -n "$target" ] || continue
+    fm_backend_target_exists "$backend" "$target" >/dev/null 2>&1 || continue
+    seat=$(awk -F= '$1 == "seat" {s=$2} $1 == "account" {a=$2} END {print (s != "" ? s : a)}' "$meta")
+    provider=$(awk -F= '$1 == "account_provider" {print $2; exit}' "$meta")
+    if [ -z "$provider" ]; then
+      harness=$(awk -F= '$1 == "harness" {print $2; exit}' "$meta")
+      provider=$(jq -r --arg h "$harness" '.[$h] // ""' <<<"$PMAP")
+    fi
+    [ -n "$seat" ] || seat="home:$provider"
+    WEEKLY_DEMAND=$(jq -c --arg k "$seat" '.[$k].running = ((.[$k].running // 0) + 1)' <<<"$WEEKLY_DEMAND")
+  done
+  if [ -s "$CONFIG/claude-shaped-store" ]; then
+    while IFS=$'\t' read -r seat store; do
+      [ -n "$store" ] || continue
+      raw_store=$store
+      if [ "$store" = default ]; then raw_store=${CLAUDE_CONFIG_DIR:-$HOME/.claude}; fi
+      canonical=$(fm_account_canonical_store "$raw_store")
+      shaped=false
+      while IFS= read -r entry || [ -n "$entry" ]; do
+        entry=${entry%%#*}
+        entry=$(awk '{$1=$1; print}' <<<"$entry")
+        [ -n "$entry" ] || continue
+        [ "$(fm_account_canonical_store "$entry")" != "$canonical" ] || shaped=true
+      done < "$CONFIG/claude-shaped-store"
+      [ "$shaped" = true ] || continue
+      census=$(bash "$SCRIPT_DIR/fm-claude-admission.sh" demand --store "$canonical" 2>/dev/null) || census=''
+      parked=$(awk -F= '$1 == "parkedSessions" {print $2}' <<<"$census")
+      if [[ "$parked" =~ ^[0-9]+$ ]] && grep -qx 'shaped=yes' <<<"$census"; then
+        WEEKLY_DEMAND=$(jq -c --arg k "$seat" --argjson n "$parked" '.[$k].parked = $n' <<<"$WEEKLY_DEMAND")
+      elif [ -z "$census" ]; then
+        WEEKLY_DEMAND=$(jq -c --arg k "$seat" '.[$k].uncertain = true' <<<"$WEEKLY_DEMAND")
+      fi
+    done < <(jq -r --argjson aq "$ACCOUNT_QUOTAS" '
+      ([{seat:"home:claude",store:"default"}] +
+       [($aq | keys[]) as $a | {seat:$a,store:(.accounts[$a].claude // "")}])[] | [.seat,.store] | @tsv' "$CONFIG/accounts.json" 2>/dev/null || printf 'home:claude\tdefault\n')
+  fi
+fi
 # ---- resolution: declared gates + quota evidence + argmax, all in jq ----------
 # Seat evaluation shared by worker and pipeline resolution: quota evidence,
 # completeness, reserve and seat-tier holds, and the spend-priority argmax. It
@@ -1017,7 +1074,7 @@ FM_DR_SEAT_JQ='
     end;
   # Fallback-only reserve tier over one candidate set (see the header).
   def reserve_tier: . as $cands | map(. as $cand |
-    if (($cand.profile.fallback_only // false) | not) or $cand.provider == null then $cand
+    if (($cand.profile.fallback_only // false) | not) or $cand.provider == null or ($cand.weekly_guard // false) then $cand
     else
       ([$cands[] | select((.profile.fallback_only // false) | not) | select(.provider == $cand.provider) | select((.banned // false) | not)]) as $kin_all |
       # A seat that cannot be read or signed in to has no known capacity to protect.
@@ -1169,10 +1226,25 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   if [ "$MODE" = pipeline ]; then fm_dispatch_pipeline_json "$@"; return; fi
   jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
     --argjson final "${3:-false}" --arg jev_failed "$JEV_FAILED_REASON" --argjson force_pick "$FORCE_PICK" --arg delivery "$BRIEF_DELIVERY" \
-    --argjson guard "$FIVE_HOUR_GUARD" --argjson debits "$BURST_DEBITS" \
+    --argjson guard "$FIVE_HOUR_GUARD" --argjson debits "$BURST_DEBITS" --argjson demand "$WEEKLY_DEMAND" \
     --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
 '"$FM_DR_SEAT_JQ"'
+  def weekly_guard:
+    map(if .eligible and ((.sq // false) | not) then
+      . as $e | (account_quota($e.profile) // {providers: []} |
+        [provider_windows($e.provider; lane_of($e.profile))[] | select(.id == "seven_day" or .id == "weekly" or .kind == "weekly")] | first) as $w |
+      ($cfg.weekly_guard.max_used_percent // 98) as $limit |
+      ($cfg.weekly_guard.reserve_by_plan[($e.provider + ":" + $e.plan)] // $cfg.weekly_guard.reserve_percent // 2.6) as $reserve |
+      ($demand[($e.profile.account // ("home:" + $e.provider))] // {}) as $d |
+      (($d.running // 0) + ($d.parked // 0)) as $n |
+      if ($w.percentRemaining | type) != "number" then .
+      else . + {weekly_estimate: "\(100 - $w.percentRemaining)%used+\($n * $reserve)%committed+\($reserve)%new/\($limit)%", demand_uncertain: ($d.uncertain // false)} |
+      if (100 - $w.percentRemaining + ($n + 1) * $reserve) >= $limit then
+        del(.unranked) + {eligible:false, weekly_guard:true,
+          reason:"weekly guard: \(100 - $w.percentRemaining)% used + \($n * $reserve)% committed (\($d.running // 0) running, \($d.parked // 0) parked) + \($reserve)% new >= \($limit)%; resets \($w.resetsAt // "unknown")"}
+      else . end end
+    else . end);
   # Five-hour guard (worker starts only): the first five-hour window of a
   # rankable seat that has a published reset and less room than the floor.
   def five_hour_guard_hit($e):
@@ -1214,7 +1286,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       (row_floor($id)) as $rf |
       ([row_use($id)[] | . as $c | (provider_of($c)) as $p |
         (if $rf == "below" then {profile: $c, provider: $p, eligible: false, reason: "row floor \(rule_at($id).floor.scope) below \(rule_at($id).floor.min_percent)%"}
-         else evaluate($c) end) + plan_for($c; $p)] | reserve_tier | seat_tier_hold(false) | skip_unreadable) as $cs |
+         else evaluate($c) end) + plan_for($c; $p)] | weekly_guard | reserve_tier | seat_tier_hold(false) | skip_unreadable) as $cs |
       ([$cs[] | select(.eligible and ((.unranked // false) | not) and ((.incomplete // false) | not)) | .profile.reasoning_class | select(type == "number")] | max // null) as $strongest |
       {id: $id, order: $order, when: (if $id == "default" then $none_criterion else rule_at($id).when end),
        approval: (rule_at($id).approval // null), row_floor: $rf,
@@ -1297,9 +1369,10 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   def hold_and_skip:
     reserve_tier | seat_tier_hold(false)
     | if ($sel.rule_floor_incomplete // false) or ($ambiguous and any($union_floors[]; .state == "unmeasured")) then . else skip_unreadable end;
-  ($unbanned | five_hour_guard | hold_and_skip) as $guarded |
+  ($unbanned | weekly_guard) as $weekly_safe |
+  ($weekly_safe | five_hour_guard | hold_and_skip) as $guarded |
   (if any($guarded[]; .five_hour_guard // false) and (any($guarded[]; .eligible and ((.unranked // false) | not)) | not)
-   then [$unbanned | hold_and_skip | .[] |
+   then [$weekly_safe | hold_and_skip | .[] |
      if .eligible and ((.unranked // false) | not) and ((.sq // false) | not) and .provider != null then
        five_hour_guard_hit(.) as $w |
        if $w == null then . else . + {guard_waived: "five-hour guard waived: \($w.id) \($w.percentRemaining)% left, under \($guard.floor)% \($guard.period), but no other seat can start"} end
@@ -1356,7 +1429,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     ([$elig[] | select((.reserve // false) | not)]) as $elig_primary |
     (if ($elig_primary | length) > 0 then $elig_primary else $elig end) as $pickable |
     ([$cands[] | select(.unranked)]) as $unranked |
-    if ($elig | length) == 0 then $ev + {status: "escalate",
+    if ($elig | length) == 0 then $ev + {status: (if any($cands[]; .weekly_guard // false) then "held" else "escalate" end),
       reason: ("no rankable eligible candidate" +
         (if ($preferred_family | length) > 0 then " in preferred provider \($cfg.preferred_provider); uncertainty does not authorize fallback" else "" end)),
       note: $sel.note, candidates: $cands}
@@ -1547,6 +1620,8 @@ TEXT=$(jq -r '
           + (if .burst then " burst_debit=\(.burst.debit | flat)pt/\(.burst.starts | flat)start(s) ranks=\(.rank_priority | flat)" else "" end)
           + "  runway=\(show(.runway))" else "" end)
       + (if (.bounds // [] | length) > 1 then "  bounds=" + ([.bounds[] | "\(.scope | flat):\(show(.pct))%/\((.runway // .status) | flat)"] | join(",")) else "" end)
+      + (if .weekly_estimate then "  weekly_estimate=\(.weekly_estimate | flat)" else "" end)
+      + (if .demand_uncertain then "  parked_demand=unreadable" else "" end)
       + (if .reading_age != null then "  reading_age=\(.reading_age | flat)s (recent reading reused)" else "" end)
       + "  -> " + (if .quota_unknown then "eligible, \(.reason | flat)" elif .incomplete then "incomplete: \(.reason | flat)" elif .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .sq then "eligible (quota ranking off: home declares a single shared quota)" elif .eligible and (.reserve_active // false) then "eligible, \(.reason | flat)" elif .eligible and .guard_waived then "eligible, \(.guard_waived | flat)" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)
       + "  plan=\(.plan | flat) (\(.plan_source | flat))"),
@@ -1576,6 +1651,10 @@ case "$(jq -r '.status // ""' <<<"$RESULT")" in
       printf '  receipt: not written (%s); stop and report\n' "${FM_DR_ERR:-see diagnostic above}"
       exit 3
     fi
+    ;;
+  held)
+    printf '  receipt: none - weekly guard; keep queued and resolve again on the next wake or reset\n'
+    exit 3
     ;;
   captain-pick)
     if PICK_CODE=$(fm_dp_write_request "$BRIEF" "$TASK_ID" "$PROJECT" "$RESULT"); then
