@@ -632,7 +632,7 @@ mkdir -p "$STORES/codex2"
 cp "$ACCOUNTS" "$TMP_ROOT/accounts-original"
 jq --arg store "$STORES" '.accounts.codex2 = {provider:"codex",codex:"\($store)/codex2",pi:"\($store)/pi",plans:{codex:"Business"}}' "$TMP_ROOT/accounts-original" > "$ACCOUNTS"
 cat > "$RULES" <<'JSON'
-{"rules":[{"when":"Any work","use":[
+{"rules":[{"when":"Any work","label":"Any work label","use":[
    {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","reasoning_class":3}]}],
  "pipeline_rows":[
   {"steps":["review","test","ci","rebase","fixes"],"never_providers":["zai"],"use":[
@@ -685,7 +685,54 @@ run "$BRIEF" --task six-p
 assert_not_contains "$(tail -1 "$LOG")" 'gpt-6.1-sol' 'worker requests never show the pipeline rows to Jev'
 assert_contains "$out" "--account 'claude1'" 'worker resolution ignores the pipeline rows'
 pass 'P: a step resolves from its fixed row with no model call and no receipt'
-# The worker guard and spreader never reach a pipeline row: a low five-hour
+# Preview shares both dispatch evaluators, but cannot spend or rotate state.
+pipeline_quota
+set_quota claude1 claude 2 9
+pipe review
+assert_equals claude2 "$(pfield .seat)" '2% weekly left is full for a pipeline start'
+assert_contains "$(pfield '.candidates[] | select(.seat == "claude1") | .reason')" 'weekly guard:' 'pipeline reuses the weekly start gate'
+set_quota claude1 claude 4 9
+pipe review
+assert_equals claude2 "$(pfield .seat)" '96% used plus the new start reserve reaches the weekly gate'
+set_quota claude2 claude 2 8
+pipe review
+assert_equals claude3 "$(pfield .seat)" 'both pool 1 seats weekly-full open the next tier'
+pipeline_quota
+# Force a full tie so a real dispatch would advance the rotation.
+set_quota claude2 claude 70 1.3
+printf '7\n' > "$HOME_DIR/state/dispatch-tie-round-robin"
+cp -R "$HOME_DIR/state" "$TMP_ROOT/state-before-preview"
+before_requests=$(wc -l < "$LOG")
+printf '#!/usr/bin/env bash\nprintf warm >> "%s"\n' "$TMP_ROOT/preview-warmed" > "$FAKEBIN/zai-window-warm"
+chmod +x "$FAKEBIN/zai-window-warm"
+run preview --json
+expect_code 0 "$code" "preview succeeds: $out"
+preview=$out
+assert_equals 'Any work label' "$(jq -r '.workers[0].label' <<< "$preview")" 'preview exports display-only labels'
+run rows --json
+expect_code 0 "$code" 'additive criteria export succeeds'
+assert_equals 'Any work label' "$(jq -r '.rows[0].label' <<< "$out")" 'rows exports the display label'
+assert_equals '1 false null' "$(jq -r '.rows[0].candidates[0] | "\(.seat_tier // 1) \(.fallback_only) \(.pool)"' <<< "$out")" 'rows exports tier, reserve and pool fields'
+assert_equals 2 "$(jq '.pipelineRows | length' <<< "$out")" 'rows includes pipeline declarations'
+assert_equals 98 "$(jq '.guards.weekly.maxUsedPercent' <<< "$out")" 'rows includes resolved guards'
+assert_equals "$before_requests" "$(wc -l < "$LOG")" 'preview never contacts Jev'
+diff -r "$TMP_ROOT/state-before-preview" "$HOME_DIR/state" > "$TMP_ROOT/preview-state-diff" || fail "preview changed state: $(cat "$TMP_ROOT/preview-state-diff")"
+[ ! -e "$TMP_ROOT/preview-warmed" ] || fail 'preview ran a warm-up'
+assert_equals 7 "$(jq '.noMistakes | length' <<< "$preview")" 'preview covers every pipeline step'
+pipe review
+assert_equals "$(pfield .seat)" "$(jq -r '.noMistakes[] | select(.step == "review") | .pick.seat' <<< "$preview")" 'preview and real pipeline choose the same tied seat'
+write_response rule_1 0.95 '{"rule_1":0.95,"default":0.05}'
+run "$BRIEF" --task preview-equality
+assert_contains "$out" "--account '$(jq -r '.workers[] | select(.id == "rule_1") | .pick.seat' <<< "$preview")'" 'preview and worker dispatch choose the same seat'
+# Unreadable Z.ai is deliberately present only in the preview account gather.
+tweak pi '.state={status:"rate_limited"} | .windows=[] | .quotaSemantics={status:"unknown",effectiveAvailability:[]}'
+run preview --json
+expect_code 0 "$code" 'preview tolerates an unreadable provider without warming it'
+[ ! -e "$TMP_ROOT/preview-warmed" ] || fail 'preview warmed unreadable Z.ai'
+rm "$FAKEBIN/zai-window-warm"
+pass 'P: shared weekly gate and read-only preview match dispatch without state changes'
+
+# The worker five-hour guard and spreader never reach a pipeline row: a low five-hour
 # window with a reset by day and a heavy burst debit leave the pick as it was.
 pipeline_quota
 tweak claude1 '.windows[0].percentRemaining = 10 | .windows[0].resetsAt = "2030-01-01T05:00:00Z"'

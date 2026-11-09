@@ -745,4 +745,22 @@ assert_equals '1 2 1' "$(jq -r '[.rows[].candidates[].reasoning_class] | join(" 
 assert_equals 0 "$(jq -r .unclassed <<<"$out")" 'no unclassed candidates'
 assert_equals 64 "$(jq -r '.table.sha256 | length' <<<"$out")" 'table hash exported'
 pass 'rows --json exports the routing criteria'
+# Preview covers every worker row and default without a socket request, even
+# when the only evidence is a read-only last-good snapshot of the home store.
+before_requests=$(wc -l < "$LOG")
+cp -R "$HOME_DIR/state" "$TMP_ROOT/preview-state"
+run preview --json
+expect_code 0 "$code" "home-store preview succeeds: $out"
+assert_equals 'rule_1 rule_2 default' "$(jq -r '[.workers[].id] | join(" ")' <<< "$out")" 'preview covers every work row and default'
+assert_equals 'sonnet opus sonnet' "$(jq -r '[.workers[].pick.model] | join(" ")' <<< "$out")" 'preview evaluates each fixed row, not one guessed row'
+assert_equals "$before_requests" "$(wc -l < "$LOG")" 'worker preview never contacts Jev'
+diff -r "$TMP_ROOT/preview-state" "$HOME_DIR/state" >/dev/null || fail 'home-store preview changed shared state'
+cp "$QUOTA" "$TMP_ROOT/preview-quota"
+printf 'invalid quota\n' > "$QUOTA"
+run preview --json
+expect_code 0 "$code" "preview with failed quota read succeeds: $out"
+assert_equals true "$(jq '[.workers[].measured] | all(. == false)' <<< "$out")" 'cached preview evidence is explicitly unmeasured'
+diff -r "$TMP_ROOT/preview-state" "$HOME_DIR/state" >/dev/null || fail 'fallback preview changed shared state'
+cp "$TMP_ROOT/preview-quota" "$QUOTA"
+pass 'preview covers rules and default and reads last-good evidence without any state write'
 echo '# all fm-dispatch-resolve tests passed'
