@@ -84,6 +84,60 @@ test_intake_deduplicates_against_earlier_suggestions() {
   pass "intake merges a repeated suggestion, raises its count and keeps a different kind"
 }
 
+test_large_stores_keep_repeat_detection_and_expiry() {
+  local home first id out store bytes
+  home=$(make_home large-stores)
+  first=$(at "$home" 0 add --origin seed --item 1 --title "Fixture finding 0")
+  id=${first#suggested }
+  # Build a realistic store without thousands of CLI calls. Each record stays
+  # small, but both stores and the eventual expiry batch exceed Linux's 128 KiB
+  # per-argument limit (and stay below ordinary total argv limits).
+  jq -c '. as $r | range(0;1000) as $i | $r
+    | .id = (if $i == 0 then $r.id else "sg-fixture-\($i)" end)
+    | .origin = "fixture-\($i)" | .title = "Fixture finding \($i)"
+    | .risk = ("x" * 256)' "$home/data/suggestions.jsonl" > "$home/data/large.jsonl"
+  mv "$home/data/large.jsonl" "$home/data/suggestions.jsonl"
+  for store in suggestions.jsonl suggestions-not-picked.jsonl; do
+    if [ "$store" = suggestions-not-picked.jsonl ]; then
+      jq -c '.id += "-archived" | .origin += "-archived" | .title += " archived"
+        | .outcome = "expired"' "$home/data/suggestions.jsonl" > "$home/data/$store"
+    fi
+    bytes=$(wc -c < "$home/data/$store")
+    [ "$bytes" -gt 400000 ] || fail "large-store fixture is too small: $bytes"
+  done
+  out=$(at "$home" 0 add --origin fixture-0 --item 1 --title "Retry with changed wording" 2>&1)
+  assert_equals "$first" "$out" "large-store intake was not idempotent"
+  out=$(at "$home" 0 add --origin repeat --item 1 --title "FIXTURE finding 0!" 2>&1)
+  assert_equals "repeat" "${out%% *}" "large-store repeat lookup failed: $out"
+  assert_contains "$out" " $id" "large-store repeat lost its target"
+  assert_equals "1000" "$(at "$home" 0 summary --json | jq '.count')" "large summary failed"
+  mkdir -p "$home/data/repeat"
+  printf '## Follow-ups\n1. Recorded repeat\n' > "$home/data/repeat/report.md"
+  assert_equals "ok repeat: every follow-up has a recorded outcome" "$(at "$home" 0 check repeat 2>&1)" "large-store check failed"
+  out=$(at "$home" 30 expire 2>&1)
+  assert_equals "expired 1000" "$out" "large expiry batch failed"
+  assert_equals "expired 0" "$(at "$home" 30 expire 2>&1)" "large expiry was not idempotent"
+  assert_equals "2000" "$(at "$home" 30 archive --json | jq 'length')" "large expiry lost archive records"
+  out=$(at "$home" 31 add --origin archived-repeat --item 1 --title "Fixture finding 0 archived" 2>&1)
+  assert_equals "repeat" "${out%% *}" "large archive repeat lookup failed: $out"
+  assert_contains "$out" " $id-archived" "large archive repeat lost its target"
+  pass "stores above 400 KB preserve intake, repeats, summary, check and batch expiry"
+}
+
+test_large_backlog_keeps_repeat_detection() {
+  local home out body n
+  home=$(make_home large-backlog)
+  # Each CLI argument fits, but the parsed backlog JSON exceeds 128 KiB.
+  body=$(printf '%060000d' 0)
+  for n in 1 2 3; do
+    tasks "$home" add "large-row-$n" "Large backlog target $n" --kind ship --body "$body" >/dev/null
+  done
+  out=$(at "$home" 0 add --origin scout-a --item 1 --title "large backlog TARGET 1" 2>&1)
+  assert_contains "$out" " large-row-1" "large backlog repeat lookup failed: $out"
+  assert_equals "repeat" "${out%% *}" "large backlog was not a repeat: $out"
+  pass "a backlog above 128 KiB still de-duplicates intake"
+}
+
 test_intake_deduplicates_against_open_rows() {
   local home out
   home=$(make_home dedupe-rows)
@@ -383,6 +437,8 @@ fm_test_run \
   test_a_follow_up_waits_off_the_backlog \
   test_an_empty_list_reports_nothing \
   test_intake_deduplicates_against_earlier_suggestions \
+  test_large_stores_keep_repeat_detection_and_expiry \
+  test_large_backlog_keeps_repeat_detection \
   test_intake_deduplicates_against_open_rows \
   test_intake_refuses_when_the_backlog_is_unreadable \
   test_repeating_an_intake_changes_nothing \
