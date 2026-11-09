@@ -36,3 +36,15 @@ This keeps the two kinds of seat in one pool, and the order stays a row declarat
 **Why the floor reads the weekly window.** A quota row can be bounded by both windows, so a floor on that row would stop claude3 on a low five-hour window while its week still has room.
 
 **Why an unreadable floor takes the seat out.** Other unreadable seats fall back to the first seat of their tier so a brief quota outage does not stop the pipeline, but the floor is a limit the captain set, so missing evidence does not override it.
+
+## 2026-11-09 - worker reservation and corrected no-mistakes pools
+
+**Decision.** This supersedes the pool membership, ordering rationale, and unreadable-seat fallback in the 2026-11-04 entry above.
+The no-mistakes pool 1 is claude1/claude2; pool 2 is codex1/codex2, then glm at a later seat tier.
+Claude3 is excluded from worker seats and reserved for firstmate and secondmates.
+Ordinary workers have no provider-family precedence: task-matched candidates compete mainly on quota and reset time, with no design work on GLM.
+When all quota evidence is unreadable, logged round-robin chooses within the open tier rather than declaration order; measured-quota ranking and exact-tie handling stay unchanged.
+[`configuration.md`](configuration.md#crew-dispatch-profiles-configcrew-dispatchjson) owns worker eligibility and selection, and [pipeline seat rows](configuration.md#pipeline-seat-rows) own the configurable pool mechanism.
+
+**Why.** A supervisor login is never a worker reserve, and an unreadable quota must not turn Claude-first array declarations into a provider preference.
+The no-mistakes pool order is a separate policy, not a rationale for biasing ordinary worker selection.
