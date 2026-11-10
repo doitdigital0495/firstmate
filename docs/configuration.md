@@ -877,6 +877,10 @@ While the file exists, the watcher runs `bin/fm-capacity.sh --publish` detached 
 Publishing is best-effort and never changes what the watcher does; no spawn reads the verdict.
 `bin/fm-capacity.sh --admit` is an advisory check of the same verdict: it exits 0 when the verdict admits or the file is absent, and reports the reasons on stderr with exit 75 when it does not.
 No Firstmate script calls it.
+`bin/fm-worker-table.sh` complements this home-local report with the cross-home worker table: one row per worker in this home and in every registered secondmate home, with harness and model, working / parked / idle, the age of the last meaningful progress, and the PR when there is one.
+This home's rows are read live through `bin/fm-crew-state.sh`; each secondmate's rows come from that home's cached `fm-live-board-input.v1` summary, with the cache age disclosed.
+Only a `working` row counts as busy, so a parked listener is never counted as a running worker.
+The command reads no config file, never spawns work in another home, and `--json` prints the `fm-worker-table.v1` document; the script's header owns the table line and the document.
 
 ### Spawn load guard
 
