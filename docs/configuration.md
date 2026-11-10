@@ -1046,6 +1046,22 @@ Pass them in the watcher's environment, or export them in `config/watch.env` for
 The flag is home-local and is not inherited by secondmate homes.
 `bin/fm-watch.sh`'s `open_decision_reminder_tick` owns the per-key schedule, which persists across watcher restarts.
 
+## Drive floor (config/drive-floor)
+
+The optional local, gitignored `config/drive-floor` file enables a default-off watcher backstop for an under-driven fleet: its first line is the integer floor of lanes that should be ACTUALLY working.
+With it present, the watcher counts this home's lanes through `bin/fm-crew-state.sh` and counts only `working` verdicts (a busy run-step or pane), so parked page listeners, held items, finished lanes and idle panes are never counted - a fleet that reports many registered workers while few work is exactly the defect this catches.
+While fewer than the floor lanes are working AND at least one startable lane exists (a lane that is `parked`, `blocked`, `failed` or `unknown`, which a sweep can push forward), the watcher queues one `check: drive floor: <n> working < <floor> <age>s (threshold <n>s): idle: <task>=<state>[, ...]` wake that names the floor, the working count and every idle lane with its state.
+A lane in a declared external-wait pause is expected idle and a `done` lane is finished work, so neither counts as startable and neither alone raises the alarm: a fleet with nothing but pauses and done lanes has nothing to start, and a fleet at or above the floor is healthy.
+`bin/fm-capacity.sh` and its lane facts keep their own counts unchanged; secondmate metadata records hold no lane.
+
+The condition must hold for `FM_DRIVE_FLOOR_HOLD_SECS` seconds (default `900`) before the first wake, then repeats once per `FM_PAUSE_RESURFACE_SECS` while it stays below the floor.
+Scans run at most once per `FM_DRIVE_FLOOR_SCAN_SECS` seconds (default `300`) and skip the forge read, like the away long-wait scan.
+Recovering to the floor, losing the last startable lane, or removing the config file drops the episode, so the next dip starts a fresh clock.
+The floor must be a canonical integer of at least 1 and at most nine digits, and the hold must be a canonical integer of at most nine digits; a present but invalid file or setting stops the watcher with an error.
+Pass them in the watcher's environment, or export them in `config/watch.env` for watchers started through `bin/fm-watch-arm.sh`.
+The flag is home-local and is not inherited by secondmate homes.
+`bin/fm-watch.sh`'s `drive_floor_tick` owns the scan and its repeats, which persist across watcher restarts.
+
 ## Validating-run deferral (config/wedge-defer-validating)
 
 The optional local, gitignored `config/wedge-defer-validating` presence flag opts this home into a default-off deferral in the watcher's wedge timer.
