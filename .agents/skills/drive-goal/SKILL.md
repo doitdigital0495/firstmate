@@ -23,7 +23,8 @@ Then run `bin/fm-goal.sh start <id> --title <t> --done-when <t> --named-by "<his
 
 Write items so a cold reader can act on each line: one item names its owner and its next step on that one line, `after` orders the dependencies, and `task` names the child task so a landing is detected mechanically.
 Make the last item the done-when check itself, with explicit evidence, because closing requires every item done or dropped.
-Class each item honestly: `drive` is the default for reversible in-plan steps, and `captain` marks anything that needs the captain: money, a real architecture deviation, anything destructive or irreversible, security-sensitive work, or credentials and logins.
+Class each item honestly: `drive` is the default for reversible in-plan steps, and `captain` marks anything that needs the captain: money, a real architecture deviation, or credentials and logins.
+A destructive, irreversible, or security-sensitive step is `drive` only behind the away limits' written analyse-first gate (an analysis recorded before the action, showing nothing crucial breaks) and `captain` whenever that gate cannot clear - anything shared by other lanes, unpushed or unmerged work, credentials, and production data are always crucial.
 A `captain` item is never advanced while the captain is away; when one is reached, hold it for the captain under the captain-hold lifecycle with its category named in the hold reason.
 When the plan changes later, `bin/fm-goal.sh edit <id> --items-file <path>` keeps every mark, and an item dropped while it still has marks shows as unplanned drift in `show`.
 
