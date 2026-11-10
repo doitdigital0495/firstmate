@@ -232,12 +232,12 @@ tasks_in "$home" add ln-held "Switch payment provider" --repo shop --kind ship
 tasks_in "$home" hold ln-held --reason "The supplier contract is still being signed" --kind external --until 2099-01-01
 tasks_in "$home" add ln-ask "Which courier?" --repo shop --kind captain
 tasks_in "$home" add ln-later "Pick a loyalty partner" --repo shop --kind captain
-in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ln-ask --reason "Pick a courier." >/dev/null \
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ln-ask --category captain-only-fact --reason "Pick a courier." >/dev/null \
   || fail "could not hold the courier question"
-in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ln-later --reason "Decide after the summer." --until 2099-01-01 >/dev/null \
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ln-later --category captain-only-fact --reason "Decide after the summer." --until 2099-01-01 >/dev/null \
   || fail "could not defer the loyalty question"
 tasks_in "$home" add ln-later-gated "Pick a gift wrap" --repo shop --kind captain --blocked-by ln-doing
-in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ln-later-gated --reason "Decide after the checkout." --until 2099-02-01 >/dev/null \
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ln-later-gated --category captain-only-fact --reason "Decide after the checkout." --until 2099-02-01 >/dev/null \
   || fail "could not defer the gift wrap question"
 in_home "$home" "$LIVE" build >/dev/null || fail "the lanes board did not build"
 out=$(render "$home")
@@ -516,19 +516,19 @@ cat > "$home/ctx-note.json" <<'JSON'
  "about":"The next release of the data platform still has no name.",
  "purpose":"The name goes on the announcement to the business. Without it the announcement waits."}
 JSON
-in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --reason "Pick a carrier." --context-file "$home/ctx-done.json" >/dev/null \
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --category captain-only-fact --reason "Pick a carrier." --context-file "$home/ctx-done.json" >/dev/null \
   || fail "could not hold the carrier question"
 # data-window is a call stored before the plain-language rule: the writer no
 # longer produces that shape, so the fixture records it the way it sits in a body.
-FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold data-window --reason "Load overlaps." >/dev/null \
+FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold data-window --category captain-only-fact --reason "Load overlaps." >/dev/null \
   || fail "could not hold the window question"
 printf '%s\n' 'Captain hold set: 2026-07-14T12:00:00Z' \
   'Captain question context: {"close":"release","lifecycle":"2026-07-14T12:00:00Z#0","options":[{"label":"Keep","value":"keep"},{"label":"Move","value":"move"}],"recommendation":null,"schema":"fm-captain-question.v1","subject":null}' \
   > "$home/old-shape.body"
 tasks_in "$home" update data-window --body-file "$home/old-shape.body"
-in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-legacy --reason "Old hold." >/dev/null \
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-legacy --category captain-only-fact --reason "Old hold." >/dev/null \
   || fail "could not hold the legacy question"
-in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold data-note-only --reason "Free answer." --context-file "$home/ctx-note.json" >/dev/null \
+in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold data-note-only --category captain-only-fact --reason "Free answer." --context-file "$home/ctx-note.json" >/dev/null \
   || fail "could not hold the note-only question"
 worker "$home" ws-redesign busy 'project=web-shop' 'pr=https://github.com/example/web-shop/pull/42'
 printf 'working [at=%s]: checkout tests pass on fm/ws-redesign, see data/ws-redesign/report.md run=01ABCDEFGHJKMNPQRSTVWXYZ01\n' \
@@ -614,7 +614,7 @@ cat > "$default_home/ctx-default.json" <<'JSON'
  "recommendation":"join","scope":["copy"],"default_eligible":"small-reversible","default_date":"2099-01-31"}
 JSON
 in_home "$default_home" "$ROOT/bin/fm-captain-hold.sh" hold ws-button --title "Button wording" --repo web-shop \
-  --reason "Pick the wording." --context-file "$default_home/ctx-default.json" >/dev/null || fail "could not hold the default question"
+  --category captain-only-fact --reason "Pick the wording." --context-file "$default_home/ctx-default.json" >/dev/null || fail "could not hold the default question"
 printf '%s\n' "$ENABLED" > "$default_home/config/live-board.json"
 in_home "$default_home" "$LIVE" build >/dev/null || fail "the default board did not build"
 out=$(render "$default_home" "$(date +%s)")

@@ -111,7 +111,7 @@ test_report_after_the_return_is_queued_for_main() {
 # --- dispatch entry -----------------------------------------------------------
 
 test_dispatch_entry_scopes_rows_and_renders_the_away_tail() {
-  local home state out rc
+  local home state out rc expected_suffix
   home="$TMP_ROOT/dispatch"
   state="$home/state"
   mkdir -p "$state"
@@ -156,7 +156,16 @@ test_dispatch_entry_scopes_rows_and_renders_the_away_tail() {
   assert_contains "$out" "FIRSTMATE SUPERVISION WAKE: signal: demo.status" "the wake prompt must carry the reason"
   assert_contains "$out" "finish with the bin/fm-branch-report.sh command." "the wake prompt must name the host's report surface"
   assert_contains "$out" "POSTURE: AWAY." "an away wake prompt must carry the posture tail"
+  assert_contains "$out" "When the record names drive goals, the drain's GOAL section is their live state and each open item's next step is named by reference: drive the startable ones through the same scripts, never past the never-set." \
+    "the away tail must carry the drive-goal rule"
+  assert_contains "$out" "Credential entry, legal or financial acceptance, an attended prompt, and any discard the captain did not name are refused for every actor in every posture, whatever the words say; money is spent only on the captain's explicit consent to that exact item. A destructive or security-sensitive step, a delete above all, proceeds only after a written analysis, recorded before the action, showing nothing crucial breaks; anything shared by other lanes, unpushed or unmerged work, credentials, and production data are always crucial and stay refused." \
+    "the away tail's away-limits sentences must stay byte-identical"
   assert_contains "$out" "    merge nothing" "the away tail must carry the record's read-back verbatim"
+  expected_suffix=$(printf 'The record, verbatim:\n%s' "$(cat "$home/readback")")
+  case "$out" in
+    *"$expected_suffix") ;;
+    *) fail "the away wake prompt must end with the record's read-back verbatim" ;;
+  esac
   pass "dispatch entry: the host reads branch eligibility, the offer rule, and the wake prompt from the Pi branch's own owner"
 }
 

@@ -37,7 +37,9 @@
 #   floor, the rule's declared `approval` and `floor`, each profile's declared
 #   `provider`, `quota_scope`, and `floor`, the quota rows from per-store quota-axi
 #   --json snapshots, the optional preferred_provider family restriction, and the
-#   spendPriority argmax over the eligible candidates. An eligible but wholly
+#   configured ranking over eligible candidates (spendPriority by default;
+#   ranking.mode=surplus_value uses weekly surplus times plan_value, with the
+#   configured 12-hour/10-percent dump band first). An eligible but wholly
 #   unrankable preferred family escalates rather than authorizing another
 #   family. The model never sees quota, catalogs, approvals, preferred_provider,
 #   `why`, account labels, or credential paths.
@@ -330,7 +332,7 @@ pipeline_problems=$(fm_account_pipeline_problems "$RULES")
 
 # The fields this tool consumes must be well formed; bootstrap owns the wider
 # schema diagnostic, but an intake never selects around a malformed file.
-rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provider_re "$FM_QUOTA_PROVIDER_ID_RE" '
+rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provider_re "$FM_QUOTA_PROVIDER_ID_RE" --argjson plan_values "$(jq -c '.plan_value // {}' "$RULES")" '
   def verified($h): $verified_harnesses | index($h);
   def provider_id($p): ($p | type) == "string" and ($p | test($provider_re));
   def effort_ok($h; $m; $e):
@@ -376,11 +378,21 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
     (.weekly_guard | has("reserve_percent") and ((.reserve_percent | type) != "number" or .reserve_percent <= 0 or .reserve_percent > 100)) or
     (.weekly_guard | has("reserve_by_plan") and ((.reserve_by_plan | type) != "object" or any(.reserve_by_plan[]; type != "number" or . <= 0 or . > 100)))
   ) then "weekly_guard needs max_used_percent, reserve_percent and reserve_by_plan values greater than 0 and at most 100"
+  elif has("ranking") and ((.ranking | type) != "object") then "ranking must be an object"
+  elif ((.ranking.mode // "spend_priority") as $mode | (["spend_priority", "surplus_value"] | index($mode)) == null) then "ranking.mode must be spend_priority or surplus_value"
+  elif any([.ranking.reset_horizon_hours // 12, .ranking.reset_horizon_min_percent // 10][]; type != "number" or . < 0) then "ranking reset horizon values must be nonnegative numbers"
+  elif (.ranking.reset_horizon_min_percent // 10) > 100 then "ranking.reset_horizon_min_percent must be at most 100"
+  elif has("plan_value") and (.plan_value | type) != "object" then "plan_value must be an object"
+  elif .ranking.mode == "surplus_value" and any(((.rules // [])[] | profiles(.use)[]), profiles(.default)[], ((.pipeline_rows // [])[] | .use[]); .account as $a | $a == null or ($a | type) != "string" or ($plan_values[$a] | type) != "number" or $plan_values[$a] <= 0) then "surplus_value requires a positive plan_value for every profile account"
   elif has("rules") and (.rules | type) != "array" then "rules must be an array"
   elif any((.rules // [])[]; type != "object") then "each rule must be an object"
   elif any((.rules // [])[]; (.when | type) != "string" or (.when | length) == 0) then "each rule needs non-empty when"
   elif any((.rules // [])[]; (profiles(.use) | length) == 0) then "each rule needs at least one use profile"
   elif any(((.rules // [])[] | profiles(.use)[]), profiles(.default)[]; .account == "claude3") then "claude3 is reserved for firstmate and secondmates; ordinary worker rules and default must not use account claude3"
+  elif any(((.rules // [])[] | profiles(.use)[]), profiles(.default)[], ((.pipeline_rows // [])[] | .use[]);
+    . as $p | (.harness == "claude" and ((.model == "opus" or .model == "sonnet") and .effort == "max" or .model == "fable" and (["xhigh", "max", "ultra"] | index($p.effort)) != null)) or
+    ((.harness == "pi" or .harness == "pi-signed") and (.provider == "anthropic" or .provider == "claude" or ((.model // "") | startswith("anthropic/"))))) then "forbidden routing profile: no Claude max, Fable above high, or Claude through Pi"
+  elif any((.rules // [])[]; has("strict_tiers") and (.strict_tiers | type) != "boolean") then "strict_tiers must be boolean"
   elif any((.rules // [])[]; has("approval") and .approval != "captain") then "approval must be \"captain\" when present"
   elif any((.rules // [])[]; has("min_confidence") and ((.min_confidence | type) != "number" or .min_confidence < 0 or .min_confidence > 1)) then "min_confidence must be a number from 0 through 1 when present"
   elif any((.rules // [])[]; has("select") and ((.select | type) != "string" or (.select | length) == 0)) then "select must be a non-empty string"
@@ -541,7 +553,7 @@ if [ "$MODE" = worker ]; then
       questions: {
         rule: {
           type: "choice",
-          instructions: "Which ONE dispatch rule best fits `task` (read `task.brief` and `task.project`)? Each option is the rule'"'"'s own matching condition; pick `default` when no rule'"'"'s condition is met, including when a rule'"'"'s own exemption text excludes this task.",
+          instructions: "Which ONE dispatch rule best fits `task` (read `task.brief` and `task.project`)? Each option is the rule'"'"'s own matching condition; pick `default` when no rule'"'"'s condition is met, including when a rule'"'"'s own exemption text excludes this task. When more than one rule fits, choose the rule whose own text says it takes precedence over the others.",
           criteria: ($criteria + {default: $none_criterion})
         },
         profile: {
@@ -1085,8 +1097,26 @@ FM_DR_SEAT_JQ='
     if ($w.percentRemaining | type) != "number" then "unreadable, does not block"
     elif ($w.percentRemaining >= 100) then "not started (idle window), does not block"
     else "\(100 - $w.percentRemaining)% used, no published reset, does not block" end;
+  # Score weekly windows only, including every model-scoped weekly bound.
+  # quota-axi reserve is time remaining minus allowance remaining.
+  def surplus_score($c):
+    if $cfg.ranking.mode != "surplus_value" or (.eligible | not) or (.unranked // false) or (.sq // false) then .
+    else . as $e | provider_of($c) as $p | lane_of($c) as $lane |
+      (account_quota($c) | applicable($p; $lane; ($c.model // ""); ($c.quota_scope // null)) | [ .[] | (.boundedBy // [])[] ] | unique) as $ids |
+      (account_quota($c) | [provider_windows($p; $lane)[] |
+        select(.kind == "weekly" or .id == "seven_day") |
+        select(.id as $id | $ids | index($id))]) as $weekly |
+      if ($weekly | length) == 0 or any($weekly[]; (.percentRemaining | type) != "number" or ((.pace.timeRemainingPercent | type) != "number" and (.pace.reservePercentPoints | type) != "number")) then
+        . + {unranked: true, reason: "weekly pace missing: not rankable for surplus_value"}
+      else
+        ($weekly | map(. + {surplus: (if (.pace.timeRemainingPercent | type) == "number" then .percentRemaining - .pace.timeRemainingPercent else -.pace.reservePercentPoints end)}) | min_by(.surplus)) as $limiting |
+        ([$weekly[] | (.resetsAt | clean_reset(.) | try fromdateiso8601 catch null) as $reset |
+          select($reset != null and $reset >= $now and $reset - $now <= (($cfg.ranking.reset_horizon_hours // 12) * 3600) and .percentRemaining >= ($cfg.ranking.reset_horizon_min_percent // 10)) | $reset] | min) as $band_reset |
+        . + {surplus: $limiting.surplus, value: ($limiting.surplus * $cfg.plan_value[$c.account] / 100), band: ($band_reset != null), band_reset: $band_reset}
+      end
+    end;
   def evaluate($c):
-    evaluate_seat($c) |
+    evaluate_seat($c) | surplus_score($c) |
     if .windows == null then .
     else (account_quota($c) | five_hour_ids(provider_of($c); lane_of($c)) as $five | provider_windows(provider_of($c); lane_of($c)) as $windows |
       [$windows[] | select(five_hour_cannot_hold(.id; $five; $windows)) | "\(.id)=\(five_hour_state(.))"]) as $open |
@@ -1140,7 +1170,10 @@ FM_DR_SEAT_JQ='
   # stable order; both are logged.
   def reset_epoch($c): ($c.binding_reset // null) as $r | if ($r | type) == "string" then ($r | try fromdateiso8601 catch null) else null end;
   # A worker burst debit (rank_priority) ranks in place of the published score.
-  def rank_priority: (.rank_priority // .spendPriority);
+  def rank_priority:
+    if $cfg.ranking.mode == "surplus_value" then
+      [(if .band then 1 else 0 end), (if .band then -.band_reset else 0 end), .value]
+    else (.rank_priority // .spendPriority) end;
   # No measured quota can rank these seats: rotate in the same stable account
   # order as exact ties, without inventing a score or reset preference.
   def unknown_winner:
@@ -1161,7 +1194,7 @@ FM_DR_SEAT_JQ='
          | sort_by([(.profile.account // ""), .profile.harness, (.profile.model // ""), (.profile.effort // "")])) as $ordered |
        ($rr % ($ordered | length)) as $slot |
        {winner: $ordered[$slot], round_robin: (($ordered | length) > 1),
-        tie_break: ("\($ties | length) candidates tied at spendPriority \($best | rank_priority); " +
+        tie_break: ("\($ties | length) candidates tied at \(if $cfg.ranking.mode == "surplus_value" then "surplus_value" else "spendPriority" end) \($best | rank_priority); " +
           (if $soonest == null then "no binding reset known" else "sooner binding reset \($soonest | todate) kept \($ordered | length)" end) +
           (if ($ordered | length) > 1 then "; round-robin slot \($slot + 1) of \($ordered | length)" else "" end) +
           " -> \($ordered[$slot].profile.harness):\($ordered[$slot].profile.model // "default")\(if $ordered[$slot].profile.account then " @" + $ordered[$slot].profile.account else "" end)")}
@@ -1171,7 +1204,7 @@ FM_DR_SEAT_JQ='
 # receipt, and every pool decision made by the shared seat logic above.
 fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
   jq -cn --arg step "$STEP" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
-    --argjson demand "$WEEKLY_DEMAND" --argjson final "${3:-false}" --arg delivery '' --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
+    --argjson now "$NOW_EPOCH" --argjson demand "$WEEKLY_DEMAND" --argjson final "${3:-false}" --arg delivery '' --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
   ($rules[0]) as $cfg | ($quota[0]) as $q |
 '"$FM_DR_SEAT_JQ"'
   # The weekly floor reads the weekly window itself, because a row bounded by
@@ -1219,7 +1252,7 @@ fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
   ([($cfg.pipeline_rows // [])[] | select(.steps | index($step))] | first) as $row |
   ($row.use | map(. as $c | evaluate($c) | apply_weekly_floor | . + plan_for($c; provider_of($c))) | weekly_guard | map(. + {out_reason: .reason}) | seat_tier_hold(true)) as $cands |
   def seat_view: {seat: .profile.account, pool: .profile.pool, tier: .profile.seat_tier, eligible: (.eligible // false), reason: .reason,
-    remaining: (.pct // null), spendPriority: (.spendPriority // null), runway: (.runway // null)};
+    remaining: (.pct // null), spendPriority: (.spendPriority // null), surplus: (.surplus // null), value: (.value // null), band: (.band // false), runway: (.runway // null)};
   ([$cands[] | select(.incomplete)]) as $incomplete |
   ([$cands[] | select(.eligible or (.incomplete // false))]) as $open |
   if ($incomplete | length) > 0 and ($final | not) then
@@ -1243,7 +1276,7 @@ fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
      reason: ("pool \($w.profile.pool) tier \($w.profile.seat_tier): " +
        (if ($tb.measured | not) then "quota unreadable, round-robin in the open tier"
         elif $sq then "quota ranking off, declared order"
-        else "best spendPriority of \($ranked | length) seat(s)" end) +
+        else "best \($cfg.ranking.mode // "spend_priority") of \($ranked | length) seat(s)" end) +
        (if ($short | length) > 0 and ($lasting | length) > 0 then "; \($short | join(", ")) will not last to reset" else "" end) +
        (if ($n_ready > 0 and ($lasting | length) == 0) then "; no open seat lasts to reset" else "" end) +
        (if $w.profile.pool != ([$row.use[].pool] | min) then "; pool \([$row.use[].pool] | min) has no seat with room" else "" end)),
@@ -1255,7 +1288,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   if [ "$MODE" = pipeline ]; then fm_dispatch_pipeline_json "$@"; return; fi
   jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
     --argjson final "${3:-false}" --arg jev_failed "$JEV_FAILED_REASON" --argjson force_pick "$FORCE_PICK" --arg delivery "$BRIEF_DELIVERY" \
-    --argjson guard "$FIVE_HOUR_GUARD" --argjson debits "$BURST_DEBITS" --argjson demand "$WEEKLY_DEMAND" \
+    --argjson now "$NOW_EPOCH" --argjson guard "$FIVE_HOUR_GUARD" --argjson debits "$BURST_DEBITS" --argjson demand "$WEEKLY_DEMAND" \
     --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
 '"$FM_DR_SEAT_JQ"'
@@ -1281,7 +1314,10 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     map(burst_key as $k | ($debits[$k] // null) as $d |
       if $d != null and .eligible and (.spendPriority | type) == "number" and (.pct | type) == "number" and .pct > 0 then
         (((([.pct - $d.debit, 0.1] | max) / .pct) | pow(.; 0.8)) * .spendPriority * 10000 | round / 10000) as $adj |
-        . + {rank_priority: $adj, burst: {debit: $d.debit, starts: $d.starts}}
+        . + {rank_priority: $adj, burst: {debit: $d.debit, starts: $d.starts}} |
+        if $cfg.ranking.mode == "surplus_value" and .surplus != null then
+          .surplus -= $d.debit | .value = (.surplus * $cfg.plan_value[.profile.account] / 100)
+        else . end
       else . end);
   def rule_at($c):
     if ($c | test("^rule_[1-9][0-9]*$")) then
@@ -1300,7 +1336,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       (row_floor($id)) as $rf |
       ([row_use($id)[] | . as $c | (provider_of($c)) as $p |
         (if $rf == "below" then {profile: $c, provider: $p, eligible: false, reason: "row floor \(rule_at($id).floor.scope) below \(rule_at($id).floor.min_percent)%"}
-         else evaluate($c) end) + plan_for($c; $p)] | weekly_guard | reserve_tier | seat_tier_hold(false) | skip_unreadable) as $cs |
+         else evaluate($c) end) + plan_for($c; $p)] | weekly_guard | reserve_tier | seat_tier_hold(rule_at($id).strict_tiers == true) | skip_unreadable) as $cs |
       ([$cs[] | select(.eligible and ((.unranked // false) | not) and ((.incomplete // false) | not)) | .profile.reasoning_class | select(type == "number")] | max // null) as $strongest |
       {id: $id, order: $order, when: (if $id == "default" then $none_criterion else rule_at($id).when end),
        approval: (rule_at($id).approval // null), row_floor: $rf,
@@ -1381,7 +1417,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   # never opens the reserve. It never empties a choice: with no other rankable
   # seat left it is waived and the line says so.
   def hold_and_skip:
-    reserve_tier | seat_tier_hold(false)
+    reserve_tier | seat_tier_hold(if $ambiguous then any($union_ids[]; rule_at(.).strict_tiers == true) else $rule.strict_tiers == true end)
     | if ($sel.rule_floor_incomplete // false) or ($ambiguous and any($union_floors[]; .state == "unmeasured")) then . else skip_unreadable end;
   ($unbanned | weekly_guard) as $weekly_safe |
   ($weekly_safe | five_hour_guard | hold_and_skip) as $guarded |
@@ -1511,20 +1547,29 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
 }
 # Preview ends before every dispatch side effect and bounded retry/warm-up loop.
 if [ "$PREVIEW" = true ]; then
-  preview_workers='[]' preview_pipeline='[]'
+  # Real tables exceed the OS per-argument limit when accumulated JSON is
+  # passed through --argjson. Keep growing preview documents in private files.
+  preview_dir=$(mktemp -d) || die "preview scratch creation failed"
+  trap 'rm -f "$RULES"; rm -rf "$preview_dir"' EXIT
+  printf '[]\n' > "$preview_dir/workers"
+  printf '[]\n' > "$preview_dir/pipeline"
   MODE=worker
   while IFS= read -r row; do
     jq -cn --arg row "$row" '{answers:{rule:{choice:$row,confidence:1,probabilities:{($row):1}},profile:{choice:"",probabilities:{}}}}' > "$RESP_FILE"
     result=$(fm_dispatch_resolve_json 1 0 true) || die "preview worker resolution failed"
-    preview_workers=$(jq -cn --argjson all "$preview_workers" --arg id "$row" --argjson result "$result" '$all + [$result + {id:$id}]')
+    printf '%s\n' "$result" > "$preview_dir/result"
+    jq -cn --slurpfile all "$preview_dir/workers" --arg id "$row" --slurpfile result "$preview_dir/result" '$all[0] + [$result[0] + {id:$id}]' > "$preview_dir/next" || die "preview worker accumulation failed"
+    mv "$preview_dir/next" "$preview_dir/workers"
   done < <(jq -r '(.rules // [] | to_entries[] | "rule_\(.key + 1)"), (if has("default") then "default" else empty end)' "$RULES")
   MODE=pipeline
   while IFS= read -r STEP; do
     result=$(fm_dispatch_pipeline_json 1 0 true) || die "preview pipeline resolution failed"
-    preview_pipeline=$(jq -cn --argjson all "$preview_pipeline" --argjson result "$result" '$all + [$result]')
+    printf '%s\n' "$result" > "$preview_dir/result"
+    jq -cn --slurpfile all "$preview_dir/pipeline" --slurpfile result "$preview_dir/result" '$all[0] + [$result[0]]' > "$preview_dir/next" || die "preview pipeline accumulation failed"
+    mv "$preview_dir/next" "$preview_dir/pipeline"
   done < <(jq -r '(.pipeline_rows // [])[].steps[]' "$RULES")
   jq -n --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg sha "$FM_DR_TABLE_SHA" \
-    --argjson workers "$preview_workers" --argjson pipeline "$preview_pipeline" --argjson aq "$ACCOUNT_QUOTAS" \
+    --slurpfile workers "$preview_dir/workers" --slurpfile pipeline "$preview_dir/pipeline" --argjson aq "$ACCOUNT_QUOTAS" \
     --argjson demand "$WEEKLY_DEMAND" --argjson guard "$FIVE_HOUR_GUARD" --slurpfile rules "$RULES" --slurpfile home "$QUOTA" '
     def code:
       if .weekly_guard or ((.reason // "") | startswith("weekly guard:")) then "weekly_guard"
@@ -1534,7 +1579,7 @@ if [ "$PREVIEW" = true ]; then
       elif .eligible then "best_spend" else "ineligible" end;
     def pick($p): {seat:($p.account // null), harness:$p.harness, model:($p.model // null), effort:($p.effort // null)};
     def measured($seat): ((if $seat == null then $home[0] else $aq[$seat].snapshot end).providers // []) | any(.[]; .quotaSemantics.status == "known") and (all(.[]; .reusedReading == null));
-    ($rules[0]) as $cfg |
+    ($rules[0]) as $cfg | $workers[0] as $workers | $pipeline[0] as $pipeline |
     {schemaVersion:1, at:$at, table:{sha256:$sha},
      guards:{weekly:{maxUsedPercent:($cfg.weekly_guard.max_used_percent // 98), reservePercent:($cfg.weekly_guard.reserve_percent // 2.6), reserveByPlan:($cfg.weekly_guard.reserve_by_plan // {})}, fiveHour:$guard},
      workers:[$workers[] | .id as $id | .chosen as $chosen | . + {
@@ -1678,6 +1723,7 @@ TEXT=$(jq -r '
              else "" end)
         elif .windows then "  windows=\(winstr(.windows))" else "" end)
       + (if .five_hour_open then "  " + (.five_hour_open | map(flat) | join("  ")) else "" end)
+      + (if .surplus != null then "  surplus=\(.surplus) value=\(.value) band=\(if .band then "yes" else "no" end)" else "" end)
       + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))"
           + (if .burst then " burst_debit=\(.burst.debit | flat)pt/\(.burst.starts | flat)start(s) ranks=\(.rank_priority | flat)" else "" end)
           + "  runway=\(show(.runway))" else "" end)

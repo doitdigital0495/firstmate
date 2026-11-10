@@ -824,12 +824,13 @@ task_json_line() {  # <captured-meta> <id>
   local remote_host remote_root current_file endpoint_file observation_line
   local pr pr_source event_json current_json endpoint_exists agent_alive meta_json status_json report_json worktree_json home_json
   local last_event_raw current_state current_source pending_decision blocked_event report_present=0 pr_from_status
-  local open_decisions_tsv open_decisions_json board_fields
+  local open_decisions_tsv open_decisions_json board_fields model
 
   original_meta="$STATE/$id.meta"
   kind=$(meta_value "$meta" kind)
   [ -n "$kind" ] || kind=ship
   harness=$(meta_value "$meta" harness)
+  model=$(meta_value "$meta" model)
   mode=$(meta_value "$meta" mode)
   yolo=$(meta_value "$meta" yolo)
   project=$(meta_value "$meta" project)
@@ -934,6 +935,7 @@ task_json_line() {  # <captured-meta> <id>
     --arg id "$id" \
     --arg kind "$kind" \
     --arg harness "$harness" \
+    --arg model "$model" \
     --arg mode "$mode" \
     --arg yolo "$yolo" \
     --arg branch "$branch" \
@@ -968,6 +970,7 @@ task_json_line() {  # <captured-meta> <id>
       id:$id,
       kind:$kind,
       harness:($harness // ""),
+      model:($model | if . == "" then null else . end),
       mode:($mode // ""),
       yolo:($yolo // ""),
       branch:($branch | if . == "" then null else . end),

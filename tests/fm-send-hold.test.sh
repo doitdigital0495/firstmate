@@ -204,12 +204,12 @@ test_release_closes_and_wrong_id_refuses() {
 
   # A wrong id refuses BEFORE anything is sent.
   local inbox_before
-  inbox_before=$(ls "$home/state/t4.inbox" 2>/dev/null | wc -l | tr -d ' ')
+  inbox_before=$(find "$home/state/t4.inbox" -maxdepth 1 -type f -name '*.msg' | wc -l | tr -d ' ')
   send_err "$err" "$fb" "$home" "$log" t4 --release-hold=0000000000000000 "note"; rc=$?
   [ "$rc" -ne 0 ] || fail "a wrong-id release should refuse"
   assert_contains "$(cat "$err")" "does not match the open hold" \
     "the wrong-id refusal should be explicit"
-  [ "$(ls "$home/state/t4.inbox" 2>/dev/null | wc -l | tr -d ' ')" = "$inbox_before" ] \
+  [ "$(find "$home/state/t4.inbox" -maxdepth 1 -type f -name '*.msg' | wc -l | tr -d ' ')" = "$inbox_before" ] \
     || fail "a refused release still delivered a message"
 
   # The matching release closes the fold.

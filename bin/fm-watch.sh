@@ -131,6 +131,15 @@
 #                          while away only, lanes CI-active, parked at a base
 #                          rebase, or idle on a green PR past their threshold;
 #                          away_long_wait_tick owns the scan and its repeats
+#   check: drive floor: <n> working < <floor> <age>s (threshold <n>s): idle: <task>=<state>[, ...]
+#                          opt-in config/drive-floor busy-lane backstop: fewer
+#                          than the configured floor of lanes actually working
+#                          (bin/fm-crew-state.sh `working`, never parked
+#                          listeners or idle panes) while startable lanes
+#                          exist (parked, blocked, failed or unknown; not a
+#                          declared pause, not terminal done); the wake names
+#                          the floor, the working count and every idle lane;
+#                          drive_floor_tick owns the scan and its repeats
 #   check: process-event result captured: <keys>
 #                          a durably captured process-to-event result is queued
 #                          and has not been surfaced yet; reported once per
@@ -2988,6 +2997,118 @@ EOF
   fm_wake_append check away-long-wait "$AWAY_LONG_WAIT" || return 1
 }
 
+# Drive-floor backstop (docs/configuration.md "Drive floor"): with the floor
+# configured, fewer than that many ACTUALLY WORKING lanes is a defect to
+# explain even when many lanes merely look busy. A lane counts as working only
+# when bin/fm-crew-state.sh reports `working` (busy run-step or pane), so
+# parked page listeners, held items and finished lanes are never counted - the
+# overnight defect this exists for read "14 running" while one lane worked.
+# The alarm fires only while startable work exists: at least one lane parked,
+# blocked, failed or unknown, which a sweep can push forward. A declared
+# external-wait pause is expected idle and terminal done is finished work, so
+# neither keeps an under-driven fleet silent about startable lanes, and neither
+# alone raises the alarm either: a fleet with nothing but pauses and done lanes
+# has nothing to start. The wake names the floor, the working count and every
+# non-working non-paused lane with its state, so the sweep knows what to steer.
+# STATE/.drive-floor keeps <first-seen-below-floor> TAB <last-escalated>; the
+# condition must hold for FM_DRIVE_FLOOR_HOLD_SECS (default 900) before the
+# first wake, then repeats once per PAUSE_RESURFACE_SECS while it stays put.
+# Recovering to the floor, losing the last startable lane, or removing the
+# config drops the row, so the next episode starts fresh. drive_floor_work_exists
+# below is the ONE gate the goal-record task (G5) extends with `fm-goal.sh
+# active`; this tick adds no goal notion of its own.
+DRIVE_FLOOR_SCAN_SECS=${FM_DRIVE_FLOOR_SCAN_SECS:-}
+case "$DRIVE_FLOOR_SCAN_SECS" in ''|*[!0-9]*) DRIVE_FLOOR_SCAN_SECS=300 ;; esac
+# The ONE drive-floor gate for "work exists to drive": returns 0 while a
+# sweep has startable lanes to push forward. The goal-record task (G5)
+# EXTENDS exactly this predicate - `|| fm-goal.sh active` - rather than adding
+# a second gate or a second goal notion, so this tick never invents what a
+# goal is on its own.
+drive_floor_work_exists() {  # <startable-lane-count>
+  [ "${1:-0}" -gt 0 ]
+}
+
+# The alarm itself. One tick inside this watcher loop; no second loop, no
+# special away hand-to-main path (away check rows already reach the
+# supervision branch, bin/fm-branch-prompt.sh), and bin/fm-capacity.sh keeps
+# its own counts.
+drive_floor_tick() {  # [now-epoch], for deterministic clock callers
+  local now=${1:-} hold=${FM_DRIVE_FLOOR_HOLD_SECS:-900}
+  local ledger="$STATE/.drive-floor" scan="$STATE/.drive-floor-scan"
+  local floor='' old='' rows='' since last idle='' idle_list='' reason
+  local old_since old_last f task line state working=0 startable=0 tmp
+  DRIVE_FLOOR=
+  if [ -e "$CONFIG/drive-floor" ] || [ -L "$CONFIG/drive-floor" ]; then
+    [ -f "$CONFIG/drive-floor" ] && [ -r "$CONFIG/drive-floor" ] && [ ! -L "$CONFIG/drive-floor" ] \
+      || { echo 'watcher: drive-floor config is not a readable file' >&2; return 1; }
+    IFS= read -r floor < "$CONFIG/drive-floor" || floor=''
+    case "$floor" in
+      ''|*[!0-9]*|0*) floor=invalid ;;
+      *) [ "${#floor}" -le 9 ] || floor=invalid ;;
+    esac
+    case "$hold" in
+      ''|*[!0-9]*) floor=invalid ;;
+      *) [ "${#hold}" -le 9 ] || floor=invalid ;;
+    esac
+    [ "$floor" != invalid ] || { echo 'watcher: invalid drive-floor settings' >&2; return 1; }
+  else
+    rm -f -- "$ledger" "$scan"
+    return 0
+  fi
+  [ -n "$now" ] || fm_epoch_seconds_to now
+  if [ -f "$scan" ]; then
+    last=$(cat "$scan" 2>/dev/null) || last=
+    case "$last" in ''|*[!0-9]*) last=0 ;; esac
+    [ "$now" -lt "$last" ] || [ "$((now - last))" -ge "$DRIVE_FLOOR_SCAN_SECS" ] || return 0
+  fi
+  printf '%s\n' "$now" > "$scan" || return 1
+  if [ -e "$ledger" ] || [ -L "$ledger" ]; then
+    [ -f "$ledger" ] && [ -r "$ledger" ] && [ ! -L "$ledger" ] || return 1
+    old=$(cat "$ledger") || return 1
+  fi
+  since=$now; last=0
+  while IFS=$'\t' read -r old_since old_last; do
+    case "$old_since:$old_last" in *[!0-9:]*|:*) continue ;; esac
+    [ "${#old_since}" -le 12 ] && [ "${#old_last}" -le 12 ] || continue
+    since=$((10#$old_since)); last=$((10#${old_last:-0}))
+    break
+  done <<EOF
+$old
+EOF
+  for f in "$STATE"/*.meta; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    grep -qx 'kind=secondmate' "$f" 2>/dev/null && continue
+    task=${f##*/}; task=${task%.meta}
+    line=$(FM_CREW_STATE_NO_FORGE=1 "$FM_CREW_STATE_BIN" "$task" 2>/dev/null) || true
+    case "$line" in state:*) ;; *) line='state: unknown · source: none · no verdict' ;; esac
+    state=${line#state: }; state=${state%% *}
+    case "$state" in
+      working) working=$((working + 1)) ;;
+      paused) ;;
+      *)
+        idle="$idle$task=$state"$'\n'
+        case "$state" in done) ;; *) startable=$((startable + 1)) ;; esac
+        ;;
+    esac
+  done
+  if [ "$working" -lt "$floor" ] && drive_floor_work_exists "$startable"; then
+    if [ "$now" -ge "$since" ] && [ "$((now - since))" -ge "$hold" ] \
+      && { [ "$last" -eq 0 ] || [ "$((now - last))" -ge "$PAUSE_RESURFACE_SECS" ]; }; then
+      idle_list=$(printf '%s' "$idle" | LC_ALL=C sort | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')
+      reason="check: drive floor: $working working < $floor $((now - since))s (threshold ${hold}s): idle: $idle_list"
+      fm_wake_append check drive-floor "$reason" || return 1
+      last=$now
+      DRIVE_FLOOR=$reason
+    fi
+    rows="$since"$'\t'"$last"$'\n'
+  fi
+  tmp=$(mktemp "$STATE/.drive-floor.XXXXXX") || return 1
+  if ! printf '%s' "$rows" > "$tmp" || ! mv -f "$tmp" "$ledger"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
 # The identity a re-surface throttle is bound to: the task's whole status-log
 # signature. Any new status event - a replacement wait, a fresh delivery, a
 # blocker - changes it and so starts its own window instead of inheriting the
@@ -4191,6 +4312,12 @@ while :; do
     exit 1
   }
   [ -z "$AWAY_LONG_WAIT" ] || wake "$AWAY_LONG_WAIT"
+
+  drive_floor_tick || {
+    echo 'watcher: drive-floor check failed' >&2
+    exit 1
+  }
+  [ -z "$DRIVE_FLOOR" ] || wake "$DRIVE_FLOOR"
 
   # Endpoint liveness runs before queue observation: a positively dead or
   # missing secondmate endpoint is relaunched here on a bounded cadence, which

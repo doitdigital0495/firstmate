@@ -208,7 +208,7 @@ CHANGED_DEFAULT_TIMEOUT_SECS=1500
 
 # How many separate-runner shards the portable serial remainder splits into.
 # One owner: CI lane names carry this count and are refused when they disagree.
-PORTABLE_SERIAL_SHARDS=11
+PORTABLE_SERIAL_SHARDS=13
 
 # Conservative balance hint for a portable-serial script with no measurement.
 # Rounded above the current CI mean, including the capability-skipped scripts.
@@ -329,6 +329,7 @@ family_for_basename() {
     fm-wake-queue.test.sh|fm-watch-arm.test.sh|fm-watch-checkpoint.test.sh|fm-watch-recovery-loop.test.sh|\
     fm-codex-stop-park.test.sh|\
     fm-watch-inbox-meta.test.sh|fm-watch-open-decisions.test.sh|fm-watch-away-long-waits.test.sh|\
+    fm-watch-drive-floor.test.sh|\
     fm-watch-triage.test.sh|fm-watch-triage-pause.test.sh|\
     fm-watch-triage-wedge-defer.test.sh|fm-task-inbox.test.sh|\
     fm-watcher-lock.test.sh|fm-inactive-reconcile.test.sh|fm-watch-wedge-cap.test.sh|\
@@ -426,7 +427,7 @@ family_for_basename() {
     fm-review-diff.test.sh|fm-teardown.test.sh|fm-x-mode.test.sh)
       printf '%s\n' pr-forge
       ;;
-    fm-afk-contract.test.sh|fm-afk-inject-e2e.test.sh|fm-afk-return.test.sh|\
+    fm-goal.test.sh|fm-afk-contract.test.sh|fm-afk-inject-e2e.test.sh|fm-afk-return.test.sh|\
     fm-supervision-host.test.sh|fm-supervision-host-drain.test.sh|\
     fm-supervision-host-hook.test.sh|fm-supervision-host-park.test.sh|\
     fm-host-mirror.test.sh)
@@ -743,6 +744,7 @@ list_portable_serial() {
 portable_serial_weight_hints() {
   cat <<'EOF'
 tests/fm-account-seat.test.sh 30000
+tests/fm-goal.test.sh 20000
 tests/fm-afk-contract.test.sh 15645
 tests/fm-afk-inject-e2e.test.sh 41958
 tests/fm-afk-pi-herdr-return-e2e.test.sh 117
@@ -958,7 +960,7 @@ tests/fm-send-inbox-doorbell-live-e2e.test.sh 118
 tests/fm-send-inbox.test.sh 41713
 tests/fm-send-kiro-confirm.test.sh 2096
 tests/fm-send-remote-delivery.test.sh 31964
-tests/fm-send-hold.test.sh 24407
+tests/fm-send-hold.test.sh 24675
 tests/fm-send-resolve-key.test.sh 47317
 tests/fm-send-secondmate-marker-herdr-e2e.test.sh 80
 tests/fm-send-secondmate-marker.test.sh 7574
@@ -1027,7 +1029,7 @@ tests/fm-warm-compact.test.sh 1500
 tests/fm-watch-arm.test.sh 113076
 tests/fm-watch-checkpoint.test.sh 11234
 tests/fm-watch-inbox-meta.test.sh 283
-tests/fm-watch-imposed-holds.test.sh 2184
+tests/fm-watch-imposed-holds.test.sh 3352
 tests/fm-watch-open-decisions.test.sh 11821
 tests/fm-watch-recovery-loop.test.sh 59092
 tests/fm-watch-triage-pause.test.sh 466750

@@ -101,10 +101,11 @@ test_fold_newest_close_supersede() {
   if status_open_imposed_hold "$f"; then
     fail "no imposed line yet, fold reported an open hold"
   fi
-  : > "$f"
-  printf 'paused [hold=firstmate] [at=1000] [key=imposed-hold-%s]: imposed-hold-%s: hold until %s\n' "$ID" "$ID" "$UNTIL" >> "$f"
-  printf 'working [at=1100]: target kept busy on other work\n' >> "$f"
-  printf 'blocked [at=1150] [key=other]: unrelated key\n' >> "$f"
+  {
+    printf 'paused [hold=firstmate] [at=1000] [key=imposed-hold-%s]: imposed-hold-%s: hold until %s\n' "$ID" "$ID" "$UNTIL"
+    printf 'working [at=1100]: target kept busy on other work\n'
+    printf 'blocked [at=1150] [key=other]: unrelated key\n'
+  } > "$f"
   row=$(status_open_imposed_hold "$f") || fail "fold lost an open hold behind later lines"
   [ "$(printf '%s' "$row" | cut -f1)" = "$ID" ] || fail "fold returned the wrong id: $row"
   [ "$(printf '%s' "$row" | cut -f2)" = 1000 ] || fail "fold lost the stamped at-epoch: $row"

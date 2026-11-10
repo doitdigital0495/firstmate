@@ -580,6 +580,7 @@ A leftover `state/.afk` flag declines nothing.
   Supervision continuity is the safety property, and the return brief's health section reads any gap.
 - The wake message ends with a fixed `POSTURE: AWAY` tail plus the record's read-back verbatim (`bin/fm-afk-contract.sh readback`).
   The branch therefore has the captain's away words, the spend cap, the expected return, and the reach line in front of it at execution time, without any prefix change.
+  When the record names drive goals (`drive goals:` in its read-back), the drain's GOAL section is their live state and each open item's next step is named by reference: the branch drives the startable ones through the same guarded scripts, never past the never-set.
 - Captain-verdict outcomes accumulate unprocessed in the outcome store.
   Their visible entries still persist, but no processing turn opens on the parked main.
   The request is re-checked against the record immediately before it would open and at every run boundary, so a request pending when the record appears is cancelled rather than delivered.
@@ -626,7 +627,7 @@ Being away changes how the captain is informed and what happens at a captain-own
 `tests/fm-branch-supervision.test.sh`, `tests/fm-pr-merge.test.sh`, and `tests/fm-send-resolve-key.test.sh` pin this invariant.
 It sets these limits:
 
-- The never-set (credential entry, legal or financial acceptance, an attended prompt, an unnamed discard, a security-sensitive action) has no guarded entrypoint that accepts away authority for either actor.
+- The never-set (credential entry, legal or financial acceptance, an attended prompt, an unnamed discard, a spend without the captain's explicit per-item consent) has no guarded entrypoint that accepts away authority for either actor; a destructive or security-sensitive step instead requires a written analysis, recorded before the action, showing nothing crucial breaks, and anything shared by other lanes, unpushed or unmerged work, credentials, and production data is always crucial and stays refused.
 - A forced teardown stays refused for the branch.
 - A red merge is refused in this posture whatever the words say.
 - No relocation survives the return, because an archived record validates as absent and the words die with it.

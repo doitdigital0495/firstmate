@@ -534,6 +534,43 @@ EOF
   [ "$shown" -gt 0 ] || return 0
 }
 
+# Timed-view epochs for every task the listing fold scans: "<task> TAB <key>
+# TAB <opened-epoch-or-unknown>", one row per still-open keyed decision, from
+# the same fold's timed view (status_open_decisions_incremental ... timed; its
+# own cursor, cursor-backed and byte-bounded like the listing itself). Ages
+# only annotate the OPEN DECISIONS group tails and stale counts: a row whose
+# epoch is unknown is never counted stale. Folded BEFORE the listing scan so
+# the read-probe's last entry per drain stays the listing fold itself
+# (fm-classify-lib.sh's FM_OPEN_DECISIONS_READ_PROBE).
+decision_opened_epochs() {  # <state> [<snapshot>]
+  local state=$1 snapshot=${2:-} f task endpoint ident timed key verb opened note
+  [ -n "$snapshot" ] || snapshot=$(status_presentation_snapshot "$state") || return 1
+  while IFS=$(printf '\t') read -r task endpoint ident; do
+    [ -n "$task" ] || continue
+    f="$state/$task.status"
+    timed=$(status_open_decisions_incremental "$f" "$endpoint" timed) || return 1
+    while IFS=$(printf '\t') read -r key verb opened note; do
+      [ -n "$key" ] || continue
+      printf '%s\t%s\t%s\n' "$task" "$key" "$opened"
+    done <<EOF
+$timed
+EOF
+  done <<EOF
+$snapshot
+EOF
+  return 0
+}
+
+# <seconds> -> compact age label: 12m, 5h, 1d. Used for the OPEN DECISIONS
+# group tails and stale counts, whose ages are advisory annotations; exact
+# per-second precision is not wanted on a wake line.
+decision_age_label() {  # <seconds>
+  local s=$1
+  if [ "$s" -ge 86400 ]; then printf '%dd' $(( s / 86400 ))
+  elif [ "$s" -ge 3600 ]; then printf '%dh' $(( s / 3600 ))
+  else printf '%dm' $(( s / 60 )); fi
+}
+
 # Print the consolidated OPEN DECISIONS section: every still-open
 # needs-decision/blocked, fleet-wide, folded from the durable status logs by
 # fm-classify-lib.sh's status_open_decisions fold (via its cursor-backed
@@ -547,11 +584,43 @@ EOF
 # appended to each task's status log since the LAST drain, not that log's whole
 # lifetime, while still never dropping an old buried decision (see
 # fm-classify-lib.sh's "incremental (cursor-backed) open-decisions fold").
+#
+# One secondmate asking in a loop used to flood this section with hundreds of
+# near-identical rows until the byte cap buried every other task's ask, so the
+# listing is GROUPED BY TASK with a priority cap: crew needs-decision and
+# secondmate captain-hold escalations first, then crew blocked rows, with
+# secondmate-internal rows last. Budget is allocated in that strict order
+# before grouping, so lower-priority rows cannot displace a captain ask.
+# If captain asks alone exceed a cap, their omitted count is explicit.
+# Each task lists at most FM_WAKE_DRAIN_DECISION_TASK_LINES (default 3) full
+# rows per priority, with a group header
+# naming its open count, oldest age, and stale count; a row whose [at=<epoch>]
+# stamp is known (same fold's timed view, cursor-backed like the listing) is
+# stale once older than FM_WAKE_DRAIN_DECISION_STALE_SECS (default 86400), and
+# the section footer states how many open rows are stale. An unknown stamp is
+# never treated as stale. This is presentation only: no durable decision or
+# status line is closed, dropped, or rewritten here.
+#
 # Bounded and silent: prints nothing when no decision is open, which is the
 # common case.
 print_open_decisions_section() {
   local snapshot=${1:-} open task key verb note line item_bytes=220 global_bytes=4000
-  local output='' used=0 shown=0 omitted=0 bytes quiet quieted=0
+  local output='' used=0 shown=0 omitted=0 bytes quiet quieted=0 omitted_asks=0
+  local LC_ALL=C
+  export LC_ALL
+  local rows='' tasks='' sm_tasks='' epochs ranked ordered selected='' listed_tasks=' '
+  local stale_secs per_task now stale=0 total=0
+  local rank sort_opened opened take count=0 cost last_group=''
+
+  # Presentation knobs: an invalid value falls back to its default rather than
+  # failing the wake, which only ever presents more information.
+  stale_secs=${FM_WAKE_DRAIN_DECISION_STALE_SECS:-86400}
+  case "$stale_secs" in '' | *[!0-9]*) stale_secs=86400 ;; esac
+  per_task=${FM_WAKE_DRAIN_DECISION_TASK_LINES:-3}
+  case "$per_task" in '' | *[!0-9]*) per_task=3 ;; esac
+  [ "$per_task" -ge 1 ] || per_task=3
+  now=$(date +%s) || now=0
+  epochs=$(decision_opened_epochs "$STATE" "$snapshot") || return 1
 
   if [ -n "$snapshot" ]; then
     open=$(scan_open_decisions_snapshot "$STATE" "$snapshot") || return 1
@@ -561,52 +630,122 @@ print_open_decisions_section() {
   [ -n "$open" ] || return 0
   quiet=$(open_decisions_quiet_relays "$STATE" "$open")
 
+  # Drop the quiet relays first: a quiet relay (bin/fm-bridge.sh header, QUIET
+  # RELAYS) is a secondmate's copy of a captain hold the Bridge already shows;
+  # it is counted below, never listed.
   while IFS=$(printf '\t') read -r task key verb note; do
     [ -n "$task" ] || continue
-    # A quiet relay (bin/fm-bridge.sh header, QUIET RELAYS) is a secondmate's
-    # copy of a captain hold the Bridge already shows; it is counted, not listed.
     if [ "$verb" = needs-decision ] && [ -n "$quiet" ]; then
       case $'\n'"$quiet"$'\n' in
         *$'\n'"$task"$'\t'"$key"$'\n'*) quieted=$((quieted + 1)); continue ;;
       esac
     fi
-    # State the folded key on EVERY entry, "default" included. This section's
-    # own hint asks the operator to pass that key to fm-send, and the note is
-    # unedited worker prose that may itself carry a "[key=...]" token the key
-    # grammar reads as prose rather than a stated key. Suppressing the key for
-    # "default" left exactly one bracket token visible on such a line - the one
-    # that is NOT the key - so the listing read as naming a key it had not
-    # folded, and the advised command then refused. An entry must always carry
-    # the token that closes it.
-    line="$task [key=$key] $verb: $note"
-    # The shared cut counts the item's own characters; the trailing newline this
-    # section's global budget also pays for is this caller's, so the per-item
-    # allowance passed down is one short of the cap.
-    fm_cap_line_var "$line" $((item_bytes - 1))
-    line=$FM_LINE_CAP_LINE
-    bytes=$(( ${#line} + 1 ))
-    if [ $((used + bytes)) -gt "$global_bytes" ]; then
-      omitted=$((omitted + 1))
-      continue
-    fi
-    output="$output$line
-"
-    used=$((used + bytes))
-    shown=$((shown + 1))
+    note=${note//$'\t'/ }
+    rows="${rows:+$rows$'\n'}$task"$'\t'"$key"$'\t'"$verb"$'\t'"$note"
+    case " $tasks " in *" $task "*) ;; *) tasks="$tasks $task" ;; esac
   done <<EOF
 $open
 EOF
+  # Quiet relays alone print nothing: a section here is reconciliation input.
+  [ -n "$rows" ] || return 0
+
+  # Secondmate homes ask through the captain's own channels, so their asks rank
+  # behind the crew's direct ones. The kind lives in the task's meta record.
+  for task in $tasks; do
+    [ "$(_fm_status_kind "$STATE/$task.status")" = secondmate ] && sm_tasks="$sm_tasks $task"
+  done
+
+  # Allocate the budget in strict row-priority order BEFORE grouping. A task
+  # with one captain ask must not pull its internal rows ahead of other asks.
+  ranked=$(awk -F'\t' -v sm=" $sm_tasks " -v OFS='\t' '
+    NR == FNR { ep[$1 SUBSEP $2] = $3; next }
+    {
+      smt = (index(sm, " " $1 " ") > 0) ? 1 : 0
+      captain = ($2 ~ /^captain-hold-/)
+      rank = ($3 == "needs-decision" && (!smt || captain)) ? 0 : (smt ? 2 : 1)
+      o = ep[$1 SUBSEP $2]
+      if (o !~ /^[0-9]+$/) o = "unknown"
+      os = (o == "unknown") ? "999999999999" : o
+      # `unknown` keeps every interior field non-empty: the walk below reads
+      # tab-separated fields with IFS=<tab>, which collapses an empty field.
+      print $1, rank, os, $2, $3, o, $4
+    }' <(printf '%s\n' "$epochs") <(printf '%s\n' "$rows"))
+  ordered=$(printf '%s\n' "$ranked" | LC_ALL=C sort -t"$(printf '\t')" -k2,2n -k1,1 -k3,3n -k4,4)
+  # A task gets at most per_task rows at each priority; low-priority rows never
+  # consume its allowance for captain asks. Reserve a full capped header when
+  # first listing a task, so grouping cannot push the body over its byte cap.
+
+  while IFS=$(printf '\t') read -r task rank sort_opened key verb opened note; do
+    [ -n "$task" ] || continue
+    total=$((total + 1))
+    case "$opened" in
+      '' | *[!0-9]*) ;;
+      *) [ $((now - opened)) -lt "$stale_secs" ] || stale=$((stale + 1)) ;;
+    esac
+    # Always state the folded key, even default: bracket tokens in worker prose
+    # are not necessarily keys. Keep the shared truncation marker and lede.
+    line="$task [key=$key] $verb: $note"
+    fm_cap_line_var "$line" $((item_bytes - 1))
+    line=$FM_LINE_CAP_LINE
+    bytes=$(( ${#line} + 1 ))
+    if [ "$last_group" != "$task/$rank" ]; then count=0; last_group="$task/$rank"; fi
+    cost=$bytes
+    case "$listed_tasks" in *" $task "*) ;; *) cost=$((cost + item_bytes)) ;; esac
+    take=0
+    if [ "$count" -lt "$per_task" ] && [ $((used + cost)) -le "$global_bytes" ]; then
+      take=1 count=$((count + 1))
+      used=$((used + cost)) shown=$((shown + 1))
+      listed_tasks="$listed_tasks$task "
+    else
+      omitted=$((omitted + 1))
+      [ "$rank" -ne 0 ] || omitted_asks=$((omitted_asks + 1))
+    fi
+    selected="${selected:+$selected$'\n'}$task"$'\t'"$rank"$'\t'"$opened"$'\t'"$take"$'\t'"$line"
+  done <<EOF
+$ordered
+EOF
+  # Group only after selection, preserving first-selected (highest priority)
+  # task order. Counts/ages include every open row, including unlisted ones.
+  output=$(printf '%s\n' "$selected" | awk -F'\t' -v now="$now" -v threshold="$stale_secs" '
+    function age(s) {
+      if (s >= 86400) return int(s/86400) "d"
+      if (s >= 3600) return int(s/3600) "h"
+      return int(s/60) "m"
+    }
+    {
+      t=$1; n[t]++
+      if ($3 ~ /^[0-9]+$/) {
+        a=now-$3; known[t]=1
+        if (a>oldest[t]) oldest[t]=a
+        if (a>=threshold) stale[t]++
+      }
+      if ($4 == 1) {
+        if (!listed[t]++) order[++nt]=t
+        body[t]=body[t] $5 "\n"
+      }
+    }
+    END {
+      for (i=1; i<=nt; i++) {
+        t=order[i]
+        header=t ": " n[t] " open, " listed[t] " listed, "
+        header=header (known[t] ? "oldest " age(oldest[t]) : "age unknown") ", " (stale[t]+0) " stale"
+        if (length(header)>219) header=substr(header,1,207) " [truncated]"
+        print header
+        printf "%s", body[t]
+      }
+    }')
 
   # Quiet relays alone print nothing: a section here is reconciliation input.
   [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ] || return 0
-  printf 'OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):\n' || return 1
-  printf '%s' "$output" || return 1
+  printf 'OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line; grouped by task, asks before obstacles):\n' || return 1
+  [ -z "$output" ] || printf '%s\n' "$output" || return 1
   if [ "$omitted" -gt 0 ]; then
-    printf 'OPEN DECISIONS: %d more omitted (byte cap)\n' "$omitted" || return 1
+    printf 'OPEN DECISIONS: %d more not listed (%d captain asks; priority/task/byte cap); inspect state/<task>.status for every key\n' "$omitted" "$omitted_asks" || return 1
   fi
   if [ "$quieted" -gt 0 ]; then
     printf 'OPEN DECISIONS: %d relayed captain holds not listed: the Bridge shows each on its secondmate card (bin/fm-bridge.sh digest)\n' "$quieted" || return 1
   fi
+  printf 'OPEN DECISIONS: %d of %d stale (at least %s); durable records unchanged\n' "$stale" "$total" "$(decision_age_label "$stale_secs")" || return 1
   # Answerer-closes hint, printed at exactly the moment an answer gets written:
   # the send that answers a listed decision also closes it, so closure never
   # depends on the busy worker writing a matching resolved line (contract:

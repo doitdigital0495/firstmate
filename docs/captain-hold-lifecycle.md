@@ -49,18 +49,23 @@ It never reads report bodies, review artifacts, terminal output, or chat.
 The `hold` subcommand is the mandatory captain-hold creation path.
 It works in this order:
 
-1. It uses an existing task, or creates one when nothing exists to hold.
+1. It validates the category and reason before creating or holding a task, then uses an existing task or creates one when nothing exists to hold.
+   `bin/fm-captain-hold.sh --help` owns the accepted categories and ASK LESS refusal.
 2. It records the task's UTC hold-set timestamp as the leading line of the task body.
 3. It invokes the underlying tasks-axi hold operation.
 4. It verifies the captain-hold annotations and timestamp.
 5. In a secondmate home, it publishes the verified hold to the parent channel.
-6. When `--origin` is supplied, it records the origin on the task, replacing any previous association only after the backend hold succeeds.
+6. It records the declared category on a `Captain hold category:` body line, preserving the structured context immediately below the timestamp.
+7. When `--origin` is supplied, it records the origin on the task, replacing any previous association only after the backend hold succeeds.
 
 Publishing the stamp first ensures a snapshot cannot observe a newly captain-held task without the timestamp that defines its age.
 
 Repeat and edge cases:
 
-- Retries of an active hold preserve its hold-set timestamp.
+- Retries of an active hold preserve its hold-set timestamp and recorded category when none is supplied.
+  Active legacy holds with a missing or unknown stored category remain usable and warn on re-hold rather than requiring migration.
+  Answering, listing and resolving legacy holds do not require a category.
+  A released task needs a valid declared category to start another lifecycle.
 - Re-holding released work starts a new timestamped lifecycle.
 - A closed task is refused rather than reopened.
 - `--until` stores the captain's own deferral date through tasks-axi's date gate.

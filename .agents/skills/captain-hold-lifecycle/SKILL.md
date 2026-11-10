@@ -23,7 +23,9 @@ Put the question and its options in the hold reason, and keep one held task per 
 Give every captain hold a structured question context through `--context-file`; a hold carrying only a reason reaches the captain as a card he cannot place.
 Write that context for a manager who did not build the work and must understand the card at once: say in plain words what it is about, what answering it unlocks and what waits while it stays unanswered, and what each option leads to, with no jargon and no task id, branch, path or other internal name; `bin/fm-captain-hold.sh --help` owns the fields and refuses a context without them.
 When the live board marks an active call "Needs a plain-language explanation", backfill it before relaying the call: re-hold the same task id with a context file that adds the missing about, purpose and option detail and changes nothing else, which keeps the call's lifecycle.
-Register or re-hold through `bin/fm-captain-hold.sh hold`, which is idempotent per task id.
+Register or re-hold through `bin/fm-captain-hold.sh hold`, which is idempotent per task id and requires a captain-owned category and a reason for every new lifecycle; its `--help` owns the categories and legacy compatibility.
+Apply ASK LESS (`data/captain-shared.md`): choose and report reversible in-plan steps and ordinary read-only checks instead of parking them for the captain, unless a genuine captain-owned gate applies.
+Route captain-facing calls through the owning board and parent channel, never only to a secondmate's pane.
 Once a worker's only remaining step is that recorded captain decision, exit its session with `bin/fm-control.sh <id> exit`, which keeps its worktree and unlanded work, and relaunch it when the answer lands; never keep an idle worker running just to wait.
 After inventorying the whole report and review surface, firstmate runs `bin/fm-captain-hold.sh complete` with every captain-held task id, or with `--none` when nothing waits on the captain.
 A scout may attest its own empty inventory only through the narrow command exception in its generated brief's Definition of done.

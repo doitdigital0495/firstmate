@@ -11,6 +11,7 @@
 #   id <origin> <key>                      -> prints the legacy <origin>-decision-<key> identity
 #   hold <origin> <key> --title --reason [--repo]
 #                                          -> hold <origin>-decision-<key> --origin <origin> ...
+#                                             Fresh holds require --category just like the canonical entry.
 #   complete <origin> (--none | <key>...)  -> complete <origin> (--none | <origin>-decision-<key>...)
 #   verify <origin>                        -> verify <origin>
 #   resolve <origin> <key> --decision-file <f> --routed-to <id>...

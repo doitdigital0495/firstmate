@@ -35,7 +35,7 @@ fi
 # An optional JSON map keyed by CLAUDE_CONFIG_DIR lets a test give separate
 # accounts separate snapshots; every other read uses $QUOTA_FIXTURE.
 if [ -n "${QUOTA_FIXTURE_MAP:-}" ]; then
-  mapped=$(printf '%s' "$QUOTA_FIXTURE_MAP" | jq -r --arg k "${CLAUDE_CONFIG_DIR:-}" '.[$k] // empty' 2>/dev/null) || mapped=''
+  mapped=$(printf '%s' "$QUOTA_FIXTURE_MAP" | jq -r --arg c "${CLAUDE_CONFIG_DIR:-}" --arg x "${CODEX_HOME:-}" --arg p "${PI_CODING_AGENT_DIR:-}" '.[$c] // .[$x] // .[$p] // empty' 2>/dev/null) || mapped=''
   if [ -n "$mapped" ] && [ -r "$mapped" ]; then
     cat "$mapped"
     exit 0
@@ -815,4 +815,125 @@ assert_contains "$out" 'receipt: dispatch-' 'unknown worker writes a launch rece
 assert_equals 1 "$(< "$HOME_DIR/state/dispatch-tie-round-robin")" 'a real unknown worker start advances rotation'
 assert_contains "$out" 'tie_break: quota unknown; round-robin slot 1 of 2' 'real unknown start logs the slot'
 pass 'preview --json proves all-unknown worker and default rotation is provider-neutral, order-independent and read-only; real starts advance'
+# Phase-1 ranking and the independent fixed-step router, using only fixture
+# snapshots and private account stores. No live config or credentials are read.
+export FM_DISPATCH_NOW_EPOCH=1893456000 FM_DISPATCH_QUOTA_ATTEMPTS=1
+unset QUOTA_FIXTURE_MAP
+rm -rf "$HOME_DIR/state/quota-last-good"
+cp "$TMP_ROOT/preview-quota" "$QUOTA"
+jq -n --arg root "$TMP_ROOT" '{crossAccount:{enabled:true},accounts:{claude1:{claude:($root+"/claude1-seat")},claude2:{claude:($root+"/claude2-seat")},codex1:{codex:($root+"/codex1-seat"),pi:($root+"/codex1-pi")},codex2:{codex:($root+"/codex2-seat"),pi:($root+"/codex2-pi")},glm:{pi:($root+"/glm-seat")}}}' > "$HOME_DIR/config/accounts.json"
+for seat in codex1-seat codex2-seat codex2-pi glm-seat; do mkdir -p "$TMP_ROOT/$seat"; done
+rank_quota() { # file provider remaining time-percent score reset
+  jq --arg p "$2" --argjson left "$3" --argjson time "$4" --argjson score "$5" --arg reset "$6" '
+    .providers[0] |= (.provider=$p | .windows[1] |= (.percentRemaining=$left | .resetsAt=$reset | .pace={timeRemainingPercent:$time, reservePercentPoints:($time-$left)}) |
+      .quotaSemantics.effectiveAvailability[0] |= (.effectivePercentRemaining=$left | .selection.spendPriority=$score))' "$QUOTA" > "$1"
+}
+rank_quota "$TMP_ROOT/rank-c1" claude 60 50 1 2030-01-04T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 80 24 9 2030-01-05T00:00:00Z
+rank_quota "$TMP_ROOT/rank-x1" codex 90 10 20 2030-01-04T00:00:00Z
+rank_quota "$TMP_ROOT/rank-x2" codex 80 10 30 2030-01-05T00:00:00Z
+rank_quota "$TMP_ROOT/rank-g" zai 90 10 40 2030-01-04T00:00:00Z
+QUOTA_FIXTURE_MAP=$(jq -cn --arg r "$TMP_ROOT" '{($r+"/claude1-seat"):($r+"/rank-c1"),($r+"/claude2-seat"):($r+"/rank-c2"),($r+"/codex1-seat"):($r+"/rank-x1"),($r+"/codex1-pi"):($r+"/rank-x1"),($r+"/codex2-seat"):($r+"/rank-x2"),($r+"/codex2-pi"):($r+"/rank-x2"),($r+"/glm-seat"):($r+"/rank-g")}')
+export QUOTA_FIXTURE_MAP
+cat > "$RULES" <<'JSON'
+{"rules":[{"when":"Any work","use":[{"harness":"claude","model":"opus","effort":"high","account":"claude1","reasoning_class":5},{"harness":"claude","model":"opus","effort":"high","account":"claude2","reasoning_class":5}]}],"plan_value":{"claude1":200,"claude2":25}}
+JSON
+run preview --json
+expect_code 0 "$code" "default ranking preview: $out"
+assert_equals claude2 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'default keeps spendPriority'
+jq '.ranking={mode:"surplus_value",reset_horizon_hours:12,reset_horizon_min_percent:10}' "$RULES" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$RULES"
+run preview --json
+expect_code 0 "$code" "surplus ranking preview: $out"
+assert_equals claude1 "$(jq -r '.workers[0].pick.seat' <<< "$out")" '10 surplus points at price 200 beats 56 at price 25'
+assert_equals '10 20 false' "$(jq -r '.workers[0].chosen | [.surplus,.value,.band] | map(tostring) | join(" ")' <<< "$out")" 'surplus, value and band are disclosed'
+rank_quota "$TMP_ROOT/rank-c2" claude 80 24 9 2030-01-01T10:00:00Z
+run preview --json
+assert_equals claude2 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'dump band beats higher value'
+rank_quota "$TMP_ROOT/rank-c1" claude 60 50 1 2030-01-01T08:00:00Z
+run preview --json
+assert_equals claude1 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'earliest reset wins within band'
+rank_quota "$TMP_ROOT/rank-c1" claude 60 70 1 2030-01-04T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 80 24 9 2030-01-05T00:00:00Z
+run preview --json
+assert_equals claude2 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'negative surplus loses'
+# A low five-hour headroom changes neither weekly surplus nor value. It remains
+# a start gate, not a scoring window.
+rank_quota "$TMP_ROOT/rank-c1" claude 60 50 1 2030-01-04T00:00:00Z
+jq '.providers[0].windows[0].percentRemaining=25' "$TMP_ROOT/rank-c1" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$TMP_ROOT/rank-c1"
+run preview --json
+assert_equals 20 "$(jq '.workers[0].chosen.value' <<< "$out")" 'five-hour window never enters value'
+# Consecutive real starts use the same fading 2-point debit as legacy mode.
+cp "$RULES" "$TMP_ROOT/pre-burst-rules"
+jq '.plan_value.claude2=200' "$RULES" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$RULES"
+rank_quota "$TMP_ROOT/rank-c2" claude 59 50 9 2030-01-05T00:00:00Z
+export FM_DISPATCH_BURST_WINDOW_SECONDS=1800
+write_response rule_1 0.95 '{"rule_1":0.95,"default":0.05}'
+run "$BRIEF" --task rank-first
+expect_code 0 "$code" "first surplus start: $out"
+assert_contains "$out" 'status: clear' "first start is routed: $out"
+assert_contains "$out" "--account 'claude1'" "first start takes higher surplus: $out"
+run "$BRIEF" --task rank-second
+expect_code 0 "$code" "second surplus start: $out"
+assert_contains "$out" "--account 'claude2'" "second start moves after burst debit: $out"
+assert_contains "$out" 'surplus=8 value=16 band=no' 'debit subtracts weekly points before price multiplication'
+export FM_DISPATCH_BURST_WINDOW_SECONDS=0
+cp "$TMP_ROOT/pre-burst-rules" "$RULES"
+rank_quota "$TMP_ROOT/rank-c2" claude 80 24 9 2030-01-05T00:00:00Z
+# Model-scoped weekly bounds also limit the value.
+jq '.providers[0] |= (.windows += [{id:"opus_week",kind:"weekly",percentRemaining:30,resetsAt:"2030-01-04T00:00:00Z",pace:{timeRemainingPercent:29}}] | .quotaSemantics.effectiveAvailability[0].boundedBy += ["opus_week"])' "$TMP_ROOT/rank-c1" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$TMP_ROOT/rank-c1"
+run preview --json
+assert_equals claude2 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'model weekly minimum limits value'
+# Invalid config and hard policy checks fail before quota/transport.
+cp "$RULES" "$TMP_ROOT/rank-rules"
+for bad in 'del(.plan_value.claude1)' '.ranking.mode="bogus"' '.ranking.reset_horizon_hours=-1' '.rules[0].use[0].effort="max"' '.rules[0].use[0] |= (.model="sonnet" | .effort="max")' '.rules[0].use[0] |= (.model="fable" | .effort="xhigh")' '.rules[0].use[0] |= (.model="fable" | .effort="max")' '.rules[0].use[0] |= (.harness="pi" | .provider="anthropic" | .model="anthropic/claude-opus")'; do
+  jq "$bad" "$TMP_ROOT/rank-rules" > "$RULES"
+  run preview --json
+  expect_code 2 "$code" "unsafe routing config refused: $bad: $out"
+done
+cp "$TMP_ROOT/rank-rules" "$RULES"
+pass 'surplus-value ranking preserves the default, dump order, weekly bounds, and hard policy checks'
+# Load the proposed-config fixture, then prove all eight steps in each tier.
+cp "$ROOT/tests/fixtures/routing-phase1-crew-dispatch.json" "$RULES"
+rank_quota "$TMP_ROOT/rank-c1" claude 60 50 1 2030-01-04T00:00:00Z
+# An unreadable Claude tier must not open GLM for Lavish or a pipeline step.
+cp "$TMP_ROOT/rank-c1" "$TMP_ROOT/rank-c1-known"
+cp "$TMP_ROOT/rank-c2" "$TMP_ROOT/rank-c2-known"
+for seat in c1 c2; do
+  jq '.providers[0] |= (.windows=[] | .quotaSemantics={status:"unknown",effectiveAvailability:[]})' "$TMP_ROOT/rank-$seat" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$TMP_ROOT/rank-$seat"
+done
+run preview --json
+expect_code 0 "$code" "unreadable Claude preview: $out"
+assert_equals claude "$(jq -r '.workers[] | select(.id=="rule_12") | .pick.harness' <<< "$out")" 'Lavish stays on Claude when its quota is unreadable'
+assert_equals true "$(jq '[.noMistakes[] | .tier==1 and .measured==false] | all' <<< "$out")" 'unreadable quota holds pipeline Claude tier'
+cp "$TMP_ROOT/rank-c1-known" "$TMP_ROOT/rank-c1"
+cp "$TMP_ROOT/rank-c2-known" "$TMP_ROOT/rank-c2"
+# Give the union's GLM profile the anchor class so only the ban excludes it.
+jq '(.rules[3].use[] | select(.provider=="zai")).reasoning_class=5' "$RULES" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$RULES"
+write_response rule_14 0.55 "$(jq -c '[(.rules | to_entries[] | {key:("rule_"+((.key+1)|tostring)),value:0})] | from_entries | . + {rule_14:0.55,rule_4:0.4,default:0.05}' "$RULES")"
+run "$BRIEF" --task security-union
+expect_code 0 "$code" "security union: $out"
+assert_contains "$out" 'provider zai is banned for this work (never_providers)' 'security ban survives an ambiguous union'
+cp "$ROOT/tests/fixtures/routing-phase1-crew-dispatch.json" "$RULES"
+for tier in 1 2 3; do
+  if [ "$tier" = 2 ]; then
+    rank_quota "$TMP_ROOT/rank-c1" claude 0 50 1 2030-01-04T00:00:00Z
+    rank_quota "$TMP_ROOT/rank-c2" claude 0 24 9 2030-01-05T00:00:00Z
+  elif [ "$tier" = 3 ]; then
+    rank_quota "$TMP_ROOT/rank-x1" codex 0 10 20 2030-01-04T00:00:00Z
+    rank_quota "$TMP_ROOT/rank-x2" codex 0 10 30 2030-01-05T00:00:00Z
+  fi
+  run preview --json
+  expect_code 0 "$code" "proposed config loads at tier $tier: $out"
+  jq -e . >/dev/null <<< "$out" || fail "proposed preview is not clean JSON: $out"
+  assert_equals 8 "$(jq '.noMistakes | length' <<< "$out")" 'all steps are routed'
+  assert_equals true "$(jq --argjson tier "$tier" '[.noMistakes[] | .tier == $tier] | all' <<< "$out")" "pool order cannot be outbid by surplus, tier $tier: $(jq -c '[.noMistakes[] | {step,tier,reason}]' <<< "$out")"
+  expected='opus:medium opus:medium sonnet:high sonnet:high sonnet:high opus:low sonnet:high sonnet:high'
+  [ "$tier" != 2 ] || expected='gpt-6.1-sol:high gpt-6.1-sol:high gpt-6.1-sol:medium gpt-6.1-sol:medium gpt-6.1-sol:medium gpt-6.1-sol:low gpt-6.1-sol:xhigh gpt-6.1-sol:xhigh'
+  [ "$tier" != 3 ] || expected='zai/glm-5.3:max zai/glm-5.3:max zai/glm-5.3:max zai/glm-5.3:max zai/glm-5.3:max zai/glm-5.3:low zai/glm-5.3:max zai/glm-5.3:max'
+  assert_equals "$expected" "$(jq -r '[.noMistakes[] | .model+":"+.effort] | join(" ")' <<< "$out")" 'every step has its specified model and effort'
+done
+run rows --json
+assert_equals surplus_value "$(jq -r '.ranking.mode' <<< "$out")" 'rows exports configured ranking'
+assert_equals 25 "$(jq '.plan_value.codex2' <<< "$out")" 'rows exports plan prices'
+pass 'proposed config loads and routes all eight no-mistakes steps through Claude, Codex, then GLM'
 echo '# all fm-dispatch-resolve tests passed'
