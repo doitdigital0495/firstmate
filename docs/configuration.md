@@ -1813,7 +1813,7 @@ Firstmate cannot see which part of a worker's life uses the resource, so the num
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
 Jev chooses the best matching natural-language rule through [typed dispatch resolution](#typed-dispatch-resolution-jevd-socket); code applies deterministic quota and eligibility gates.
-The resolver selects the rule's eligible profile by the worker weekly guard, any declared seat tier, the worker five-hour guard, then spendPriority less any recent burst debit; firstmate reviews it under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only the receipted concrete profile flags to `fm-spawn.sh`.
+The resolver selects the rule's eligible profile by the worker weekly guard, any declared seat tier, the worker five-hour guard, then the configured quota ranking (see "Ranking mode" below); firstmate reviews it under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only the receipted concrete profile flags to `fm-spawn.sh`.
 
 **Spawn requirements**
 
@@ -1910,7 +1910,8 @@ Only the lowest tier that still holds a candidate which is not ineligible and no
 Every later tier reads `seat_tier held` and is out of the choice, so its own quota, known or not, never makes the choice incomplete.
 A candidate whose quota is unreadable holds no tier, so a later tier with a readable seat opens instead (see the unreadable rule under "Typed dispatch resolution").
 An eligible but unrankable candidate of the open tier still holds that tier, so the choice goes to the captain rather than selecting around it.
-Inside the open tier the existing rules decide: `fallback_only`, keep-strongest `reasoning_class`, `preferred_provider`, then `spendPriority`, so seats that share a tier still compete on quota.
+Inside the open tier the existing rules decide: `fallback_only`, keep-strongest `reasoning_class`, `preferred_provider`, then the configured ranking mode, so seats that share a tier still compete on quota.
+Optional rule `strict_tiers: true` keeps an unreadable earlier tier closed to later families, using round-robin within it when no seat is rankable; it also applies when that rule participates in an ambiguous union.
 A released `fallback_only` candidate competes in its own tier, so a later tier of another family waits for it, unlike a reserve with no tier.
 An ambiguous union takes its class from the first declared tier of its most probable row, so a stronger fallback seat cannot drop that row's default seat out of the union.
 The optional top-level `"seat_tiers_by_delivery"` maps a delivery mode, read from the brief's `Delivery contract: mode=` line, to `{account: tier}` entries that replace `seat_tier` for those accounts on that delivery.
@@ -1954,6 +1955,31 @@ Resolutions that run at the same moment read the ledger before either writes, so
 `FM_DISPATCH_FIVE_HOUR_WORKDAY_PERCENT` (20), `FM_DISPATCH_FIVE_HOUR_OFFHOURS_PERCENT` (5), `FM_DISPATCH_WORKDAY_TZ` (`Europe/Amsterdam`) and `FM_DISPATCH_WORKDAY_HOURS` (`08-18`) tune the guard.
 `FM_DISPATCH_BURST_COST` (2.0) and `FM_DISPATCH_BURST_WINDOW_SECONDS` (1800, 0 turns the spreader off) tune the spreader, and every provider is debited the same cost.
 
+### Ranking mode
+
+Optional top-level `ranking.mode` accepts `spend_priority` (the default, preserving the existing burst-adjusted ranking) or `surplus_value`.
+The latter requires a positive numeric `plan_value` monthly price for every profile's named account, including pipeline profiles.
+For example:
+
+```json
+"ranking": {"mode": "surplus_value", "reset_horizon_hours": 12, "reset_horizon_min_percent": 10},
+"plan_value": {"claude1": 200, "claude2": 200, "codex1": 100, "codex2": 25, "glm": 80}
+```
+
+After eligibility, seat tiers and reasoning class, seats in the dump band rank first: an applicable weekly window resets within `reset_horizon_hours` (default 12) and has at least `reset_horizon_min_percent` remaining (default 10).
+Within that band the soonest reset wins, then value; outside it the highest value wins.
+Value is `(weekly percentRemaining - burst debit - pace.timeRemainingPercent) * plan_value / 100`, taking the minimum surplus across applicable account-wide and model-scoped weekly windows.
+When only `pace.reservePercentPoints` is available, its negation supplies the pre-debit surplus.
+Missing weekly pace leaves the candidate unranked rather than inventing a score.
+Five-hour windows remain gates, never scoring inputs; the weekly start gate and burst debit cost and decay are unchanged.
+Candidate lines and receipts retain `spendPriority` and add `surplus`, `value`, and `band` evidence.
+Pipeline rows use this mode within their open tier, without worker burst debits.
+`rows --json` exports `ranking`, `plan_value`, and each rule's `strict_tiers` alongside the existing schema-version-1 fields.
+Switching `ranking.mode` back to `spend_priority` restores legacy ranking without migrating receipts or state.
+
+The resolver refuses Claude Opus or Sonnet at `max`, Fable above `high`, and Pi or Pi-signed profiles declaring a Claude/Anthropic provider or an `anthropic/` model.
+These checks apply to worker rules, default profiles and pipeline rows before quota reads.
+
 ### Pipeline seat rows
 
 The optional top-level `pipeline_rows` gives each no-mistakes step a fixed row, and `bin/fm-dispatch-resolve.sh pipeline --step <step>` returns that step's seat from it.
@@ -1974,10 +2000,10 @@ Each row declares these fields, and every one is required unless marked optional
 | Profile `weekly_floor_percent` | Optional. The seat stops once its weekly room left is at or below this percent. |
 
 `fallback_only` is refused in a row, because its reserve test would hold a seat until the earlier seats reach their weekly limit and so skip it when they are only out on a five-hour window.
-Selection uses the same quota evaluation, weekly start guard (including the same committed-demand census), seat tier hold, spendPriority ranking, and tie-break as worker resolution, with two additions.
+Selection uses the same quota evaluation, weekly start guard (including the same committed-demand census), seat tier hold, configured ranking mode, and tie-break as worker resolution, with two additions.
 The weekly floor reads the weekly window itself, because a quota row bounded by both windows would also trip on a low five-hour window.
 Inside the open tier, a seat projected to run out within 90 minutes loses to a seat that lasts to its reset, and a five-hour window with no published reset does not count.
-That runway test never opens a later tier: if every open seat is short, they still compete on spendPriority.
+That runway test never opens a later tier: if every open seat is short, they still compete under the configured ranking mode.
 
 Quota evidence gets at most 30 seconds in total, including the first reads, and `FM_DISPATCH_QUOTA_WAIT_SECONDS` can only shorten that.
 After that, a measured seat of the open tier wins; otherwise the logged round-robin chooses within that tier, independent of declaration order, with `measured` false.
@@ -2296,7 +2322,7 @@ That one diagnostic names the list line number at most and never prints the list
 
 An absent or empty table returns `no rules to match`; a default-only table can route its default.
 An existing unreadable or malformed table, including a broken symlink, is an exit 2 configuration error.
-Everything after the answer runs in code: the confidence floor, the matched rule's `approval`, `min_confidence`, and `floor`, each candidate's `provider`, `quota_scope`, and `floor`, every applicable account-wide and model/product row from the default and authorized named-store `quota-axi --json` snapshots, the optional `preferred_provider` restriction under the [profile-array procedure](../.agents/skills/quota-array-dispatch/SKILL.md#4-rank-by-spendpriority), and the numeric `spendPriority` argmax within that candidate pool using each candidate's limiting row, restricted to the highest declared `reasoning_class` first under the keep-strongest rule below.
+Everything after the answer runs in code: the confidence floor, the matched rule's `approval`, `min_confidence`, and `floor`, each candidate's `provider`, `quota_scope`, and `floor`, every applicable account-wide and model/product row from the default and authorized named-store `quota-axi --json` snapshots, the optional `preferred_provider` restriction under the [profile-array procedure](../.agents/skills/quota-array-dispatch/SKILL.md#4-rank-by-spendpriority), and the configured ranking mode (owned by "Ranking mode" above) within that candidate pool, restricted to the highest declared `reasoning_class` first under the keep-strongest rule below.
 A candidate is rankable only with complete limit information: every window its applicable rows are bounded by - the weekly limit, a session limit where the plan has one, and named model windows - must carry a known remaining percent and reset time.
 A five-hour window counts on every account whenever its remaining percent and published reset are both known: a seat at that limit prints `not eligible: <limit>: at its five-hour limit, held until <reset>` and stays out until that reset (captain 2026-11-05).
 Above that limit, the worker five-hour guard and burst spreader under "Crew dispatch profiles" decide which known seats a new start may take.
@@ -2337,11 +2363,11 @@ When the picked rule declares its own floor but its probability falls below it, 
 2. Print a `fallback:` line naming both floors and resolve that rule as though it had been picked.
 
 No qualifying option, or two equally probable qualifying options, triggers an ambiguous union.
-Code unions rows whose probability is at least 0.25, retains only candidates at the highest numeric `reasoning_class` of the most probable row, then applies eligibility and spendPriority.
+Code unions rows whose probability is at least 0.25, retains only candidates at the highest numeric `reasoning_class` of the most probable row, then applies eligibility and the configured ranking mode.
 Equal row probabilities use table order, with the default row after explicit rules.
 `reasoning_class` is an optional finite JSON number on each candidate, higher meaning stronger; every candidate in an ambiguous union must declare it or routing stops for captain review rather than guessing from names.
-A single matched rule and the default row get the same keep-strongest semantics within the pickable tier (`fallback_only` reserves enter only when no non-fallback candidate is rankable, and only the open seat tier competes): when every eligible candidate declares a numeric `reasoning_class`, only the highest declared class reaches the `spendPriority` argmax, so an unused weaker pool cannot win on quota headroom alone, while candidates at an equal class still compete on `spendPriority`.
-When any eligible candidate lacks a class, ranking stays plain `spendPriority` with no silent guessing.
+A single matched rule and the default row get the same keep-strongest semantics within the pickable tier (`fallback_only` reserves enter only when no non-fallback candidate is rankable, and only the open seat tier competes): when every eligible candidate declares a numeric `reasoning_class`, only the highest declared class reaches quota ranking, so an unused weaker pool cannot win on quota headroom alone, while candidates at an equal class still compete under the configured ranking mode.
+When any eligible candidate lacks a class, ranking uses the configured mode without class filtering or silent guessing.
 The restriction applies after eligibility, so an ineligible strongest-class candidate never blocks a weaker eligible one.
 An approval-gated union stops for the captain, and rule floors are never silently waived.
 
@@ -2351,7 +2377,7 @@ No route is ever guessed and no model is hardcoded as a fallback.
 A missing socket first gets `FM_JEVD_SOCKET_WAIT_SECONDS` (default 15, 0..60) to come back, because jevd's service manager owns its restart; the resolver never starts jevd.
 Jev error, outage, or invalid answer then gets exactly one retry, and a still-failing Jev makes the result a captain pick.
 So does an answer code cannot dispatch: an approval row, nothing rankable, an ambiguous union with a missing class, an unverifiable rule floor, or a row that is not in the table.
-An exact spendPriority tie keeps the candidates whose binding window (the windows bounding the limiting row) resets soonest, then takes the next slot of a fixed round-robin over a stable account, harness, model and effort order kept in `state/dispatch-tie-round-robin`; the result prints a `tie_break:` line naming the tie, the reset and the slot (captain 2026-11-02).
+An exact ranking tie keeps the candidates whose binding window (the windows bounding the limiting row) resets soonest, then takes the next slot of a fixed round-robin over a stable account, harness, model and effort order kept in `state/dispatch-tie-round-robin`; the result prints a `tie_break:` line naming the tie, the reset and the slot (captain 2026-11-02).
 
 A captain pick writes a private request under `state/dispatch-pick/` and launches nothing.
 The request offers every row of the table, Jev's most probable rows first when Jev answered, with each candidate's eligibility, reasons, remaining quota, `spendPriority`, `reasoning_class`, and strongest-class mark computed exactly as for a clear resolution.

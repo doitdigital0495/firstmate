@@ -400,13 +400,13 @@ fm_dr_cmd_rows() {
       def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
       ($t[0] // {}) as $cfg |
       {schemaVersion: 1, table: {path: $path, sha256: $sha}, preferredProvider: ($cfg.preferred_provider // null),
-       sharedQuota: ($cfg.shared_quota // false),
+       sharedQuota: ($cfg.shared_quota // false), ranking: ($cfg.ranking // {mode:"spend_priority"}), plan_value: ($cfg.plan_value // {}),
        guards: {weekly:{maxUsedPercent:($cfg.weekly_guard.max_used_percent // 98), reservePercent:($cfg.weekly_guard.reserve_percent // 2.6), reserveByPlan:($cfg.weekly_guard.reserve_by_plan // {})}, fiveHour:$five},
        pipelineRows: [($cfg.pipeline_rows // [])[] | {label:(.label // null), steps, never_providers, candidates:.use}],
        rows: [$rows[] | .id as $id |
          (if $id == "default" then ($cfg.default // null) else ($cfg.rules[($id | ltrimstr("rule_") | tonumber) - 1]) end) as $raw |
          {id, sha256, when, approval, label: (if $id == "default" then null else ($raw.label // null) end), minConfidence: (if $id == "default" then null else ($raw.min_confidence // null) end),
-          floor: (if $id == "default" then null else ($raw.floor // null) end),
+          floor: (if $id == "default" then null else ($raw.floor // null) end), strict_tiers: (if $id == "default" then false else ($raw.strict_tiers // false) end),
           candidates: [(if $id == "default" then profiles($raw) else profiles($raw.use) end)[] |
             {harness, model: (.model // ""), effort: (.effort // ""), account: (.account // ""), provider: (.provider // ""),
              reasoning_class: (.reasoning_class // null), floor: (.floor // null), quota_scope: (.quota_scope // null),
