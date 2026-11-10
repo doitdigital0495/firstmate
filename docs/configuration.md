@@ -2457,9 +2457,11 @@ A task is due two hours after its done line (`FM_REAP_DONE_SECS`), or, while a L
 | --- | --- |
 | absent | The reaper is off; `bin/fm-reap.sh list` still shows every verdict. |
 | `shadow` | One `check:` wake names the due workers when that set changes; nothing is closed. Run a shadow week before enforcing. |
-| `enforce` | Due workers are torn down in the background through `bin/fm-teardown.sh` without `--force`, and the next check wake names what closed and what was kept. |
+| `enforce` | Due workers are torn down in the background through `bin/fm-teardown.sh` without `--force`; closes and changed keep reasons surface immediately, while unchanged keeps back off. |
 
 Teardown keeps a worker whose work has not landed and retains a backlog item the captain still holds, so enforcing never discards work or a captain call; `bin/fm-reap.sh list` shows every verdict.
+An unchanged kept cleanup reports once, then repeats after an exponentially increasing delay capped at a daily reminder; the cleanup attempt still runs on every check.
+`bin/fm-reap.sh`'s header owns the repeat schedule, tuning and persistent report ledger; `tests/fm-reap.test.sh` covers suppression, changed reasons, capped reminders and closes.
 
 `bin/fm-reap.sh sweep-state` is a separate manual cleanup of stale lock folders and old markers in `state/`, independent of `config/reaper`.
 It is a dry run that prints counts by kind unless given `--apply`, and its header owns what counts as stale.

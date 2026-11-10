@@ -35,6 +35,18 @@
 #   worker is named with teardown's own reason. FM_REAP_TEARDOWN replaces the
 #   teardown command for tests only.
 #
+# Enforce report backoff: a kept worker stays due for as long as its work has
+#   not landed, so `run` rewrites the same `kept` line on every check pass; the
+#   report prints an unchanged kept line once, then again only after an
+#   exponentially growing delay - FM_REAP_REPEAT_BASE_SECS (default 3600)
+#   doubling per repeat, capped at FM_REAP_REPEAT_CAP_SECS (default 86400, the
+#   daily reminder) - and at once when the line changes (a new teardown
+#   reason, or the same worker closed: `closed` lines always print). The run
+#   still happens on every check; only the report backs off. The ledger is
+#   state/.reaper-repeat, one "<cksum> <last-print-epoch> <repeats> <line>" row per
+#   known kept line, pruned to the lines the latest run log still names; any
+#   ledger problem fails open (the line prints).
+#
 # sweep-state considers only the three families below; anything else in state/,
 #   including task records, wake queues, .seen-* dedup records, inboxes and
 #   handled records, teardown and landing protection records, and lock links, is
@@ -71,12 +83,18 @@ BOARD_SECS=${FM_REAP_BOARD_SECS:-86400}
 TEARDOWN=${FM_REAP_TEARDOWN:-$SCRIPT_DIR/fm-teardown.sh}
 SWEEP_LOCK_AGE=${FM_REAP_LOCK_AGE_SECS:-86400}
 SWEEP_MARKER_AGE=${FM_REAP_MARKER_AGE_SECS:-604800}
+REPEAT_BASE=${FM_REAP_REPEAT_BASE_SECS:-3600}
+REPEAT_CAP=${FM_REAP_REPEAT_CAP_SECS:-86400}
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 fail() { printf 'fm-reap: %s\n' "$1" >&2; exit 2; }
 case "$DONE_SECS$BOARD_SECS" in *[!0-9]*) fail 'FM_REAP_DONE_SECS and FM_REAP_BOARD_SECS must be whole seconds' ;; esac
 case "$SWEEP_LOCK_AGE" in '' | *[!0-9]*) fail 'FM_REAP_LOCK_AGE_SECS must be whole seconds' ;; esac
 case "$SWEEP_MARKER_AGE" in '' | *[!0-9]*) fail 'FM_REAP_MARKER_AGE_SECS must be whole seconds' ;; esac
+case "$REPEAT_BASE" in '' | *[!0-9]*) fail 'FM_REAP_REPEAT_BASE_SECS must be whole seconds' ;; esac
+case "$REPEAT_CAP" in '' | *[!0-9]*) fail 'FM_REAP_REPEAT_CAP_SECS must be whole seconds' ;; esac
+[ "$REPEAT_BASE" -ge 1 ] || fail 'FM_REAP_REPEAT_BASE_SECS must be at least 1'
+[ "$REPEAT_CAP" -ge "$REPEAT_BASE" ] || fail 'FM_REAP_REPEAT_CAP_SECS must be at least FM_REAP_REPEAT_BASE_SECS'
 
 mode() {
   local m=off
@@ -166,14 +184,71 @@ cmd_run() {
   done < <(verdicts)
 }
 
+# Filter a settled run log using the enforce-report schedule in the header.
+# Compare the complete line as well as its checksum so collisions cannot hide
+# a changed reason. Invalid state fails open; atomic replacement prevents a
+# partial ledger from being mistaken for a successful report.
+report_repeat_lines() {  # <run-log>
+  local now hash last repeats delay k row newkeep='' allowed='' line ledger rhash rlast rrep rline staged
+  now=$(date +%s) || { command cat -- "$1"; return 0; }
+  ledger=$(command cat "$STATE/.reaper-repeat" 2>/dev/null) || ledger=
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in 'kept '*) ;; *)
+      allowed="${allowed:+$allowed$'\n'}$line"
+      continue
+      ;;
+    esac
+    hash=$(printf '%s' "$line" | cksum)
+    hash=${hash%% *}
+    last=0 repeats=0
+    while IFS=' ' read -r rhash rlast rrep rline; do
+      [ -n "${rhash:-}" ] || continue
+      [ "$rhash" = "$hash" ] && [ "$rline" = "$line" ] || continue
+      case "$rlast" in '' | *[!0-9]* | ???????????*) continue ;; esac
+      case "$rrep" in '' | *[!0-9]* | ??????*) continue ;; esac
+      last=$((10#$rlast)) repeats=$((10#$rrep))
+      break
+    done <<EOF
+$ledger
+EOF
+    row="$hash $last $repeats $line"
+    if [ "$repeats" -eq 0 ] || [ "$now" -lt "$last" ]; then
+      allowed="${allowed:+$allowed$'\n'}$line"
+      row="$hash $now 1 $line"
+    else
+      # next allowed delay: base doubling per prior repeat, capped
+      delay=$REPEAT_BASE k=$((repeats - 1))
+      while [ "$k" -gt 0 ] && [ "$delay" -lt "$REPEAT_CAP" ]; do
+        delay=$((delay * 2)) k=$((k - 1))
+      done
+      [ "$delay" -le "$REPEAT_CAP" ] || delay=$REPEAT_CAP
+      if [ $(( now - last )) -ge "$delay" ]; then
+        allowed="${allowed:+$allowed$'\n'}$line"
+        row="$hash $now $((repeats + 1)) $line"
+      fi
+    fi
+    newkeep="${newkeep:+$newkeep$'\n'}$row"
+  done < "$1"
+  # Best effort: a failed ledger write only means the backoff restarts.
+  if staged=$(umask 077; mktemp "$STATE/.reaper-repeat.XXXXXX"); then
+    if printf '%s\n' "$newkeep" > "$staged" && mv -f -- "$staged" "$STATE/.reaper-repeat"; then :
+    else rm -f -- "$staged"; fi
+  fi
+  printf '%s' "$allowed"
+}
+
 cmd_check() {
-  local due mark="$STATE/.reaper-due" log="$STATE/reaper-run.log" reported="$STATE/.reaper-reported" m
+  local due mark="$STATE/.reaper-due" log="$STATE/reaper-run.log" reported="$STATE/.reaper-reported" m out
   m=$(mode)
   [ "$m" != off ] || return 0
   due=$(verdicts | awk '$2 == "due" { $2 = ""; sub(/  /, " "); print }' | LC_ALL=C sort)
   if [ "$m" = enforce ]; then
     if [ -f "$log" ] && [ "$log" -nt "$reported" ] && [ ! -d "$STATE/.reaper-run.lock" ]; then
-      [ ! -s "$log" ] || printf 'reap: %s\n' "$(paste -sd';' "$log" | sed 's/;/; /g')"
+      if [ -s "$log" ]; then
+        out=$(report_repeat_lines "$log")
+        [ -z "$out" ] || printf 'reap: %s\n' "$(printf '%s\n' "$out" | paste -sd';' | sed 's/;/; /g')"
+      fi
       : > "$reported"
     fi
     if [ -n "$due" ] && [ ! -d "$STATE/.reaper-run.lock" ]; then
