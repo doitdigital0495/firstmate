@@ -179,9 +179,9 @@ test_hold_answer_path() {
   {"value":"postnl","label":"PostNL","detail":"Two-day delivery at today's price, which is why it is recommended."}],
  "recommendation":"postnl"}
 JSON
-  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --reason "Pick a carrier." --context-file "$home/ctx.json" >/dev/null \
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --category captain-only-fact --reason "Pick a carrier." --context-file "$home/ctx.json" >/dev/null \
     || fail "could not hold the carrier question"
-  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-legacy --reason "Which logo, old or new?" >/dev/null \
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-legacy --category captain-only-fact --reason "Which logo, old or new?" >/dev/null \
     || fail "could not hold the legacy question"
   in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
   now=$(date +%s)
@@ -450,7 +450,7 @@ test_alerts_fire_once_per_step() {
   set=$(date -u -d "@$t0" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$t0" +%Y-%m-%dT%H:%M:%SZ)
   tasks_in "$home" add ws-colour "Pick the banner colour" --repo web-shop --kind captain
   in_home "$home" env FM_CAPTAIN_HOLD_NOW="$set" "$ROOT/bin/fm-captain-hold.sh" hold ws-colour \
-    --reason "Secret plan: blue or green banner?" >/dev/null || fail "could not hold the question"
+    --category captain-only-fact --reason "Secret plan: blue or green banner?" >/dev/null || fail "could not hold the question"
 
   # No config: nothing fires and the page says it is the only signal.
   build_at "$home" "$((t0 + 60))"
@@ -485,7 +485,7 @@ test_alerts_fire_once_per_step() {
 
   # A question first seen past a step fires once, not once per step it skipped.
   tasks_in "$home" add ws-font "Pick the heading font" --repo web-shop --kind captain
-  in_home "$home" env FM_CAPTAIN_HOLD_NOW="$set" "$ROOT/bin/fm-captain-hold.sh" hold ws-font --reason "Serif or sans?" >/dev/null \
+  in_home "$home" env FM_CAPTAIN_HOLD_NOW="$set" "$ROOT/bin/fm-captain-hold.sh" hold ws-font --category captain-only-fact --reason "Serif or sans?" >/dev/null \
     || fail "could not hold the second question"
   build_at "$home" "$((t0 + 48 * 3600 + 60))"
   [ "$(alert_count "$home")" = 4 ] || fail "a late-seen question did not fire exactly one alert"
@@ -517,12 +517,12 @@ test_deadline_clock_on_the_card() {
       options:[{value:"order",label:"Order now",detail:"Short and clear, which is why it is recommended."},
                {value:"buy",label:"Add to basket",detail:"Longer."}],
       recommendation:"order",scope:["copy"],default_eligible:"small-reversible",default_at:$at}' > "$home/ctx.json"
-    in_home "$home" env FM_CAPTAIN_HOLD_NOW="$set" "$ROOT/bin/fm-captain-hold.sh" hold "$id" --reason "Pick a label." \
+    in_home "$home" env FM_CAPTAIN_HOLD_NOW="$set" "$ROOT/bin/fm-captain-hold.sh" hold "$id" --category captain-only-fact --reason "Pick a label." \
       --context-file "$home/ctx.json" >/dev/null || fail "could not hold $id with an hour default"
   done
   tasks_in "$home" add ws-out "Tell customers about the sale" --repo web-shop --kind captain
   jq '.scope = ["outward-facing"] | del(.default_eligible, .default_at)' "$home/ctx.json" > "$home/ctx-out.json"
-  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-out --reason "Mail customers?" --context-file "$home/ctx-out.json" >/dev/null \
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-out --category captain-only-fact --reason "Mail customers?" --context-file "$home/ctx-out.json" >/dev/null \
     || fail "could not hold the outward-facing question"
   in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
   ask_soon=$(ask_for "$home" '.task == "ws-soon"')
@@ -575,7 +575,7 @@ test_nudge_and_parked_work() {
   printf 'needs-decision [key=tone] [at=%s]: Formal or casual tone?\n' "$((now - 300))" > "$home/state/w2.status"
   tasks_in "$home" add ws-carrier "Which carrier?" --repo web-shop --kind captain
   tasks_in "$home" add ws-ship "Ship the spring orders" --repo web-shop --kind ship --blocked-by ws-carrier
-  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --reason "Pick a carrier." >/dev/null || fail "could not hold"
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --category captain-only-fact --reason "Pick a carrier." >/dev/null || fail "could not hold"
   in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
   old=$(ask_for "$home" '.route.key == "db"')
   young=$(ask_for "$home" '.route.key == "tone"')
@@ -618,7 +618,7 @@ test_projects_group_and_filter() {
   tasks_in "$home" add ws-carrier "Which carrier?" --repo web-shop --kind captain
   tasks_in "$home" add a-docs "Write the alpha docs" --repo alpha
   tasks_in "$home" add loose "A task with no project"
-  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --reason "Pick a carrier." >/dev/null || fail "could not hold"
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --category captain-only-fact --reason "Pick a carrier." >/dev/null || fail "could not hold"
   in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
   out=$(feed "$home" '.')
   # shellcheck disable=SC2016 # jq variables, not shell ones
