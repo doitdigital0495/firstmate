@@ -215,7 +215,7 @@ last_status_line() {  # <status-file> [<previous-event-var>]
 # 0 when <verb> is exactly one recognized status verb, with no leftover token.
 _fm_status_verb_recognized() {  # <verb>
   case "$1" in
-    working|needs-decision|blocked|done|failed|note|\
+    working|needs-decision|blocked|done|failed|note|goal|\
     "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}"|\
     "${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}"|\
     "${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}")
@@ -290,7 +290,7 @@ _fm_status_event_scan() {
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in *[![:space:]]*) ;; *) continue ;; esac
     status_line_verb "$line" verb
-    [ "$verb" != milestone ] || continue
+    case "$verb" in milestone|goal) continue ;; esac
     fallback=$line
     _fm_status_line_is_event "$line" "$legacy_re" && { prev=$last; last=$line; }
   done
@@ -334,6 +334,7 @@ status_last_meaningful_event() {  # <captured-status-file>
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in *:*) ;; *) continue ;; esac
     status_line_verb "$line" verb
+    [ "$verb" != goal ] || continue
     if [ "$verb" = milestone ]; then
       status_milestone_record "$line" >/dev/null && last=$line
       continue
@@ -398,7 +399,7 @@ status_is_captain_relevant() {
   [ -n "$line" ] || return 1
   status_line_verb "$line" verb
   case "$verb" in
-    working|resolved|captain-held|milestone|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}")
+    working|resolved|captain-held|milestone|goal|"${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}")
       return 1
       ;;
   esac
