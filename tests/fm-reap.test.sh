@@ -60,6 +60,130 @@ out=$(FM_REAP_TEARDOWN="$TMP_ROOT/teardown" "$REAP" check)
 assert_contains "$out" 'reap: closed old' 'enforce reports the background run outcome'
 assert_contains "$out" 'kept scoutdone' 'enforce reports what it kept'
 pass 'enforce closes through teardown in the background and keeps what teardown refuses'
+
+# --- the kept-report backoff ----------------------------------------------
+# An unchanged `kept` line reports once, then again only after an exponentially
+# growing delay (FM_REAP_REPEAT_BASE_SECS doubling per repeat, capped), so a
+# worker kept for days is a daily reminder, not a wake on every check pass. A
+# changed teardown reason is a new line and resurfaces at once; `closed` is a
+# one-time event and always prints. Only the report backs off - every check
+# still starts the run that would surface either change.
+BACKOFF_HOME="$TMP_ROOT/backoff"
+mkdir -p "$BACKOFF_HOME/state" "$BACKOFF_HOME/config" "$BACKOFF_HOME/data"
+export FM_HOME="$BACKOFF_HOME" FM_STATE_OVERRIDE="$BACKOFF_HOME/state" FM_CONFIG_OVERRIDE="$BACKOFF_HOME/config" FM_DATA_OVERRIDE="$BACKOFF_HOME/data"
+printf 'kind=ship\nharness=claude\n' > "$BACKOFF_HOME/state/stuck.meta"
+printf 'done [at=%s]: PR https://example.invalid/9\n' "$((now - 8000))" > "$BACKOFF_HOME/state/stuck.status"
+printf 'enforce\n' > "$BACKOFF_HOME/config/reaper"
+cat > "$TMP_ROOT/teardown2" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  stuck)
+    if [ -e "$FM_STATE_OVERRIDE/stuck.meta.gone" ]; then
+      rm -f "$FM_STATE_OVERRIDE/stuck.meta"
+      printf 'tore down stuck\n'
+      exit 0
+    fi
+    if [ -e "$FM_STATE_OVERRIDE/stuck.meta.new" ]; then
+      printf 'error: CI still failing on the final job\n' >&2
+      exit 1
+    fi
+    printf 'error: refusing - the worktree holds work that has not landed (2 commits)\n' >&2
+    exit 1
+    ;;
+  *) printf 'error: unknown worker\n' >&2; exit 1 ;;
+esac
+SH
+chmod +x "$TMP_ROOT/teardown2"
+rlog="$BACKOFF_HOME/state/reaper-run.log"
+run_done() {
+  for ((i = 0; i < 100; i++)); do
+    [ -s "$rlog" ] && [ ! -d "$BACKOFF_HOME/state/.reaper-run.lock" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+# One reporting check: report what the settled log holds, drain the run that
+# check starts, and re-stamp the log so the next check reads a strictly newer
+# log than the `.reaper-reported` marker it just wrote.
+report_once() {
+  local out
+  out=$(FM_REAP_TEARDOWN="$TMP_ROOT/teardown2" "$REAP" check)
+  run_done || fail "the background reaper run never finished"
+  sleep 1.1
+  touch "$rlog"
+  printf '%s' "$out"
+}
+err=$(FM_REAP_REPEAT_BASE_SECS=abc "$REAP" check 2>&1) && fail 'a bad repeat base must refuse'
+assert_contains "$err" 'FM_REAP_REPEAT_BASE_SECS must be whole seconds' 'the bad repeat base names itself'
+err=$(FM_REAP_REPEAT_CAP_SECS=30 "$REAP" check 2>&1) && fail 'a repeat cap below the base must refuse'
+assert_contains "$err" 'at least FM_REAP_REPEAT_BASE_SECS' 'the inverted repeat cap names itself'
+FM_REAP_TEARDOWN="$TMP_ROOT/teardown2" "$REAP" check > /dev/null
+run_done || fail "the first background run never finished"
+sleep 1.1
+touch "$rlog"
+out=$(report_once)
+assert_contains "$out" 'kept stuck: error: refusing - the worktree holds work that has not landed (2 commits)' 'the first kept report prints'
+sleep 1
+out=$(report_once)
+assert_equals '' "$out" 'an unchanged kept line backs off instead of repeating every check'
+# 2h past a 1h base: the second report is due; the delay doubles after it, so
+# only 1h more is still inside the new 2h delay.
+h=$(printf '%s' "kept stuck: error: refusing - the worktree holds work that has not landed (2 commits)" | cksum | cut -d' ' -f1)
+backdate() {  # <age-seconds>
+  awk -v h="$h" -v b=$(( $(date +%s) - $1 )) '$1 == h { $2 = b } { print }' \
+    "$BACKOFF_HOME/state/.reaper-repeat" > "$BACKOFF_HOME/state/.reaper-repeat.new" && \
+    mv -f "$BACKOFF_HOME/state/.reaper-repeat.new" "$BACKOFF_HOME/state/.reaper-repeat"
+}
+sleep 1
+backdate 7200
+out=$(report_once)
+assert_contains "$out" 'kept stuck: error: refusing' 'a kept line past its base delay reports again'
+sleep 1
+backdate 3600
+out=$(report_once)
+assert_equals '' "$out" 'the repeat delay doubles: 1h past a 2h delay stays silent'
+# High repeat counts cap at one day, rather than growing without bound.
+awk '{ $3 = 20; print }' "$BACKOFF_HOME/state/.reaper-repeat" > "$BACKOFF_HOME/state/repeat.new"
+mv "$BACKOFF_HOME/state/repeat.new" "$BACKOFF_HOME/state/.reaper-repeat"
+backdate 86000
+out=$(report_once)
+assert_equals '' "$out" 'the daily reminder waits until a day has elapsed'
+backdate 86401
+out=$(report_once)
+assert_contains "$out" 'kept stuck: error: refusing' 'the exponential delay caps at a daily reminder'
+# A malformed ledger fails open instead of hiding the cleanup or crashing.
+printf '%s invalid 2 kept stuck: error: refusing - the worktree holds work that has not landed (2 commits)\n' "$h" > "$BACKOFF_HOME/state/.reaper-repeat"
+out=$(report_once)
+assert_contains "$out" 'kept stuck: error: refusing' 'malformed repeat state reports again'
+# A clock rollback cannot suppress reminders until a future ledger time.
+backdate -7200
+out=$(report_once)
+assert_contains "$out" 'kept stuck: error: refusing' 'future repeat state fails open after clock rollback'
+# A changed reason is a new line: it resurfaces at once and the ledger prunes
+# the reason the log no longer names.
+printf 'x\n' > "$BACKOFF_HOME/state/stuck.meta.new"
+FM_REAP_TEARDOWN="$TMP_ROOT/teardown2" "$REAP" check > /dev/null
+run_done || fail "the reason-change run never finished"
+sleep 1.1
+touch "$rlog"
+out=$(report_once)
+assert_contains "$out" 'kept stuck: error: CI still failing on the final job' 'a changed reason resurfaces at once'
+grep -F "$h" "$BACKOFF_HOME/state/.reaper-repeat" >/dev/null && fail 'the repeat ledger must prune the old reason'
+# `closed` is a one-time event: it prints, and a re-read prints it again.
+printf 'x\n' > "$BACKOFF_HOME/state/stuck.meta.gone"
+FM_REAP_TEARDOWN="$TMP_ROOT/teardown2" "$REAP" check > /dev/null
+run_done || fail "the closing run never finished"
+sleep 1.1
+touch "$rlog"
+out=$(report_once)
+assert_contains "$out" 'closed stuck (done 2h ago)' 'a closed worker reports its close'
+sleep 1.1
+touch "$rlog"
+out=$(FM_REAP_TEARDOWN="$TMP_ROOT/teardown2" "$REAP" check)
+assert_contains "$out" 'closed stuck (done 2h ago)' 'a closed line is never gated by the repeat backoff'
+pass 'the enforce report backs off unchanged kept lines, resurfaces on change, never gates closes'
+# Restore the shared fixture home for the arm and sweep-state tests below.
+export FM_HOME="$HOME_DIR" FM_STATE_OVERRIDE="$HOME_DIR/state" FM_CONFIG_OVERRIDE="$HOME_DIR/config" FM_DATA_OVERRIDE="$HOME_DIR/data"
 "$REAP" arm >/dev/null 2>&1 || true
 assert_present "$HOME_DIR/state/reaper.check.sh" 'arm writes the watcher check'
 assert_contains "$(<"$HOME_DIR/state/reaper.check.sh")" 'fm-reap.sh check' 'the check runs the reaper'

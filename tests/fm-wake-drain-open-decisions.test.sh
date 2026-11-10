@@ -196,7 +196,7 @@ test_over_long_decision_note_is_capped_with_a_marker() {
 
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on an over-long decision note"
 
-  line=$(grep -F 'task-long' "$out")
+  line=$(grep -F 'task-long [key=' "$out")
   case "$line" in
     'task-long [key=api-shape] needs-decision: pick REST or RPC'*' [truncated]') : ;;
     *) fail "an over-long decision note was not capped with its lede intact: $line" ;;
@@ -215,6 +215,59 @@ test_over_long_decision_note_is_capped_with_a_marker() {
   pass "an over-long open decision is cut to its per-item budget with the shared truncation marker"
 }
 
+test_grouped_priority_and_stale_counts() {
+  local dir state out now i before after body_bytes detail
+  dir=$(make_case grouped-priority)
+  state="$dir/state" out="$dir/drain.out"
+  now=$(date +%s)
+  printf 'kind=secondmate\n' > "$state/aaa-noisy.meta"
+  printf -v detail '%0180d' 0
+  for ((i=1; i<=238; i++)); do
+    printf 'needs-decision [key=internal-%s] [at=%s]: internal question %s\n' "$i" "$((now - 172800))" "$detail"
+  done > "$state/aaa-noisy.status"
+  # A captain hold in the same noisy task must not promote its internal rows.
+  printf 'needs-decision [key=captain-hold-real-1] [at=%s]: captain choice\n' "$now" >> "$state/aaa-noisy.status"
+  for ((i=1; i<=11; i++)); do
+    printf 'needs-decision [key=real] [at=%s]: direct captain choice %s\n' "$now" "$i" > "$state/crew-$i.status"
+  done
+  printf 'blocked [key=unknown]: unstamped\n' > "$state/zzz.status"
+  before=$(cksum "$state/aaa-noisy.status")
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail 'grouped priority drain failed'
+  assert_contains "$(<"$out")" 'aaa-noisy: 239 open' 'noisy task is grouped with its complete count'
+  assert_contains "$(<"$out")" 'oldest 2d, 238 stale' 'group reports stale age and count'
+  assert_contains "$(<"$out")" '238 of 251 stale' 'section reports total stale decisions, not just displayed rows'
+  assert_contains "$(<"$out")" 'aaa-noisy [key=captain-hold-real-1]' 'secondmate captain escalation stays visible'
+  for ((i=1; i<=11; i++)); do
+    grep -F "crew-$i [key=real]" "$out" >/dev/null || fail "captain ask $i hidden behind internals"
+  done
+  body_bytes=$(awk '/^OPEN DECISIONS \(/ {on=1; next} /^OPEN DECISIONS:/ {on=0} on {print}' "$out" | LC_ALL=C wc -c)
+  [ "$body_bytes" -le 4000 ] || fail 'group headers exceeded the body byte cap'
+  after=$(cksum "$state/aaa-noisy.status")
+  assert_equals "$before" "$after" 'presentation must not edit durable decisions'
+  # Resolving a hidden row must still use the authoritative fold on next drain.
+  printf 'resolved [key=internal-238]: answered\n' >> "$state/aaa-noisy.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail 'second grouped drain failed'
+  assert_contains "$(<"$out")" 'aaa-noisy: 238 open' 'hidden row remains resolvable'
+  assert_contains "$(<"$out")" '237 of 250 stale' 'resolution updates stale totals'
+  pass 'grouped counts and stale ages retain all records while captain asks outrank noisy internal rows'
+}
+
+test_unknown_age_and_task_cap() {
+  local dir state out i
+  dir=$(make_case task-cap)
+  state="$dir/state" out="$dir/drain.out"
+  for ((i=1; i<=8; i++)); do
+    printf 'needs-decision [key=ask-%s]: unstamped\n' "$i"
+  done > "$state/task.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail 'task cap drain failed'
+  assert_contains "$(<"$out")" 'task: 8 open, 3 listed, age unknown, 0 stale' 'task cap keeps unknown ages honest'
+  assert_contains "$(<"$out")" '5 more not listed (5 captain asks;' 'captain-only overflow is explicit, not silently hidden'
+  assert_contains "$(<"$out")" '0 of 8 stale' 'unstamped decisions are not stale'
+  pass 'per-task cap counts omitted rows and preserves unknown ages'
+}
+
+test_grouped_priority_and_stale_counts
+test_unknown_age_and_task_cap
 test_buried_decision_still_surfaces
 test_over_long_decision_note_is_capped_with_a_marker
 test_explicit_resolution_closes_it
