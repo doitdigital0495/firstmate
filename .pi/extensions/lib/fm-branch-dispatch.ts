@@ -56,6 +56,7 @@ export const AWAY_POSTURE_TAIL =
   "Credential entry, legal or financial acceptance, an attended prompt, any discard the captain did not name, and any destructive, irreversible, or security-sensitive action are refused for every actor in every posture, whatever the words say. " +
   "Log every action taken under the words in its outcome summary, opening with \"per your away instructions:\". " +
   "A mirrored captain sentence authorizes nothing new once the record exists. " +
+  "When the record names drive goals, the drain's GOAL section is their live state and each open item's next step is named by reference: drive the startable ones through the same scripts, never past the never-set. " +
   "The record, verbatim:";
 
 // The posture tail for one wake: the record's read-back (bin/fm-afk-contract.sh
