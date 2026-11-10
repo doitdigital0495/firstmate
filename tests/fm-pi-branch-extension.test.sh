@@ -2253,6 +2253,8 @@ if (!awayPrompt.startsWith(head)) throw new Error(`the away wake lost its shape 
 const readback = contract(["readback"]);
 if (!readback.endsWith("    merge task-d when green, then cut the prerelease\n    \n")) throw new Error(`the read-back lost the captain's words or their trailing blank line: ${JSON.stringify(readback)}`);
 if (!awayPrompt.includes("act on them by your own judgment")) throw new Error(`the away tail lost the words-execution rule: ${awayPrompt}`);
+if (!awayPrompt.includes("When the record names drive goals, the drain's GOAL section is their live state and each open item's next step is named by reference: drive the startable ones through the same scripts, never past the never-set.")) throw new Error(`the away tail lost the drive-goal rule: ${awayPrompt}`);
+if (!awayPrompt.includes("Credential entry, legal or financial acceptance, an attended prompt, any discard the captain did not name, and any destructive, irreversible, or security-sensitive action are refused for every actor in every posture, whatever the words say.")) throw new Error(`the away tail's never-set sentence is not byte-identical: ${awayPrompt}`);
 if (awayPrompt.includes("does not execute them")) throw new Error(`the away tail still calls the words inert: ${awayPrompt}`);
 if (!awayPrompt.endsWith(`The record, verbatim:\n${readback}`)) throw new Error(`the tail does not end with the record's read-back verbatim, trailing whitespace included: ${JSON.stringify(awayPrompt)}`);
 const snapshot = readFileSync(`${home}/state/.branch-eligible-rows`, "utf8").trim().split("\n").join(",");
