@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Steer a task by durable record: write the message into the task's steering
 # inbox and ring a constant doorbell through its backend endpoint, best-effort.
-# Usage: fm-send.sh <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--after-done <reason>] <text...>
+# Usage: fm-send.sh <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--after-done <reason>] [--hold[=<seconds>] | --release-hold[=<id>]] <text...>
 #   <target> may be an exact task id, a legacy fm-<id> task label resolved
 #   through this home's state/<id>.meta, or an explicit well-formed backend
 #   target. fm-send refuses unresolved guesses rather than falling back to a
@@ -221,6 +221,33 @@
 # This is what lets an answer reach a decision that has already been
 # transferred from the live status log to its durable captain-held task, which
 # the status ledger alone can no longer close.
+#
+# Firstmate-imposed holds (hold expiry): pass --hold "<reason>" (optionally
+# --hold=<seconds> "<reason>") when this steer ITSELF imposes a hold or pause
+# on the target - telling a worker or secondmate to hold, or to start nothing
+# - so the hold cannot sit forgotten while it stalls the target. The message
+# is delivered exactly as typed, and fm-send also appends the hold's record to
+# the target's state/<id>.status:
+#   paused [hold=firstmate] [key=imposed-hold-<id>]: imposed-hold-<id>: <reason> until <YYYY-MM-DDTHH:MM:SSZ>
+# The expiry is set at imposition: FM_IMPOSED_HOLD_SECS seconds (default 1800,
+# thirty minutes) or the --hold=<seconds> override. When it lapses, the
+# watcher wakes exactly once (bin/fm-watch.sh imposed_hold_expiry_tick) with
+# the exact commands: renew with a fresh reason - a new --hold supersedes the
+# old hold and starts a new clock - or release with --release-hold "<note>",
+# which appends the closing record. The key lives in the reserved
+# imposed-hold- namespace (bin/fm-classify-lib.sh), so no worker line, no
+# answered: note, and no --resolve-key can release firstmate's hold; a hold
+# closes only through --release-hold (optionally --release-hold=<id>, the id
+# from the wake or the status record, checked against the open hold) or by a
+# renewal's supersession. The record is a LOCAL append for every target kind,
+# crewmate and secondmate, local and remote alike, because it is this home's
+# own supervision ledger; only the message crosses the transport. Both flags
+# refuse with --key, with an explicit backend target, with --resolve-key, and
+# with an empty message; --release-hold refuses before sending when no hold is
+# open. An append that fails after delivery exits nonzero with the exact
+# manual record command, like a failed decision close. Captain backlog holds
+# (bin/fm-captain-hold.sh) are a different record and never expire; a
+# crew-declared paused: line is the crew's own wait and records no hold.
 #
 # Each named key must therefore currently be open in ONE of the two ledgers: open
 # in this home's status log per status_open_decisions (bin/fm-classify-lib.sh), or
@@ -539,6 +566,16 @@ fi
 RESOLVE_KEYS=
 FIRE_AND_FORGET_ID=
 AFTER_DONE=
+HOLD_MODE=
+HOLD_SECS_EXPLICIT=
+HOLD_RELEASE_ID=
+HOLD_TASK_ID=
+HOLD_STATUS_FILE=
+HOLD_TEXT=
+HOLD_IMPOSED_ID=
+HOLD_RECORD_LINE=
+HOLD_UNTIL_ISO=
+HOLD_SECS=
 fm_send_add_resolve_key() { # <key>
   local k=$1
   case "$k" in
@@ -597,6 +634,42 @@ while :; do
     AFTER_DONE=$2
     shift 2
     ;;
+  --hold)
+    [ -z "$HOLD_MODE" ] || {
+      echo "error: one hold action per send; --hold given twice" >&2
+      exit 1
+    }
+    HOLD_MODE=impose
+    shift
+    ;;
+  --hold=*)
+    [ -z "$HOLD_MODE" ] || {
+      echo "error: one hold action per send; --hold given twice" >&2
+      exit 1
+    }
+    HOLD_MODE=impose
+    HOLD_SECS_EXPLICIT=${1#--hold=}
+    [ -n "$HOLD_SECS_EXPLICIT" ] || { echo 'error: --hold= requires positive seconds' >&2; exit 1; }
+    shift
+    ;;
+  --release-hold)
+    [ -z "$HOLD_MODE" ] || {
+      echo "error: one hold action per send; --hold and --release-hold cannot combine" >&2
+      exit 1
+    }
+    HOLD_MODE=release
+    shift
+    ;;
+  --release-hold=*)
+    [ -z "$HOLD_MODE" ] || {
+      echo "error: one hold action per send; --hold and --release-hold cannot combine" >&2
+      exit 1
+    }
+    HOLD_MODE=release
+    HOLD_RELEASE_ID=${1#--release-hold=}
+    [ -n "$HOLD_RELEASE_ID" ] || { echo 'error: --release-hold= requires a hold id' >&2; exit 1; }
+    shift
+    ;;
   *) break ;;
   esac
 done
@@ -616,7 +689,7 @@ fm_send_lifecycle_state() { # <status-file>: newest lifecycle state, or nothing
     END { print last }' "$1" 2>/dev/null
 }
 if [ -n "$TARGET_SELECTOR" ] && [ -n "$TARGET_META" ] && [ "${1:-}" != --key ] && [ -z "$RESOLVE_KEYS" ] \
-  && [ -z "${AFTER_DONE:-}" ] && [ "$(fm_meta_get "$TARGET_META" kind)" != secondmate ]; then
+  && [ "${HOLD_MODE:-}" != release ] && [ -z "${AFTER_DONE:-}" ] && [ "$(fm_meta_get "$TARGET_META" kind)" != secondmate ]; then
   REUSE_ID=$(fm_send_id_from_meta "$TARGET_META")
   case "$(fm_send_lifecycle_state "$STATE/$REUSE_ID.status")" in
   done | failed)
@@ -764,6 +837,15 @@ if [ -n "$FIRE_AND_FORGET_ID" ]; then
     }
 fi
 
+# A hold is steering, an answer closes a decision: both flags on one send
+# refuse together, before either validation runs, so the operator learns the
+# combination is wrong rather than which key happened not to be open.
+[ -z "${HOLD_MODE:-}" ] || [ -z "$RESOLVE_KEYS" ] ||
+  {
+    echo "error: --hold cannot accompany --resolve-key; send the hold and the answer as separate messages" >&2
+    exit 1
+  }
+
 if [ -n "$RESOLVE_KEYS" ]; then
   if [ -z "$TARGET_SELECTOR" ] || [ -z "$TARGET_META" ]; then
     echo "error: --resolve-key needs a task selector resolved through this home's metadata; an explicit backend target has no decision ledger here" >&2
@@ -872,6 +954,96 @@ if [ -n "$RESOLVE_KEYS" ]; then
   done
 fi
 
+# Firstmate-imposed holds (header contract above). Validated before anything
+# is sent, exactly like a --resolve-key answer: a refused hold leaves the
+# message unsent, and a delivered hold whose record cannot be written is a
+# loud nonzero, never a silent no-op.
+if [ -n "$HOLD_MODE" ]; then
+  _fm_wake_require_classify
+  if [ -z "$TARGET_SELECTOR" ] || [ -z "$TARGET_META" ]; then
+    echo "error: --hold/--release-hold need a task selector resolved through this home's metadata; an explicit backend target has no supervision ledger here" >&2
+    exit 1
+  fi
+  if [ "${1:-}" = "--key" ]; then
+    echo "error: a hold is steering text and cannot accompany --key" >&2
+    exit 1
+  fi
+  if [ -z "$*" ]; then
+    echo "error: --hold and --release-hold require a nonempty message (the hold instruction, or the release note)" >&2
+    exit 1
+  fi
+  HOLD_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
+  [ -n "$HOLD_TASK_ID" ] || {
+    echo "error: the target's metadata records no task id, so its hold ledger cannot be written" >&2
+    exit 1
+  }
+  HOLD_STATUS_FILE="$STATE/$HOLD_TASK_ID.status"
+  HOLD_TEXT=$(printf '%s' "$*" | tr '\n\r\t' '   ' | LC_ALL=C tr -d '\000-\037\177')
+  printf '%s' "$HOLD_TEXT" | grep -q '[^[:space:]]' || {
+    echo 'error: a hold or release requires a nonblank reason' >&2
+    exit 1
+  }
+  if [ "$HOLD_MODE" = impose ]; then
+    HOLD_SECS=${HOLD_SECS_EXPLICIT:-${FM_IMPOSED_HOLD_SECS:-1800}}
+    case "$HOLD_SECS" in
+    '' | 0 | 0* | *[!0-9]*)
+      echo "error: imposed-hold seconds '$HOLD_SECS' must be a positive integer (FM_IMPOSED_HOLD_SECS or --hold=<seconds>)" >&2
+      exit 1
+      ;;
+    esac
+    [ "${#HOLD_SECS}" -le 9 ] || {
+      echo "error: imposed-hold seconds must be at most 9 digits" >&2
+      exit 1
+    }
+    fm_epoch_seconds_to HOLD_NOW || {
+      echo "error: the clock could not be read to set the hold's expiry" >&2
+      exit 1
+    }
+    HOLD_IMPOSED_ID=$(fm_pending_reply_new_id)
+    printf '%s' "$HOLD_IMPOSED_ID" | grep -Eq '^[a-f0-9]{16}$' || {
+      echo "error: an imposed-hold id could not be minted" >&2
+      exit 1
+    }
+    HOLD_UNTIL_ISO=$(fm_epoch_iso_utc "$((HOLD_NOW + HOLD_SECS))") || {
+      echo "error: the hold's expiry time could not be rendered" >&2
+      exit 1
+    }
+    HOLD_RECORD_LINE=$(status_hold_imposed_line "$HOLD_IMPOSED_ID" "$HOLD_UNTIL_ISO" "$HOLD_TEXT" \
+      "$((FM_LINE_CAP_DEFAULT - $(status_stamp_width)))")
+    # The record must read back as the hold it records, or the cap ate
+    # structure (never possible through the builder, but the proof is cheap).
+    [ "$(status_hold_imposed_id "$HOLD_RECORD_LINE")" = "$HOLD_IMPOSED_ID" ] \
+      && [ "$(fm_utc_iso_to_epoch "$HOLD_UNTIL_ISO")" = "$(status_paused_until "$HOLD_RECORD_LINE")" ] || {
+      echo "error: the imposed-hold record does not read back intact; use a shorter reason. Nothing was sent." >&2
+      exit 1
+    }
+  else
+    if [ -n "$HOLD_RELEASE_ID" ]; then
+      printf '%s' "$HOLD_RELEASE_ID" | grep -Eq '^[a-f0-9]{16}$' || {
+        echo "error: --release-hold '<id>' must be the 16-hex hold id from the wake or the status record" >&2
+        exit 1
+      }
+    fi
+    if ! HOLD_RELEASE_ROW=$(status_open_imposed_hold "$HOLD_STATUS_FILE"); then
+      echo "error: --release-hold: no firstmate-imposed hold is open on $HOLD_TASK_ID; nothing was sent. Impose one with: fm-send $HOLD_TASK_ID --hold \"<reason>\"" >&2
+      exit 1
+    fi
+    HOLD_OPEN_ID=${HOLD_RELEASE_ROW%%$'\t'*}
+    if [ -n "$HOLD_RELEASE_ID" ] && [ "$HOLD_RELEASE_ID" != "$HOLD_OPEN_ID" ]; then
+      echo "error: --release-hold '$HOLD_RELEASE_ID' does not match the open hold imposed-hold-$HOLD_OPEN_ID on $HOLD_TASK_ID; nothing was sent." >&2
+      exit 1
+    fi
+    HOLD_IMPOSED_ID=$HOLD_OPEN_ID
+    HOLD_RECORD_LINE=$(status_hold_release_line "$HOLD_IMPOSED_ID" "$HOLD_TEXT" \
+      "$((FM_LINE_CAP_DEFAULT - $(status_stamp_width)))")
+    [ "$(status_line_verb "$HOLD_RECORD_LINE")" = "${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}" ] \
+      && [ "$(_fm_decision_key "$HOLD_RECORD_LINE" || true)" = "imposed-hold-$HOLD_IMPOSED_ID" ] || {
+      echo "error: the release record does not read back intact; use a shorter note. Nothing was sent." >&2
+      exit 1
+    }
+  fi
+fi
+
 # Close each answered decision in this home's ledger, only after the answer is
 # durably sent: enqueued on the inbox plane, submit-confirmed on the typed
 # plane. An append failure exits nonzero with the manual close
@@ -928,6 +1100,38 @@ fm_send_feed_resolved_holds() { # <answer-text>
   if ! printf '%s' "$lines" | "$SCRIPT_DIR/fm-captain-hold.sh" answers \
     --source "a firstmate answer sent to $RESOLVE_TASK_ID" >/dev/null 2>&1; then
     echo "error: the answer was delivered to $T, but this captain-held task could not be closed: ${RESOLVE_HOLD_KEYS}. Close it with fm-captain-hold.sh answer - do not resend the answer." >&2
+    return 1
+  fi
+}
+
+# Record the firstmate-imposed hold (or its release) in the target's own
+# status ledger, only after the instruction is durably delivered - the same
+# delivery-confirmed append points --resolve-key closes use. The record is
+# this home's own supervision bookkeeping (the watcher's expiry backstop and
+# the fold's reserved namespace read it), a LOCAL append for every target
+# kind written through the same guarded self-announced append, so it never
+# re-wakes this session over its own bookkeeping. An append failure exits
+# nonzero with the exact manual record command; the hold then stays
+# unrecorded (for --hold: nothing expires, nothing wakes) or stays open (for
+# --release-hold: the expiry wake re-surfaces), never silently lost.
+fm_send_record_imposed_hold() {
+  local append_rc=0 row open_id manual_record_cmd
+  printf -v manual_record_cmd "printf '%%s\\\\n' %q >> %q" "$HOLD_RECORD_LINE" "$HOLD_STATUS_FILE"
+  fm_wake_status_append_self_announced "$STATE" "$HOLD_STATUS_FILE" "$HOLD_RECORD_LINE" || append_rc=$?
+  if [ "$append_rc" -eq 2 ]; then
+    echo "error: the hold instruction was delivered to $T, but its record could not be appended to $HOLD_STATUS_FILE. Record it manually with: $manual_record_cmd - do not resend the instruction." >&2
+    return 1
+  fi
+  row=$(status_open_imposed_hold "$HOLD_STATUS_FILE") || row=
+  if [ "$HOLD_MODE" = impose ]; then
+    open_id=$(printf '%s' "$row" | cut -f1)
+    if [ "$open_id" != "$HOLD_IMPOSED_ID" ]; then
+      echo "error: the hold instruction was delivered to $T, but hold imposed-hold-$HOLD_IMPOSED_ID did not read back open in $HOLD_STATUS_FILE. Record it manually with: $manual_record_cmd - do not resend the instruction." >&2
+      return 1
+    fi
+    echo "notice: firstmate hold imposed on $HOLD_TASK_ID until $HOLD_UNTIL_ISO (imposed-hold-$HOLD_IMPOSED_ID, ${HOLD_SECS}s). When it lapses the watcher wakes once to renew it (fm-send $HOLD_TASK_ID --hold \"<reason>\") or release it (fm-send $HOLD_TASK_ID --release-hold \"<note>\")." >&2
+  elif [ -n "$row" ]; then
+    echo "error: the release was delivered to $T, but hold imposed-hold-$HOLD_IMPOSED_ID still reads open in $HOLD_STATUS_FILE. Close it manually with: $manual_record_cmd - do not resend the release." >&2
     return 1
   fi
 }
@@ -1187,6 +1391,7 @@ else
       fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
       fm_send_feed_resolved_holds "$RESOLVE_ANSWER_TEXT" || exit 1
     fi
+    [ -z "${HOLD_MODE:-}" ] || fm_send_record_imposed_hold || exit 1
     exit 0
   fi
   if [ "$INBOX_PLANE" = 1 ]; then
@@ -1264,6 +1469,7 @@ else
       fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
       fm_send_feed_resolved_holds "$RESOLVE_ANSWER_TEXT" || exit 1
     fi
+    [ -z "${HOLD_MODE:-}" ] || fm_send_record_imposed_hold || exit 1
     # Ring the doorbell, best-effort: no ring outcome changes the exit status,
     # because the watcher owns loss detection from here, either through its
     # bounded re-ring ladder or direct unavailable-endpoint recovery.
@@ -1406,6 +1612,7 @@ else
     fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
     fm_send_feed_resolved_holds "$RESOLVE_ANSWER_TEXT" || exit 1
   fi
+  [ -z "${HOLD_MODE:-}" ] || fm_send_record_imposed_hold || exit 1
   # Submit landed with exact empty. Confirmation only proves the text was
   # accepted; the harness still needs a beat to spin up the
   # turn before its busy footer shows. Pause so an immediate peek catches the
