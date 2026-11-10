@@ -627,7 +627,7 @@ Being away changes how the captain is informed and what happens at a captain-own
 `tests/fm-branch-supervision.test.sh`, `tests/fm-pr-merge.test.sh`, and `tests/fm-send-resolve-key.test.sh` pin this invariant.
 It sets these limits:
 
-- The never-set (credential entry, legal or financial acceptance, an attended prompt, an unnamed discard, a security-sensitive action) has no guarded entrypoint that accepts away authority for either actor.
+- The never-set (credential entry, legal or financial acceptance, an attended prompt, an unnamed discard, a spend without the captain's explicit per-item consent) has no guarded entrypoint that accepts away authority for either actor; a destructive or security-sensitive step instead requires a written analysis, recorded before the action, showing nothing crucial breaks, and anything shared by other lanes, unpushed or unmerged work, credentials, and production data is always crucial and stays refused.
 - A forced teardown stays refused for the branch.
 - A red merge is refused in this posture whatever the words say.
 - No relocation survives the return, because an archived record validates as absent and the words die with it.

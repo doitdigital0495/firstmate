@@ -86,18 +86,42 @@ test_branch_prompt_names_drive_goals_and_keeps_the_never_set_byte_identical() {
     *) fail "branch prompt lost the drive-goal paragraph" ;;
   esac
   assert_contains "$prompt" \
-    "Never by analogy: act only where the words, or a drive goal the record names, plainly name the event and the action; the words cover nothing they do not say." \
+    "Never by analogy: act only where the words, a drive goal the record names, or the standing drive and ask-less rules plainly cover the event and the action - and there a reversible, in-plan step inside a named goal proceeds without asking - while the words and rules cover nothing they do not say and the limits below still bind." \
     "branch prompt lost the drive-goal clause in the never-by-analogy rule"
 
   assert_contains "$prompt" \
     "On every wake, after handling its rows, start or advance each item the GOAL section lists as startable. Steer its owning second mate with \`bin/fm-send.sh\`. For an item this home owns, dispatch it within the spend cap from a backlog item you file for exactly that step. Merge an item's pull request only when it is green at its live head." \
     "branch prompt lost the startable-item driving rule or its safeguards"
 
-  # HARD LIMIT (drive-goal plan, G4): this entire line is pinned byte-identical;
-  # driving a named goal never widens what may be done while away.
-  grep -Fxq "The never-set is absolute for every actor in every posture: credential entry, legal or financial acceptance, an attended prompt, any discard the captain did not name, and any destructive, irreversible, or security-sensitive action are refused whatever the words say." <<< "$prompt" ||
-    fail "the never-set sentence is not byte-identical: drive goals must never widen it"
-  pass "branch prompt names drive goals under the words, with the never-set sentence byte-identical"
+  # HARD LIMIT (drive-goal plan, G4; reworked by drive fix 4): this entire
+  # line is pinned byte-identical; driving a named goal never widens what is
+  # refused here, and the delete/security/money gates are pinned by their own
+  # test below.
+  grep -Fxq "The never-set is absolute for every actor in every posture: credential entry, legal or financial acceptance, an attended prompt, and any discard the captain did not name are refused whatever the words say; money is always the captain's per-item call, spent only on explicit consent to that exact item, never on a general or inferred grant." <<< "$prompt" ||
+    fail "the refused-set sentence is not byte-identical: drive goals must never widen it"
+  pass "branch prompt names drive goals under the words, with the refused-set sentence byte-identical"
+}
+
+test_branch_prompt_pins_away_limits_for_money_delete_and_security() {
+  local prompt
+  prompt=$(bash "$ROOT/bin/fm-branch-prompt.sh") || fail "branch prompt generator failed"
+
+  # Drive fix 4 (captain round 8, 2026-11-10): away authority widens exactly
+  # this far - money needs the captain's explicit per-item consent, a deleting
+  # or security-sensitive step needs a written analysis recorded before the
+  # action, and the always-crucial floor never clears.
+  grep -Fxq "The never-set's one bounded exception is a destructive or security-sensitive step, a delete above all: it proceeds only after a written analysis, recorded before the action, that shows nothing crucial breaks, and it is reported verdict captain with that analysis in its outcome." <<< "$prompt" ||
+    fail "the analyse-first sentence is not byte-identical: deleting and security-sensitive steps must stay behind the recorded analysis"
+  grep -Fxq "Anything shared by other lanes, any unpushed or unmerged work, credentials, and production data are always crucial: a step touching them is refused and reported verdict captain whatever the words say." <<< "$prompt" ||
+    fail "the always-crucial floor is not byte-identical: shared lanes, unpushed work, and production data must stay refused"
+  assert_contains "$prompt" \
+    "Standing rules: the home's standing captain rules (\`data/captain.md\`, when present) bind you in every posture as they bind MAIN - the standing drive and ask-less rules above all; read them at the tail of every wake beside the record and apply them under every limit below, which they never widen." \
+    "branch prompt lost the standing drive and ask-less rules reading rule"
+  case "$prompt" in
+    *"and any destructive, irreversible, or security-sensitive action are refused whatever the words say"*)
+      fail "the old flat never-set refusal of deleting and security-sensitive steps survived" ;;
+  esac
+  pass "branch prompt pins the away limits: money per-item, delete and security behind a recorded analysis, crucial floor refused"
 }
 
 test_branch_prompt_routes_completed_scouts_through_guarded_cleanup() {
@@ -1649,6 +1673,7 @@ WRAPPER
 
 test_branch_prompt_is_byte_stable_and_above_cache_floor
 test_branch_prompt_names_drive_goals_and_keeps_the_never_set_byte_identical
+test_branch_prompt_pins_away_limits_for_money_delete_and_security
 test_branch_prompt_routes_completed_scouts_through_guarded_cleanup
 test_outcome_store_is_append_only_with_cursor_reads
 test_outcome_append_keeps_a_bounded_display_tail
