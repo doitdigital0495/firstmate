@@ -452,6 +452,89 @@ status_is_paused_or_captain_held() {  # <status-line>
   status_is_paused "$line" || status_is_captain_held "$line"
 }
 
+# --- firstmate-imposed holds -------------------------------------------------
+#
+# A `paused:` line FIRSTMATE itself imposed on a task - a steer telling a
+# worker or secondmate to hold, or to start nothing - differs from a pause the
+# crew declared for itself: firstmate owns that hold's expiry, so an imposed
+# hold must surface for renewal or release instead of silencing the fleet
+# indefinitely. An imposed hold is recorded in the target's own status file
+# (fm-send --hold), because the target keeps appending while held and the
+# last-line declared-wait read would lose the hold behind newer lines. The
+# grammar therefore carries the imposition in the line head - the pause verb,
+# the imposer tag, and a reserved imposed-hold-<id> key - and a dedicated
+# position-independent fold below reads the newest still-open one wherever it
+# sits in the log. The key lives in the reserved namespace
+# (FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT), so no other writer's line can
+# open, close, or hijack the hold: only a note that begins with the
+# imposed-hold- namespace's own vocabulary folds at all. The captain's backlog
+# holds (bin/fm-captain-hold.sh) are a different record and never expire.
+FM_CLASSIFY_HOLD_IMPOSER_TAG_DEFAULT='hold=firstmate'
+FM_CLASSIFY_HOLD_KEY_PREFIX_DEFAULT='imposed-hold-'
+
+# The id of the imposed hold a status line records, or nothing when the line
+# is not an imposition. The pause verb, the imposer tag in the head, and a
+# well-formed imposed-hold-<id> key token before the first colon must all be
+# present, so a worker's own `paused:` declaration and a captain-held transfer
+# line never read as firstmate's hold.
+status_hold_imposed_id() {  # <status-line> -> <id> on stdout, or nothing
+  local line=$1 head key prefix
+  status_is_paused "$line" || return 1
+  head=${line%%:*}
+  case "$head" in
+    *"[${FM_CLASSIFY_HOLD_IMPOSER_TAG:-$FM_CLASSIFY_HOLD_IMPOSER_TAG_DEFAULT}]"*) ;;
+    *) return 1 ;;
+  esac
+  key=$(_fm_decision_key "$line") || return 1
+  prefix=${FM_CLASSIFY_HOLD_KEY_PREFIX:-$FM_CLASSIFY_HOLD_KEY_PREFIX_DEFAULT}
+  case "$key" in
+    "$prefix"?*) printf '%s' "${key#"$prefix"}" ;;
+    *) return 1 ;;
+  esac
+}
+
+# 0 when a status line records a firstmate-imposed hold (see
+# status_hold_imposed_id): the discriminator a supervisor needs to tell an
+# imposed hold from a crew-declared pause once a declared wait is known.
+status_is_hold_imposed() {  # <status-line>
+  local id
+  id=$(status_hold_imposed_id "$1") || return 1
+  [ -n "$id" ]
+}
+
+# The two writer halves of the grammar, owned here so writers cannot drift
+# from the readers. The reason/excerpt is prose and is capped to keep the line
+# inside <cap> characters (a <cap> of 0 means uncapped, for tests and
+# non-status callers); every structural byte - verb, tag, key, and the `until`
+# the expiry read re-parses - always survives the cap, because only the prose
+# is ever truncated. Callers must pass single-line sanitized prose and a <cap>
+# that leaves room for it (fm-send subtracts the stamp width before appending,
+# exactly as its --resolve-key closes do).
+status_hold_imposed_line() {  # <id> <until-iso> <reason> [cap]
+  local id=$1 until=$2 reason=$3 cap=${4:-0} prefix fixed tail budget
+  prefix=${FM_CLASSIFY_HOLD_KEY_PREFIX:-$FM_CLASSIFY_HOLD_KEY_PREFIX_DEFAULT}
+  fixed="${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT} [${FM_CLASSIFY_HOLD_IMPOSER_TAG:-$FM_CLASSIFY_HOLD_IMPOSER_TAG_DEFAULT}] [key=$prefix$id]: $prefix$id: "
+  tail=" until $until"
+  if [ "$cap" -gt 0 ]; then
+    budget=$((cap - ${#fixed} - ${#tail}))
+    [ "$budget" -ge 0 ] || budget=0
+    reason=${reason:0:$budget}
+  fi
+  printf '%s%s%s' "$fixed" "$reason" "$tail"
+}
+
+status_hold_release_line() {  # <id> <excerpt> [cap]
+  local id=$1 excerpt=$2 cap=${3:-0} prefix fixed
+  prefix=${FM_CLASSIFY_HOLD_KEY_PREFIX:-$FM_CLASSIFY_HOLD_KEY_PREFIX_DEFAULT}
+  fixed="${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT} [key=$prefix$id]: $prefix$id: released by firstmate: "
+  if [ "$cap" -gt 0 ]; then
+    local budget=$((cap - ${#fixed}))
+    [ "$budget" -ge 0 ] || budget=0
+    excerpt=${excerpt:0:$budget}
+  fi
+  printf '%s%s' "$fixed" "$excerpt"
+}
+
 # The status line that holds a crew in a declared wait, or nothing when it is in
 # none. Supervisors decide the wait from this line, never from the raw latest
 # event: a resolved line is also how firstmate answers a decision (fm-send
@@ -523,10 +606,50 @@ status_paused_until() {  # <status-line> -> epoch on stdout
   local line=$1 token
   status_is_paused "$line" || return 1
   token=$(printf '%s' "$line" \
-    | sed -n 's/.*[[:space:]][Uu][Nn][Tt][Ii][Ll][[:space:]]\{1,\}\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]Z\).*/\1/p; s/.*[[:space:]][Uu][Nn][Tt][Ii][Ll][[:space:]]\{1,\}\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\).*/\1/p' \
+    | sed -En 's/.*[[:space:]][Uu][Nn][Tt][Ii][Ll][[:space:]]+([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2})?Z).*/\1/p' \
     | head -1)
   [ -n "$token" ] || return 1
   fm_utc_iso_to_epoch "$token"
+}
+
+# The newest still-open firstmate-imposed hold in a status file, wherever it
+# sits in the log: the target keeps appending its own lines while held, so a
+# hold cannot be read from the last line the way a crew-declared wait can. One
+# pass folds the whole lifetime: an imposition with the guard's vocabulary
+# opens (and supersedes any earlier still-open one - a renewal replaces the
+# hold it renews), and only a `resolved` line whose key matches the open hold
+# AND speaks the imposed-hold- namespace's own vocabulary closes it, so no
+# other writer's line can release firstmate's hold. Prints
+# "<id> TAB <at-epoch or unknown> TAB <until-epoch or empty>", returns 1 when
+# no hold is open. An empty until - a malformed or missing `until` token - is
+# read as lapsed by the caller (fail-safe: an imposed hold without a recorded
+# expiry must surface, not silence the fleet forever).
+status_open_imposed_hold() {  # <status-file>
+  local f=$1 line id note key verb prefix
+  local open_id='' open_at='' open_until=''
+  prefix=${FM_CLASSIFY_HOLD_KEY_PREFIX:-$FM_CLASSIFY_HOLD_KEY_PREFIX_DEFAULT}
+  [ -f "$f" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    if id=$(status_hold_imposed_id "$line"); then
+      note=$(status_line_note "$line")
+      if _fm_decision_key_transition_allowed "$prefix$id" "$note"; then
+        open_id=$id
+        open_at=$(status_line_at_epoch "$line") || open_at=unknown
+        open_until=$(status_paused_until "$line") || open_until=
+        continue
+      fi
+    fi
+    [ -n "$open_id" ] || continue
+    verb=$(status_line_verb "$line")
+    [ "$verb" = "${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}" ] || continue
+    key=$(_fm_decision_key "$line") || continue
+    [ "$key" = "$prefix$open_id" ] || continue
+    note=$(status_line_note "$line")
+    _fm_decision_key_transition_allowed "$key" "$note" || continue
+    open_id='' open_at='' open_until=''
+  done < "$f"
+  [ -n "$open_id" ] || return 1
+  printf '%s\t%s\t%s\n' "$open_id" "$open_at" "$open_until"
 }
 
 # --- optional event emission time -------------------------------------------
@@ -964,7 +1087,10 @@ EOF
 # consumer-side rule on purpose - it protects local and remote writers
 # identically, and it can never fail a whole delta or wedge a stream the way a
 # writer-side rejection would.
-FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT='pending-reply-'
+# imposed-hold- joins the namespace so firstmate's hold records (the
+# firstmate-imposed holds above) are equally protected: no other writer's line
+# can open, renew, or release a hold, exactly as pending-reply expects.
+FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT='pending-reply- imposed-hold-'
 
 # 0 when <key> is not reserved, or is reserved and <note> speaks its vocabulary.
 _fm_decision_key_transition_allowed() {  # <key> <note>

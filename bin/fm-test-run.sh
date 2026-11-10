@@ -208,7 +208,7 @@ CHANGED_DEFAULT_TIMEOUT_SECS=1500
 
 # How many separate-runner shards the portable serial remainder splits into.
 # One owner: CI lane names carry this count and are refused when they disagree.
-PORTABLE_SERIAL_SHARDS=11
+PORTABLE_SERIAL_SHARDS=13
 
 # Conservative balance hint for a portable-serial script with no measurement.
 # Rounded above the current CI mean, including the capability-skipped scripts.
@@ -797,6 +797,7 @@ tests/fm-check-unregister.test.sh 481
 tests/fm-ci-workflow.test.sh 5833
 tests/fm-classify-corr-token.test.sh 49294
 tests/fm-classify-decision-key.test.sh 4362
+tests/fm-classify-imposed-hold.test.sh 598
 tests/fm-claude-admission.test.sh 37243
 tests/fm-claude-bypass-prompt-live-e2e.test.sh 60
 tests/fm-claude-settings-live-e2e.test.sh 74
@@ -959,6 +960,7 @@ tests/fm-send-inbox-doorbell-live-e2e.test.sh 118
 tests/fm-send-inbox.test.sh 41713
 tests/fm-send-kiro-confirm.test.sh 2096
 tests/fm-send-remote-delivery.test.sh 31964
+tests/fm-send-hold.test.sh 24675
 tests/fm-send-resolve-key.test.sh 47317
 tests/fm-send-secondmate-marker-herdr-e2e.test.sh 80
 tests/fm-send-secondmate-marker.test.sh 7574
@@ -1027,6 +1029,7 @@ tests/fm-warm-compact.test.sh 1500
 tests/fm-watch-arm.test.sh 113076
 tests/fm-watch-checkpoint.test.sh 11234
 tests/fm-watch-inbox-meta.test.sh 283
+tests/fm-watch-imposed-holds.test.sh 3352
 tests/fm-watch-open-decisions.test.sh 11821
 tests/fm-watch-recovery-loop.test.sh 59092
 tests/fm-watch-triage-pause.test.sh 466750

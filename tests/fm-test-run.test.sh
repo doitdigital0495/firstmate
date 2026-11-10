@@ -1281,7 +1281,9 @@ test_portable_serial_hint_coverage_is_reported_and_bounded() {
   [ "$budget" -eq 1200000 ] || fail "packing must leave ten minutes of the normal CI tier"
   [ "$max" -gt 0 ] && [ "$max" -le "$budget" ] \
     || fail "largest serial shard packs ${max}ms above the ${budget}ms target"
-  pass "coverage guard bounds the unmeasured share and serial packing within twenty minutes"
+  [ "$max" -le "$((budget - 120000))" ] \
+    || fail "serial packing needs two minutes of headroom below its target; refresh hints or rebalance shards"
+  pass "coverage guard bounds the unmeasured share and preserves two minutes of packing headroom"
 }
 
 test_portable_serial_packing_budget_boundary() {

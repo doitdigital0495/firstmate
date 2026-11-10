@@ -1050,6 +1050,20 @@ Pass them in the watcher's environment, or export them in `config/watch.env` for
 The flag is home-local and is not inherited by secondmate homes.
 `bin/fm-watch.sh`'s `open_decision_reminder_tick` owns the per-key schedule, which persists across watcher restarts.
 
+## Firstmate-imposed hold expiry
+
+Holds firstmate itself imposes on the fleet - a steer telling a worker or secondmate to hold, or to start nothing - carry an expiry set at imposition: `fm-send <target> --hold "<reason>"` delivers the steer and records the hold in the target's status with its clock.
+Unlike the optional backstops above, this watcher check is always on: when such a hold lapses, the watcher queues exactly one `check: imposed hold expired: <task> hold imposed-hold-<id> expired at <ISO>Z` wake carrying the exact renew and release commands.
+Renewing with a new `--hold` supersedes the old hold and starts a new clock, `--release-hold` closes it, and a hold acted on before its time never wakes.
+Captain backlog holds (`bin/fm-captain-hold.sh`) and crew-declared `paused:` waits are not imposed holds and never wake here.
+Captain holds retain their existing optional `--until` deferral semantics; this expiry neither releases them nor forces maintenance.
+
+`FM_IMPOSED_HOLD_SECS` defaults to `1800` seconds (thirty minutes) and sets each hold's expiry when `fm-send` imposes it; `FM_IMPOSED_HOLD_SCAN_SECS` defaults to `60` seconds and bounds how often the watcher scans for lapsed holds.
+Both must be canonical positive integers of at most nine digits.
+An invalid expiry refuses the send before delivery; an invalid scan interval falls back to sixty seconds.
+Pass them in the environment - the expiry at send time, the scan setting in the watcher's environment or `config/watch.env` for watchers started through `bin/fm-watch-arm.sh`.
+`bin/fm-watch.sh`'s `imposed_hold_expiry_tick` owns the wake schedule and `bin/fm-classify-lib.sh` owns the hold records it reads.
+
 ## Drive floor (config/drive-floor)
 
 The optional local, gitignored `config/drive-floor` file enables a default-off watcher backstop for an under-driven fleet: its first line is the integer floor of lanes that should be ACTUALLY working.

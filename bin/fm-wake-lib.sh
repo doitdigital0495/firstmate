@@ -66,6 +66,18 @@ else
   fm_epoch_seconds_to() { printf -v "$1" '%s' "$(date +%s)"; }
 fi
 
+# Render an exact UTC deadline in the existing declared-wait grammar.
+# Try GNU date first: its -r means a file's mtime, not a BSD epoch.
+fm_epoch_iso_utc() {  # <epoch> -> YYYY-MM-DDTHH:MM:SSZ on stdout
+  local e=$1
+  case "$e" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  date -u -d "@$e" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -r "$e" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || return 1
+}
+
 fm_pid_alive() {
   local pid=$1
   case "$pid" in

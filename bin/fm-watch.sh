@@ -2835,6 +2835,98 @@ EOF
   fi
 }
 
+# Firstmate-imposed hold expiry (bin/fm-classify-lib.sh, firstmate-imposed
+# holds). A hold FIRSTMATE imposed on a task - a steer telling a worker or
+# secondmate to hold, or to start nothing - is recorded in that task's status
+# with an expiry (fm-send --hold; FM_IMPOSED_HOLD_SECS, default 1800). This
+# always-on backstop surfaces the moment such a hold lapses: one actionable
+# check wake naming the hold and the exact renew/release commands, so a hold
+# that once stalled a secondmate for an evening cannot sit forgotten while
+# nothing runs. Exactly one wake per imposition: a durable per-task marker
+# records the id already surfaced, an unconsumed queue row is the pre-delivery
+# dedup when the marker could not be written, and a renewal mints a new id so
+# the next lapse surfaces again. A hold renewed or released before its time
+# never wakes. Captain backlog holds (bin/fm-captain-hold.sh) and crew-declared
+# pauses are not imposed holds and never wake here. The scan is fleet-wide but
+# cadenced - one bounded pass per FM_IMPOSED_HOLD_SCAN_SECS (default 60) - so
+# an idle home pays one file test per cycle in the common case.
+IMPOSED_HOLD_SCAN_SECS=${FM_IMPOSED_HOLD_SCAN_SECS:-}
+case "$IMPOSED_HOLD_SCAN_SECS" in ''|0*|*[!0-9]*) IMPOSED_HOLD_SCAN_SECS=60 ;; esac
+[ "${#IMPOSED_HOLD_SCAN_SECS}" -le 9 ] || IMPOSED_HOLD_SCAN_SECS=60
+imposed_hold_expiry_tick() {  # [now-epoch], for deterministic clock callers
+  local now=${1:-} scan="$STATE/.imposed-holds-scan" exclude f task row last
+  local id at until numeric_at numeric_until
+  local due_task='' due_id='' due_until='' due_num='' due_at='' woke status=0 reason until_iso
+  IMPOSED_HOLD_EXPIRY=
+  [ -n "$now" ] || fm_epoch_seconds_to now
+  [ ! -L "$scan" ] || return 1
+  if [ -f "$scan" ]; then
+    last=$(cat "$scan" 2>/dev/null) || last=
+    case "$last" in ''|*[!0-9]*) last=0 ;; esac
+    [ "$now" -lt "$last" ] || [ "$((now - last))" -ge "$IMPOSED_HOLD_SCAN_SECS" ] || return 0
+  fi
+  printf '%s\n' "$now" > "$scan" || return 1
+  exclude=$(status_scan_parent_channel_exclude "$STATE")
+  for f in "$STATE"/*.status; do
+    [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || continue
+    [ "$f" != "$exclude" ] || continue
+    task=${f##*/}; task=${task%.status}
+    case "$task" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
+    if ! row=$(status_open_imposed_hold "$f"); then
+      [ ! -e "$STATE/.imposed-hold-woke-$task" ] || rm -f -- "$STATE/.imposed-hold-woke-$task" 2>/dev/null || true
+      continue
+    fi
+    IFS=$'\t' read -r id at until <<EOF
+$row
+EOF
+    # Lapsed: no until recorded (fail-safe, fm-classify-lib.sh) or now past it.
+    numeric_until=$until; [ -n "$numeric_until" ] || numeric_until=0
+    [ "$now" -ge "$numeric_until" ] || continue
+    # A hold whose marker already records its wake was surfaced; skip it so
+    # the earliest NOT-yet-surfaced lapse is the one this cycle wakes.
+    [ "$(cat "$STATE/.imposed-hold-woke-$task" 2>/dev/null || true)" != "$id" ] || continue
+    numeric_at=$at; case "$numeric_at" in ''|*[!0-9]*) numeric_at=0 ;; esac
+    # Oldest lapse first, then earliest imposition; glob order breaks ties.
+    if [ -z "$due_task" ] || [ "$numeric_until" -lt "$due_num" ] \
+      || { [ "$numeric_until" -eq "$due_num" ] && [ "$numeric_at" -lt "$due_at" ]; }; then
+      due_task=$task; due_id=$id; due_num=$numeric_until; due_at=$numeric_at; due_until=$until
+    fi
+  done
+  [ -n "$due_task" ] || return 0
+  woke="$STATE/.imposed-hold-woke-$due_task"
+  [ ! -L "$woke" ] || return 1
+  until_iso=
+  [ -z "$due_until" ] || until_iso=$(fm_epoch_iso_utc "$due_until") || until_iso=
+  if [ -n "$until_iso" ]; then
+    reason="check: imposed hold expired: $due_task hold imposed-hold-$due_id expired at $until_iso - renew it with a reason (fm-send $due_task --hold \"<reason>\") or release it (fm-send $due_task --release-hold \"<note>\")"
+  else
+    reason="check: imposed hold expired: $due_task hold imposed-hold-$due_id expired with no time recorded - renew it with a reason (fm-send $due_task --hold \"<reason>\") or release it (fm-send $due_task --release-hold \"<note>\")"
+  fi
+  # One wake per imposition, delivered once: the marker survives queue
+  # consumption, an unconsumed queue row covers a marker that could not be
+  # written, and a renewed hold's new id differs from the marker's.
+  local appended=0
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
+  if [ "$(cat "$woke" 2>/dev/null || true)" != "$due_id" ]; then
+    if fm_wake_queued_carries_locked check "imposed-hold:$due_task" "$due_id"; then
+      printf '%s\n' "$due_id" > "$woke" 2>/dev/null || true
+    elif fm_wake_append_locked check "imposed-hold:$due_task" "$reason"; then
+      printf '%s\n' "$due_id" > "$woke" 2>/dev/null || true
+      appended=1
+    else
+      status=1
+    fi
+  fi
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK" || status=1
+  [ "$status" -eq 0 ] || return 1
+  # Only a fresh append ends this poll cycle; a hold the marker already
+  # covered stays silent so a lapsed-but-waked hold never re-prints per poll.
+  if [ "$appended" -eq 1 ]; then
+    IMPOSED_HOLD_EXPIRY=$reason
+  fi
+  return 0
+}
+
 # Away-mode long-wait escalation. While an away record exists (never quiet
 # mode's), scan each task with a meta record once per AWAY_LONG_WAIT_SCAN_SECS,
 # classify it with crew_away_long_wait_class, and escalate every lane that has
@@ -4208,6 +4300,12 @@ while :; do
     exit 1
   }
   [ -z "$OPEN_DECISION_REMINDER" ] || wake "$OPEN_DECISION_REMINDER"
+
+  imposed_hold_expiry_tick || {
+    echo 'watcher: imposed-hold expiry check failed' >&2
+    exit 1
+  }
+  [ -z "$IMPOSED_HOLD_EXPIRY" ] || wake "$IMPOSED_HOLD_EXPIRY"
 
   away_long_wait_tick || {
     echo 'watcher: away long-wait check failed' >&2
