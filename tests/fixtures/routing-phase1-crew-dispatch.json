@@ -1,0 +1,944 @@
+{
+  "rules": [
+    {
+      "when": "the task's deliverable is generated raster images and nothing else: illustrations, mockup or marketing imagery produced by an image model. A feature, page or plan that merely includes some imagery is not this rule - it goes to its matching general rule, with the image generation split into its own task",
+      "use": [
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "medium",
+          "reasoning_class": 4,
+          "account": "codex1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "medium",
+          "reasoning_class": 4,
+          "account": "codex2",
+          "seat_tier": 1
+        }
+      ],
+      "why": "Claude Code cannot generate images and the Codex-family models can (image_generation is a stable feature); this rule covers only work no Claude candidate can do. Reached through pi rather than the native codex CLI per the captain's standing instruction of 2026-09-22 - same ChatGPT subscription, same models, one harness. gpt-6-sol replaced gpt-5.6-sol on 2026-09-23: the same class at half the credits per task on Artificial Analysis 2026-09-30: gpt-6.1-sol replaces gpt-6-sol at the same effort (AA index v4.3.2: low 42/medium 48/xhigh 51 vs 34/40/44, equal or lower cost per task); still below Opus high on judgment work. 2026-11-10 routing-tree proposal (AA Intelligence Index v5.0.1, read 2026-11-10): GPT-6 Luna xhigh (23.5, $0.10/task, Terminal-Bench 8.1%) left this rule; it sat one class ABOVE Sol medium (46.3, $0.36) only by an old class number.",
+      "label": "Image generation"
+    },
+    {
+      "when": "read-only investigation: locating code, mapping a module, finding callers, summarising a directory, answering 'where is X'",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "haiku",
+          "effort": "low",
+          "reasoning_class": 1,
+          "account": "claude1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "haiku",
+          "effort": "low",
+          "reasoning_class": 1,
+          "account": "claude2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6-luna",
+          "effort": "xhigh",
+          "reasoning_class": 1,
+          "account": "codex1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6-luna",
+          "effort": "xhigh",
+          "reasoning_class": 1,
+          "account": "codex2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "zai",
+          "model": "zai/glm-5.3-flash",
+          "effort": "low",
+          "reasoning_class": 1,
+          "account": "glm",
+          "seat_tier": 1
+        }
+      ],
+      "why": "mirrors the locate subagent - reads a lot, writes almost nothing, needs no judgment. Summarising is deliberately NOT a rule of its own: it lands on the same rung, and a category that leads to the same choice is administration rather than a category. Pick between the candidates by quota-array-dispatch's gates and spendPriority, which is the weekly glideslope: positive means that allowance is on track to reset unused. Efforts differ on purpose: the class is set by the Artificial Analysis score, not by the effort label - gpt-6-luna at xhigh scores 33.9 for about 1 credit per task, where gpt-5.6-luna at low scored 21.0 (2026-09-23). glm-5.3-flash is the light GLM variant, and Z.ai is a SEPARATE pool from Claude and ChatGPT, so it relieves the two allowances the captain actually runs out of. Both non-Claude candidates compact early (gpt-6-luna and glm-5.3-flash at 64K) through pi's compaction.modelOverrides 2026-10-08: the `haiku` alias now runs Haiku 5.5, and the captain kept it at low: AA index 29.4 for about $0.024 per task against Haiku 4.5's 16.9 for $0.28, Terminal-Bench 4.0 12.6% against 0%. Medium (34.5, $0.047) was proposed for Anthropic's low-effort early-stop caveat and declined. 2026-11-10 routing-tree proposal (AA Intelligence Index v5.0.1, read 2026-11-10): unchanged by the cost-and-capability test (captain round 1): the bar is Haiku low's capability (mean of index and Terminal-Bench 15.6) and gpt-6-luna xhigh (15.8, $0.10/task) is the cheapest Codex setting that clears it; Sol low (32.8, $0.16) would buy capability a lookup does not need.",
+      "label": "Read-only investigation"
+    },
+    {
+      "when": "trivial mechanical edit: typo, rename, single-function rewrite, format-preserving tweak, small guard - at most 2 files. Never a change to credentials, permissions, payments or stored data (security rule)",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "low",
+          "reasoning_class": 3,
+          "account": "claude1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "low",
+          "reasoning_class": 3,
+          "account": "claude2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "low",
+          "reasoning_class": 3,
+          "account": "codex1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "low",
+          "reasoning_class": 3,
+          "account": "codex2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "zai",
+          "model": "zai/glm-5.3",
+          "effort": "low",
+          "reasoning_class": 3,
+          "account": "glm",
+          "seat_tier": 1
+        }
+      ],
+      "why": "mirrors quick-edit - bounded and writing, but still no judgment. Sonnet left this rule on 2026-09-23: Opus 5.5 low scores 42.3 on Artificial Analysis at about the price of Sonnet 5 low's 24.3, so Sonnet has no job left anywhere on the ladder. gpt-6-sol low (33.9) replaces gpt-5.6-terra low (27.5). GLM is admitted because the outcome is checkable by inspection, so a weaker model costs a re-run rather than a shipped fault; it takes the full glm-5.3 rather than the flash variant, because this is the rung that WRITES 2026-09-30: gpt-6.1-sol replaces gpt-6-sol at the same effort (AA index v4.3.2: low 42/medium 48/xhigh 51 vs 34/40/44, equal or lower cost per task); still below Opus high on judgment work. 2026-11-10 routing-tree proposal (AA Intelligence Index v5.0.1, read 2026-11-10): gpt-6-luna xhigh left: Sol low beats it on index (34.8 vs 23.5), Terminal-Bench (30.8% vs 8.1%) and time. Opus low (34.8) stays the Claude rung.",
+      "label": "Trivial edit"
+    },
+    {
+      "when": "multi-file implementation of an already-specified change: build the feature or refactor that a plan or issue already describes, across three or more files, where WHAT to build is settled and only HOW is open.",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "reasoning_class": 4,
+          "account": "claude1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "reasoning_class": 4,
+          "account": "claude2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "medium",
+          "reasoning_class": 3,
+          "account": "claude1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "medium",
+          "reasoning_class": 3,
+          "account": "claude2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "medium",
+          "reasoning_class": 4,
+          "account": "codex1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "medium",
+          "reasoning_class": 4,
+          "account": "codex2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "zai",
+          "model": "zai/glm-5.3",
+          "effort": "max",
+          "reasoning_class": 4,
+          "account": "glm",
+          "seat_tier": 1
+        }
+      ],
+      "why": "NEW 2026-09-21, and it closes a real gap: the workhorse category had no rule at all and fell through to default. Turn-heavy and writing, but not ambiguous, so it belongs below the review and architect rungs rather than on them. Refactor is deliberately not split off: the difference is in the brief, not in the cost profile. 2026-09-23: gpt-6-sol xhigh (44.1, about 13.3 credits) replaces gpt-5.6-sol medium (39.2, about 12.6), and GLM is admitted on benchmarks alone - glm-5.3 scores 44.8 on the index and 41.9% on Terminal-Bench against Sol xhigh's 44.1 and 30.3%. The old bar (a turn-heavy task stalls a small pool) is covered by quota-array-dispatch's runway gate. pi maps glm effort only at low, high and max, so high is its rung here 2026-09-30: gpt-6.1-sol replaces gpt-6-sol at the same effort (AA index v4.3.2: low 42/medium 48/xhigh 51 vs 34/40/44, equal or lower cost per task); still below Opus high on judgment work. 2026-10-11, captain akkoord: sonnet/high added as the first Claude candidate on both seats. The work is specified and checkable, which is the ladder's value rung (Sonnet 5.5 high 46.8 on the AA index for about $0.88 per task against opus/medium's 51.2 for $1.34, 0.66x); opus/medium stays as the next Claude candidate for work that turns out to need judgment. Whole sessions only: never switch down to Sonnet mid-session. 2026-11-09, captain Option A (class equalization): sonnet/high, gpt-6.1-sol/medium and glm-5.3/high share class 4 and compete on spendPriority; opus/medium sits at class 3 and is inert (same seats). AA index v5.0 read 2026-11-09: Sonnet 5.5 high 42, Sol medium 46, Opus medium 48, GLM-5.3 max 32 / low 23 (no high variant published); the 44.8 GLM figure above is v4.3.2 and stale. 2026-11-10 routing-tree proposal (AA Intelligence Index v5.0.1, read 2026-11-10): classes unchanged (captain Option A). The bar is Sonnet high's capability (42.7); gpt-6.1-sol medium (47.1, $0.36/task) is the cheapest Codex setting that clears it, so it stays. glm-5.3 high -> max: high has no published AA score; max is 31.7 index, Terminal-Bench 41.9%, GDPval 1657, the only measured GLM setting near the bar.",
+      "label": "Implement a settled spec"
+    },
+    {
+      "when": "external research: library or API behaviour, comparing approaches, evaluating a dependency - the unknown is outside this repo",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "medium",
+          "reasoning_class": 4,
+          "account": "claude1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "medium",
+          "reasoning_class": 4,
+          "account": "claude2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "high",
+          "reasoning_class": 4,
+          "account": "codex1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "high",
+          "reasoning_class": 4,
+          "account": "codex2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "zai",
+          "model": "zai/glm-5.3",
+          "effort": "max",
+          "reasoning_class": 4,
+          "account": "glm",
+          "seat_tier": 1
+        }
+      ],
+      "why": "mirrors the researcher subagent. Fetched pages arrive as FRESH input, not as cache reads, so the cheapest-on-cache model is not the cheapest here. Same candidates as implementation, for the same benchmark reasons (2026-09-23) 2026-09-30: gpt-6.1-sol replaces gpt-6-sol at the same effort (AA index v4.3.2: low 42/medium 48/xhigh 51 vs 34/40/44, equal or lower cost per task); still below Opus high on judgment work. 2026-11-09, captain Option A: glm-5.3/high joins class 4 beside opus/medium and gpt-6.1-sol/medium (AA v5.0 48 / 46 / GLM max 32); research does not need the strongest model. 2026-11-10 routing-tree proposal (AA Intelligence Index v5.0.1, read 2026-11-10): classes unchanged. The bar is Opus medium's capability (50.4): gpt-6.1-sol medium (47.1) misses it and high (50.9, $0.59/task) is the cheapest Sol effort that clears it. glm-5.3 high -> max, the measured GLM variant.",
+      "label": "External research"
+    },
+    {
+      "when": "a bug whose root cause is not obvious after one look, or an adversarial pre-ship review of a diff",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "high",
+          "reasoning_class": 5,
+          "account": "claude1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "high",
+          "reasoning_class": 5,
+          "account": "claude2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "xhigh",
+          "reasoning_class": 4,
+          "account": "codex1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "xhigh",
+          "reasoning_class": 4,
+          "account": "codex2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "zai",
+          "model": "zai/glm-5.3",
+          "effort": "high",
+          "reasoning_class": 3,
+          "account": "glm",
+          "seat_tier": 1
+        }
+      ],
+      "why": "mirrors debugger and reviewer - the value champion rung. The one category where a missed fault costs more than the whole session, so never trade this class down for quota. Both non-Claude candidates sit a class below Opus 5.5 high (56.6% Terminal-Bench) and were admitted by the captain on 2026-09-23 as its fallbacks: glm-5.3 is the strongest of them (41.9% Terminal-Bench), gpt-6-sol xhigh the other (30.3%) 2026-09-30: gpt-6.1-sol replaces gpt-6-sol at the same effort (AA index v4.3.2: low 42/medium 48/xhigh 51 vs 34/40/44, equal or lower cost per task); still below Opus high on judgment work."
+    },
+    {
+      "when": "ambiguous, cross-subsystem, or high-cost-of-redo feature that needs a plan before code; ALSO producing a project or iteration plan, WBS, roadmap or architecture/design-of-system document (even when the deliverable is a Lavish page or report - the planning and architecture judgment is the work)",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "xhigh",
+          "reasoning_class": 5,
+          "account": "claude1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "xhigh",
+          "reasoning_class": 5,
+          "account": "claude2",
+          "seat_tier": 1
+        }
+      ],
+      "why": "CAPTAIN 2026-11-08: planning and architecture of this size (project plans, WBS, system or portal architecture, anything a whole iteration is built on) runs on Opus xhigh, never sonnet or a lower effort; the strongest-class filter keeps the Opus class-5 rows over every weaker candidate. Mirrors architect. Earlier note: lowered from xhigh to high on 2026-09-21: planning is few turns and few tokens, so the extra effort buys little here while xhigh costs roughly 1.9x per task on Opus 5.5 for +2.4 on the index; ask for xhigh explicitly on a genuinely hard fork. Context size is not a reason to pick a candidate: every session compacts early (Claude at 200K, gpt-6-sol on its 272K default, glm-5.3 at 100K) 2026-09-30: gpt-6.1-sol replaces gpt-6-sol at the same effort (AA index v4.3.2: low 42/medium 48/xhigh 51 vs 34/40/44, equal or lower cost per task); still below Opus high on judgment work.",
+      "never_providers": [
+        "codex",
+        "zai"
+      ],
+      "label": "Plan or architecture"
+    },
+    {
+      "when": "orchestration: a long-running supervising session that dispatches, tracks and reviews other workers rather than writing the code itself - firstmate, a secondmate, or any session whose own context is re-read turn after turn",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "reasoning_class": 3,
+          "account": "claude1",
+          "seat_tier": 2
+        },
+        {
+          "harness": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "reasoning_class": 3,
+          "account": "claude2",
+          "seat_tier": 3
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "medium",
+          "reasoning_class": 4,
+          "account": "claude1",
+          "seat_tier": 2
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "medium",
+          "reasoning_class": 4,
+          "account": "claude2",
+          "seat_tier": 3
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "xhigh",
+          "reasoning_class": 4,
+          "account": "codex1",
+          "seat_tier": 4
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "xhigh",
+          "reasoning_class": 4,
+          "account": "codex2",
+          "seat_tier": 4
+        },
+        {
+          "harness": "pi",
+          "provider": "zai",
+          "model": "zai/glm-5.3",
+          "effort": "high",
+          "reasoning_class": 3,
+          "account": "glm",
+          "seat_tier": 4
+        }
+      ],
+      "why": "NEW 2026-09-21. FABLE RETIRED 2026-09-23 (the old M1 gate is closed, not pending). The measured basis was the break-even Fable / Opus 5 = 2 - 1.5 x cache-read share, won only above a 66.7% share, and orchestration on this home ran 92.3% cache-read over 30 days. Opus 5.5 cut its cache hit to $0.20 against Fable 5.1's $0.25 and its other rates to 0.4x Fable's, so Fable / Opus 5.5 = 2.5 - 1.25 x share, at least 1.25 for ANY share (1.35 at the measured 92.3%), and Fable 5.1 medium also scores lower (48.9 against Opus 5.5 medium's 51.2). There is no break-even left, so this rule stays on Opus. glm-5.3 high is admitted on its index and Terminal-Bench scores and compacts at 100K through pi's compaction.modelOverrides 2026-09-30: gpt-6.1-sol replaces gpt-6-sol at the same effort (AA index v4.3.2: low 42/medium 48/xhigh 51 vs 34/40/44, equal or lower cost per task); still below Opus high on judgment work. 2026-10-11, captain akkoord: sonnet/high added as the first Claude candidate on both seats, because the captain runs firstmate and the secondmates on Sonnet high (config/secondmate-harness) and the row now says so. opus/medium stays as the next Claude candidate. Whole sessions only: never switch down to Sonnet mid-session. 2026-11-10 routing-tree proposal (AA Intelligence Index v5.0.1, read 2026-11-10): gpt-6-luna xhigh left (23.5 index, dominated by every Sol effort).",
+      "label": "Orchestration (firstmate and secondmates)"
+    },
+    {
+      "when": "writing and reporting: a report, a proposal, documentation, release notes - prose is the deliverable rather than code. A project plan, WBS, roadmap or architecture document is never this rule: it goes to the plan-before-code rule at opus xhigh. A Lavish page whose point is a visual design goes to the front-end design rule, never here",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "reasoning_class": 3,
+          "account": "claude1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "reasoning_class": 3,
+          "account": "claude2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "xhigh",
+          "reasoning_class": 3,
+          "account": "codex1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "xhigh",
+          "reasoning_class": 3,
+          "account": "codex2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "zai",
+          "model": "zai/glm-5.3",
+          "effort": "max",
+          "reasoning_class": 3,
+          "account": "glm",
+          "seat_tier": 1
+        }
+      ],
+      "why": "NEW 2026-09-21. The mirror image of orchestration: output dominates the bill instead of cache-read, so a cheap-on-cache model would be the expensive choice here, and this rule must never follow a cache-read argument onto Fable. GLM added 2026-09-23: its GDPval (0.57) is the best result outside Claude; gpt-6-sol xhigh scores 0.47, and GPT-6 Sol regressed on GDPval against GPT-5.6 Sol 2026-09-30: gpt-6.1-sol replaces gpt-6-sol at the same effort (AA index v4.3.2: low 42/medium 48/xhigh 51 vs 34/40/44, equal or lower cost per task); still below Opus high on judgment work. 2026-10-08, captain akkoord: the Claude candidate moves opus/medium -> sonnet/high on every seat. After Sonnet 5.5's cache-read cut to $0.10 it is 46.8 on the AA index for $0.88 per task against opus/medium's 51.2 for $1.34 (0.66x), GDPval-AA 1551 against 1586 and AA-Briefcase 1639 against 1628. Output dominates this bill and Sonnet's output is half Opus's. Whole sessions only: never switch down to Sonnet mid-session. 2026-11-10 routing-tree proposal (AA Intelligence Index v5.0.1, read 2026-11-10): glm-5.3 high -> max: GDPval-AA puts GLM-5.3 max at 1657, above Sonnet 5.5 high (1557) and Sol xhigh (1555); high is unmeasured. Fable 5.2 stays off this rule: its GDPval (low 1546, medium 1591) is below Opus and Sonnet xhigh.",
+      "label": "Writing and reports"
+    },
+    {
+      "when": "visual work with pixel control: UI polish, a print or PDF render, a design comparison against a mockup - the check is what it LOOKS like, from a screenshot",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "high",
+          "reasoning_class": 5,
+          "account": "claude1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "high",
+          "reasoning_class": 5,
+          "account": "claude2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "xhigh",
+          "reasoning_class": 4,
+          "account": "codex1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "xhigh",
+          "reasoning_class": 4,
+          "account": "codex2",
+          "seat_tier": 1
+        }
+      ],
+      "why": "NEW 2026-09-21. Image input plus visual judgment; the cheap rungs are structurally unsuited here rather than merely weaker, so this rule must never fall back to haiku however tight quota is. No GLM: glm-5.3 takes text only, and the only GLM with image input (glm-5.3-flash) is weaker. There is no Artificial Analysis visual eval, so gpt-6-sol xhigh is an id swap for gpt-5.6-sol high 2026-09-30: gpt-6.1-sol replaces gpt-6-sol at the same effort (AA index v4.3.2: low 42/medium 48/xhigh 51 vs 34/40/44, equal or lower cost per task); still below Opus high on judgment work.",
+      "never_providers": [
+        "zai"
+      ],
+      "label": "Visual polish"
+    },
+    {
+      "when": "front-end design: designing or redesigning a page, report layout, dashboard, landing page, UI mockup or Lavish design page - the deliverable is how something LOOKS and is laid out, whether built as code or as a mockup",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "xhigh",
+          "reasoning_class": 5,
+          "account": "claude1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "xhigh",
+          "reasoning_class": 5,
+          "account": "claude2",
+          "seat_tier": 1
+        }
+      ],
+      "why": "2026-11-02, captain: front-end design (the Renske deck) must run on Claude Opus xhigh, so this rule lists only the two Opus xhigh seats and the earlier Sol xhigh candidates were removed (backup config/crew-dispatch.json.pre-opus-xhigh-frontend-2026-11-02). NEW 2026-10-06, captain ruling: GLM must NEVER do front-end design. The transport prices and emballage redesigns built on glm-5.3 looked very bad, and the captain asked for this to be persistent. Never put a zai candidate on this rule, never fall through to the default for design work, and a standing 'only zai' ask does not cover it. 2026-11-02, captain: the geris Claude seat (now claude3) was for firstmate and secondmates only; superseded 2026-11-04, when the captain made claude3 the last Claude reserve on worker rows (the earlier 'redesign using claude geris' ruling is superseded); Claude on the personal and claude2 seats first, then Codex",
+      "never_providers": [
+        "zai"
+      ],
+      "label": "Front-end design"
+    },
+    {
+      "when": "the worker owns a Lavish page: it hosts or keeps listening on a Lavish board (lavish-axi listener or poll), answers the captain's annotations and prompts on it, or builds the page and stays to answer it. This holds whatever else the task also does; a Lavish page that is purely a visual design still follows the front-end design rule, which is Claude as well",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "medium",
+          "reasoning_class": 4,
+          "account": "claude1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "medium",
+          "reasoning_class": 4,
+          "account": "claude2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "zai",
+          "model": "zai/glm-5.3",
+          "effort": "max",
+          "reasoning_class": 4,
+          "account": "glm",
+          "seat_tier": 2
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "high",
+          "reasoning_class": 4,
+          "account": "codex1",
+          "seat_tier": 3
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "high",
+          "reasoning_class": 4,
+          "account": "codex2",
+          "seat_tier": 3
+        }
+      ],
+      "why": "NEW 2026-11-03, captain: never link a Lavish page to a Codex or GLM worker; Lavish always runs on Claude workers. The captain's words also name a fallback, GLM first and then Codex, only when no Claude worker is available. The resolver ranks every listed candidate by spendPriority and has no strict cross-family tiers, so listing GLM or Codex here would let them win ahead of Claude (GLM spendPriority far above Claude's); this rule therefore lists only the two Claude seats, as the front-end design rule does, and a tight Claude pool stops and reports instead of silently falling to another family. The GLM-then-Codex fallback needs a resolver change, tracked as backlog item dispatch-strict-fallback-tiers. When it lands, GLM must still be skipped for design Lavish pages (the 2026-10-06 ruling). The Geris Claude seat (now claude3) stayed out as firstmate and secondmate only (2026-11-02), until the captain made it the last Claude reserve on worker rows (2026-11-04). Trigger: on 2026-11-03 the Miko plan board was handed to a Pi/gpt-6.1-sol scout while its listener kept dropping. Backup config/crew-dispatch.json.pre-lavish-claude-only-2026-11-03 2026-11-10 routing-tree proposal (AA Intelligence Index v5.0.1, read 2026-11-10): the captain's fallback order (Claude, then GLM, then Codex) is now expressible with seat_tier, so this closes backlog dispatch-strict-fallback-tiers by configuration. A design Lavish page still never reaches GLM: it matches the front-end design rule, whose never_providers zai bans GLM for the whole union.",
+      "label": "Lavish page owner",
+      "strict_tiers": true
+    },
+    {
+      "use": [
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "medium",
+          "reasoning_class": 4,
+          "account": "claude1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "medium",
+          "reasoning_class": 4,
+          "account": "claude2",
+          "seat_tier": 1
+        }
+      ],
+      "when": "TIMING NOTE, not a work category - this rule never matches a task and exists so the reader sees it at every intake. Some providers do not charge a flat rate: they run an off-peak window where usage counts half or not at all, a peak window where it counts heavier, an introductory discount, or a time-limited promotion. spendPriority does not know about any of that - it reads how much allowance is left against the reset clock, not what the next call will cost. A provider whose promotion has expired is a flat provider again, so treat every dated rule as dead on its end date rather than quietly keeping the discount alive. Read every window in ITS OWN timezone: an off-peak window published in China time is not the same clock as this machine's. VERIFIED 2026-09-22 against the vendor's own documentation, and the only provider of the four with any such rule at all: Z.ai charges peak only Mon-Fri 14:00-18:00 Singapore time (08:00-12:00 CEST in summer, 07:00-11:00 in winter) and half rate every other hour including the whole weekend, so a GLM candidate is at half price outside one four-hour morning window. The two dated promotion overlays that ran until 2026-10-07 expired and were removed on 2026-10-11, so no overlay is active. This note states facts only; it is not a rule to prefer any model",
+      "why": "Carrier for the timing policy the captain asked for on 2026-09-22. The schema has no place for a standing note, so it rides a rule whose `when` can never match a real deliverable; the profile is the ordinary default and is never expected to be selected. The concrete per-provider windows live in the agentic-setup payload rate-window table rather than here, so one table feeds the cockpit, both statusbars and this decision instead of three copies drifting apart"
+    },
+    {
+      "label": "Security-sensitive or destructive change",
+      "when": "security-sensitive or destructive change: writing or changing code, configuration or infrastructure that handles credentials or secrets, sign-in, permissions or access grants, payments, deletes or migrates stored data, or changes production infrastructure - whatever its size. This rule takes precedence over the implementation and trivial-edit rules. A pure review of such a diff stays with the hard-bug and pre-ship review rule",
+      "use": [
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "high",
+          "reasoning_class": 5,
+          "account": "claude1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "high",
+          "reasoning_class": 5,
+          "account": "claude2",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "max",
+          "reasoning_class": 4,
+          "account": "codex1",
+          "seat_tier": 1
+        },
+        {
+          "harness": "pi",
+          "provider": "codex",
+          "model": "openai-codex/gpt-6.1-sol",
+          "effort": "max",
+          "reasoning_class": 4,
+          "account": "codex2",
+          "seat_tier": 1
+        }
+      ],
+      "never_providers": [
+        "zai"
+      ],
+      "why": "NEW 2026-11-10 routing-tree proposal. A miss here costs more than the session (rule 6 reasoning), so the class matches rule 6: Opus 5.5 high first, Sol max as the class-below fallback. GLM is banned: 31.7 on the index against 51.8 / 54.6. Fable is deliberately absent: its cyber safeguards may silently route flagged security queries to a less capable model."
+    }
+  ],
+  "default": [
+    {
+      "harness": "claude",
+      "model": "opus",
+      "effort": "medium",
+      "reasoning_class": 4,
+      "account": "claude1",
+      "seat_tier": 1
+    },
+    {
+      "harness": "claude",
+      "model": "opus",
+      "effort": "medium",
+      "reasoning_class": 4,
+      "account": "claude2",
+      "seat_tier": 1
+    },
+    {
+      "harness": "pi",
+      "provider": "codex",
+      "model": "openai-codex/gpt-6.1-sol",
+      "effort": "high",
+      "reasoning_class": 4,
+      "account": "codex1",
+      "seat_tier": 1
+    },
+    {
+      "harness": "pi",
+      "provider": "codex",
+      "model": "openai-codex/gpt-6.1-sol",
+      "effort": "high",
+      "reasoning_class": 4,
+      "account": "codex2",
+      "seat_tier": 1
+    },
+    {
+      "harness": "pi",
+      "provider": "codex",
+      "model": "openai-codex/gpt-6.1-sol",
+      "effort": "medium",
+      "reasoning_class": 3,
+      "account": "codex1",
+      "seat_tier": 1
+    },
+    {
+      "harness": "pi",
+      "provider": "codex",
+      "model": "openai-codex/gpt-6.1-sol",
+      "effort": "medium",
+      "reasoning_class": 3,
+      "account": "codex2",
+      "seat_tier": 1
+    },
+    {
+      "harness": "pi",
+      "provider": "zai",
+      "model": "zai/glm-5.3",
+      "effort": "max",
+      "reasoning_class": 4,
+      "account": "glm",
+      "seat_tier": 1
+    }
+  ],
+  "model_notes": {
+    "pi/zai/glm-5.3": "NEVER for front-end design (captain ruling 2026-10-06: GLM transport prices and emballage designs looked very bad; no page, report layout, dashboard or Lavish design on GLM, any account, any standing 'only zai' ask notwithstanding). Z.ai is a SEPARATE pool from Claude and ChatGPT. Normal rule: peak only Mon-Fri 14:00-18:00 Singapore time (08:00-12:00 CEST summer, 07:00-11:00 winter), half rate every other hour incl. whole weekend. The promotion that ran until 2026-10-07 is over and removed. AA v5.0.1 (2026-11-10): low 23.1 / max 31.7 index, Terminal-Bench 34.8% / 41.9%, GDPval 1333 / 1657; AA publishes no high variant, so worker rows use max (Pi maps only low, high and max). Max takes about 30 minutes per AA task against 15 at low.",
+    "pi/zai/glm-5.3-flash": "Light GLM variant. The promotion that ran until 2026-10-07 is over and removed; the normal Z.ai windows apply.",
+    "claude/haiku": "Resolves to claude-haiku-5-5 (Haiku 5.5, released 2026-10-07) since Claude Code 2.1.293. Prompts over 100K tokens bill at 5x ($0.50 in / $2.50 out / $0.05 cache read against $0.10 / $0.50 / $0.01). Kept at low by captain ruling 2026-10-08; Anthropic documents early stopping and skipped searches at low in long agent prompts, so watch investigation results for a missed search.",
+    "claude/sonnet": "Sonnet 5.5 cache read is $0.10 since 2026-10-07 (was $0.20), so it is exactly 0.5x Opus 5.5 on every rate. Opus 5.5 reads Sonnet 5.5 thinking blocks, so escalating Sonnet -> Opus keeps the reasoning; Opus -> Sonnet still drops it, so never switch DOWN mid-session.",
+    "pi/openai-codex/gpt-6.1-sol": "AA v5.0.1 (2026-11-10): low 34.8 / medium 46.3 / high 50.3 / xhigh 52.5 / max 54.6 index at $0.16 / $0.36 / $0.59 / $0.76 / $1.27 per task; Terminal-Bench 4.0 30.8% / 48.0% / 51.5% / 54.0% / 56.1%; Coding Agent Index (Codex harness, max) 54.1. Pi maps max to max.",
+    "pi/openai-codex/gpt-6-luna": "Left every worker row 2026-11-10: xhigh scores 23.5 (Terminal-Bench 8.1%) and gpt-6.1-sol low beats it on every lens for six cents more per task.",
+    "codex/gpt-6.1-terra": "In both native Codex catalogs (models_cache.json) but NOT in Pi's openai-codex list, so workers cannot reach it yet. AA: low 29.4 / medium 38.2 / high 42.4 / xhigh 45.3 at $0.07 / $0.17 / $0.26 / $0.40; Coding Agent Index high 46.3 at $0.54. A cheap candidate once Pi lists it.",
+    "pi/openai-codex/gpt-6-astra": "In Pi's catalog, not on any row: $10 / $50 per million tokens, xhigh 55.3 index at $3.66 per task against Sol max 54.6 at $1.27; Coding Agent Index max 54.7 against Sol max 54.1. Dominated on credits."
+  },
+  "seat_tiers_by_delivery": {},
+  "pipeline_rows": [
+    {
+      "label": "Judge the change: review and test",
+      "steps": [
+        "review",
+        "test"
+      ],
+      "use": [
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "medium",
+          "account": "claude1",
+          "pool": 1,
+          "seat_tier": 1,
+          "reasoning_class": 4
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "medium",
+          "account": "claude2",
+          "pool": 1,
+          "seat_tier": 1,
+          "reasoning_class": 4
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "high",
+          "account": "codex1",
+          "pool": 2,
+          "seat_tier": 2,
+          "reasoning_class": 4
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "high",
+          "account": "codex2",
+          "pool": 2,
+          "seat_tier": 2,
+          "reasoning_class": 4
+        },
+        {
+          "harness": "pi",
+          "provider": "zai",
+          "model": "zai/glm-5.3",
+          "effort": "max",
+          "account": "glm",
+          "pool": 2,
+          "seat_tier": 3,
+          "reasoning_class": 3
+        }
+      ],
+      "never_providers": [
+        "google"
+      ]
+    },
+    {
+      "label": "Apply a known fix: fixes, CI repair, rebase",
+      "steps": [
+        "fixes",
+        "ci",
+        "rebase"
+      ],
+      "use": [
+        {
+          "harness": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "account": "claude1",
+          "pool": 1,
+          "seat_tier": 1,
+          "reasoning_class": 4
+        },
+        {
+          "harness": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "account": "claude2",
+          "pool": 1,
+          "seat_tier": 1,
+          "reasoning_class": 4
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium",
+          "account": "codex1",
+          "pool": 2,
+          "seat_tier": 2,
+          "reasoning_class": 4
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "medium",
+          "account": "codex2",
+          "pool": 2,
+          "seat_tier": 2,
+          "reasoning_class": 4
+        },
+        {
+          "harness": "pi",
+          "provider": "zai",
+          "model": "zai/glm-5.3",
+          "effort": "max",
+          "account": "glm",
+          "pool": 2,
+          "seat_tier": 3,
+          "reasoning_class": 3
+        }
+      ],
+      "never_providers": [
+        "google"
+      ]
+    },
+    {
+      "label": "Mechanical: lint",
+      "steps": [
+        "lint"
+      ],
+      "use": [
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "low",
+          "account": "claude1",
+          "pool": 1,
+          "seat_tier": 1,
+          "reasoning_class": 3
+        },
+        {
+          "harness": "claude",
+          "model": "opus",
+          "effort": "low",
+          "account": "claude2",
+          "pool": 1,
+          "seat_tier": 1,
+          "reasoning_class": 3
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "low",
+          "account": "codex1",
+          "pool": 2,
+          "seat_tier": 2,
+          "reasoning_class": 3
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "low",
+          "account": "codex2",
+          "pool": 2,
+          "seat_tier": 2,
+          "reasoning_class": 3
+        },
+        {
+          "harness": "pi",
+          "provider": "zai",
+          "model": "zai/glm-5.3",
+          "effort": "low",
+          "account": "glm",
+          "pool": 2,
+          "seat_tier": 3,
+          "reasoning_class": 3
+        }
+      ],
+      "never_providers": [
+        "google"
+      ]
+    },
+    {
+      "label": "Write: document and PR text",
+      "steps": [
+        "document",
+        "pr"
+      ],
+      "use": [
+        {
+          "harness": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "account": "claude1",
+          "pool": 1,
+          "seat_tier": 1,
+          "reasoning_class": 3
+        },
+        {
+          "harness": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "account": "claude2",
+          "pool": 1,
+          "seat_tier": 1,
+          "reasoning_class": 3
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh",
+          "account": "codex1",
+          "pool": 2,
+          "seat_tier": 2,
+          "reasoning_class": 3
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh",
+          "account": "codex2",
+          "pool": 2,
+          "seat_tier": 2,
+          "reasoning_class": 3
+        },
+        {
+          "harness": "pi",
+          "provider": "zai",
+          "model": "zai/glm-5.3",
+          "effort": "max",
+          "account": "glm",
+          "pool": 2,
+          "seat_tier": 3,
+          "reasoning_class": 3
+        }
+      ],
+      "never_providers": [
+        "google"
+      ]
+    }
+  ],
+  "ranking": {
+    "mode": "surplus_value",
+    "reset_horizon_hours": 12,
+    "reset_horizon_min_percent": 10
+  },
+  "plan_value": {
+    "claude1": 200,
+    "claude2": 200,
+    "codex1": 100,
+    "codex2": 25,
+    "glm": 80
+  }
+}
