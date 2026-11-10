@@ -326,7 +326,11 @@ test_security_and_data_loss_reach_a_captain_hold_at_once() {
       "$ROOT/bin/fm-captain-hold.sh" open "$row" >/dev/null || fail "'$risk' did not open a captain call"
   done
   assert_equals "" "$(at "$home" 0 summary)" "an escalated finding sat in the waiting list"
-  out=$(at "$home" 0 add --origin scout-b --item 1 --title "Plain question" --kind question --hold)
+  if at "$home" 0 add --origin scout-b --item 1 --title "Plain question" --kind question --hold > "$home/refused.out" 2>&1; then
+    fail "suggestion intake bypassed the category gate"
+  fi
+  assert_grep "ASK LESS" "$home/refused.out" "uncategorized intake did not explain the gate"
+  out=$(at "$home" 0 add --origin scout-b --item 1 --title "Plain question" --kind question --hold --category captain-only-fact)
   assert_equals "escalated" "${out%% *}" "--hold did not take the captain-hold path"
   out=$(at "$home" 0 add --origin scout-a --item 9 --title "Plain stale doc" --risk "securityless wording is fine")
   assert_equals "suggested" "${out%% *}" "a risk merely starting with the letters escalated"

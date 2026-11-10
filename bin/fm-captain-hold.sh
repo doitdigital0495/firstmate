@@ -22,7 +22,7 @@
 # Usage:
 #   fm-captain-hold.sh hold <task-id> --reason <reason> \
 #     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD] \
-#     [--context-file <path>]
+#     --category <category> [--context-file <path>]
 #   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release] [--expected-lifecycle <identity>]
 #   fm-captain-hold.sh answer <task-id> --deadline-default
 #   fm-captain-hold.sh defaults-due
@@ -61,6 +61,17 @@
 # `--until` records the captain's own deferral date through `tasks-axi hold
 # --until`, so a "revisit later" answer is stored as a date instead of a live
 # card.
+# `--category` declares which captain-owned class the call is: money,
+# architecture-deviation, destructive, security-sensitive, credential-or-login,
+# or captain-only-fact. A fresh hold lifecycle is refused without a valid
+# category: ASK LESS (data/captain-shared.md) keeps only those classes with the
+# captain, so a call outside them is chosen and reported instead of held, and a
+# read-only or reversible in-plan step needs no hold absent a genuine gate.
+# The category is recorded on a `Captain hold category:` body line below the
+# same durable pattern as the origin line. Re-holding an active call preserves
+# its recorded category (an exact retry passes the same one), and a row held
+# before this gate re-holds uncategorized with a warning instead of breaking,
+# because its lifecycle already exists.
 #
 # `answer` records the captain's exact words and resolves the call in the same
 # act. It requires a non-empty captain decision file of at most 8192 bytes and
@@ -402,6 +413,22 @@ validate_one_line() {  # <label> <value>
   case "$value" in
     *$'\n'*|*$'\r'*) fail "$label must be one line" ;;
   esac
+}
+
+# ASK LESS (data/captain-shared.md) keeps only these call classes with the
+# captain, so every fresh hold lifecycle declares which one it is; a call
+# outside them is refused before any write and the agent decides and reports
+# it instead of stalling the work on the captain.
+CAPTAIN_HOLD_CATEGORIES='money architecture-deviation destructive security-sensitive credential-or-login captain-only-fact'
+CAPTAIN_HOLD_CATEGORY_LIST='money, architecture-deviation, destructive, security-sensitive, credential-or-login, captain-only-fact'
+CAPTAIN_HOLD_CATEGORY_GATE="a captain hold must declare --category ($CAPTAIN_HOLD_CATEGORY_LIST): a call outside those classes belongs to ASK LESS (data/captain-shared.md), so choose the best option and report it - a read-only or reversible in-plan step needs no hold absent a genuine captain-owned gate; continue work within standing authority and report afterwards"
+
+valid_hold_category() {  # <category>
+  local accepted
+  for accepted in $CAPTAIN_HOLD_CATEGORIES; do
+    [ "$1" != "$accepted" ] || return 0
+  done
+  return 1
 }
 
 acquire_task_control_lock() {  # <task-id>
@@ -1037,6 +1064,13 @@ body_hold_origin() {  # <decoded-task-body>
   printf '%s\n' "$1" | sed -n 's/^Captain hold origin: \(.*\)$/\1/p' | head -1
 }
 
+# The category a hold declared lives on its own body line below the hold
+# header, the same durable pattern as the origin line. A row held before the
+# category gate carries none, and reads as an empty category.
+body_hold_category() {  # <decoded-task-body>
+  printf '%s\n' "$1" | sed -n 's/^Captain hold category: \([A-Za-z0-9._-]\{1,\}\)$/\1/p' | head -1
+}
+
 task_identity() {
   local id=$1
   if task_show "$id"; then
@@ -1082,6 +1116,49 @@ write_hold_origin() {  # <task-id> <shown-body> <origin>
   if ! tasks_axi update "$id" --body-file "$tmp" >/dev/null; then
     rm -f -- "$tmp"
     printf 'fm-captain-hold: could not record the hold origin on %s\n' "$id" >&2
+    return 1
+  fi
+  rm -f -- "$tmp"
+}
+
+# The declared category lives on one `Captain hold category:` line below the
+# hold header, deduplicated the way write_hold_origin deduplicates its line,
+# so exactly one active category line exists no matter how often a task is
+# re-held across lifecycles.
+write_hold_category() {  # <task-id> <shown-body> <category>
+  local id=$1 body=$2 category=$3 stamp rest new_body tmp context_line=''
+  body=$(decode_shown_value "$body") \
+    || fail "could not decode the existing body for $id"
+  stamp=$(printf '%s\n' "$body" | sed -n 1p)
+  [ -n "$(body_hold_set_timestamp "$body")" ] \
+    || fail "task $id lost its hold-set stamp before its category was recorded"
+  rest=$(printf '%s\n' "$body" | sed 1d | awk '!/^Captain hold category: /' \
+    | awk 'NF || started { started = 1; print }')
+  new_body=$stamp
+  # Structured context must remain directly below the stamp; the category is
+  # independent authority and follows that header, never displacing it.
+  case "$rest" in
+    'Captain question context: '*)
+      context_line=${rest%%$'\n'*}
+      rest=${rest#"$context_line"}
+      rest=${rest#$'\n'}
+      rest=${rest#$'\n'}
+      new_body=$(printf '%s\n%s' "$new_body" "$context_line")
+      ;;
+  esac
+  new_body=$(printf '%s\nCaptain hold category: %s' "$new_body" "$category")
+  if [ -n "$rest" ]; then
+    new_body=$(printf '%s\n\n%s' "$new_body" "$rest")
+  fi
+  tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-captain-hold-category.XXXXXX") \
+    || fail "cannot stage the hold category"
+  if ! printf '%s\n' "$new_body" > "$tmp"; then
+    rm -f -- "$tmp"
+    fail "cannot stage the hold category for $id"
+  fi
+  if ! tasks_axi update "$id" --body-file "$tmp" >/dev/null; then
+    rm -f -- "$tmp"
+    printf 'fm-captain-hold: could not record the hold category on %s\n' "$id" >&2
     return 1
   fi
   rm -f -- "$tmp"
@@ -1348,7 +1425,7 @@ require_future_default_date() {  # <hold-set> <preserve> <shown-body>; reads QUE
 command_hold() {
   local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
   local existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason original_body='' hold_status=0
-  local context_file='' QUESTION_CONTEXT=''
+  local context_file='' QUESTION_CONTEXT='' category='' recorded_category=''
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1358,6 +1435,7 @@ command_hold() {
       --repo) shift; repo=${1:-} ;;
       --origin) shift; origin=${1:-} ;;
       --until) shift; until=${1:-} ;;
+      --category) [ "$#" -ge 2 ] && [ -n "$2" ] || fail "--category requires a value"; shift; category=$1 ;;
       --context-file) [ "$#" -ge 2 ] && [ -n "$2" ] || fail "--context-file requires a path"; shift; context_file=$1 ;;
       *) usage >&2; exit 2 ;;
     esac
@@ -1365,6 +1443,10 @@ command_hold() {
   done
   validate_slug task-id "$id"
   [ -n "$reason" ] || fail "reason must not be empty"
+  if [ -n "$category" ]; then
+    valid_hold_category "$category" \
+      || fail "--category must be one of: $CAPTAIN_HOLD_CATEGORY_LIST (got: $category); $CAPTAIN_HOLD_CATEGORY_GATE"
+  fi
   # bin/fm-hold-reason-lib.sh owns the storage constraint and reversible encoding.
   stored_reason=$(fm_hold_reason_encode "$reason") || fail "could not encode the hold reason"
   if [ -n "$origin" ]; then
@@ -1403,7 +1485,20 @@ command_hold() {
       existing_title=$(show_field_value "$show" title)
       [ "$existing_title" = "$title" ] || fail "existing task $id has a different title"
     fi
+    if [ "$preserve_hold_set" = 1 ]; then
+      recorded_category=$(body_hold_category "$(show_field_value "$show" body)")
+      if [ -z "$category" ]; then
+        if [ -z "$recorded_category" ]; then
+          printf 'fm-captain-hold: warning: active hold %s carries no category (held before the category gate); continuing uncategorized\n' "$id" >&2
+        elif ! valid_hold_category "$recorded_category"; then
+          printf 'fm-captain-hold: warning: active hold %s carries an unknown category (%s); keeping it\n' "$id" "$recorded_category" >&2
+        fi
+      fi
+    else
+      [ -n "$category" ] || fail "$CAPTAIN_HOLD_CATEGORY_GATE"
+    fi
   else
+    [ -n "$category" ] || fail "$CAPTAIN_HOLD_CATEGORY_GATE"
     [ -n "$title" ] || fail "--title is required to create task $id"
     validate_one_line title "$title"
     require_future_default_date "$hold_set" 0 ''
@@ -1461,6 +1556,10 @@ command_hold() {
     || fail "task $id lost its hold-set stamp while being held"
   occurrence=$(( $(resolution_record_count "$(show_field "$show" body)") + 1 ))
   publish_parent_hold "$id" "$occurrence" needs-decision "$reason"
+  if [ -n "$category" ] && [ "$category" != "$recorded_category" ]; then
+    write_hold_category "$id" "$(show_field "$show" body)" "$category" || exit $?
+    task_show_or_fail "$id" "task $id disappeared while recording its category"
+  fi
   if [ -n "$origin" ]; then
     write_hold_origin "$id" "$(show_field "$show" body)" "$origin" || exit $?
   fi

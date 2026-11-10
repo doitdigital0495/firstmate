@@ -15,7 +15,7 @@
 #   fm-suggestions.sh add --origin <task-id> --title <one-line outcome>
 #       [--item <report-number>] [--file-line <path:line>] [--size S|M|L]
 #       [--kind defect|hardening|doc-nit|question|research] [--risk <text>]
-#       [--repo <name>] [--recommend pick|bundle|drop] [--hold]
+#       [--repo <name>] [--recommend pick|bundle|drop] [--hold --category <captain-hold-category>]
 #   fm-suggestions.sh summary [--json]
 #   fm-suggestions.sh list --json
 #   fm-suggestions.sh digest [--json]
@@ -208,11 +208,11 @@ do_expire() {
 }
 
 cmd_add() {
-  local origin='' title='' item='' file_line='' size='' kind='' risk='' repo='' recommend='' hold=0
+  local origin='' title='' item='' file_line='' size='' kind='' risk='' repo='' recommend='' hold=0 category=''
   while [ $# -gt 0 ]; do
     case "$1" in
       --hold) hold=1; shift; continue ;;
-      --origin|--title|--item|--file-line|--size|--kind|--risk|--repo|--recommend)
+      --origin|--title|--item|--file-line|--size|--kind|--risk|--repo|--recommend|--category)
         [ $# -ge 2 ] || die "$1 needs a value" 2 ;;
       *) die "add: unknown argument $1" 2 ;;
     esac
@@ -226,6 +226,7 @@ cmd_add() {
       --risk) risk=$2 ;;
       --repo) repo=$2 ;;
       --recommend) recommend=$2 ;;
+      --category) category=$2 ;;
     esac
     shift 2
   done
@@ -238,7 +239,8 @@ cmd_add() {
   case "$kind" in ''|defect|hardening|doc-nit|question|research) ;; *) die "add: --kind must be defect, hardening, doc-nit, question or research" 2 ;; esac
   case "$recommend" in ''|pick|bundle|drop) ;; *) die "add: --recommend must be pick, bundle or drop" 2 ;; esac
   case "$(printf '%s' "$risk" | tr '[:upper:]' '[:lower:]')" in
-    security|security[!a-z-]*|data-loss|data-loss[!a-z-]*|data\ loss|data\ loss[!a-z-]*) hold=1 ;;
+    security|security[!a-z-]*) hold=1; category=${category:-security-sensitive} ;;
+    data-loss|data-loss[!a-z-]*|data\ loss|data\ loss[!a-z-]*) hold=1; category=${category:-destructive} ;;
   esac
 
   acquire_lock
@@ -280,7 +282,7 @@ cmd_add() {
     held_id=$(row_id_for "$id" "$title")
     held_reason="Follow-up from $origin: $title${file_line:+ ($file_line)}${risk:+ - risk if ignored: $risk}"
     "$SCRIPT_DIR/fm-captain-hold.sh" hold "$held_id" --reason "$held_reason" --title "$title" \
-      ${repo:+--repo "$repo"} >/dev/null \
+      ${category:+--category "$category"} ${repo:+--repo "$repo"} >/dev/null \
       || die "the captain hold for $held_id failed; nothing recorded, so retry this intake"
     list=$(jq -c --slurpfile m <(printf '%s' "${match:-null}") --arg id "$id" --argjson now "$NOW" '
       $m[0] as $m | if $m == null then . else
