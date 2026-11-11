@@ -99,6 +99,9 @@ A relaunch does take one session reference when the endpoint's own runtime recor
    [`docs/herdr-backend.md`](herdr-backend.md#agent-status-authority-and-relaunch) owns the mechanism and measured behavior.
 
 Switching harness is therefore one ordinary relaunch rather than a separate mechanism.
+Successful relaunches also preserve the prior attempt's typed reason and the replacement's launch profile in the per-task ledger owned by [`bin/fm-task-history.sh`](../bin/fm-task-history.sh) (its header and `--help` own commands and JSON output).
+The optional reason defaults to unknown, rather than guessing capability failure from a progress note; storage failures warn without undoing the confirmed replacement.
+The watcher records published stall escalations in the same ledger, independently of its resettable per-window cap counters, but a suspected stall alone never advances a capability-failure ladder.
 
 ### Reclaiming a task whose endpoint is gone
 

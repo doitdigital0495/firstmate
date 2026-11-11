@@ -386,6 +386,15 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
   out=$(run_control "$dir" rl1 relaunch --note "stopped mid-refactor"); rc=$?
   expect_code 0 "$rc" "a same-harness relaunch should succeed"$'\n'"$out"
   assert_contains "$out" "relaunched rl1 harness=claude from=claude" "the outcome should name the transition"
+  python3 - "$dir/home/state/rl1.history.jsonl" <<'PY' || fail 'relaunch history lost its prior/replacement identity'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert [r['event'] for r in rows] == ['relaunch', 'launch-profile'], rows
+assert rows[0]['reason'] == 'unknown', rows
+assert rows[0]['profile']['harness'] == 'claude', rows
+assert rows[1]['profile']['harness'] == 'claude', rows
+assert rows[0]['attempt'] != rows[1]['attempt'], rows
+PY
   [ "$(meta_field "$dir" rl1 window)" = "fmses:fm-rl1" ] \
     || fail "the endpoint must be reused, not recreated"
   [ "$(meta_field "$dir" rl1 worktree)" = "$dir/wt" ] \
@@ -650,7 +659,12 @@ test_relaunch_appends_the_progress_note_to_the_instructions() {
   dir=$(new_case note rl2)
   add_ship_task "$dir" rl2 claude
   cp "$ROOT/AGENTS.md" "$dir/wt/AGENTS.md"
-  out=$(run_control "$dir" rl2 relaunch --note "reproduced the crash in parser.go"); rc=$?
+  out=$(run_control "$dir" rl2 relaunch --reason infra --note "reproduced the crash in parser.go"); rc=$?
+  python3 - "$dir/home/state/rl2.history.jsonl" <<'PY' || fail 'explicit infra reason was not recorded'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert rows[0]['event'] == 'relaunch' and rows[0]['reason'] == 'infra', rows
+PY
   expect_code 0 "$rc" "relaunch should succeed"$'\n'"$out"
   brief="$dir/home/data/rl2/brief.md"
   assert_grep "Exercise relaunch behavior for rl2." "$brief" "the original instructions must survive"

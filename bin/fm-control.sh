@@ -4,10 +4,14 @@
 #
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
-#        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
+#        fm-control.sh <task-id> relaunch [--reason <class>] [--harness <name>] [--model <name>]
 #                                         [--effort <level>] [--account <id>]
 #                                         [--priority <1-99>]
 #                                         (--note <text> | --note-file <path>)
+# --reason: capability | infra | usage-limit | captain | unknown.
+# Omitted reason records unknown, never inferred from the free-text note.
+# Successful replacements append history (fm-task-history.sh owns its format);
+# storage failures warn without undoing a confirmed launch.
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
 # DATA plane: conversational text for the agent to read, always routing-marked
@@ -304,6 +308,8 @@ if ! fm_control_verb_allowed "$VERB"; then
   exit 2
 fi
 
+RELAUNCH_REASON=unknown
+REASON_SET=0
 NEW_HARNESS=
 NEW_MODEL=
 NEW_EFFORT=
@@ -323,6 +329,7 @@ for control_arg in "$@"; do
       --*) die "--$control_want_value requires a value" ;;
     esac
     case "$control_want_value" in
+      reason) RELAUNCH_REASON=$control_arg; REASON_SET=1 ;;
       harness) NEW_HARNESS=$control_arg; HARNESS_SET=1 ;;
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
@@ -339,6 +346,8 @@ for control_arg in "$@"; do
     continue
   fi
   case "$control_arg" in
+    --reason) control_want_value=reason ;;
+    --reason=*) RELAUNCH_REASON=${control_arg#--reason=}; REASON_SET=1 ;;
     --harness) control_want_value=harness ;;
     --harness=*) NEW_HARNESS=${control_arg#--harness=}; HARNESS_SET=1 ;;
     --model) control_want_value=model ;;
@@ -367,9 +376,13 @@ fi
 
 if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    && [ "$PRIORITY_SET" = 0 ] && [ "$ACCOUNT_SET" = 0 ] \
-    || die "--harness, --model, --effort, --account, --priority, and --note apply to 'relaunch' only"
+    && [ "$PRIORITY_SET" = 0 ] && [ "$ACCOUNT_SET" = 0 ] && [ "$REASON_SET" = 0 ] \
+    || die "--harness, --model, --effort, --account, --priority, --reason, and --note apply to 'relaunch' only"
 fi
+case "$RELAUNCH_REASON" in
+  capability|infra|usage-limit|captain|unknown) ;;
+  *) die "--reason must be capability, infra, usage-limit, captain, or unknown" ;;
+esac
 if [ "$PRIORITY_SET" = 1 ]; then
   case "$PRIORITY" in
     ''|*[!0-9]*) die "--priority must be a whole number from 1 to 99" ;;
@@ -1493,6 +1506,12 @@ do_relaunch() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
+  FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-task-history.sh" append "$ID" relaunch \
+    --reason "$RELAUNCH_REASON" --meta-file "$META_PRIOR" --event-id "relaunch:$RELAUNCH_TX" >/dev/null \
+    || echo "warning: confirmed relaunch of $ID could not be recorded in task history" >&2
+  FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-task-history.sh" append "$ID" launch-profile \
+    --event-id "launch:$RELAUNCH_TX" >/dev/null \
+    || echo "warning: confirmed launch profile of $ID could not be recorded in task history" >&2
   echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
 }
 
