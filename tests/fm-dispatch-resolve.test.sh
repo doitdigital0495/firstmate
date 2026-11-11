@@ -1027,6 +1027,46 @@ expect_code 3 "$code" 'a profile outside the rule and its ladder is refused'
 run gate --brief "$BRIEF" --task ladder-gate --harness claude --model opus --effort medium --consume
 expect_code 0 "$code" "the ladder profile is a member of its row, so the gate admits it: $out"
 pass 'the escalation ladder resolves the next rung after a capability failure and the gate admits that rung profile'
+# Jev gets a bounded, sanitised task history and the rule question tells it never
+# to pick a stronger rule because the task failed before (lane 3b).
+: > "$LOG"
+run "$BRIEF" --project pager --task fresh-history
+expect_code 0 "$code" "a task without history resolves: $out"
+request=$(tail -1 "$LOG")
+jev_request() { tail -1 "$LOG" | jq -c '.request // .'; }
+history_field=$(jev_request | jq -c '.state.task.history // "absent"')
+assert_equals '"absent"' "$history_field" 'a task without history sends no history field'
+FM_STATE_OVERRIDE="$HOME_DIR/state" "$ROOT/bin/fm-task-history.sh" append ladder-gate relaunch --reason capability --attempt a2 \
+  --profile '{"harness":"claude","model":"opus","effort":"medium","account":"claude2"}' >/dev/null
+for n in 1 2 3 4 5 6 7 8; do
+  FM_STATE_OVERRIDE="$HOME_DIR/state" "$ROOT/bin/fm-task-history.sh" append ladder-gate relaunch --reason capability --attempt "b$n" \
+    --profile "{\"harness\":\"claude\",\"model\":\"model-$n-/home/daan/secret/path/$(printf 'x%.0s' $(seq 1 120))\",\"effort\":\"low\"}" >/dev/null
+done
+run "$BRIEF" --project pager --task ladder-gate
+expect_code 0 "$code" "a long history still resolves: $out"
+request=$(jev_request)
+history=$(jq -c '.state.task.history' <<<"$request")
+[ "${#history}" -le 1200 ] || fail "history is ${#history} characters, over the 1200 bound"
+assert_equals 10 "$(jq '.capability_failures' <<<"$history")" 'the history carries the capability failure count'
+[ "$(jq '.failed_profiles | length' <<<"$history")" -le 6 ] || fail 'failed_profiles is not capped'
+[ "$(jq '.last_outcomes | length' <<<"$history")" -le 3 ] || fail 'last_outcomes is not capped'
+assert_not_contains "$history" '/home/daan' 'no path reaches Jev'
+assert_not_contains "$history" '/' 'no path separator reaches Jev'
+assert_contains "$history" 'model-1-_home_daan_secret_path_' 'a path-like profile string is reduced to an identifier'
+assert_not_contains "$history" 'claude2' 'no account reaches Jev'
+assert_not_contains "$history" 'receipt' 'no receipt reaches Jev'
+assert_not_contains "$history" 'attempt' 'no attempt id key reaches Jev'
+assert_equals "$history" "$(jev_request | jq -c '.state.task.history')" 'the same history is sent deterministically' 
+assert_contains "$request" 'Never choose a stronger rule because the task failed before; the router climbs the matched rule' 'the rule question carries the no-escalation sentence'
+assert_contains "$(jq -r '.questions.rule.instructions' <<<"$request")" "the router climbs the matched rule's ladder by itself." 'the sentence is in the rule instructions'
+# A never-send entry matching a history string stops the request before it is sent.
+printf '%s\n' 'model-2-' > "$HOME_DIR/config/dispatch-never-send"
+requests_before=$(wc -l < "$LOG")
+run "$BRIEF" --project pager --task ladder-gate
+assert_contains "$out" 'dispatch-resolve: off' 'never-send holds for history text'
+assert_equals "$requests_before" "$(wc -l < "$LOG")" 'nothing is sent when the history matches never-send'
+rm -f "$HOME_DIR/config/dispatch-never-send"
+pass 'Jev receives a bounded, sanitised task history and the no-escalation rule sentence'
 cp "$TMP_ROOT/rules-before-ladder" "$RULES"
 if [ -e "$TMP_ROOT/accounts-before-ladder" ]; then mv "$TMP_ROOT/accounts-before-ladder" "$HOME_DIR/config/accounts.json"; fi
 echo '# all fm-dispatch-resolve tests passed'

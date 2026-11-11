@@ -1910,6 +1910,10 @@ It reads one per-task fact from [`bin/fm-task-history.sh summary TASK`](../bin/f
 Only a recorded capability failure advances a task.
 Unknown attempts, stalls, crashes, usage-limit moves, seat moves, restarts and captain relaunches never count, and Jev's own answers never escalate (`ladder_policy.jev_never_escalates`).
 `failed_profiles` of the same summary holds the profiles that failed, and `last_outcomes` is the disclosed trail.
+Jev also receives a bounded `state.task.history` for a task with a recorded capability failure or relaunch outcome: `capability_failures`, `failed_profiles` (at most six) and `last_outcomes` (at most three, each only `event`, `reason` and `profile`), with profiles cut to `harness`, `model`, `effort` and `provider`.
+Attempt ids, receipts, accounts, notes and paths never leave, every string is reduced to the characters `A-Za-z0-9._:-` and 40 characters, and the object is cut deterministically to 1,200 characters (oldest outcomes first, then the last failed profiles, then down to the count alone).
+The [never-send list](#typed-dispatch-resolution-jevd-socket) checks it with the rest of the request, and the rule question tells Jev never to choose a stronger rule because the task failed before, because the router climbs the matched rule's ladder by itself.
+A task without history, or whose history cannot be read, sends no `history` field.
 The resolver reads the history only when it is given `--task`, and a history it cannot read sends the task to the captain's pick card with `task routing history for <task> is unreadable` instead of restarting it on the lowest rung.
 
 - `ladder_rungs` is an array of rung objects with a unique integer `rung`, an optional `name`, and one array of profiles per provider family (`claude`, `codex`, `zai`).

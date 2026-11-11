@@ -659,17 +659,42 @@ if [ "$MODE" = worker ]; then
     cp "$BRIEF" "$TASK_TEXT" || die "could not read brief: $BRIEF"
   fi
   command -v python3 >/dev/null 2>&1 || emit_error "python3 not installed"
+  # Bounded task history for Jev (state.task.history): the verified capability
+  # failure count plus the failed profiles and last relaunch outcomes from
+  # bin/fm-task-history.sh summary. Only routing axes and reasons are kept: ids,
+  # receipts, notes and paths are dropped, every string is reduced to a short
+  # identifier alphabet, and the whole object is cut deterministically (oldest
+  # outcomes, then last failed profiles) to JEV_HISTORY_MAX characters. An
+  # unreadable history sends none; the ladder fails closed on it separately.
+  JEV_HISTORY_MAX=1200
+  JEV_HISTORY='null'
+  if [ -n "$TASK_ID" ] && [[ "$TASK_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] && [[ "$TASK_ID" != *..* ]] \
+    && jev_hist_raw=$(FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-task-history.sh" summary "$TASK_ID" 2>/dev/null); then
+    JEV_HISTORY=$(jq -c --argjson max "$JEV_HISTORY_MAX" '
+      def tok: tostring | gsub("[^A-Za-z0-9._:-]"; "_") | .[0:40];
+      def prof: if type == "object" then with_entries(select(.key == ("harness","model","effort","provider")) | .value |= tok) else {} end;
+      def fits: (tojson | length) <= $max;
+      {capability_failures: ((.capability_failures // 0) | if type == "number" then floor else 0 end),
+       failed_profiles: [(.failed_profiles // [])[:6][] | prof],
+       last_outcomes: [(.last_outcomes // [])[-3:][] | {reason: ((.reason // "unknown") | tok), event: ((.event // "relaunch") | tok), profile: ((.profile // {}) | prof)}]}
+      | if (.capability_failures == 0 and (.last_outcomes | length) == 0) then null
+        else until(fits or (.last_outcomes | length) == 0; .last_outcomes |= .[1:])
+          | until(fits or (.failed_profiles | length) == 0; .failed_profiles |= .[:-1])
+          | if fits then . else {capability_failures: .capability_failures} end
+        end' <<<"$jev_hist_raw" 2>/dev/null) || JEV_HISTORY='null'
+    [ -n "$JEV_HISTORY" ] || JEV_HISTORY='null'
+  fi
   REQUEST=$(jq -n --rawfile brief "$TASK_TEXT" --arg project "$PROJECT" --arg model "$TS_MODEL" \
-    --arg none_criterion "$DEFAULT_WHEN" --slurpfile rules "$RULES" '
+    --arg none_criterion "$DEFAULT_WHEN" --argjson history "$JEV_HISTORY" --slurpfile rules "$RULES" '
     ($rules[0] | .rules //= []) as $cfg |
     ($cfg.rules | to_entries | map({key: ("rule_" + ((.key + 1) | tostring)), value: .value.when}) | from_entries) as $criteria |
     {
       model: $model,
-      state: {task: {project: $project, brief: $brief}},
+      state: {task: ({project: $project, brief: $brief} + (if $history == null then {} else {history: $history} end))},
       questions: {
         rule: {
           type: "choice",
-          instructions: "Which ONE dispatch rule best fits `task` (read `task.brief` and `task.project`)? Each option is the rule'"'"'s own matching condition; pick `default` when no rule'"'"'s condition is met, including when a rule'"'"'s own exemption text excludes this task. When more than one rule fits, choose the rule whose own text says it takes precedence over the others.",
+          instructions: "Which ONE dispatch rule best fits `task` (read `task.brief` and `task.project`)? Each option is the rule'"'"'s own matching condition; pick `default` when no rule'"'"'s condition is met, including when a rule'"'"'s own exemption text excludes this task. When more than one rule fits, choose the rule whose own text says it takes precedence over the others. `task.history`, when present, only records earlier failed attempts of this task. Never choose a stronger rule because the task failed before; the router climbs the matched rule'"'"'s ladder by itself.",
           criteria: ($criteria + {default: $none_criterion})
         },
         profile: {
