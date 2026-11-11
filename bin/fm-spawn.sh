@@ -132,6 +132,11 @@
 #   seat id is recorded as seat= in the task record and on the spawned line, and
 #   its seat, plan and login email lead the Claude status line, the Pi footer
 #   status and the Codex launch banner (docs/configuration.md "Worker seat label").
+#   A Claude crewmate or scout whose seat names claudeTokenEnv runs claude under
+#   `opr -f <that file> --` and the terminal bridge, so its long-lived
+#   CLAUDE_CODE_OAUTH_TOKEN reaches only the child; it refuses before endpoint
+#   creation when opr, script, or the file is missing (docs/configuration.md
+#   "Long-lived Claude token").
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
@@ -595,6 +600,8 @@
 #                  supplies its own trailing space, empty never used)
 #     __PIBIN__    quoted concrete Pi-family executable path resolved from PATH
 #     __PIPREFIX__ optional `opr -f __PIOPENV__ -- <bin/fm-pi-tty-bridge.sh> ` prefix for a zai task worker
+#     __CLAUDEPREFIX__ optional `opr -f <claudeTokenEnv> -- <bin/fm-pi-tty-bridge.sh> ` prefix for a Claude
+#                  worker whose seat names claudeTokenEnv
 #     __PIOPENV__ absolute tracked ZAI_API_KEY reference map
 #     __PITUIMODE__ optional --tui-mode regular when that executable advertises it
 #     __PIHERDREXT__ absolute operator Pi herdr-agent-state extension path
@@ -2956,7 +2963,7 @@ launch_template() {
   # project and fetched content. A persistent secondmate receives its own
   # supervisor contract instead, so this task-worker statement does not apply.
   claude)
-      printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude __CLAUDEPERMFLAG__ '
+      printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 __CLAUDEPREFIX__claude __CLAUDEPERMFLAG__ '
       printf '%s' '__CLAUDEADDDIRS__--settings __CLAUDESETTINGS__ '
     if [ "$kind" != secondmate ]; then
       # --bare disables --settings hooks and OAuth; --restricted denies git writes.
@@ -3770,6 +3777,23 @@ if [ "$KIND" != secondmate ]; then
       [ "$SPAWN_SEAT_KIND" != claude ] || SPAWN_SEAT_CLAUDE_STORE=$SPAWN_SEAT_STORE
       SPAWN_SEAT_LABEL=$(fm_account_seat_label "$CONFIG/accounts.json" "$SPAWN_SEAT" "$SPAWN_SEAT_PROVIDER" "$SPAWN_SEAT_CLAUDE_STORE")
     fi
+  fi
+fi
+
+# A seat whose config/accounts.json entry names claudeTokenEnv runs its Claude
+# task worker on that long-lived token (bin/fm-account-lib.sh): the launch rides
+# `opr -f <file> --`, so CLAUDE_CODE_OAUTH_TOKEN reaches only the child
+# environment, never launch text, records, or output. A secondmate keeps its own
+# home identity and a raw launch command is the operator's, so neither changes.
+CLAUDE_TOKEN_ENV=
+if [ "$HARNESS" = claude ] && [ "$KIND" != secondmate ] && [ "$RAW_LAUNCH" -eq 0 ] && [ -n "$SPAWN_SEAT" ]; then
+  CLAUDE_TOKEN_ENV=$(fm_account_claude_token_env "$CONFIG/accounts.json" "$SPAWN_SEAT")
+  if [ -n "$CLAUDE_TOKEN_ENV" ]; then
+    if [ "$BACKEND" = t3code ]; then
+      echo "error: backend=t3code cannot run account '$SPAWN_SEAT' on its claudeTokenEnv token because T3 starts the agent itself; choose another backend or seat" >&2
+      exit 1
+    fi
+    fm_account_claude_token_check "$SPAWN_SEAT" "$CLAUDE_TOKEN_ENV" || exit 1
   fi
 fi
 
@@ -7134,7 +7158,16 @@ BUSY_GEN=
               ;;
             *) claude_hook_cmd="$busy_cmd_prefix idle $busy_suffix" ;;
           esac
-          claude_hook_cmd=$(json_escape "$claude_hook_cmd --event $claude_hook_event 2>/dev/null || true")
+          claude_hook_cmd="$claude_hook_cmd --event $claude_hook_event 2>/dev/null || true"
+          # A claudeTokenEnv worker runs behind opr, out of Herdr's process
+          # view: each turn reports working, and every close reports idle,
+          # under the firstmate:claude source its launch bracket opens.
+          if [ -n "$CLAUDE_TOKEN_ENV" ]; then
+            claude_herdr_state=idle
+            [ "$claude_hook_key" != UserPromptSubmit ] || claude_herdr_state=working
+            claude_hook_cmd="$claude_hook_cmd; if [ -n \"\${HERDR_PANE_ID:-}\" ] && command -v herdr >/dev/null 2>&1; then herdr pane report-agent \"\$HERDR_PANE_ID\" --source firstmate:claude --agent claude --state $claude_herdr_state >/dev/null 2>&1 || true; fi"
+          fi
+          claude_hook_cmd=$(json_escape "$claude_hook_cmd")
           claude_hook_entries="$claude_hook_entries${claude_hook_entries:+,}\"$claude_hook_key\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$claude_hook_cmd\"}]}]"
         done
         CLAUDE_HOOK_ENTRIES=$claude_hook_entries
@@ -8194,6 +8227,14 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RESUME_ARGS=$(relaunch_resume_args "$HARNESS" "$BACKEND" "$T") || RESUME_ARGS=
 fi
 LAUNCH=${LAUNCH//__PIRESUME__/$RESUME_ARGS}
+# A claudeTokenEnv seat (resolved with the seat above) puts opr in front of
+# claude and the terminal bridge inside opr: op run pipes the child's output to
+# mask secrets, and Claude's interactive TUI needs a real terminal behind it.
+CLAUDE_PREFIX=
+if [ -n "$CLAUDE_TOKEN_ENV" ]; then
+  CLAUDE_PREFIX="opr -f $(shell_quote "$CLAUDE_TOKEN_ENV") -- $(shell_quote "$FM_ROOT/bin/fm-pi-tty-bridge.sh") "
+fi
+LAUNCH=${LAUNCH//__CLAUDEPREFIX__/$CLAUDE_PREFIX}
 LAUNCH=${LAUNCH//__CLAUDEPERMFLAG__/$CLAUDE_PERM_FLAG}
 LAUNCH=${LAUNCH//__CODEXAPPROVALFLAG__/$CODEX_APPROVAL_FLAG}
 if [ "$KEEP_AI_TRAILERS" = 1 ]; then
@@ -8253,6 +8294,11 @@ fi
 PI_TASK_HERDR_PRE='if [ -n "${HERDR_PANE_ID:-}" ] && command -v herdr >/dev/null 2>&1; then herdr pane report-agent "$HERDR_PANE_ID" --source firstmate:pi --agent pi --state working --message "firstmate pi task worker starting" >/dev/null 2>&1 || true; fi; '
 # shellcheck disable=SC2016
 PI_TASK_HERDR_POST='; __fm_pi_rc=$?; if [ -n "${HERDR_PANE_ID:-}" ] && command -v herdr >/dev/null 2>&1; then if [ "$__fm_pi_rc" -eq 0 ]; then __fm_pi_st=idle; else __fm_pi_st=blocked; fi; herdr pane report-agent "$HERDR_PANE_ID" --source firstmate:pi --agent pi --state "$__fm_pi_st" --message "firstmate pi task worker exited rc=$__fm_pi_rc" >/dev/null 2>&1 || true; fi; unset __fm_pi_rc __fm_pi_st'
+# The same bracket for a Claude worker riding opr on its seat's claudeTokenEnv.
+# shellcheck disable=SC2016
+CLAUDE_TOKEN_HERDR_PRE='if [ -n "${HERDR_PANE_ID:-}" ] && command -v herdr >/dev/null 2>&1; then herdr pane report-agent "$HERDR_PANE_ID" --source firstmate:claude --agent claude --state working --message "firstmate claude task worker starting" >/dev/null 2>&1 || true; fi; '
+# shellcheck disable=SC2016
+CLAUDE_TOKEN_HERDR_POST='; __fm_claude_rc=$?; if [ -n "${HERDR_PANE_ID:-}" ] && command -v herdr >/dev/null 2>&1; then if [ "$__fm_claude_rc" -eq 0 ]; then __fm_claude_st=idle; else __fm_claude_st=blocked; fi; herdr pane report-agent "$HERDR_PANE_ID" --source firstmate:claude --agent claude --state "$__fm_claude_st" --message "firstmate claude task worker exited rc=$__fm_claude_rc" >/dev/null 2>&1 || true; fi; unset __fm_claude_rc __fm_claude_st'
 LAUNCH=${LAUNCH//__PIPREFIX__/$PI_PREFIX}
 LAUNCH=${LAUNCH//__PIOPENV__/$sq_piopenv}
 LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$sq_claudesettings}
@@ -8403,8 +8449,17 @@ esac
 # Shed higher-ranked ambient Claude credentials whenever a pin is configured.
 # The task-owned root assignment above and the ordinary-store unset stay inside
 # this clean environment; the pin never competes with an inherited API token.
-if [ -n "$WORKER_ACCOUNT" ] && [ "$HARNESS" = claude ]; then
+# A claudeTokenEnv seat sheds them too, ahead of opr, which then injects the
+# seat's own CLAUDE_CODE_OAUTH_TOKEN into the cleaned environment.
+if { [ -n "$WORKER_ACCOUNT" ] || [ -n "$CLAUDE_TOKEN_ENV" ]; } && [ "$HARNESS" = claude ]; then
   LAUNCH="$(fm_worker_account_claude_shed) $LAUNCH"
+fi
+# The sudo use_pty chain behind opr runs Claude off the pane's pty, so Herdr's
+# process view cannot attribute it (the zai Pi note above). Bracket the whole
+# launch line with pane-side firstmate:claude reports; the busy hooks report each
+# turn under the same source while the worker stays open.
+if [ -n "$CLAUDE_TOKEN_ENV" ]; then
+  LAUNCH="$CLAUDE_TOKEN_HERDR_PRE$LAUNCH$CLAUDE_TOKEN_HERDR_POST"
 fi
 if [ "$KIND" = secondmate ]; then
   sq_home=$(shell_quote "$PROJ_ABS")

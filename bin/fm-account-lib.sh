@@ -10,6 +10,9 @@
 # (claude, codex, zai, ...). It is what tells two seats that share one store
 # apart (a Codex seat and a Z.ai seat both on ~/.pi/agent), and the intake and
 # the resolver read only that provider's rows for the account.
+# An optional `claudeTokenEnv` names a `.env.op` reference file for the account's
+# Claude launches (fm_account_claude_token_env below); a present value must be a
+# valid path like a store.
 fm_account_registry_valid() {
   local file=$1
   [ -f "$file" ] && jq -e '
@@ -20,6 +23,7 @@ fm_account_registry_valid() {
       (.value | type == "object") and
       ((.value.provider // null) == null or
         ((.value.provider | type) == "string" and (.value.provider | test("^[a-z0-9]+(-[a-z0-9]+)*$")))) and
+      ((.value.claudeTokenEnv // null) == null or (.value.claudeTokenEnv | store_path)) and
       ([.value.claude, .value.pi, .value.codex] | map(select(. != null))) as $present |
       ($present | length) > 0 and all($present[]; store_path)) and
     ((.crossAccount // null) == null or
@@ -162,6 +166,7 @@ fm_account_seat_for_store() {
 #     claude store; codex needs a codex or pi store; any other provider needs pi)
 #   - two accounts declaring the same provider on the same canonical store, which
 #     would read and bill one login twice under two names
+#   - a claudeTokenEnv on an account that owns no claude store
 fm_account_registry_problems() {
   local file=$1 account provider kind store key seen=''
   [ -e "$file" ] || return 0
@@ -169,6 +174,8 @@ fm_account_registry_problems() {
     printf 'malformed registry (see docs/configuration.md "Cross-account worker routing")\n'
     return 0
   fi
+  jq -r '.accounts | to_entries[] | select(.value.claudeTokenEnv != null and .value.claude == null) |
+    "account \(.key) sets claudeTokenEnv but owns no claude store"' "$file"
   while IFS=$'\t' read -r account provider; do
     [ -n "$account" ] || continue
     [ -n "$provider" ] || continue
@@ -229,6 +236,45 @@ fm_account_seat_label() {
   [ -z "$plan" ] || label="$label · $(fm_account_label_text "$plan" 80)"
   [ -z "$email" ] || label="$label · $(fm_account_label_text "$email" 120)"
   printf '%s\n' "$label"
+}
+
+# ---- long-lived Claude token (claudeTokenEnv) ----------------------------------
+# An account may name in `claudeTokenEnv` a `.env.op` file whose
+# CLAUDE_CODE_OAUTH_TOKEN 1Password reference (a `claude setup-token` token)
+# `opr -f <file> --` injects into that seat's Claude task-worker launches, so the
+# seat keeps working after its stored /login ends. Claude ranks that token above
+# the stored login, so a configured seat always runs on it. Only the file path is
+# configuration: the file holds references only, and nothing here reads a
+# reference or value into launch text, records, or output.
+
+# fm_account_claude_token_env <file> <account>: the account's claudeTokenEnv
+# with ~/ expanded, or nothing. Needs a valid registry; the routing switch may be off.
+fm_account_claude_token_env() {
+  local value
+  [ -n "$2" ] || return 0
+  fm_account_registry_valid "$1" || return 0
+  value=$(jq -r --arg a "$2" '.accounts[$a].claudeTokenEnv // empty | strings' "$1" 2>/dev/null) || return 0
+  [ -z "$value" ] || fm_account_expand_store "$value"
+}
+
+# fm_account_claude_token_check <account> <token-env>: one error and rc 1 when a
+# launch cannot carry the token - opr or script missing (script keeps Claude's
+# interactive terminal behind opr's output pipe), or the file unreadable or
+# declaring no CLAUDE_CODE_OAUTH_TOKEN. Only the variable name is matched.
+fm_account_claude_token_check() {
+  local account=$1 envfile=$2 why=
+  if ! command -v opr >/dev/null 2>&1; then
+    why='opr is not on PATH'
+  elif ! command -v script >/dev/null 2>&1; then
+    why='script is not on PATH'
+  elif [ ! -f "$envfile" ] || [ ! -r "$envfile" ]; then
+    why="$envfile is not a readable file"
+  elif ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?CLAUDE_CODE_OAUTH_TOKEN=' "$envfile" 2>/dev/null; then
+    why="$envfile declares no CLAUDE_CODE_OAUTH_TOKEN"
+  fi
+  [ -n "$why" ] || return 0
+  echo "error: account '$account' runs Claude on its claudeTokenEnv token (config/accounts.json), but $why; nothing was launched" >&2
+  return 1
 }
 
 # ---- six-account dispatch guard (S1) -------------------------------------------

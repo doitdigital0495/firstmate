@@ -413,6 +413,7 @@ family_for_basename() {
     fm-send-inbox.test.sh|fm-spawn-batch.test.sh|\
     fm-spawn-dispatch-profile.test.sh|fm-spawn-pi-skill.test.sh|fm-spawn-pi-trust.test.sh|fm-claude-trust.test.sh|\
     fm-worker-account.test.sh|fm-worker-account-precedence.test.sh|fm-account-seat.test.sh|fm-git-strip-ai-trailers.test.sh|\
+    fm-account-claude-token.test.sh|\
     fm-trace-context-spawn.test.sh|fm-spawn-worktree-settle.test.sh|\
     fm-spawn-claude-settings.test.sh|fm-spawn-claude-lean.test.sh|\
     fm-spawn-compact-adviser-disable.test.sh|\
@@ -1732,6 +1733,7 @@ families_for_changed_path() {
     bin/fm-account-lib.sh|bin/fm-account-migrate.sh|bin/fm-account-routing.sh)
       printf '%s\n' "__script__:fm-dispatch-six-accounts.test.sh"
       printf '%s\n' "__script__:fm-account-seat.test.sh"
+      printf '%s\n' "__script__:fm-account-claude-token.test.sh"
       printf '%s\n' "__script__:fm-quota-intake.test.sh"
       ;;
     bin/fm-capacity.sh)

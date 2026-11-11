@@ -2214,6 +2214,43 @@ test_relaunch_account_switch_refuses_an_ineligible_seat_before_stop() {
   pass "fm-control relaunch: an account switch refuses an ineligible seat before the agent is touched"
 }
 
+# A seat naming claudeTokenEnv relaunches its Claude worker under opr, and an
+# unusable token setup refuses while the running agent is untouched.
+test_relaunch_token_seat_rides_opr_and_refuses_before_stop() {
+  local dir store envop meta out rc
+  dir=$(new_case acctoken rl45)
+  add_ship_task "$dir" rl45 claude
+  fm_fake_exit0 "$dir/fakebin" opr script
+  meta="$dir/home/state/rl45.meta"
+  store="$dir/tok-store"
+  envop="$dir/tok/c1.env.op"
+  mkdir -p "$store" "$dir/tok" "$dir/home/config"
+  printf 'CLAUDE_CODE_OAUTH_TOKEN="op://vault/item/fm-test-ref"\n' > "$envop"
+  jq -n --arg s "$store" --arg e "$envop" \
+    '{crossAccount:{enabled:true}, accounts:{tok:{provider:"claude", claude:$s, claudeTokenEnv:$e}}}' \
+    > "$dir/home/config/accounts.json"
+  printf 'account=tok\nclaude_config_dir=%s\n' "$store" >> "$meta"
+  rm -f "$envop"
+  cp "$meta" "$dir/meta.before"
+  out=$(run_control "$dir" rl45 relaunch --note "token seat"); rc=$?
+  expect_code 1 "$rc" "a token seat with no readable token file must refuse"
+  assert_contains "$out" "account 'tok' runs Claude on its claudeTokenEnv token" \
+    "the refusal must name the token seat"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "a refused token relaunch must not stop the agent"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused token relaunch must send nothing"
+  cmp -s "$meta" "$dir/meta.before" || fail "a refused token relaunch must leave the record untouched"
+
+  printf 'CLAUDE_CODE_OAUTH_TOKEN="op://vault/item/fm-test-ref"\n' > "$envop"
+  out=$(run_control "$dir" rl45 relaunch --note "token seat"); rc=$?
+  expect_code 0 "$rc" "a token seat relaunch should succeed"$'\n'"$out"
+  assert_contains "$(cat "$dir/fake/literal")" "opr -f '$envop' -- '$ROOT/bin/fm-pi-tty-bridge.sh' claude " \
+    "the replacement must run claude under opr on the seat's token"
+  assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$store'" \
+    "the replacement keeps the seat's recorded store"
+  assert_not_contains "$(cat "$dir/fake/literal")" 'fm-test-ref' "no reference may reach the launch"
+  pass "fm-control relaunch: a token seat relaunches under opr and refuses an unusable token before stop"
+}
+
 test_relaunch_without_account_keeps_the_recorded_seat() {
   local dir second meta out rc
   dir=$(new_case acctkeep rl45)
@@ -3619,6 +3656,7 @@ test_relaunch_keeps_the_task_recorded_claude_account
 test_relaunch_keeps_a_personal_task_off_a_work_account
 test_relaunch_switches_the_task_recorded_account
 test_relaunch_account_switch_refuses_an_ineligible_seat_before_stop
+test_relaunch_token_seat_rides_opr_and_refuses_before_stop
 test_relaunch_without_account_keeps_the_recorded_seat
 test_relaunch_account_switch_refuses_a_secondmate
 test_checkpoint_refusal_leaves_the_record_byte_identical
