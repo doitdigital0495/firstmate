@@ -2179,6 +2179,16 @@ A worker whose seat is not known (no registry, or a store no account owns) shows
 That `seat=` line is the one sanctioned non-secret source for a worker's seat: agentic-setup's `seat-info` and cockpit read it rather than inferring the seat from a store path.
 `account=` keeps its meaning, the explicit `--account` id or a worker pin declaration, and a worker started without one gets `seat=` only when a registry account owns its store.
 
+### Long-lived Claude token (claudeTokenEnv)
+
+An account may add `claudeTokenEnv`, the absolute or `~/` path of a local `.env.op` file holding one `CLAUDE_CODE_OAUTH_TOKEN` 1Password reference to a `claude setup-token` token, so the seat keeps working after its stored `/login` ends: `"claude1":{"provider":"claude","claude":"~/.claude","claudeTokenEnv":"~/.firstmate/data/claude1.env.op"}`.
+A Claude crewmate or scout on that seat (its explicit or recorded `--account`, or the account owning its Claude store) then launches as `opr -f <file> -- bin/fm-pi-tty-bridge.sh claude ...`, and `fm-control.sh <task> relaunch` follows the same seat.
+Credentials Claude ranks above the token, an inherited `CLAUDE_CODE_OAUTH_TOKEN` included, are unset ahead of `opr`; no reference or value reaches launch text, task records, or output, and `CLAUDE_CONFIG_DIR` still pins the seat's store for settings, sessions, and the seat label.
+Claude ranks the token above the stored login, so a configured seat always runs on it.
+As with a Z.ai Pi worker, the terminal bridge keeps the TUI interactive behind `opr`, and `firstmate:claude` Herdr reports around the launch and on each turn keep the pane's agent record.
+Spawn and relaunch refuse before anything is touched when `opr` or `script` is missing or the file is unreadable or declares no `CLAUDE_CODE_OAUTH_TOKEN`; a malformed path invalidates the registry like a malformed store, and bootstrap reports the field on an account with no Claude store.
+Secondmates and raw launch commands ignore it, the T3 backend refuses it, and quota reads still use the stored login, because `quota-axi` cannot read the usage endpoint with an inference-only `setup-token` token unless it is allowed to spend an inference request.
+
 ## Home session and account pin (data/home-identity)
 
 Each firstmate home belongs to exactly one terminal session and one Claude account, and `data/home-identity` records that binding.

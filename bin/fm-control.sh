@@ -1273,7 +1273,7 @@ do_relaunch() {
   local exit_result state note_line admission_out admission_store
   local quota_gate_out quota_gate_store relaunch_claude_store relaunch_pi_store relaunch_codex_store account_origin
   local identity_store identity_session identity_out
-  local dispatch_gate_brief dispatch_gate_account dispatch_gate_out
+  local dispatch_gate_brief dispatch_gate_account dispatch_gate_out token_seat token_store token_env
   local -a spawn_args admission_args relaunch_account_stores quota_gate_args dispatch_gate_args
 
   require_state_verified_backend relaunch
@@ -1347,6 +1347,19 @@ do_relaunch() {
     pi|pi-signed)
       relaunch_pi_store=$(fm_worker_account_effective_store "$TARGET_HARNESS" "$RELAUNCH_WORKER_ACCOUNT" "$relaunch_pi_store" "$account_origin") || return 1 ;;
   esac
+  # A Claude worker whose seat (the named account, else the one owning its store)
+  # runs on claudeTokenEnv refuses an unusable token setup while the running
+  # agent is untouched; bin/fm-spawn.sh re-checks at launch.
+  if [ "$TARGET_HARNESS" = claude ] && [ "$KIND" != secondmate ]; then
+    token_seat=$relaunch_seat
+    if [ -z "$token_seat" ] || ! jq -e --arg a "$token_seat" '.accounts[$a] != null' "$CONFIG/accounts.json" >/dev/null 2>&1; then
+      token_store=$relaunch_claude_store
+      case "$token_store" in ''|default) token_store="$HOME/.claude" ;; esac
+      token_seat=$(fm_account_seat_for_store "$CONFIG/accounts.json" claude "$token_store" claude)
+    fi
+    token_env=$(fm_account_claude_token_env "$CONFIG/accounts.json" "$token_seat")
+    [ -z "$token_env" ] || fm_account_claude_token_check "$token_seat" "$token_env" || return 1
+  fi
 
   # bin/fm-spawn.sh refuses a second mate whose own pin differs from this
   # selection, but only after the agent is stopped, so compare while it still runs.

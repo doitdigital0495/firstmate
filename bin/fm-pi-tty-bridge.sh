@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Give Pi a real controlling terminal when the credential broker pipes its
-# output. Keep this INSIDE opr: the broker still resolves credentials and masks
-# its output, while script relays Pi's interactive display back to the pane.
+# Give an interactive worker - Pi on zai, or Claude on a claudeTokenEnv seat - a
+# real controlling terminal when the credential broker pipes its output. Keep
+# this INSIDE opr: the broker still resolves credentials and masks its output,
+# while script relays the worker's interactive display back to the pane.
 set -u
 
 [ "$#" -gt 0 ] || { echo 'error: Pi terminal bridge requires a command' >&2; exit 1; }
