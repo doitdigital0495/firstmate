@@ -64,21 +64,52 @@ write_response() {
 }
 run() { code=0; out=$("$TOOL" "$@" 2>&1) || code=$?; }
 latest() { find "$HOME_DIR/state/dispatch-receipt" -name 'dispatch-*.json' | sort | tail -1; }
-# The reservation is an account rule, independent of harness, provider, or reserve flag.
+# claude3 seats a worker row only as a later tier behind tiered claude1 and
+# claude2 seats (claude3_policy.worker_rows: later seat tier only), and a
+# firstmate row only entirely before them; every other shape is refused by the
+# load checks, whatever the harness, the reserve flag, or the row location.
 cp "$RULES" "$TMP_ROOT/reservation-rules"
+claude3_row() {  # <shape> <rule|default> <reserve flag>
+  jq --arg shape "$1" --arg target "$2" --argjson reserve "$3" '
+    def seat($n; $tier): {harness:"claude", model:"opus", account:$n, fallback_only:$reserve, seat_tier:$tier};
+    (if $target == "rule" then .rules[0].use else .default end) |=
+      (if $shape == "worker" then [seat("claude1";1), seat("claude2";1), seat("claude3";2)]
+       elif $shape == "firstmate" then [seat("claude3";1), seat("claude1";2), seat("claude2";2)]
+       elif $shape == "notier" then [seat("claude1";1), seat("claude2";1), (seat("claude3";2) | del(.seat_tier))]
+       elif $shape == "no12" then [seat("claude3";2)]
+       elif $shape == "untiered12" then [(seat("claude1";1) | del(.seat_tier)), seat("claude2";1), seat("claude3";2)]
+       else [seat("claude1";1), seat("claude2";2), seat("claude3";2)] end)
+  ' "$TMP_ROOT/reservation-rules" > "$RULES"
+}
 for location in rule default; do
-  for reserve in false true; do
-    jq --arg location "$location" --argjson reserve "$reserve" '
-      (if $location == "rule" then .rules[0].use else .default end) |=
-        {harness:"pi", provider:"claude", model:"anthropic/claude-sonnet", account:"claude3", fallback_only:$reserve}
-    ' "$TMP_ROOT/reservation-rules" > "$RULES"
-    run preview --json
-    expect_code 2 "$code" "claude3 $location profile is rejected: $out"
-    assert_contains "$out" 'claude3 is reserved for firstmate and secondmates; ordinary worker rules and default must not use account claude3' 'reservation error names the rule'
-  done
+  claude3_row worker "$location" false
+  run preview --json
+  expect_code 0 "$code" "claude3 seated after claude1/claude2 in $location is accepted: $out"
 done
+claude3_row firstmate rule false
+run preview --json
+expect_code 0 "$code" "claude3 seated before the worker seats is accepted: $out"
+claude3_row worker rule true
+run preview --json
+expect_code 0 "$code" "the reserve flag does not change the claude3 seating: $out"
+claude3_row notier rule false
+run preview --json
+expect_code 2 "$code" "claude3 without a tier is refused: $out"
+assert_contains "$out" 'claude3 profiles must declare seat_tier' 'untiered claude3 names the policy'
+claude3_row no12 default false
+run preview --json
+expect_code 2 "$code" "claude3 without claude1/claude2 is refused: $out"
+assert_contains "$out" 'a row using claude3 must also route the claude1 and claude2 worker seats' 'the missing worker seats are named'
+claude3_row untiered12 rule false
+run preview --json
+expect_code 2 "$code" "untiered claude1 beside claude3 is refused: $out"
+assert_contains "$out" 'claude1 and claude2 profiles beside claude3 must also declare seat_tier' 'untiered peers are named'
+claude3_row overlap rule false
+run preview --json
+expect_code 2 "$code" "claude3 beside the worker tiers is refused: $out"
+assert_contains "$out" 'claude3 seat tiers must sit entirely after' 'the seating order rule is named'
 cp "$TMP_ROOT/reservation-rules" "$RULES"
-pass 'preview --json rejects claude3 worker rows and default, including fallback_only'
+pass 'preview --json seats claude3 only after the worker seats, or entirely before them'
 start_stub() {
   python3 "$ROOT/tests/jevd-dispatch-stub.py" "$SOCKET" "$RESPONSE" "$LOG" &
   SERVER=$!
@@ -155,10 +186,13 @@ run "$BRIEF" --task pager
 assert_equals opus "$(jq -r .profile.model "$(latest)")" 'anchor uses its strongest class, not the union maximum'
 cp "$TMP_ROOT/rules-backup" "$RULES"
 write_response rule_1 0.4 '{"rule_1":0.4,"rule_2":0.35,"default":0.25}'
+jq 'del(.rules[0].use.reasoning_class)' "$TMP_ROOT/rules-backup" > "$RULES"
+run "$BRIEF" --task pager
+assert_contains "$out" 'ambiguous union needs numeric reasoning_class' 'missing class on the anchor row stops'
+assert_contains "$out" 'status: captain-pick' 'a union with a missing anchor class goes to the captain'
 jq 'del(.default.reasoning_class)' "$TMP_ROOT/rules-backup" > "$RULES"
 run "$BRIEF" --task pager
-assert_contains "$out" 'ambiguous union needs numeric reasoning_class' 'missing class stops'
-assert_contains "$out" 'status: captain-pick' 'a union with a missing class goes to the captain'
+assert_equals sonnet "$(jq -r .profile.model "$(latest)")" 'missing class on a non-anchor union row routes clear'
 jq '.rules[1].approval="captain"' "$TMP_ROOT/rules-backup" > "$RULES"
 run "$BRIEF" --task pager
 assert_contains "$out" 'requires captain approval' 'approval union stops'
@@ -760,6 +794,25 @@ assert_equals '1 2 1' "$(jq -r '[.rows[].candidates[].reasoning_class] | join(" 
 assert_equals 0 "$(jq -r .unclassed <<<"$out")" 'no unclassed candidates'
 assert_equals 64 "$(jq -r '.table.sha256 | length' <<<"$out")" 'table hash exported'
 pass 'rows --json exports the routing criteria'
+# rows runs the same load checks as preview: a bad table is refused before any
+# export, so a dump never launders an unshippable table.
+cp "$RULES" "$TMP_ROOT/rows-rules"
+for bad in '.bogus_key = 1' '.rules[0].bogus_key = 1' '.rules[0].use = [{harness:"claude",model:"opus",account:"claude3",seat_tier:2}]'; do
+  jq "$bad" "$TMP_ROOT/rows-rules" > "$RULES"
+  run rows --json
+  expect_code 2 "$code" "rows refuses an unsafe table ($bad): $out"
+done
+jq '.bogus_key = 1' "$TMP_ROOT/rows-rules" > "$RULES"
+run rows --json
+assert_contains "$out" 'unknown top-level key "bogus_key"; known keys:' 'rows names the unknown top-level key'
+jq '.rules[0].bogus_key = 1' "$TMP_ROOT/rows-rules" > "$RULES"
+run rows --json
+assert_contains "$out" 'unknown rule key: rule 1 key "bogus_key"; known keys:' 'rows names the unknown rule key'
+jq '.rules[0].use = [{harness:"claude",model:"opus",account:"claude3",seat_tier:2}]' "$TMP_ROOT/rows-rules" > "$RULES"
+run rows --json
+assert_contains "$out" 'claude3 policy: rule 1:' 'rows refuses a bad claude3 shape'
+cp "$TMP_ROOT/rows-rules" "$RULES"
+pass 'rows refuses tables the load checks reject, naming the unknown key'
 # Preview covers every worker row and default without a socket request, even
 # when the only evidence is a read-only last-good snapshot of the home store.
 before_requests=$(wc -l < "$LOG")
@@ -907,9 +960,11 @@ assert_equals claude "$(jq -r '.workers[] | select(.id=="rule_12") | .pick.harne
 assert_equals true "$(jq '[.noMistakes[] | .tier==1 and .measured==false] | all' <<< "$out")" 'unreadable quota holds pipeline Claude tier'
 cp "$TMP_ROOT/rank-c1-known" "$TMP_ROOT/rank-c1"
 cp "$TMP_ROOT/rank-c2-known" "$TMP_ROOT/rank-c2"
-# Give the union's GLM profile the anchor class so only the ban excludes it.
-jq '(.rules[3].use[] | select(.provider=="zai")).reasoning_class=5' "$RULES" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$RULES"
-write_response rule_14 0.55 "$(jq -c '[(.rules | to_entries[] | {key:("rule_"+((.key+1)|tostring)),value:0})] | from_entries | . + {rule_14:0.55,rule_4:0.4,default:0.05}' "$RULES")"
+# A blended row owns its bans: rule_11 bans zai, so the GLM candidate the
+# anchor rule_14 offers is out even though rule_14 itself declares no ban:
+# the anchor owns the candidates, every blended row owns its bans.
+jq 'del(.rules[13].never_providers) | (.rules[3].use[] | select(.provider=="zai")) as $glm | .rules[13].use += [$glm + {reasoning_class:5}]' "$RULES" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$RULES"
+write_response rule_14 0.55 "$(jq -c '[(.rules | to_entries[] | {key:("rule_"+((.key+1)|tostring)),value:0})] | from_entries | . + {rule_14:0.55,rule_11:0.4,default:0.05}' "$RULES")"
 run "$BRIEF" --task security-union
 expect_code 0 "$code" "security union: $out"
 assert_contains "$out" 'provider zai is banned for this work (never_providers)' 'security ban survives an ambiguous union'

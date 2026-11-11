@@ -407,6 +407,7 @@ fm_dr_cmd_rows() {
          (if $id == "default" then ($cfg.default // null) else ($cfg.rules[($id | ltrimstr("rule_") | tonumber) - 1]) end) as $raw |
          {id, sha256, when, approval, label: (if $id == "default" then null else ($raw.label // null) end), minConfidence: (if $id == "default" then null else ($raw.min_confidence // null) end),
           floor: (if $id == "default" then null else ($raw.floor // null) end), strict_tiers: (if $id == "default" then false else ($raw.strict_tiers // false) end),
+          never_providers: (if ($raw | type) == "object" then ($raw.never_providers // null) else null end), never_models: (if ($raw | type) == "object" then ($raw.never_models // null) else null end),
           candidates: [(if $id == "default" then profiles($raw) else profiles($raw.use) end)[] |
             {harness, model: (.model // ""), effort: (.effort // ""), account: (.account // ""), provider: (.provider // ""),
              reasoning_class: (.reasoning_class // null), floor: (.floor // null), quota_scope: (.quota_scope // null),

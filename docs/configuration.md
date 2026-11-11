@@ -1850,6 +1850,8 @@ This section is the single owner of the canonical schema and its per-field seman
   "preferred_provider": "<optional quota-axi provider family to spend first>",
   "shared_quota": false,
   "seat_tiers_by_delivery": { "<delivery mode>": { "<registry account id>": 1 } },
+  "claude3_policy": { "worker_rows": "later seat tier only", "weekly_floor_percent": 25, "note": "<optional>" },
+  "ladder_policy": { "fable_projects": ["<optional repo allowlist>", "firstmate"], "note": "<optional>" },
   "pipeline_rows": [ { "steps": ["<no-mistakes step>"], "never_providers": ["zai"], "use": [ { "<profile>": "see Pipeline seat rows" } ] } ],
   "rules": [
     {
@@ -1858,6 +1860,7 @@ This section is the single owner of the canonical schema and its per-field seman
       "min_confidence": 0.85,
       "floor": { "scope": "<quota-axi scope>", "min_percent": 20, "provider": "<quota-axi provider>" },
       "never_providers": ["<optional provider ID this rule may never run on>"],
+      "never_models": ["<optional model ID this rule may never run, such as fable>"],
       "use": [
         { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "account": "<optional registry account id>", "provider": "<optional quota-axi provider>", "quota_scope": "<optional quota-axi scope>", "fallback_only": false, "seat_tier": 1, "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
       ],
@@ -1883,13 +1886,16 @@ This section is the single owner of the canonical schema and its per-field seman
 | Top-level `shared_quota` | Optional; see "Shared-quota opt-out" below. |
 | Profile `fallback_only` | Optional boolean reserve-tier flag; see "Fallback-only reserve tier" below. |
 | Profile `seat_tier` and top-level `seat_tiers_by_delivery` | Optional strict seat order; see "Seat tiers" below. |
+| Top-level `claude3_policy` and `ladder_policy` | Optional; see "Supervisor reserve and provider bans" below. |
 
 An absent `account` keeps the home seat only in a home without `config/accounts.json`; once that registry exists every profile must name a registered account that owns the store its harness launches from and, when the account declares `provider`, spends that provider, or the resolver exits 2 and bootstrap prints `CREW_DISPATCH: invalid config/crew-dispatch.json - <profile> names no account` (or the unregistered account, missing store, or provider mismatch), so no profile falls quietly onto the home's own login. A named account must be allowlisted in the enabled home registry and is passed as `--account`. A configured worker pin is authoritative; disagreeing explicit or relaunch bindings refuse.
 
 **Supervisor reserve and provider bans**
 
-- The claude3 account is reserved for firstmate and secondmates and is rejected in ordinary worker rules and the default, including `fallback_only` profiles.
+- The claude3 account stays the supervisor reserve: firstmate and secondmate rows use it freely, while ordinary worker rules and the default may seat it only as a LATER seat tier behind the tiered claude1 and claude2 seats. `claude3_policy.worker_rows` must read `"later seat tier only"` and `weekly_floor_percent` (default 25, range 0-100) stops worker starts once claude3's weekly window falls below the floor - a row that seats claude3 first (tier 1, the firstmate-orchestration pattern) skips that worker floor. An unknown `claude3_policy` key or a first-tier claude3 seat in an ordinary row is a configuration error.
 - A rule `never_providers` is a non-empty array of provider IDs that rule's work may never run on, such as `["zai"]` on front-end design. A rule that lists a profile of a provider it bans is a configuration error, and when an ambiguous union pulls profiles of a banned provider in from another rule, those candidates read `provider <id> is banned for this work (never_providers)` and are never chosen.
+- A rule `never_models` is the same ban for model IDs, such as `["fable"]` on security and planning: a rule that lists a profile of a model its own `never_models` bans is a configuration error, and a blended ban reads `model <id> is banned for this work (never_models)`. In an ambiguous union the candidates come from the most probable (anchor) row alone, while every blended row's `never_providers` and `never_models` bans apply to that pool, so a security anchor never offers a Fable seat blended in from another row.
+- `ladder_policy.fable_projects` is an optional repo allowlist for Fable seats. Absent (captain decision 2026-11-11, option B) it restricts nothing and Fable may start and escalate on every repo; declared, a Fable seat outside a listed project reads `fable is reserved for projects in ladder_policy.fable_projects; project <name> is not one of them` and is never chosen. An empty array is a configuration error.
 - `bin/fm-account-routing.sh audit` reports any rung that lists fewer accounts of a provider than the registry declares for it, and notes a provider served by a single account.
 
 **Preferred provider**
@@ -2047,7 +2053,7 @@ Worker entries retain dispatch evidence and add `id`, nullable display-only rule
 Each `seatsWhy` entry includes the router's reason text, a presentation `code` and measurement provenance; consumers must not re-rank candidates.
 The answer is a snapshot, not a reservation, so concurrent dispatch and later quota changes can change the next real pick.
 
-`rows --json` remains additive at schema version 1: rows gain nullable `label`; candidates gain nullable `seat_tier`, nullable `pool` and boolean `fallback_only`; top-level `pipelineRows` exports `label`, `steps`, `never_providers` and `candidates`, and `guards` exports resolved weekly and five-hour settings.
+`rows --json` remains additive at schema version 1: rows gain nullable `label`, nullable `never_providers` and nullable `never_models`; candidates gain nullable `seat_tier`, nullable `pool` and boolean `fallback_only`; top-level `pipelineRows` exports `label`, `steps`, `never_providers` and `candidates`, and `guards` exports resolved weekly and five-hour settings.
 The optional rule `label` is display-only and has no effect on matching or eligibility.
 The agentic-setup cockpit collector and `scripts/test-cockpit-routing-sync.cjs` field whitelist must explicitly adopt these new fields before displaying them; unknown fields may continue to be dropped during rollout.
 
