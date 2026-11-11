@@ -2968,6 +2968,12 @@ test_wedge_escalation_marks_demand_deep_inspection_after_threshold() {
     else
       grep -F "demand-deep-inspection" "$out" >/dev/null || fail "round $n (threshold) did not demand deep inspection: $(cat "$out")"
     fi
+    FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-task-history.sh" summary wedged | python3 -c '
+import json, sys
+summary = json.load(sys.stdin)
+assert summary["stall_escalations"] == int(sys.argv[1]), summary
+assert summary["capability_failures"] == 0, summary
+' "$n" || fail "task history did not preserve wedge round $n across watcher restarts"
     ack_stopped_cycle "$state" || fail "could not acknowledge wedge escalation round $n"
     n=$((n + 1))
   done

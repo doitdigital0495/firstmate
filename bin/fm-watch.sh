@@ -2072,6 +2072,15 @@ wedge_write_escalation_count() {  # <window> <window-key> <escalation-file> <sin
   fi
 }
 
+# Preserve lifetime per-task evidence separately from resettable window cap state.
+# A stall is suspicion, not a verified capability failure. Record only after a
+# wake append succeeds; a history failure must not suppress the existing wake.
+wedge_record_task_history() {  # <task>
+  [ -n "$1" ] || return 0
+  FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-task-history.sh" append "$1" stall-escalation >/dev/null \
+    || triage_log "warning: stall escalation for $1 could not be recorded in task history"
+}
+
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
@@ -2306,6 +2315,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
             triage_log "wedge fm_wake_append FAILED for cap on $win, no cap marker written (next poll will retry)"
             exit 1
           fi
+          [ "$_wrb_cap_status" -ne 0 ] || wedge_record_task_history "$task"
           # A stream observation deferred its count until its guarded terminal
           # append was published; commit it before the cap marker supersedes it.
           [ -z "$stream_snapshot" ] || wedge_write_escalation_count "$win" "$_wkey" "$escalation_file" "$since_file" "$n"
@@ -2357,6 +2367,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         else
           fm_wake_append stale "$win" "$reason" || exit 1
         fi
+        wedge_record_task_history "$task"
         # The ladder's own step, not an episode end: this pane is still wedged,
         # so the idle timer restarts for the next rung of the same escalation
         # count and the cap that fired stays exactly where it is.
