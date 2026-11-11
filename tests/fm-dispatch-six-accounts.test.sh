@@ -13,6 +13,8 @@
 #   T   seat_tier strict order, per-delivery tiers, and their reserve and class rules
 #   U   an unreadable candidate is skipped while another is readable; with none readable a round-robin seat starts quota unknown
 #   P   pipeline mode: fixed row per step, pools, per-tier reasoning class, weekly floor, live five-hour window
+#   S10 lane 1 resolver: claude3 worker seating and weekly floor, never_models bans
+#       inside blended unions, the optional fable_projects allowlist, and their load refusals
 #   A   provider-aware, symlink-canonical seat lookup and the one-shot migration
 set -u
 # shellcheck source=tests/lib.sh
@@ -34,7 +36,7 @@ QDIR="$TMP_ROOT/quota"
 SERVER=''
 cleanup() { [ -z "$SERVER" ] || kill "$SERVER" 2>/dev/null || true; rm -rf "$TMP_ROOT"; }
 trap cleanup EXIT
-mkdir -p "$STORES"/claude1 "$STORES"/claude2 "$STORES"/claude-reserve "$STORES"/codex1 "$STORES"/pi "$QDIR"
+mkdir -p "$STORES"/claude1 "$STORES"/claude2 "$STORES"/claude-reserve "$STORES"/claude3 "$STORES"/codex1 "$STORES"/codex2 "$STORES"/pi "$STORES"/pi2 "$QDIR"
 printf '# Task\n## Captain%s intent\nFix the pager.\n## Firstmate spec\nOne page per call.\n' "'" > "$BRIEF"
 
 # The fake quota-axi answers per store: the Claude store's name, else the Codex
@@ -71,7 +73,9 @@ reset_quota() {
   set_quota claude1 claude 70 1
   set_quota claude2 claude 60 2
   set_quota claude-reserve claude 95 9
+  set_quota claude3 claude 90 4
   set_quota codex1 codex 50 1
+  set_quota codex2 codex 50 3
   set_quota pi zai 90 5
   rm -rf "$HOME_DIR/state/quota-last-good"
 }
@@ -82,7 +86,9 @@ cat > "$ACCOUNTS" <<JSON
  "claude1":{"provider":"claude","claude":"$STORES/claude1","plans":{"claude":"Max 20x"}},
  "claude2":{"provider":"claude","claude":"$STORES/claude2","plans":{"claude":"Ultra"}},
  "claude-reserve":{"provider":"claude","claude":"$STORES/claude-reserve","plans":{"claude":"Team premium"}},
+ "claude3":{"provider":"claude","claude":"$STORES/claude3","plans":{"claude":"Max 20x"}},
  "codex1":{"provider":"codex","codex":"$STORES/codex1","pi":"$STORES/pi","plans":{"codex":"Pro 5x"}},
+ "codex2":{"provider":"codex","codex":"$STORES/codex2","pi":"$STORES/pi2","plans":{"codex":"Business"}},
  "glm":{"provider":"zai","pi":"$STORES/pi","plans":{"zai":"Pro 6x"}}}}
 JSON
 cat > "$RULES" <<'JSON'
@@ -306,6 +312,10 @@ write_response rule_1 0.95 "$worker"
 cp "$RULES" "$TMP_ROOT/before-flight-rules"
 jq '.rules = [.rules[0] | .use |= map(select(.account == "claude1" or .account == "claude2"))] | del(.default)' "$RULES" > "$TMP_ROOT/flight-rules"
 mv "$TMP_ROOT/flight-rules" "$RULES"
+# The three-login counts below are registry-size dependent: keep the later S10
+# accounts (claude3, codex2) out of this one-start flight, as the comment says.
+cp "$ACCOUNTS" "$TMP_ROOT/accounts-before-flight"
+jq 'del(.accounts.claude3, .accounts.codex2)' "$ACCOUNTS" > "$TMP_ROOT/accounts-flight" && mv "$TMP_ROOT/accounts-flight" "$ACCOUNTS"
 write_response rule_1 0.95 '{"rule_1":0.95,"default":0.05}'
 reset_quota
 # Earlier cases left attempts here; this one starts cold.
@@ -328,6 +338,7 @@ for i in 1 2 3 4; do
 done
 assert_equals 3 "$(grep -c '^--json$' "$TMP_ROOT/parallel-starts")" 'four parallel starts share the three resolver reads'
 assert_equals 3 "$(grep -c '^--full --json$' "$TMP_ROOT/parallel-starts")" 'four parallel starts share the three intake reads'
+cp "$TMP_ROOT/accounts-before-flight" "$ACCOUNTS"
 reset_quota
 cp "$TMP_ROOT/before-flight-rules" "$RULES"
 write_response rule_1 0.95 "$worker"
@@ -663,9 +674,7 @@ pass 'G: equal seats on different providers rank identically after a burst'
 # The fixed row per no-mistakes step: pool 1 is claude1 and claude2, pool 2 is
 # claude-reserve above its weekly floor and then the Codex seats. A healthy glm seat with
 # the most room stays out, because no row may list a banned provider.
-mkdir -p "$STORES/codex2"
 cp "$ACCOUNTS" "$TMP_ROOT/accounts-original"
-jq --arg store "$STORES" '.accounts.codex2 = {provider:"codex",codex:"\($store)/codex2",pi:"\($store)/pi",plans:{codex:"Business"}}' "$TMP_ROOT/accounts-original" > "$ACCOUNTS"
 cat > "$RULES" <<'JSON'
 {"rules":[{"when":"Any work","label":"Any work label","use":[
    {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","reasoning_class":3}]}],
@@ -1040,6 +1049,141 @@ pipeline_quota
 reset_quota
 pass 'P: a class 3 GLM tier follows the class 4 tiers, opened only when they are full'
 
+# ---- S10: lane 1 resolver - claude3 seating, never_models, the optional fable gate ----
+# A plan-shaped worker table: claude3 joins rows only as a later seat tier with a
+# 25% weekly floor (rule 8-style rows put it first instead), never_models keeps a
+# blended rule's bans on the anchor's candidates, and ladder_policy.fable_projects
+# stays an optional allowlist - absent it restricts nothing (captain decision
+# 2026-11-11, option B: Fable may start and escalate on every repo).
+cat > "$RULES" <<'JSON'
+{"model_notes":{"claude":"claude line","codex":"codex line","zai":"glm line"},
+ "claude3_policy":{"worker_rows":"later seat tier only","weekly_floor_percent":25,"note":"claude3 seats follow the worker seats"},
+ "ladder_policy":{"fable_projects":["firstmate"]},
+ "rules":[
+  {"when":"Security review","never_providers":["zai"],"never_models":["fable"],"strict_tiers":true,"use":[
+    {"harness":"claude","model":"opus","effort":"xhigh","account":"claude1","seat_tier":1,"reasoning_class":5},
+    {"harness":"claude","model":"opus","effort":"xhigh","account":"claude2","seat_tier":1,"reasoning_class":5},
+    {"harness":"pi","provider":"codex","model":"openai-codex/gpt-6-astra","effort":"xhigh","account":"codex1","seat_tier":2,"reasoning_class":4},
+    {"harness":"claude","model":"opus","effort":"xhigh","account":"claude3","seat_tier":3,"reasoning_class":5}]},
+  {"when":"Planning","never_providers":["zai"],"never_models":["fable"],"strict_tiers":true,"use":[
+    {"harness":"claude","model":"opus","effort":"high","account":"claude1","seat_tier":1,"reasoning_class":5},
+    {"harness":"claude","model":"opus","effort":"high","account":"claude2","seat_tier":1,"reasoning_class":5},
+    {"harness":"pi","provider":"codex","model":"openai-codex/gpt-6-astra","effort":"high","account":"codex1","seat_tier":2,"reasoning_class":4},
+    {"harness":"claude","model":"opus","effort":"high","account":"claude3","seat_tier":3,"reasoning_class":5}]},
+  {"when":"Front-end design","never_models":["fable"],"strict_tiers":true,"use":[
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","seat_tier":1,"reasoning_class":3},
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude2","seat_tier":1,"reasoning_class":3},
+    {"harness":"pi","provider":"zai","model":"zai/glm-5.3","effort":"high","account":"glm","seat_tier":2,"reasoning_class":2},
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude3","seat_tier":3,"reasoning_class":3}]},
+  {"when":"Read-only research","use":[
+    {"harness":"claude","model":"haiku","effort":"low","account":"claude1","seat_tier":1,"reasoning_class":1},
+    {"harness":"claude","model":"haiku","effort":"low","account":"claude2","seat_tier":1,"reasoning_class":1},
+    {"harness":"pi","provider":"codex","model":"openai-codex/gpt-6-luna","effort":"xhigh","account":"codex1","seat_tier":2,"reasoning_class":2}]},
+  {"when":"Written deliverables","strict_tiers":true,"use":[
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude1","seat_tier":1,"reasoning_class":4},
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude2","seat_tier":1,"reasoning_class":4},
+    {"harness":"pi","provider":"codex","model":"openai-codex/gpt-6.1-sol","effort":"medium","account":"codex1","seat_tier":2,"reasoning_class":4},
+    {"harness":"pi","provider":"codex","model":"openai-codex/gpt-6.1-sol","effort":"medium","account":"codex2","seat_tier":2,"reasoning_class":4},
+    {"harness":"pi","provider":"zai","model":"zai/glm-5.3","effort":"high","account":"glm","seat_tier":3,"reasoning_class":2}]},
+  {"when":"Hard bugs","strict_tiers":true,"use":[
+    {"harness":"claude","model":"fable","effort":"medium","account":"claude1","seat_tier":1,"reasoning_class":6},
+    {"harness":"claude","model":"fable","effort":"medium","account":"claude2","seat_tier":1,"reasoning_class":6},
+    {"harness":"claude","model":"opus","effort":"xhigh","account":"claude1","seat_tier":1,"reasoning_class":5},
+    {"harness":"claude","model":"opus","effort":"xhigh","account":"claude2","seat_tier":1,"reasoning_class":5},
+    {"harness":"pi","provider":"codex","model":"openai-codex/gpt-6.1-sol","effort":"max","account":"codex1","seat_tier":2,"reasoning_class":4},
+    {"harness":"pi","provider":"zai","model":"zai/glm-5.3","effort":"max","account":"glm","seat_tier":2,"reasoning_class":2},
+    {"harness":"claude","model":"opus","effort":"xhigh","account":"claude3","seat_tier":3,"reasoning_class":5}]},
+  {"when":"Firstmate orchestration","use":[
+    {"harness":"claude","model":"opus","effort":"high","account":"claude3","seat_tier":1,"reasoning_class":5},
+    {"harness":"claude","model":"opus","effort":"high","account":"claude1","seat_tier":2,"reasoning_class":5},
+    {"harness":"claude","model":"opus","effort":"high","account":"claude2","seat_tier":2,"reasoning_class":5}]}],
+ "default":[
+  {"harness":"claude","model":"opus","effort":"medium","account":"claude1","seat_tier":1,"reasoning_class":4},
+  {"harness":"claude","model":"opus","effort":"medium","account":"claude2","seat_tier":1,"reasoning_class":4},
+  {"harness":"pi","provider":"zai","model":"zai/glm-5.3","effort":"high","account":"glm","seat_tier":2,"reasoning_class":2}]}
+JSON
+reset_quota
+printf '0\n' > "$HOME_DIR/state/dispatch-tie-round-robin"
+run rows --json
+expect_code 0 "$code" "the plan-shaped table passes the load checks: $out"
+assert_equals zai "$(jq -r '.rows[] | select(.id == "rule_1") | .never_providers[0]' <<< "$out")" 'rows --json exports each row never_providers'
+assert_equals fable "$(jq -r '.rows[] | select(.id == "rule_1") | .never_models[0]' <<< "$out")" 'rows --json exports each row never_models'
+assert_equals true "$(jq -r '.rows[] | select(.id == "rule_4") | (.never_providers == null and .never_models == null)' <<< "$out")" 'rows without bans export null bans'
+# A clear pick keeps claude3 and the Codex fallback held behind the open tier.
+write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.02,"rule_3":0.01,"rule_4":0.01,"rule_5":0.0,"rule_6":0.0,"rule_7":0.0,"default":0.01}'
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude2'" "security spends the higher-priority seat inside the open tier: $out"
+assert_contains "$out" 'seat_tier held' 'later tiers stay held while tier 1 has room'
+# With every earlier pool out, claude3 starts above its floor but stops below it.
+set_quota claude1 claude 0 1 exhausted_now
+set_quota claude2 claude 0 2 exhausted_now
+set_quota codex1 codex 0 1 exhausted_now
+set_quota claude3 claude 30 4
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude3'" "claude3 opens when the earlier pools are out: $out"
+set_quota claude3 claude 20 4
+run "$BRIEF" --task six
+assert_contains "$out" 'claude3 weekly floor: 20% left, stops at 25%' "a claude3 start below the floor is stopped: $out"
+assert_not_contains "$(chosen)" "claude3" 'the stopped claude3 seat is never the pick'
+# A rule that seats claude3 first (the firstmate pattern) skips the worker floor.
+reset_quota
+set_quota claude3 claude 10 4
+write_response rule_7 0.95 '{"rule_1":0.0,"rule_2":0.0,"rule_3":0.0,"rule_4":0.0,"rule_5":0.0,"rule_6":0.0,"rule_7":0.95,"default":0.05}'
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--account 'claude3'" "a tier-1 claude3 seat ignores the worker floor: $out"
+# Blends take candidates from the most probable row and bans from every blended row.
+# The resolver validates a full probability map, so every blend completes the rest at 0.
+blend() { write_response "$1" 0.55 "$(jq -cn --argjson over "$2" '[["rule_1",0],["rule_2",0],["rule_3",0],["rule_4",0],["rule_5",0],["rule_6",0],["rule_7",0],["default",0]] | reduce .[] as [$k, $v] ($over; .[$k] = ($over[$k] // $v))')"; reset_quota; }
+blend rule_6 '{"rule_1":0.40,"rule_6":0.55,"default":0.05}'
+run "$BRIEF" --task six
+assert_contains "$out" 'status: clear' "the hard-bug blend clears: $out"
+assert_contains "$out" 'model fable is banned for this work (never_models)' "the security row never_models reaches the anchor: $out"
+assert_contains "$(chosen)" "--model 'opus'" "the blend starts Opus, never Fable: $out"
+assert_not_contains "$(chosen)" "fable" 'no Fable seat wins the blend'
+blend rule_6 '{"rule_2":0.40,"rule_6":0.55,"default":0.05}'
+run "$BRIEF" --task six
+assert_contains "$out" 'model fable is banned for this work (never_models)' "the planning row ban blends the same way: $out"
+blend rule_6 '{"rule_3":0.40,"rule_6":0.55,"default":0.05}'
+run "$BRIEF" --task six
+assert_contains "$out" 'model fable is banned for this work (never_models)' "the design row ban blends without never_providers: $out"
+blend rule_5 '{"rule_4":0.40,"rule_5":0.55,"default":0.05}'
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--model 'opus'" "the lavish blend keeps the anchor candidates: $out"
+assert_contains "$(chosen)" "--effort 'medium'" "the anchor row sets the effort: $out"
+blend rule_1 '{"rule_1":0.55,"rule_6":0.40,"default":0.05}'
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--model 'opus'" "a security anchor never lists Fable: $out"
+assert_not_contains "$out" 'fable' 'the anchor pool alone decides, so no Fable line appears'
+# ladder_policy.fable_projects is optional: declared, it gates; absent, it restricts nothing.
+reset_quota
+write_response rule_6 0.95 '{"rule_1":0.0,"rule_2":0.0,"rule_3":0.0,"rule_4":0.0,"rule_5":0.0,"rule_6":0.95,"rule_7":0.0,"default":0.05}'
+run "$BRIEF" --task six
+assert_contains "$out" 'fable is reserved for projects in ladder_policy.fable_projects; project unset is not one of them' "a declared allowlist gates an unnamed project: $out"
+assert_contains "$(chosen)" "--model 'opus'" "the gated Fable seat loses to Opus: $out"
+run "$BRIEF" --task six --project geris
+assert_contains "$out" 'fable is reserved for projects in ladder_policy.fable_projects; project geris is not one of them' "a client project is named in the gate: $out"
+run "$BRIEF" --task six --project firstmate
+assert_contains "$(chosen)" "--model 'fable'" "a listed project runs Fable: $out"
+jq 'del(.ladder_policy.fable_projects)' "$RULES" > "$TMP_ROOT/rules-lane1"
+cp "$TMP_ROOT/rules-lane1" "$RULES"
+run "$BRIEF" --task six
+assert_contains "$(chosen)" "--model 'fable'" "an absent allowlist never gates (captain option B): $out"
+# Malformed declarations are configuration errors.
+jq '.rules[5].never_models = ["fable"]' "$TMP_ROOT/rules-lane1" > "$RULES"
+run rows --json
+expect_code 2 "$code" "a self-banning rule is a configuration error: $out"
+assert_contains "$out" 'a rule lists a profile of a model its own never_models bans: rule 6 claude:fable' 'the self-ban error names the rule and model'
+jq '.claude3_policy.weekly_floor_percent = 150' "$TMP_ROOT/rules-lane1" > "$RULES"
+run rows --json
+expect_code 2 "$code" 'an out-of-range claude3 floor is a configuration error'
+assert_contains "$out" 'claude3_policy needs worker_rows' 'the claude3_policy error is actionable'
+jq '.ladder_policy.fable_projects = []' "$TMP_ROOT/rules-lane1" > "$RULES"
+run rows --json
+expect_code 2 "$code" 'an empty allowlist is a configuration error'
+assert_contains "$out" 'ladder_policy needs fable_projects' 'the ladder_policy error is actionable'
+cp "$TMP_ROOT/rules-original" "$RULES"
+pass 'S10: claude3 seats hold behind the worker tiers under their weekly floor, blended never_models bans reach the anchor, and fable_projects stays an optional allowlist'
+
 # ---- A: seat lookup and migration ------------------------------------------------
 ln -s "$STORES/claude-reserve" "$STORES/claude-reserve-alias"
 assert_equals claude-reserve "$(acct fm_account_seat_for_store "$ACCOUNTS" claude "$STORES/claude-reserve-alias")" 'a symlinked alias names its target seat'
@@ -1049,11 +1193,16 @@ assert_equals codex1 "$(acct fm_account_seat_for_store "$ACCOUNTS" pi "$STORES/p
 assert_equals '' "$(acct fm_account_registry_problems "$ACCOUNTS")" 'the six-account registry has no problems'
 jq '.accounts.dup = {"provider":"zai","pi":"'"$STORES"'/pi/"}' "$ACCOUNTS" > "$TMP_ROOT/dup.json"
 assert_contains "$(acct fm_account_registry_problems "$TMP_ROOT/dup.json")" 'both declare provider zai on pi store' 'two seats on one login are reported'
+# The coverage audit is asserted against the original six accounts; the S10
+# accounts (claude3, codex2) join the registry only for the resolver sections.
+jq 'del(.accounts.claude3, .accounts.codex2)' "$ACCOUNTS" > "$TMP_ROOT/accounts-audit"
+cp "$TMP_ROOT/accounts-audit" "$ACCOUNTS"
 out=$("$ROOT/bin/fm-account-routing.sh" audit 2>&1); code=$?
 expect_code 1 "$code" "the audit fails on a coverage gap: $out"
 assert_contains "$out" 'gap: rule 2 claude:opus/high lacks claude account(s) claude-reserve' 'a rung missing a provider account is named'
 assert_contains "$out" 'single point: provider zai has one account (glm)' 'a single-account provider is noted'
 assert_not_contains "$out" 'gap: rule 1' 'a fully covered rule is not reported'
+cp "$TMP_ROOT/accounts-original" "$ACCOUNTS"
 RC="$TMP_ROOT/recent.json"
 snap claude 40 3 > "$TMP_ROOT/good.json"
 qlib fm_quota_recent_save "$RC" "$TMP_ROOT/good.json" "$STORES/claude-reserve" "$STORES/pi" "$STORES/codex1"

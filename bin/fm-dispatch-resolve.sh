@@ -232,7 +232,6 @@ case "${1:-}" in
   gate) shift; fm_dr_cmd_gate "$@"; exit $? ;;
   refund) shift; fm_dr_cmd_refund "$@"; exit $? ;;
   choose|degraded|override|degraded-recent) fm_dr_die "self-service and degraded receipts are retired; run the resolver with the brief (Jev, or the captain's pick when Jev cannot route)" ;;
-  rows) shift; fm_dr_cmd_rows "$@"; exit $? ;;
   overrides) shift; fm_dr_cmd_overrides "$@"; exit $? ;;
   audit) shift; fm_dr_cmd_audit "$@"; exit $? ;;
   pick) shift; fm_dp_cmd_pick "$@"; exit $? ;;
@@ -276,13 +275,21 @@ usage() {
   ' "$0"
 }
 
-MODE=worker STEP='' PREVIEW=false
+MODE=worker STEP='' PREVIEW=false ROWS_JSON=false
 if [ "${1:-}" = preview ]; then
   PREVIEW=true; MODE=preview; shift
   [ "${1:-}" = --json ] && [ "$#" -eq 1 ] || die "preview takes --json"
   shift
 fi
 if [ "${1:-}" = pipeline ]; then MODE=pipeline; shift; fi
+if [ "${1:-}" = rows ]; then
+  MODE=rows; shift
+  case "${1:-}" in
+    --json) ROWS_JSON=true; shift ;;
+    '') ;;
+    *) die "unknown rows argument: ${1:-}" ;;
+  esac
+fi
 BRIEF='' PROJECT='' TASK_ID='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES='' FORCE_PICK=false
 NEVER_SEND_PATH="$CONFIG/dispatch-never-send"
 while [ $# -gt 0 ]; do
@@ -310,10 +317,20 @@ elif [ "$MODE" = pipeline ]; then
   QUOTA_DEADLINE=$(( $(date +%s) + QUOTA_WAIT_SECONDS ))
 else
   [ -z "$STEP" ] || die "--step belongs to pipeline mode"
-  [ -n "$BRIEF" ] || die "brief file required (see --help)"
-  [ -r "$BRIEF" ] || die "brief file not readable: $BRIEF"
-  BRIEF_DELIVERY=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
-  [ -e "$RULES_PATH" ] || [ -L "$RULES_PATH" ] || no_rules
+  if [ "$MODE" = rows ]; then
+    # rows is the cockpit's source of truth, so it runs the same load checks
+    # as preview below; with no table at all there is nothing to check and
+    # the rows output alone answers.
+    if [ ! -e "$RULES_PATH" ] && [ ! -L "$RULES_PATH" ]; then
+      fm_dr_cmd_rows ${ROWS_JSON:+--json}
+      exit $?
+    fi
+  else
+    [ -n "$BRIEF" ] || die "brief file required (see --help)"
+    [ -r "$BRIEF" ] || die "brief file not readable: $BRIEF"
+    BRIEF_DELIVERY=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
+    [ -e "$RULES_PATH" ] || [ -L "$RULES_PATH" ] || no_rules
+  fi
 fi
 [ -r "$RULES_PATH" ] || die "rules file not readable: $RULES_PATH"
 command -v jq >/dev/null 2>&1 || die "jq required"
@@ -369,6 +386,31 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   def duplicate_profiles($items):
     ($items | map([.account // null, .harness, (.model // null), (.effort // null)] | @json)) as $keys
     | ($keys | length) != ($keys | unique | length);
+  # Claude3 policy: a worker row takes claude3 only as a strictly later seat
+  # tier beside tiered claude1 and claude2 seats; a firstmate/secondmate row
+  # takes it only strictly before them. Every other shape is a typo waiting
+  # to route a supervisor seat, so it is refused at load.
+  def claude3_problem($w; $use):
+    ([$use[] | select(.account == "claude3")]) as $c3 |
+    if ($c3 | length) == 0 then empty
+    elif any($c3[]; .seat_tier == null) then
+      "\($w): claude3 profiles must declare seat_tier so the row keeps the supervisor seats ordered (claude3_policy.worker_rows: later seat tier only)"
+    elif ([$use[] | select(.account == "claude1")] | length) == 0 or ([$use[] | select(.account == "claude2")] | length) == 0 then
+      "\($w): a row using claude3 must also route the claude1 and claude2 worker seats"
+    elif any([$use[] | select(.account == "claude1" or .account == "claude2")][]; .seat_tier == null) then
+      "\($w): claude1 and claude2 profiles beside claude3 must also declare seat_tier"
+    else
+      ([$use[] | select(.account == "claude1" or .account == "claude2") | .seat_tier]) as $t12 |
+      ([$c3[] | .seat_tier]) as $t3 |
+      if (($t12 | max) < ($t3 | min)) or (($t3 | max) < ($t12 | min)) then empty
+      else "\($w): claude3 seat tiers must sit entirely after (worker row) or entirely before (firstmate row) every claude1/claude2 tier" end
+    end;
+  def known_top: ["preferred_provider", "shared_quota", "weekly_guard", "ranking", "plan_value", "rules", "default", "pipeline_rows", "seat_tiers_by_delivery", "model_notes", "claude3_policy", "ladder_policy", "ladder_rungs", "default_ladder", "capability"];
+  def known_rule: ["when", "use", "label", "why", "approval", "min_confidence", "select", "floor", "never_providers", "never_models", "strict_tiers", "ladder"];
+  ([(.rules // []) | to_entries[] | .key as $i | claude3_problem("rule \($i + 1)"; profiles(.value.use))]
+    + [claude3_problem("default"; profiles(.default // null))] | map(select(. != null))) as $c3 |
+  ([keys_unsorted[] | . as $k | select(known_top | index($k) == null)]) as $top_unknown |
+  ([(.rules // []) | to_entries[] | .key as $i | .value | keys_unsorted[] | . as $k | select(known_rule | index($k) == null) | "rule \($i + 1) key \"\($k)\""]) as $rule_unknown |
   if type != "object" then "top-level value must be an object"
   elif has("preferred_provider") and (provider_id(.preferred_provider) | not) then "preferred_provider must be a lowercase provider ID (for example codex)"
   elif has("shared_quota") and (.shared_quota | type) != "boolean" then "shared_quota must be true or false when present"
@@ -388,7 +430,9 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   elif any((.rules // [])[]; type != "object") then "each rule must be an object"
   elif any((.rules // [])[]; (.when | type) != "string" or (.when | length) == 0) then "each rule needs non-empty when"
   elif any((.rules // [])[]; (profiles(.use) | length) == 0) then "each rule needs at least one use profile"
-  elif any(((.rules // [])[] | profiles(.use)[]), profiles(.default)[]; .account == "claude3") then "claude3 is reserved for firstmate and secondmates; ordinary worker rules and default must not use account claude3"
+  elif ($c3 | length) > 0 then "claude3 policy: " + $c3[0]
+  elif ($top_unknown | length) > 0 then "unknown top-level key \"\($top_unknown[0])\"; known keys: \(known_top | join(", "))"
+  elif ($rule_unknown | length) > 0 then "unknown rule key: \($rule_unknown[0]); known keys: \(known_rule | join(", "))"
   elif any(((.rules // [])[] | profiles(.use)[]), profiles(.default)[], ((.pipeline_rows // [])[] | .use[]);
     . as $p | (.harness == "claude" and ((.model == "opus" or .model == "sonnet") and .effort == "max" or .model == "fable" and (["xhigh", "max", "ultra"] | index($p.effort)) != null)) or
     ((.harness == "pi" or .harness == "pi-signed") and (.provider == "anthropic" or .provider == "claude" or ((.model // "") | startswith("anthropic/"))))) then "forbidden routing profile: no Claude max, Fable above high, or Claude through Pi"
@@ -401,6 +445,21 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   elif any((.rules // [])[]; has("never_providers") and ((.never_providers | type) != "array" or (.never_providers | length) == 0 or any(.never_providers[]; provider_id(.) | not))) then "never_providers must be a non-empty array of provider IDs when present"
   elif any((.rules // [])[]; . as $r | has("never_providers") and any(profiles($r.use)[]; (family_of(.) as $f | $f != null and ($r.never_providers | index($f)) != null))) then
     "a rule lists a profile of a provider its own never_providers bans: " + ([(.rules // []) | to_entries[] | .key as $i | .value as $r | select($r | has("never_providers")) | profiles($r.use)[] | select(family_of(.) as $f | $f != null and ($r.never_providers | index($f)) != null) | "rule \($i + 1) \(.harness):\(.model // "default")"] | join(", "))
+  elif any((.rules // [])[]; has("never_models") and ((.never_models | type) != "array" or (.never_models | length) == 0 or any(.never_models[]; (. | type) != "string" or (. | length) == 0))) then
+    "never_models must be a non-empty array of model IDs when present"
+  elif any((.rules // [])[]; . as $r | has("never_models") and any(profiles($r.use)[]; (.model // null) as $m | $m != null and ($r.never_models | index($m)) != null)) then
+    "a rule lists a profile of a model its own never_models bans: " + ([(.rules // []) | to_entries[] | .key as $i | .value as $r | select($r | has("never_models")) | profiles($r.use)[] | select((.model // null) as $m | $m != null and ($r.never_models | index($m)) != null) | "rule \($i + 1) \(.harness):\(.model)"] | join(", "))
+  elif has("claude3_policy") and (
+    (.claude3_policy | type) != "object" or
+    (.claude3_policy | keys_unsorted | map(. as $k | select((["worker_rows", "weekly_floor_percent", "note"] | index($k)) == null)) | length) > 0 or
+    (.claude3_policy | has("weekly_floor_percent") and ((.weekly_floor_percent | type) != "number" or .weekly_floor_percent < 0 or .weekly_floor_percent > 100)) or
+    (.claude3_policy | has("worker_rows") and ((.worker_rows | type) != "string" or (.worker_rows | length) == 0))
+  ) then "claude3_policy needs worker_rows (a string) and weekly_floor_percent (a number from 0 through 100) when present"
+  elif has("ladder_policy") and (
+    (.ladder_policy | type) != "object" or
+    (.ladder_policy | keys_unsorted | map(. as $k | select((["counts", "tie_band_points", "fable_projects", "beyond_ceiling", "jev_never_escalates", "note"] | index($k)) == null)) | length) > 0 or
+    (.ladder_policy | has("fable_projects") and ((.fable_projects | type) != "array" or (.fable_projects | length) == 0 or any(.fable_projects[]; (. | type) != "string" or (. | length) == 0)))
+  ) then "ladder_policy needs fable_projects, a non-empty array of project names, when present"
   elif any((.rules // [])[]; has("floor") and floor_bad(.floor; true)) then "rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\\z"
   elif any((.rules // [])[] | profiles(.use)[]; type == "object" and has("quota_scope") and ((.quota_scope | type) != "string" or (.quota_scope | length) == 0)) then "each use profile quota_scope must be a non-empty string when present"
   elif any((.rules // [])[] | profiles(.use)[]; type == "object" and has("fallback_only") and ((.fallback_only | type) != "boolean")) then "each use profile fallback_only must be true or false when present"
@@ -446,6 +505,13 @@ if [ -n "$missing_provider" ]; then
     missing_provider_detail="${missing_provider_detail:+$missing_provider_detail; }$location profiles whose harness lacks one authoritative provider family require provider: $harness"
   done <<< "$missing_provider"
   die "malformed rules file: $RULES_PATH - $missing_provider_detail"
+fi
+
+# rows feeds the cockpit, so a table preview refuses never loads for rows
+# either: every load check above has passed by this point (follow-up 15).
+if [ "$MODE" = rows ]; then
+  fm_dr_cmd_rows ${ROWS_JSON:+--json}
+  exit $?
 fi
 
 # ---- harness -> provider map, from the single owner in fm-quota-axi-lib.sh -----
@@ -959,6 +1025,25 @@ FM_DR_SEAT_JQ='
   # makes a seat ineligible for the reserve test.
   def reserve_weekly_window($snap; $p; $lane):
     ([$snap | provider_windows($p; $lane)[] | select(.id == "seven_day" or .kind == "weekly")] | first) // null;
+  def weekly_window($e): reserve_weekly_window(account_quota($e.profile) // {providers: []}; $e.provider; lane_of($e.profile));
+  # A floor on the weekly window (the weekly floor of a row, or the claude3
+  # floor): room left must stay above the floor, and a floor that cannot be
+  # read never fails open at the deadline. The label names the policy in every
+  # reason, so the card says which floor stopped the seat.
+  def floor_stop($f; $policy):
+    . as $e |
+    if $f == null or $sq or (($e.eligible or ($e.incomplete // false)) | not) then $e
+    else (weekly_window($e).percentRemaining) as $pct |
+      if ($pct | type) == "number" then
+        if $pct <= $f then
+          ($e | del(.incomplete, .windows_missing, .unranked)) + {eligible: false, floor_stop: true, reason: "\($policy): \($pct)% left, stops at \($f)%"}
+        else $e end
+      elif $final then
+        ($e | del(.incomplete, .windows_missing, .unranked)) + {eligible: false, reason: "\($policy) \($f)% is unverifiable: no weekly reading"}
+      else
+        $e + {eligible: false, incomplete: true, windows_missing: (($e.windows_missing // []) + ["weekly"] | unique), reason: "\($policy) \($f)% is unmeasured"}
+      end
+    end;
   def seat_at_limit($c):
     provider_of($c) as $p | lane_of($c) as $lane |
     if $p == null then false
@@ -1207,24 +1292,10 @@ fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
     --argjson now "$NOW_EPOCH" --argjson demand "$WEEKLY_DEMAND" --argjson final "${3:-false}" --arg delivery '' --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
   ($rules[0]) as $cfg | ($quota[0]) as $q |
 '"$FM_DR_SEAT_JQ"'
-  # The weekly floor reads the weekly window itself, because a row bounded by
-  # both windows would also trip on a live five-hour window. Room left must stay
-  # above the floor; a floor that cannot be read never fails open at the deadline.
-  def weekly_window($e): reserve_weekly_window(account_quota($e.profile) // {providers: []}; $e.provider; lane_of($e.profile));
-  def apply_weekly_floor:
-    . as $e | $e.profile.weekly_floor_percent as $f |
-    if $f == null or $sq or (($e.eligible or ($e.incomplete // false)) | not) then $e
-    else (weekly_window($e).percentRemaining) as $pct |
-      if ($pct | type) == "number" then
-        if $pct <= $f then
-          ($e | del(.incomplete, .windows_missing, .unranked)) + {eligible: false, floor_stop: true, reason: "weekly floor: \($pct)% left, stops at \($f)%"}
-        else $e end
-      elif $final then
-        ($e | del(.incomplete, .windows_missing, .unranked)) + {eligible: false, reason: "weekly floor \($f)% is unverifiable: no weekly reading"}
-      else
-        $e + {eligible: false, incomplete: true, windows_missing: (($e.windows_missing // []) + ["weekly"] | unique), reason: "weekly floor \($f)% is unmeasured"}
-      end
-    end;
+  # The weekly floor reads the weekly window itself (shared floor_stop),
+  # because a row bounded by both windows would also trip on a live five-hour
+  # window.
+  def apply_weekly_floor: floor_stop(.profile.weekly_floor_percent; "weekly floor");
   # A live window that will not last: projected exhaustion inside the usable
   # runway limit. A five-hour window with no published reset does not count.
   def limiting_ids: [(.runway.limitingWindowId // empty), (.runway.limitingWindowIds // [])[], (.limitingWindowIds // [])[]];
@@ -1286,7 +1357,7 @@ fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
 }
 fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   if [ "$MODE" = pipeline ]; then fm_dispatch_pipeline_json "$@"; return; fi
-  jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
+  jq -n --arg project "${PROJECT:-unset}" --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
     --argjson final "${3:-false}" --arg jev_failed "$JEV_FAILED_REASON" --argjson force_pick "$FORCE_PICK" --arg delivery "$BRIEF_DELIVERY" \
     --argjson now "$NOW_EPOCH" --argjson guard "$FIVE_HOUR_GUARD" --argjson debits "$BURST_DEBITS" --argjson demand "$WEEKLY_DEMAND" \
     --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
@@ -1307,6 +1378,30 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
           else . + {eligible: false, five_hour_guard: true,
             reason: "five-hour guard: \($w.id) \($w.percentRemaining)% left, under \($guard.floor)% \($guard.period); resets \(clean_reset($w.resetsAt))"} end
         else . end);
+  # Fable 5.2 may start and escalate on every repo (captain decision
+  # 2026-11-11, Q-A routing-fable-where, option B): an absent
+  # ladder_policy.fable_projects means no project restriction. The key stays
+  # an optional allowlist for a future restriction; when the table declares
+  # it, a project outside the list (or no project name at all) keeps its
+  # seats out, and the captain can still pick one explicitly.
+  def fable_gate_reason($c):
+    "fable is reserved for projects in ladder_policy.fable_projects; project \($project // "unset") is not one of them";
+  def fable_gated($c):
+    ($c.harness == "claude" and $c.model == "fable")
+    and (($cfg.ladder_policy.fable_projects | type) == "array")
+    and (($cfg.ladder_policy.fable_projects | index($project)) == null);
+  # claude3 joins a worker row only as a later seat tier (the load checks keep
+  # that shape), and a start on it must leave more than the claude3 weekly
+  # floor behind, so the supervisor seats above keep room.
+  def claude3_worker($c; $use):
+    (($c.account // "") == "claude3")
+    and (([$use[] | select((.account // "") == "claude1" or (.account // "") == "claude2") | (.seat_tier // 0)]) as $t12 |
+         [$use[] | select((.account // "") == "claude3") | (.seat_tier // 1e9)] as $t3 |
+         ($t12 | length) > 0 and (($t12 | max) < ($t3 | min)));
+  def claude3_floor($use):
+    map(. as $e | if claude3_worker($e.profile; $use)
+      then ($e | floor_stop(($cfg.claude3_policy.weekly_floor_percent // null); "claude3 weekly floor"))
+      else $e end);
   # Burst spreader: a seat debited by recent starts ranks on its score scaled as
   # if that many weekly points were already spent, the way spendPriority falls.
   def burst_key: (.profile.account // ("home:" + (.provider // "")));
@@ -1336,7 +1431,8 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       (row_floor($id)) as $rf |
       ([row_use($id)[] | . as $c | (provider_of($c)) as $p |
         (if $rf == "below" then {profile: $c, provider: $p, eligible: false, reason: "row floor \(rule_at($id).floor.scope) below \(rule_at($id).floor.min_percent)%"}
-         else evaluate($c) end) + plan_for($c; $p)] | weekly_guard | reserve_tier | seat_tier_hold(rule_at($id).strict_tiers == true) | skip_unreadable) as $cs |
+         elif fable_gated($c) then {profile: $c, provider: $p, eligible: false, reason: fable_gate_reason($c)}
+         else evaluate($c) end) + plan_for($c; $p)] | weekly_guard | claude3_floor(row_use($id)) | reserve_tier | seat_tier_hold(rule_at($id).strict_tiers == true) | skip_unreadable) as $cs |
       ([$cs[] | select(.eligible and ((.unranked // false) | not) and ((.incomplete // false) | not)) | .profile.reasoning_class | select(type == "number")] | max // null) as $strongest |
       {id: $id, order: $order, when: (if $id == "default" then $none_criterion else rule_at($id).when end),
        approval: (rule_at($id).approval // null), row_floor: $rf,
@@ -1384,30 +1480,42 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   ([$a.probabilities | to_entries[] | select(.value >= 0.25) | .key]) as $union_ids |
   ([$union_ids[] | . as $id | if $id == "default" then profiles($cfg.default // null) else profiles(rule_at($id).use) end | .[]]) as $union |
   (if $ambiguous then $union else ($sel.use // $answer_use // []) end) as $raw_use |
-  ($ambiguous and (any($union[]; (.reasoning_class | type) != "number") or ($union | length) == 0)) as $missing_class |
-  # Anchor the class to the most probable row, not the hardest union member.
+  # Anchor the decision to the most probable row, not the hardest union member.
   # Equal row probabilities keep table order, with default after explicit rules.
   (row_ids | to_entries | map(select(.value as $id | $union_ids | index($id)))
     | sort_by([-$a.probabilities[.value], .key]) | first | .value) as $anchor_id |
-  # With seat tiers the class comes from the first tier of that row, so a stronger
-  # fallback seat cannot drop the default seat of the row out of the union.
-  (if $anchor_id == null then [] else row_use($anchor_id) end
-    | (map(seat_rank(.)) | min) as $first | map(select(seat_rank(.) == $first))) as $anchor_use |
-  (if $ambiguous and ($missing_class | not) then ($anchor_use | map(.reasoning_class) | max) as $strongest | [$union[] | select(.reasoning_class == $strongest)] | unique else $raw_use end) as $decision_use |
+  # The full use list of the anchor row, every tier of it: seat_tier_hold
+  # keeps the earlier tiers shut while they have room, keep-strongest ranks
+  # the open tier by class, so a stronger fallback seat cannot drop the
+  # default seat of the anchor row out of the decision.
+  (if $anchor_id == null then [] else row_use($anchor_id) end) as $anchor_use |
+  # Only the anchor needs a numeric reasoning_class now: its candidates are
+  # the decision, and an anchor without any candidate has no class to keep.
+  ($ambiguous and (any($anchor_use[]; (.reasoning_class | type) != "number") or ($anchor_use | length) == 0)) as $missing_class |
+  (if $ambiguous then $anchor_use else $raw_use end) as $decision_use |
   ($ambiguous and any($union_ids[]; rule_at(.).approval == "captain")) as $union_approval |
   ([$union_ids[] | . as $id | rule_at($id) | select(.floor != null) | .floor as $f |
     {id:$id, floor:$f, state:($q | floor_state($f; $f.provider; ""))}]) as $union_floors |
   ($decision_use | map(. as $c | (provider_of($c)) as $p |
     (if $ambiguous and any($union_floors[]; .state == "below" and (rule_at(.id).use | profiles(.) | index($c)) != null)
      then {profile:$c, provider:$p, eligible:false, reason:"ambiguous row floor below minimum"}
+     elif fable_gated($c) then {profile:$c, provider:$p, eligible:false, reason: fable_gate_reason($c)}
      else evaluate($c) end) + plan_for($c; $p))) as $evaluated |
   # S3: a provider a matched rule bans (never_providers) is never chosen, also
   # when an ambiguous union pulls in profiles of another rule of that provider.
   ((if $ambiguous then [$union_ids[] | rule_at(.) | select(. != null) | (.never_providers // [])[]]
     elif $rule != null then ($rule.never_providers // []) else [] end) | unique) as $banned |
+  # S3 for models: a model a matched rule bans (never_models) is never chosen,
+  # and an ambiguous union applies the bans of every blended row to the
+  # candidates of the anchor, the same as never_providers.
+  ((if $ambiguous then [$union_ids[] | rule_at(.) | select(. != null) | (.never_models // [])[]]
+    elif $rule != null then ($rule.never_models // []) else [] end) | unique) as $banned_models |
   ([$evaluated[] | .provider as $pv | if ($pv != null and ($banned | index($pv)) != null)
       then del(.incomplete, .windows_missing, .unranked) + {eligible: false, banned: true, reason: "provider \(.provider) is banned for this work (never_providers)"}
       else . end]) as $unbanned |
+  ([$unbanned[] | .profile.model as $mv | if ($mv != null and ($banned_models | index($mv)) != null)
+      then del(.incomplete, .windows_missing, .unranked) + {eligible: false, banned: true, reason: "model \($mv) is banned for this work (never_models)"}
+      else . end]) as $unbanned_m |
   # Fallback-only reserve tier: a fallback candidate is eligible only once
   # every non-fallback candidate of the same provider family is at its limit
   # under the weekly-window seat test above; it then ranks below every
@@ -1419,7 +1527,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   def hold_and_skip:
     reserve_tier | seat_tier_hold(if $ambiguous then any($union_ids[]; rule_at(.).strict_tiers == true) else $rule.strict_tiers == true end)
     | if ($sel.rule_floor_incomplete // false) or ($ambiguous and any($union_floors[]; .state == "unmeasured")) then . else skip_unreadable end;
-  ($unbanned | weekly_guard) as $weekly_safe |
+  ($unbanned_m | claude3_floor($decision_use) | weekly_guard) as $weekly_safe |
   ($weekly_safe | five_hour_guard | hold_and_skip) as $guarded |
   (if any($guarded[]; .five_hour_guard // false) and (any($guarded[]; .eligible and ((.unranked // false) | not)) | not)
    then [$weekly_safe | hold_and_skip | .[] |
@@ -1438,7 +1546,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   }
   + (if $fb.to then {fallback: "\($choice) (\(when_of($choice))) probability \($fb.p) clears its floor \($fb.to_floor); \($picked) probability \($a.probabilities[$picked]) is below its floor \($picked_floor)"} else {} end))
   as $ev |
-  (if $missing_class then $ev + {status: "escalate", reason: "ambiguous union needs numeric reasoning_class on every candidate"}
+  (if $missing_class then $ev + {status: "escalate", reason: "ambiguous union needs numeric reasoning_class on every candidate of its most probable row \($anchor_id // "none")"}
   elif $union_approval then $ev + {status: "escalate", reason: "ambiguous union requires captain approval"}
   elif $ambiguous and any($union_floors[]; .state == "absent") then $ev + {status:"escalate",reason:"ambiguous union rule floor is unverifiable"}
   elif $ambiguous and any($union_floors[]; .state == "unmeasured") then
@@ -1497,7 +1605,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       if false then empty
       else ($tb.winner) as $winner |
         (if $ambiguous then ([$union_ids[] | . as $id | (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | select(index($winner.profile)) | $id] | first) else $sel.source end) as $winner_row |
-        $ev + {status: "clear", note: ((if $ambiguous then "ambiguous union >= 0.25; strongest reasoning class of most probable row \($anchor_id)"
+        $ev + {status: "clear", note: ((if $ambiguous then "ambiguous union >= 0.25; candidates from most probable row \($anchor_id)" + (if (($banned + $banned_models) | length) > 0 then "; bans from every blended row apply" else "" end)
           elif ($ranked | length) < ($pickable | length) then "\($sel.note); strongest reasoning class \($strongest), \(($pickable | length) - ($ranked | length)) weaker eligible candidate(s) outranked"
           else $sel.note end)
                + (if ($winner.reserve_active // false) then "; \($winner.reason)" else "" end)
