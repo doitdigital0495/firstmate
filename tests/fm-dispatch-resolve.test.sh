@@ -991,4 +991,42 @@ run rows --json
 assert_equals surplus_value "$(jq -r '.ranking.mode' <<< "$out")" 'rows exports configured ranking'
 assert_equals 25 "$(jq '.plan_value.codex2' <<< "$out")" 'rows exports plan prices'
 pass 'proposed config loads and routes all eight no-mistakes steps through Claude, Codex, then GLM'
+# The escalation ladder (lane 3): a relaunch after a recorded capability failure
+# resolves on the next rung, and the receipt gate admits that rung's profile.
+cp "$RULES" "$TMP_ROOT/rules-before-ladder"
+# The ladder profiles name no account, so this home carries no account registry.
+if [ -e "$HOME_DIR/config/accounts.json" ]; then mv "$HOME_DIR/config/accounts.json" "$TMP_ROOT/accounts-before-ladder"; fi
+cat > "$RULES" <<'JSON'
+{"ladder_rungs":[
+  {"rung":1,"name":"Small","claude":[{"harness":"claude","model":"sonnet","effort":"low"}]},
+  {"rung":2,"name":"Solid","claude":[{"harness":"claude","model":"opus","effort":"medium"}]},
+  {"rung":3,"name":"Hard","claude":[{"harness":"claude","model":"opus","effort":"high"}]}],
+ "capability":{"claude/sonnet:low":{"index":30,"terminal_bench":30,"gdpval":1100},
+  "claude/opus:medium":{"index":48.2,"terminal_bench":52.5,"gdpval":1593},
+  "claude/opus:high":{"index":51.8,"terminal_bench":56.6,"gdpval":1714}},
+ "rules":[{"when":"Small fix","ladder":{"start":1,"ceiling":3},"use":{"harness":"claude","model":"sonnet","effort":"low","reasoning_class":1}},
+  {"when":"Hard design","use":{"harness":"claude","model":"opus","reasoning_class":2}}],
+ "default":{"harness":"claude","model":"sonnet","reasoning_class":1}}
+JSON
+write_response rule_1 0.95 '{"rule_1":0.95,"rule_2":0.03,"default":0.02}'
+run "$BRIEF" --project pager --task ladder-gate
+expect_code 0 "$code" "a task without history resolves from the rule: $out"
+assert_not_contains "$out" 'escalation ladder' 'no capability failure, no ladder'
+FM_STATE_OVERRIDE="$HOME_DIR/state" "$ROOT/bin/fm-task-history.sh" append ladder-gate relaunch --reason capability --attempt a1 \
+  --profile '{"harness":"claude","model":"sonnet","effort":"low"}' >/dev/null
+run "$BRIEF" --project pager --task ladder-gate
+expect_code 0 "$code" "the relaunch resolves on rung 2: $out"
+assert_contains "$out" 'escalation ladder: 1 capability failure(s), rung 2 (Solid)' 'the note names the rung'
+receipt=$(latest)
+assert_equals opus "$(jq -r .profile.model "$receipt")" 'the receipt carries the rung-2 model'
+assert_equals medium "$(jq -r .profile.effort "$receipt")" 'the receipt carries the rung-2 effort'
+run gate --brief "$BRIEF" --task ladder-gate --harness claude --model sonnet --effort low --consume
+expect_code 3 "$code" 'the rule profile no longer matches the ladder receipt'
+run gate --brief "$BRIEF" --task ladder-gate --harness claude --model haiku --effort low --consume
+expect_code 3 "$code" 'a profile outside the rule and its ladder is refused'
+run gate --brief "$BRIEF" --task ladder-gate --harness claude --model opus --effort medium --consume
+expect_code 0 "$code" "the ladder profile is a member of its row, so the gate admits it: $out"
+pass 'the escalation ladder resolves the next rung after a capability failure and the gate admits that rung profile'
+cp "$TMP_ROOT/rules-before-ladder" "$RULES"
+if [ -e "$TMP_ROOT/accounts-before-ladder" ]; then mv "$TMP_ROOT/accounts-before-ladder" "$HOME_DIR/config/accounts.json"; fi
 echo '# all fm-dispatch-resolve tests passed'

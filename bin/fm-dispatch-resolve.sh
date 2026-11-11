@@ -58,6 +58,12 @@
 #   and strongest reasoning class, marked quota unknown (captain 2026-11-05: an
 #   unknown quota never blocks a start).
 #
+# Escalation ladder: with --task, the task's recorded capability failures
+#   (bin/fm-task-history.sh summary) pick rung start+k of the matched row's
+#   ladder instead of its use list; unknown attempts and stalls never count.
+#   bin/fm-dispatch-ladder-lib.sh owns the expansion and docs/configuration.md
+#   "Escalation ladder" owns the fields and the rules.
+#
 # Shared-quota opt-out: an optional top-level "shared_quota": true in the
 #   rules file declares this home draws every provider's usage from one single
 #   shared budget, so per-provider quota rows do not describe what is left.
@@ -405,12 +411,45 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
       if (($t12 | max) < ($t3 | min)) or (($t3 | max) < ($t12 | min)) then empty
       else "\($w): claude3 seat tiers must sit entirely after (worker row) or entirely before (firstmate row) every claude1/claude2 tier" end
     end;
+  def int_ok($n): ($n | type) == "number" and ($n | floor) == $n and $n >= 1;
+  def fable_above_high($p): $p.harness == "claude" and $p.model == "fable" and (["xhigh", "max", "ultra"] | index($p.effort)) != null;
+  def rung_profiles($r): [$r | to_entries[] | select(.key != "rung" and .key != "name") | .value | arrays | .[]];
+  def rungs_problem($rs):
+    if ($rs | type) != "array" or ($rs | length) == 0 then "ladder_rungs must be a non-empty array of rung objects"
+    elif any($rs[]; type != "object" or (int_ok(.rung) | not) or (has("name") and (.name | type) != "string")) then "each ladder_rungs entry needs an integer rung (1 or more) and a string name when present"
+    elif ([$rs[].rung] | unique | length) != ($rs | length) then "ladder_rungs rung numbers must be unique"
+    elif any($rs[]; any(to_entries[]; .key != "rung" and .key != "name" and (.value | type) != "array")) then "each ladder_rungs family (claude, codex, zai, claude_written) must be an array of profiles"
+    elif any($rs[]; any(rung_profiles(.)[]; profile_bad(.) or has("account"))) then "each ladder_rungs profile needs harness, model and effort without an account; the row supplies its accounts"
+    elif any($rs[]; any(rung_profiles(.)[]; (verified(.harness) | not))) then "each ladder_rungs profile must name a verified harness"
+    elif any($rs[]; any(rung_profiles(.)[]; (effort_ok(.harness; .model; .effort) | not))) then "each ladder_rungs profile effort must be supported by its harness and model"
+    elif any($rs[]; any(rung_profiles(.)[]; fable_above_high(.))) then "forbidden ladder profile: Fable above high"
+    elif ([$rs[].rung] | max) as $top | any($rs[]; .rung != $top and any(rung_profiles(.)[]; .harness == "claude" and .model == "fable" and .effort == "high")) then "Fable high is allowed only on the top ladder rung"
+    else null end;
+  def ladder_problem($l; $w; $ids; $rs):
+    if ($l | type) != "object" then "\($w) must be an object"
+    elif any($l | keys_unsorted[]; . as $k | (["start", "ceiling", "lens", "claude_first", "families", "note"] | index($k)) == null) then "\($w) has an unknown key; known keys: start, ceiling, lens, claude_first, families, note"
+    elif (int_ok($l.start) | not) or (int_ok($l.ceiling) | not) or $l.start > $l.ceiling then "\($w) needs integer start and ceiling with start at most ceiling"
+    elif ($ids | index($l.start)) == null or ($ids | index($l.ceiling)) == null then "\($w) start and ceiling must be rungs of ladder_rungs"
+    elif ($l | has("lens")) and (["technical", "written"] | index($l.lens)) == null then "\($w).lens must be technical or written"
+    elif ($l | has("claude_first")) and ($l.claude_first | type) != "boolean" then "\($w).claude_first must be true or false"
+    elif ($l | has("families")) and (($l.families | type) != "array" or ($l.families | length) == 0 or any($l.families[]; type != "string")) then "\($w).families must be a non-empty array of provider families"
+    elif ($l | has("note")) and ($l.note | type) != "string" then "\($w).note must be a string"
+    elif ([$rs[] | select(.rung == $l.start) | rung_profiles(.)[] | select(.harness == "claude" and .model == "fable" and .effort == "high")] | length) > 0 then "\($w) may not start on a rung that lists Fable high; Fable starts at medium at most"
+    else null end;
+  def capability_problem($c):
+    if ($c | type) != "object" then "capability must be an object keyed family/model:effort"
+    elif any($c[]; type != "object" or any(.[]; type != "number")) then "each capability entry must be an object of numbers (index, terminal_bench, gdpval)"
+    else null end;
   def known_top: ["preferred_provider", "shared_quota", "weekly_guard", "ranking", "plan_value", "rules", "default", "pipeline_rows", "seat_tiers_by_delivery", "model_notes", "claude3_policy", "ladder_policy", "ladder_rungs", "default_ladder", "capability"];
   def known_rule: ["when", "use", "label", "why", "approval", "min_confidence", "select", "floor", "never_providers", "never_models", "strict_tiers", "ladder"];
   ([(.rules // []) | to_entries[] | .key as $i | claude3_problem("rule \($i + 1)"; profiles(.value.use))]
     + [claude3_problem("default"; profiles(.default // null))] | map(select(. != null))) as $c3 |
   ([keys_unsorted[] | . as $k | select(known_top | index($k) == null)]) as $top_unknown |
   ([(.rules // []) | to_entries[] | .key as $i | .value | keys_unsorted[] | . as $k | select(known_rule | index($k) == null) | "rule \($i + 1) key \"\($k)\""]) as $rule_unknown |
+  ((if (.ladder_rungs | type) == "array" then [.ladder_rungs[] | (.rung? // null)] else [] end)) as $rung_ids |
+  ((if (.ladder_rungs | type) == "array" then .ladder_rungs else [] end)) as $rungs |
+  ([(.rules // []) | to_entries[] | .key as $i | .value | select(type == "object" and has("ladder")) | ladder_problem(.ladder; "rule \($i + 1) ladder"; $rung_ids; $rungs)]
+    + [if has("default_ladder") then ladder_problem(.default_ladder; "default_ladder"; $rung_ids; $rungs) else null end] | map(select(. != null))) as $ladder_problems |
   if type != "object" then "top-level value must be an object"
   elif has("preferred_provider") and (provider_id(.preferred_provider) | not) then "preferred_provider must be a lowercase provider ID (for example codex)"
   elif has("shared_quota") and (.shared_quota | type) != "boolean" then "shared_quota must be true or false when present"
@@ -460,6 +499,17 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
     (.ladder_policy | keys_unsorted | map(. as $k | select((["counts", "tie_band_points", "fable_projects", "beyond_ceiling", "jev_never_escalates", "note"] | index($k)) == null)) | length) > 0 or
     (.ladder_policy | has("fable_projects") and ((.fable_projects | type) != "array" or (.fable_projects | length) == 0 or any(.fable_projects[]; (. | type) != "string" or (. | length) == 0)))
   ) then "ladder_policy needs fable_projects, a non-empty array of project names, when present"
+  elif has("ladder_policy") and (
+    (.ladder_policy | has("counts") and .counts != "capability_failures") or
+    (.ladder_policy | has("beyond_ceiling") and .beyond_ceiling != "escalate") or
+    (.ladder_policy | has("tie_band_points") and ((.tie_band_points | type) != "number" or .tie_band_points < 0)) or
+    (.ladder_policy | has("jev_never_escalates") and ((.jev_never_escalates | type) != "boolean")) or
+    (.ladder_policy | has("note") and ((.note | type) != "string"))
+  ) then "ladder_policy counts must be capability_failures, beyond_ceiling escalate, tie_band_points a number of 0 or more, jev_never_escalates a boolean and note a string when present"
+  elif has("ladder_rungs") and (rungs_problem(.ladder_rungs) != null) then rungs_problem(.ladder_rungs)
+  elif has("capability") and (capability_problem(.capability) != null) then capability_problem(.capability)
+  elif (any((.rules // [])[]; type == "object" and has("ladder")) or has("default_ladder")) and (has("ladder_rungs") | not) then "a ladder needs ladder_rungs"
+  elif ($ladder_problems | length) > 0 then $ladder_problems[0]
   elif any((.rules // [])[]; has("floor") and floor_bad(.floor; true)) then "rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\\z"
   elif any((.rules // [])[] | profiles(.use)[]; type == "object" and has("quota_scope") and ((.quota_scope | type) != "string" or (.quota_scope | length) == 0)) then "each use profile quota_scope must be a non-empty string when present"
   elif any((.rules // [])[] | profiles(.use)[]; type == "object" and has("fallback_only") and ((.fallback_only | type) != "boolean")) then "each use profile fallback_only must be true or false when present"
@@ -1355,12 +1405,29 @@ fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
     + (if $tb.tie_break then {tie_break: $tb.tie_break, tie_round_robin: ($tb.round_robin // false)} else {} end)
   end'
 }
+# Escalation ladder input: the task's recorded capability failures
+# (bin/fm-task-history.sh summary). Only a verified capability failure moves a
+# task up its ladder; unknown attempts, stalls, crashes and usage limits never
+# count there. A history that cannot be read fails closed to the captain
+# instead of silently restarting the task on its lowest rung.
+LADDER_HIST='{"k":0,"failed":[],"error":null}'
+if [ "$PREVIEW" != true ] && [ "$MODE" != pipeline ] && [ -n "$TASK_ID" ] \
+  && [[ "$TASK_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] && [[ "$TASK_ID" != *..* ]]; then
+  if hist_json=$(FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-task-history.sh" summary "$TASK_ID" 2>/dev/null) \
+    && LADDER_HIST=$(jq -c '{k: (.capability_failures // 0), failed: (.failed_profiles // []), error: null}' <<<"$hist_json" 2>/dev/null) \
+    && [ -n "$LADDER_HIST" ]; then
+    :
+  else
+    LADDER_HIST='{"k":0,"failed":[],"error":"task routing history for '"$TASK_ID"' is unreadable"}'
+  fi
+fi
 fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   if [ "$MODE" = pipeline ]; then fm_dispatch_pipeline_json "$@"; return; fi
   jq -n --arg project "${PROJECT:-unset}" --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
     --argjson final "${3:-false}" --arg jev_failed "$JEV_FAILED_REASON" --argjson force_pick "$FORCE_PICK" --arg delivery "$BRIEF_DELIVERY" \
     --argjson now "$NOW_EPOCH" --argjson guard "$FIVE_HOUR_GUARD" --argjson debits "$BURST_DEBITS" --argjson demand "$WEEKLY_DEMAND" \
-    --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
+    --argjson ladder_hist "$LADDER_HIST" \
+    --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ$FM_DL_JQ"'
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
 '"$FM_DR_SEAT_JQ"'
   # Five-hour guard (worker starts only): the first five-hour window of a
@@ -1492,7 +1559,25 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   # Only the anchor needs a numeric reasoning_class now: its candidates are
   # the decision, and an anchor without any candidate has no class to keep.
   ($ambiguous and (any($anchor_use[]; (.reasoning_class | type) != "number") or ($anchor_use | length) == 0)) as $missing_class |
-  (if $ambiguous then $anchor_use else $raw_use end) as $decision_use |
+  (if $ambiguous then $anchor_use else $raw_use end) as $base_use |
+  # Escalation ladder: after k recorded capability failures (--task history) the
+  # decision row runs rung start+k of its ladder instead of its own use list.
+  # k=0, no --task, a row without a ladder, a captain-approval row and a row
+  # the loader turned into an error keep the use list exactly as before.
+  (if $ambiguous then $anchor_id else $sel.source end) as $ladder_row_id |
+  (if $ladder_row_id == null then null
+   elif $ladder_row_id == "default" then {use: profiles($cfg.default // null), meta: {}}
+   elif rule_at($ladder_row_id) != null then {use: profiles(rule_at($ladder_row_id).use), meta: rule_at($ladder_row_id)}
+   else null end) as $ladder_row |
+  (if $ladder_row == null then null else dl_ladder_for($cfg; $ladder_row.meta) end) as $ladder |
+  (if $ladder == null or ($sel.invalid // null) != null or ($sel.escalate // null) != null or ($sel.rule_floor_incomplete // false) then null
+   elif ($ladder_hist.error // null) != null then {escalate: $ladder_hist.error}
+   elif $ladder_hist.k < 1 then null
+   else dl_resolve($cfg; $ladder_row.use; $ladder_row.meta; $ladder; $ladder_hist.k; $ladder_hist.failed; $project) end) as $lad |
+  (if $lad != null and $lad.use != null then $lad.use else $base_use end) as $decision_use |
+  (if $lad != null and $lad.use != null
+   then ($sel + {note: "\($sel.note); escalation ladder: \($lad.k) capability failure(s), rung \($lad.rung)\(if $lad.name then " (\($lad.name))" else "" end) of the \($ladder.start)-\($ladder.ceiling) ladder"})
+   else $sel end) as $sel |
   ($ambiguous and any($union_ids[]; rule_at(.).approval == "captain")) as $union_approval |
   ([$union_ids[] | . as $id | rule_at($id) | select(.floor != null) | .floor as $f |
     {id:$id, floor:$f, state:($q | floor_state($f; $f.provider; ""))}]) as $union_floors |
@@ -1553,6 +1638,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     $ev + {status:"incomplete",reason:"ambiguous union rule floor unmeasured",candidates:$cands,
       incomplete:[$union_floors[] | select(.state == "unmeasured") | {account:null,provider:.floor.provider,missing:[.floor.scope]}]}
   elif $sel.invalid then $ev + {status: "error", reason: $sel.invalid}
+  elif $lad != null and $lad.escalate != null then $ev + {status: "escalate", reason: $lad.escalate, note: $sel.note, candidates: []}
   elif ($incomplete | length) > 0 or ($sel.rule_floor_incomplete // false) then
     $ev + {
       status: "incomplete",
@@ -1604,7 +1690,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       ($ranked | rank_winner) as $tb |
       if false then empty
       else ($tb.winner) as $winner |
-        (if $ambiguous then ([$union_ids[] | . as $id | (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | select(index($winner.profile)) | $id] | first) else $sel.source end) as $winner_row |
+        (if $lad != null then $ladder_row_id elif $ambiguous then ([$union_ids[] | . as $id | (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | select(index($winner.profile)) | $id] | first) else $sel.source end) as $winner_row |
         $ev + {status: "clear", note: ((if $ambiguous then "ambiguous union >= 0.25; candidates from most probable row \($anchor_id)" + (if (($banned + $banned_models) | length) > 0 then "; bans from every blended row apply" else "" end)
           elif ($ranked | length) < ($pickable | length) then "\($sel.note); strongest reasoning class \($strongest), \(($pickable | length) - ($ranked | length)) weaker eligible candidate(s) outranked"
           else $sel.note end)
@@ -1635,7 +1721,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
     if $seat == null then $out
     else
       ($seat | del(.incomplete, .windows_missing) + {eligible: true, quota_unknown: true, reason: "quota unknown: \(.reason)"}) as $started |
-      (if $ambiguous then ([$union_ids[] | . as $id | (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | select(index($seat.profile)) | $id] | first) else $sel.source end) as $seat_row |
+      (if $lad != null then $ladder_row_id elif $ambiguous then ([$union_ids[] | . as $id | (if $id == "default" then profiles($cfg.default) else profiles(rule_at($id).use) end) | select(index($seat.profile)) | $id] | first) else $sel.source end) as $seat_row |
       ($out | del(.reason, .incomplete, .quota_attempts, .warmups)) + {
         status: "clear", quota_unknown: true, chosen: $started, row: $seat_row,
         note: "quota unknown on every candidate: starting on \($seat | seat_label), by round-robin within its tier and strongest class, without waiting",

@@ -1851,7 +1851,10 @@ This section is the single owner of the canonical schema and its per-field seman
   "shared_quota": false,
   "seat_tiers_by_delivery": { "<delivery mode>": { "<registry account id>": 1 } },
   "claude3_policy": { "worker_rows": "later seat tier only", "weekly_floor_percent": 25, "note": "<optional>" },
-  "ladder_policy": { "fable_projects": ["<optional repo allowlist>", "firstmate"], "note": "<optional>" },
+  "ladder_policy": { "counts": "capability_failures", "tie_band_points": 2, "beyond_ceiling": "escalate", "jev_never_escalates": true, "fable_projects": ["<optional repo allowlist>", "firstmate"], "note": "<optional>" },
+  "ladder_rungs": [ { "rung": 1, "name": "<label>", "claude": [ { "harness": "claude", "model": "<model>", "effort": "<effort>" } ], "codex": [], "zai": [], "claude_written": [] } ],
+  "default_ladder": { "start": 4, "ceiling": 6, "lens": "technical", "claude_first": false },
+  "capability": { "claude/opus:high": { "index": 51.8, "terminal_bench": 56.6, "gdpval": 1714 } },
   "pipeline_rows": [ { "steps": ["<no-mistakes step>"], "never_providers": ["zai"], "use": [ { "<profile>": "see Pipeline seat rows" } ] } ],
   "rules": [
     {
@@ -1861,6 +1864,7 @@ This section is the single owner of the canonical schema and its per-field seman
       "floor": { "scope": "<quota-axi scope>", "min_percent": 20, "provider": "<quota-axi provider>" },
       "never_providers": ["<optional provider ID this rule may never run on>"],
       "never_models": ["<optional model ID this rule may never run, such as fable>"],
+      "ladder": { "start": 3, "ceiling": 5, "lens": "technical", "claude_first": false, "families": ["<optional provider families>"] },
       "use": [
         { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "account": "<optional registry account id>", "provider": "<optional quota-axi provider>", "quota_scope": "<optional quota-axi scope>", "fallback_only": false, "seat_tier": 1, "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
       ],
@@ -1887,6 +1891,7 @@ This section is the single owner of the canonical schema and its per-field seman
 | Profile `fallback_only` | Optional boolean reserve-tier flag; see "Fallback-only reserve tier" below. |
 | Profile `seat_tier` and top-level `seat_tiers_by_delivery` | Optional strict seat order; see "Seat tiers" below. |
 | Top-level `claude3_policy` and `ladder_policy` | Optional; see "Supervisor reserve and provider bans" below. |
+| Top-level `ladder_rungs`, `default_ladder`, `capability` and rule `ladder` | Optional; see "Escalation ladder" below. A declared ladder needs `ladder_rungs`. |
 
 An absent `account` keeps the home seat only in a home without `config/accounts.json`; once that registry exists every profile must name a registered account that owns the store its harness launches from and, when the account declares `provider`, spends that provider, or the resolver exits 2 and bootstrap prints `CREW_DISPATCH: invalid config/crew-dispatch.json - <profile> names no account` (or the unregistered account, missing store, or provider mismatch), so no profile falls quietly onto the home's own login. A named account must be allowlisted in the enabled home registry and is passed as `--account`. A configured worker pin is authoritative; disagreeing explicit or relaunch bindings refuse.
 
@@ -1897,6 +1902,42 @@ An absent `account` keeps the home seat only in a home without `config/accounts.
 - A rule `never_models` is the same ban for model IDs, such as `["fable"]` on security and planning: a rule that lists a profile of a model its own `never_models` bans is a configuration error, and a blended ban reads `model <id> is banned for this work (never_models)`. In an ambiguous union the candidates come from the most probable (anchor) row alone, while every blended row's `never_providers` and `never_models` bans apply to that pool, so a security anchor never offers a Fable seat blended in from another row.
 - `ladder_policy.fable_projects` is an optional repo allowlist for Fable seats. Absent (captain decision 2026-11-11, option B) it restricts nothing and Fable may start and escalate on every repo; declared, a Fable seat outside a listed project reads `fable is reserved for projects in ladder_policy.fable_projects; project <name> is not one of them` and is never chosen. An empty array is a configuration error.
 - `bin/fm-account-routing.sh audit` reports any rung that lists fewer accounts of a provider than the registry declares for it, and notes a provider served by a single account.
+
+**Escalation ladder**
+
+The ladder moves a task that failed on capability to a stronger profile when it is relaunched.
+It reads one per-task fact from [`bin/fm-task-history.sh summary TASK`](../bin/fm-task-history.sh): `capability_failures`, the number of distinct known attempts whose relaunch reason was `capability`.
+Only a recorded capability failure advances a task.
+Unknown attempts, stalls, crashes, usage-limit moves, seat moves, restarts and captain relaunches never count, and Jev's own answers never escalate (`ladder_policy.jev_never_escalates`).
+`failed_profiles` of the same summary holds the profiles that failed, and `last_outcomes` is the disclosed trail.
+The resolver reads the history only when it is given `--task`, and a history it cannot read sends the task to the captain's pick card with `task routing history for <task> is unreadable` instead of restarting it on the lowest rung.
+
+- `ladder_rungs` is an array of rung objects with a unique integer `rung`, an optional `name`, and one array of profiles per provider family (`claude`, `codex`, `zai`).
+  A family lists its profiles in preference order, and the first one the row and project allow is used.
+  A profile carries `harness`, `model` and `effort` only (and `provider` for Pi); the row supplies accounts, seat tiers, floors and quota scopes.
+  An optional `claude_written` list replaces the `claude` list for rows whose lens is `written`.
+  An empty family list drops that family from the rung.
+- A rule's `ladder` (or `default_ladder` for the default and for a rule without its own) declares `start` and `ceiling`, both rungs of `ladder_rungs` with `start` at most `ceiling`, and optionally `lens` (`technical` by default, or `written`), `claude_first`, `families` and `note`.
+  `start` is the rung the rule's own `use` list stands for.
+  An unknown key is a configuration error.
+- `capability` maps `<provider>/<model>:<effort>` (the model without its provider prefix, for example `claude/opus:high` or `codex/gpt-6.1-sol:max`) to `index`, `terminal_bench` and `gdpval`.
+- `ladder_policy.counts` must read `capability_failures` and `beyond_ceiling` must read `escalate` when present, `tie_band_points` is a number of 0 or more (default 2), and `jev_never_escalates` is a boolean.
+
+The matched row then resolves as follows, with `k` the recorded capability failures (0 when no `--task` is given).
+
+1. `k=0` runs the row's own `use` list exactly as without a ladder, so a row with no ladder, a task with no history and a task whose history holds only unproven attempts are unchanged.
+2. `k` of 1 or more runs rung `start+k`, expanded per family: each family the row's `use` lists keeps that family's accounts, seat tiers, floors and quota scopes (one entry per account and tier), so a rung never adds an account such as claude3 or codex2 where the row keeps it out, and claude3 keeps its later pool.
+   With `claude_first` the Codex and then GLM profiles take the seat tiers after the highest Claude tier of the row.
+3. A rung profile is dropped when its family is outside the rule's `ladder.families`, when the rule's `never_providers` or `never_models` bans it, when `ladder_policy.fable_projects` is declared and the project is not on it, when it is a failed profile, or when it does not beat every failed profile on the lens.
+   The technical lens needs `index` or `terminal_bench` higher by more than `tie_band_points`, the written lens needs a higher `gdpval`, and a profile the `capability` map does not list never beats anything.
+4. A rung that leaves no profile moves to the next rung up to the ceiling.
+   Past the ceiling, or when no rung up to it has a profile, the resolver reports `escalate` and hands the task to the captain's pick card.
+5. The receipt records the matched row, and the dispatch receipt gate counts every profile any rung of the row's ladder can seat as a member of that row, so the relaunch on the higher rung is admitted while a profile outside the row and its ladder is refused.
+   [`bin/fm-dispatch-ladder-lib.sh`](../bin/fm-dispatch-ladder-lib.sh) owns the expansion both use.
+
+Fable is never limited by repository unless `ladder_policy.fable_projects` is declared (see above).
+A Fable profile starts at `medium` at most, `high` is allowed only on the top rung of `ladder_rungs` (a ladder may not start on that rung), and `xhigh`, `max` and `ultra` are configuration errors everywhere, so Fable is never seated above high.
+The loader refuses a malformed ladder, with an actionable message, before any resolution.
 
 **Preferred provider**
 

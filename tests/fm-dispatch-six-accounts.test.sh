@@ -15,6 +15,8 @@
 #   P   pipeline mode: fixed row per step, pools, per-tier reasoning class, weekly floor, live five-hour window
 #   S10 lane 1 resolver: claude3 worker seating and weekly floor, never_models bans
 #       inside blended unions, the optional fable_projects allowlist, and their load refusals
+#   S11 lane 3 resolver: the escalation ladder from per-task capability history, Fable limits,
+#       bans, lenses, default_ladder, fail-closed history, and the ladder load refusals
 #   A   provider-aware, symlink-canonical seat lookup and the one-shot migration
 set -u
 # shellcheck source=tests/lib.sh
@@ -1183,6 +1185,194 @@ expect_code 2 "$code" 'an empty allowlist is a configuration error'
 assert_contains "$out" 'ladder_policy needs fable_projects' 'the ladder_policy error is actionable'
 cp "$TMP_ROOT/rules-original" "$RULES"
 pass 'S10: claude3 seats hold behind the worker tiers under their weekly floor, blended never_models bans reach the anchor, and fable_projects stays an optional allowlist'
+
+# ---- S11: lane 3 resolver - the escalation ladder with per-task capability history ----
+# A task starts on its rule's own use list (k=0) and runs rung start+k of its
+# ladder after k recorded capability failures. Unknown attempts, stalls, crashes
+# and usage limits never advance it. Fable starts at medium, tops out at high on
+# the top rung only, and is gated by no repository unless fable_projects says so.
+HIST="$ROOT/bin/fm-task-history.sh"
+cat > "$RULES" <<'JSON'
+{"model_notes":{"claude":"claude line","codex":"codex line","zai":"glm line"},
+ "claude3_policy":{"worker_rows":"later seat tier only","weekly_floor_percent":25},
+ "ladder_policy":{"counts":"capability_failures","tie_band_points":2,"beyond_ceiling":"escalate","jev_never_escalates":true},
+ "ladder_rungs":[
+  {"rung":3,"name":"Build","claude":[{"harness":"claude","model":"sonnet","effort":"high"}],
+   "codex":[{"harness":"pi","provider":"codex","model":"openai-codex/gpt-6.1-sol","effort":"medium"}],
+   "zai":[{"harness":"pi","provider":"zai","model":"zai/glm-5.3","effort":"max"}]},
+  {"rung":4,"name":"Solid","claude":[{"harness":"claude","model":"opus","effort":"medium"}],
+   "codex":[{"harness":"pi","provider":"codex","model":"openai-codex/gpt-6.1-sol","effort":"high"}],"zai":[]},
+  {"rung":5,"name":"Hard","claude":[{"harness":"claude","model":"fable","effort":"medium"},{"harness":"claude","model":"opus","effort":"high"}],
+   "codex":[{"harness":"pi","provider":"codex","model":"openai-codex/gpt-6.1-sol","effort":"max"}],"zai":[],
+   "claude_written":[{"harness":"claude","model":"opus","effort":"high"}]},
+  {"rung":6,"name":"Top","claude":[{"harness":"claude","model":"fable","effort":"high"}],"codex":[],"zai":[]}],
+ "capability":{
+  "claude/sonnet:high":{"index":41.5,"terminal_bench":43.9,"gdpval":1557},
+  "claude/opus:medium":{"index":48.2,"terminal_bench":52.5,"gdpval":1593},
+  "claude/opus:high":{"index":51.8,"terminal_bench":56.6,"gdpval":1714},
+  "claude/fable:medium":{"index":56.4,"terminal_bench":55.1,"gdpval":1591},
+  "claude/fable:high":{"index":61.8,"terminal_bench":59.6,"gdpval":1718},
+  "codex/gpt-6.1-sol:medium":{"index":46.3,"terminal_bench":48.0,"gdpval":1459},
+  "codex/gpt-6.1-sol:high":{"index":50.3,"terminal_bench":51.5,"gdpval":1520},
+  "codex/gpt-6.1-sol:max":{"index":54.6,"terminal_bench":56.1,"gdpval":1608},
+  "zai/glm-5.3:max":{"index":31.7,"terminal_bench":41.9,"gdpval":1657}},
+ "default_ladder":{"start":3,"ceiling":4,"lens":"technical","claude_first":false},
+ "rules":[
+  {"when":"Implement a settled spec","ladder":{"start":3,"ceiling":5,"lens":"technical","claude_first":false},"use":[
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","seat_tier":1,"reasoning_class":4},
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude2","seat_tier":1,"reasoning_class":4},
+    {"harness":"pi","provider":"codex","model":"openai-codex/gpt-6.1-sol","effort":"medium","account":"codex1","seat_tier":1,"reasoning_class":4},
+    {"harness":"pi","provider":"zai","model":"zai/glm-5.3","effort":"max","account":"glm","seat_tier":1,"reasoning_class":4},
+    {"harness":"claude","model":"sonnet","effort":"high","account":"claude3","seat_tier":2,"reasoning_class":4}]},
+  {"when":"Hard bug","ladder":{"start":4,"ceiling":6,"lens":"technical","claude_first":true},"use":[
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude1","seat_tier":1,"reasoning_class":5},
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude2","seat_tier":1,"reasoning_class":5},
+    {"harness":"pi","provider":"codex","model":"openai-codex/gpt-6.1-sol","effort":"high","account":"codex1","seat_tier":1,"reasoning_class":4},
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude3","seat_tier":2,"reasoning_class":5}]},
+  {"when":"Security change","never_models":["fable"],"never_providers":["zai"],"ladder":{"start":4,"ceiling":5,"lens":"technical","claude_first":true},"use":[
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude1","seat_tier":1,"reasoning_class":5},
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude2","seat_tier":1,"reasoning_class":5}]},
+  {"when":"Written report","ladder":{"start":4,"ceiling":5,"lens":"written","claude_first":false},"use":[
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude1","seat_tier":1,"reasoning_class":4},
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude2","seat_tier":1,"reasoning_class":4}]}],
+ "default":[
+  {"harness":"claude","model":"sonnet","effort":"high","account":"claude1","seat_tier":1,"reasoning_class":4},
+  {"harness":"claude","model":"sonnet","effort":"high","account":"claude2","seat_tier":1,"reasoning_class":4}]}
+JSON
+cp "$RULES" "$TMP_ROOT/rules-ladder"
+reset_quota
+printf '0\n' > "$HOME_DIR/state/dispatch-tie-round-robin"
+run rows --json
+expect_code 0 "$code" "the ladder table passes the load checks: $out"
+P_SONNET='{"harness":"claude","model":"sonnet","effort":"high","account":"claude1"}'
+P_OPUS_HIGH='{"harness":"claude","model":"opus","effort":"high","account":"claude1"}'
+P_FABLE='{"harness":"claude","model":"fable","effort":"medium","account":"claude1"}'
+fail_attempt() { FM_STATE_OVERRIDE="$HOME_DIR/state" "$HIST" append "$1" relaunch --reason "$2" --attempt "$3" --profile "$4" >/dev/null || fail "history append failed for $1"; }
+resp_row() { write_response "$1" 0.96 "$(jq -cn --arg r "$1" '["rule_1","rule_2","rule_3","rule_4","default"] | map({(.): (if . == $r then 0.96 else 0.01 end)}) | add')"; }
+# k=0: no history, and history made only of unknown attempts and stalls, keep the rule's own use list.
+resp_row rule_1
+run "$BRIEF" --task lad0
+assert_contains "$out" 'status: clear' "no history clears from the rule's own list: $out"
+assert_not_contains "$out" 'escalation ladder' 'k=0 never mentions the ladder'
+assert_contains "$out" 'candidate: pi:zai/glm-5.3' 'k=0 still lists the rule GLM seat'
+fail_attempt lad0 unknown a1 "$P_SONNET"
+fail_attempt lad0 infra a2 "$P_SONNET"
+fail_attempt lad0 usage-limit a3 "$P_SONNET"
+FM_STATE_OVERRIDE="$HOME_DIR/state" "$HIST" append lad0 stall-escalation --attempt a4 >/dev/null
+FM_STATE_OVERRIDE="$HOME_DIR/state" "$HIST" append lad0 stall-escalation --attempt a5 >/dev/null
+run "$BRIEF" --task lad0
+assert_not_contains "$out" 'escalation ladder' 'unknown, infra, usage-limit and stall history never advances the ladder'
+assert_contains "$out" 'candidate: pi:zai/glm-5.3' 'the unproven history keeps the rule list'
+# One capability failure: rung start+1 for every family the rule lists, no GLM
+# (rung 4 has none), accounts and tiers from the rule, the failed profile beaten.
+fail_attempt lad1 capability a1 "$P_SONNET"
+run "$BRIEF" --task lad1
+assert_contains "$out" 'status: clear' "one capability failure clears on the next rung: $out"
+assert_contains "$out" 'escalation ladder: 1 capability failure(s), rung 4 (Solid) of the 3-5 ladder' "the note names the rung: $out"
+assert_contains "$out" 'candidate: claude:opus' 'the Claude family moves to Opus'
+assert_not_contains "$out" 'candidate: claude:sonnet' 'the failed Sonnet is gone'
+assert_not_contains "$out" 'candidate: pi:zai/glm-5.3' 'a rung with no GLM profile drops the family'
+assert_contains "$out" 'account=claude3  provider=claude' 'claude3 keeps its later pool from the rule'
+assert_not_contains "$out" 'account=codex2  provider=codex' 'a rung never adds an account the rule does not list'
+assert_equals rule_1 "$(jq -r '.row.id' "$(latest)")" 'the receipt records the matched row, not a ladder row'
+assert_equals false "$(jq -r '.profile.model == "sonnet"' "$(latest)")" 'the receipt profile is a rung-4 profile, never the failed Sonnet'
+# A second recorded capability failure moves up one more rung.
+fail_attempt lad1 capability a2 '{"harness":"claude","model":"opus","effort":"medium","account":"claude2"}'
+run "$BRIEF" --task lad1
+assert_contains "$out" 'escalation ladder: 2 capability failure(s), rung 5 (Hard)' "two failures reach rung 5: $out"
+assert_contains "$out" 'candidate: claude:fable' 'rung 5 offers Fable first on every repository'
+assert_not_contains "$out" 'candidate: claude:opus' 'the first allowed Fable preference wins over the Opus fallback'
+# Past the ceiling the captain decides.
+fail_attempt lad1 capability a3 "$P_FABLE"
+run "$BRIEF" --task lad1
+assert_contains "$out" 'status: captain-pick' "past the ceiling the resolver hands over: $out"
+assert_contains "$out" 'past its ladder ceiling (rung 5)' "the reason names the ceiling: $out"
+# Attempts are counted once: a retried attempt id is the same failure.
+fail_attempt lad2 capability a1 "$P_SONNET"
+fail_attempt lad2 capability a1 "$P_SONNET"
+run "$BRIEF" --task lad2
+assert_contains "$out" 'escalation ladder: 1 capability failure(s)' "one attempt id is one failure: $out"
+# never_models and never_providers drop the Fable and GLM preferences of a rung.
+resp_row rule_3
+fail_attempt lad3 capability a1 '{"harness":"claude","model":"opus","effort":"medium","account":"claude1"}'
+run "$BRIEF" --task lad3
+assert_contains "$out" 'escalation ladder: 1 capability failure(s), rung 5' "the security ladder starts at rung 4 and moves to 5: $out"
+assert_not_contains "$out" 'candidate: claude:fable' 'a never_models row never gets Fable from the ladder'
+assert_contains "$out" 'candidate: claude:opus' 'the Opus high preference runs once Fable is banned'
+# A rung whose every allowed profile is the failed one leaves nothing to run: the captain decides.
+fail_attempt lad3b capability a1 "$P_OPUS_HIGH"
+run "$BRIEF" --task lad3b
+assert_contains "$out" 'status: captain-pick' "no profile beats a failed Opus high on a Fable-banned row: $out"
+assert_contains "$out" 'beats the 1 failed profile(s)' 'the reason names the capability bar'
+# The lens decides which profiles beat the failed one: a failed Opus high (index 51.8)
+# is beaten by Fable but not by another Opus high.
+resp_row rule_2
+fail_attempt lad4 capability a1 '{"harness":"claude","model":"opus","effort":"medium","account":"claude1"}'
+run "$BRIEF" --task lad4
+assert_contains "$out" 'rung 5' "the claude-first row advances on one failure: $out"
+assert_contains "$out" 'candidate: claude:fable' 'Fable beats Opus medium on the technical lens'
+assert_contains "$out" 'candidate: pi:openai-codex/gpt-6.1-sol' 'Codex joins at a later seat tier on a claude-first row'
+assert_contains "$out" 'seat_tier held' 'claude-first holds the Codex tier behind the Claude seats'
+# The written lens uses GDPval and the claude_written list.
+resp_row rule_4
+fail_attempt lad5 capability a1 '{"harness":"claude","model":"opus","effort":"medium","account":"claude1"}'
+run "$BRIEF" --task lad5
+assert_contains "$out" 'candidate: claude:opus' "the written lens takes the claude_written Opus list: $out"
+assert_not_contains "$out" 'candidate: claude:fable' 'the written lens never takes the technical Fable preference'
+# fable_projects stays an optional allowlist: declared, a rung skips Fable for a project outside it.
+resp_row rule_2
+jq '.ladder_policy.fable_projects = ["firstmate"]' "$TMP_ROOT/rules-ladder" > "$RULES"
+run "$BRIEF" --task lad4 --project geris
+assert_not_contains "$out" 'candidate: claude:fable' "a declared allowlist keeps Fable off a client repo: $out"
+assert_contains "$out" 'candidate: claude:opus' 'the next preference of the rung runs instead'
+run "$BRIEF" --task lad4 --project firstmate
+assert_contains "$out" 'candidate: claude:fable' "a listed project keeps Fable: $out"
+cp "$TMP_ROOT/rules-ladder" "$RULES"
+# An unreadable history fails closed to the captain instead of restarting on the lowest rung.
+printf 'not json\n' > "$HOME_DIR/state/lad6.history.jsonl"
+resp_row rule_1
+run "$BRIEF" --task lad6
+assert_contains "$out" 'status: captain-pick' "an unreadable history hands over: $out"
+assert_contains "$out" 'task routing history for lad6 is unreadable' 'the reason names the task history'
+# A row with no ladder of its own runs on default_ladder; the default row too.
+resp_row default
+fail_attempt lad7 capability a1 "$P_SONNET"
+run "$BRIEF" --task lad7
+assert_contains "$out" 'escalation ladder: 1 capability failure(s), rung 4 (Solid) of the 3-4 ladder' "the default row uses default_ladder: $out"
+fail_attempt lad7 capability a2 '{"harness":"claude","model":"opus","effort":"medium","account":"claude1"}'
+run "$BRIEF" --task lad7
+assert_contains "$out" 'past its ladder ceiling (rung 4)' "default_ladder has its own ceiling: $out"
+# Load refusals: Fable above high, Fable high below the top rung, a ladder on an unknown rung, an unknown ladder key.
+jq '.ladder_rungs[2].claude[0].effort = "xhigh"' "$TMP_ROOT/rules-ladder" > "$RULES"
+run rows --json
+expect_code 2 "$code" 'Fable xhigh on a rung is a configuration error'
+assert_contains "$out" 'forbidden ladder profile: Fable above high' 'the Fable ceiling is named'
+jq '.ladder_rungs[2].claude[0].effort = "high"' "$TMP_ROOT/rules-ladder" > "$RULES"
+run rows --json
+expect_code 2 "$code" 'Fable high below the top rung is a configuration error'
+assert_contains "$out" 'Fable high is allowed only on the top ladder rung' 'the top-rung rule is named'
+jq '.rules[0].ladder.ceiling = 9' "$TMP_ROOT/rules-ladder" > "$RULES"
+run rows --json
+expect_code 2 "$code" 'a ladder ceiling outside ladder_rungs is a configuration error'
+assert_contains "$out" 'start and ceiling must be rungs of ladder_rungs' 'the missing rung is named'
+jq '.rules[0].ladder.pace = 1' "$TMP_ROOT/rules-ladder" > "$RULES"
+run rows --json
+expect_code 2 "$code" 'an unknown ladder key is a configuration error'
+assert_contains "$out" 'has an unknown key' 'the unknown ladder key is named'
+jq '.ladder_policy.counts = "stalls"' "$TMP_ROOT/rules-ladder" > "$RULES"
+run rows --json
+expect_code 2 "$code" 'counting anything but capability failures is a configuration error'
+assert_contains "$out" 'counts must be capability_failures' 'the counts rule is named'
+jq 'del(.ladder_rungs)' "$TMP_ROOT/rules-ladder" > "$RULES"
+run rows --json
+expect_code 2 "$code" 'a ladder without ladder_rungs is a configuration error'
+assert_contains "$out" 'a ladder needs ladder_rungs' 'the missing rungs are named'
+jq '.ladder_rungs[3].claude[0].effort = "high" | .rules[1].ladder.start = 6' "$TMP_ROOT/rules-ladder" > "$RULES"
+run rows --json
+expect_code 2 "$code" 'a ladder may not start on a rung that lists Fable high'
+assert_contains "$out" 'Fable starts at medium at most' 'the Fable start rule is named'
+cp "$TMP_ROOT/rules-original" "$RULES"
+pass 'S11: the ladder moves only on recorded capability failures, honours bans and lens, fails closed, and loads strictly'
 
 # ---- A: seat lookup and migration ------------------------------------------------
 ln -s "$STORES/claude-reserve" "$STORES/claude-reserve-alias"

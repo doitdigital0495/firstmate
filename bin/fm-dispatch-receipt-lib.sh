@@ -186,13 +186,20 @@ fm_dr_profile_text() {  # <profile-json>
     + (if .account != "" then " --account \(.account)" else "" end)' <<<"$1"
 }
 
+# shellcheck source=bin/fm-dispatch-ladder-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-dispatch-ladder-lib.sh"
+
+# ladder_profiles are the extra profiles the row'"'"'s escalation ladder can seat
+# (bin/fm-dispatch-ladder-lib.sh); the gate counts them as row members so a
+# relaunch on a higher rung is admitted, while `rows` keeps listing `profiles`.
 # shellcheck disable=SC2016 # jq program text, not shell expansion
-FM_DR_ROW_JQ='
+FM_DR_ROW_JQ="$FM_DL_JQ"'
   def axis: if . == null or . == "default" then "" else . end;
   def norm: {harness: .harness, model: (.model | axis), effort: (.effort | axis), account: (.account // ""), provider: (.provider // "")};
-  def row_entry($id; $sha; $when; $approval; $use):
+  def row_entry($id; $sha; $when; $approval; $use; $meta):
     {id: $id, sha256: $sha, when: $when, approval: $approval,
-     profiles: ((if ($use | type) == "array" then $use else [$use] end) | map(norm))};
+     profiles: ((if ($use | type) == "array" then $use else [$use] end) | map(norm)),
+     ladder_profiles: (dl_all($cfg[0]; $use; $meta) | map(norm))};
 '
 
 # The table's rows as [{id, sha256, when, approval, profiles}]. An absent file
@@ -226,14 +233,14 @@ fm_dr_table_rows() {
     [ -n "$canon" ] || continue
     n=$((n + 1))
     sha=$(printf '%s' "$canon" | fm_dr_sha256) || { FM_DR_ERR="no sha256 tool (sha256sum or shasum)"; return 1; }
-    rows=$(jq -c --arg id "rule_$n" --arg sha "$sha" --argjson row "$canon" "$FM_DR_ROW_JQ"'
-      . + [row_entry($id; $sha; $row.when // ""; $row.approval // null; $row.use)]' <<<"$rows") || return 1
+    rows=$(jq -c --slurpfile cfg "$table" --arg id "rule_$n" --arg sha "$sha" --argjson row "$canon" "$FM_DR_ROW_JQ"'
+      . + [row_entry($id; $sha; $row.when // ""; $row.approval // null; $row.use; $row)]' <<<"$rows") || return 1
   done < <(jq -cS '(.rules // [])[]' "$table")
   canon=$(jq -cS '.default // empty' "$table")
   if [ -n "$canon" ]; then
     sha=$(printf '%s' "$canon" | fm_dr_sha256) || { FM_DR_ERR="no sha256 tool (sha256sum or shasum)"; return 1; }
-    rows=$(jq -c --arg sha "$sha" --argjson use "$canon" "$FM_DR_ROW_JQ"'
-      . + [row_entry("default"; $sha; "No listed rule applies to this task."; null; $use)]' <<<"$rows") || return 1
+    rows=$(jq -c --slurpfile cfg "$table" --arg sha "$sha" --argjson use "$canon" "$FM_DR_ROW_JQ"'
+      . + [row_entry("default"; $sha; "No listed rule applies to this task."; null; $use; {})]' <<<"$rows") || return 1
   fi
   printf '%s\n' "$rows"
 }
@@ -657,7 +664,7 @@ fm_dr_cmd_gate() {
       ([.[] | select(.id == ($rc.row.id // ""))] | first) as $row |
       if $row == null then "gone"
       elif $row.sha256 != ($rc.row.sha256 // "") then "changed"
-      elif any($row.profiles[]; key == ($rc.profile | key)) | not then "outside"
+      elif any(($row.profiles + ($row.ladder_profiles // []))[]; key == ($rc.profile | key)) | not then "outside"
       else "member" end' <<<"$rows") || fm_dr_refuse "receipt $name is unreadable; $hint"
     case "$verdict" in
       member) ;;
