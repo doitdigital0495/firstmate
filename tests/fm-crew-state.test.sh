@@ -915,7 +915,7 @@ test_stale_blocked_superseded() {
 # supervisor answer is to steer a reattach, not to escalate a dead pipeline.
 test_daemon_claim_over_live_run_reads_run_alive() {
   reset_fakes
-  local d; d=$(new_case daemon-claim-live)
+  local d label; d=$(new_case daemon-claim-live)
   make_repo_on_branch "$d/wt" fm/feat-dl
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-dl.meta" "window=fm:fm-feat-dl" "worktree=$d/wt" "kind=ship"
@@ -929,7 +929,25 @@ test_daemon_claim_over_live_run_reads_run_alive() {
   assert_contains "$out" "reattach" "the reading names the reattach steer"
   assert_not_contains "$out" "superseded by active run" \
     "the daemon claim gets the sharper reading, not the generic one"
-  pass "daemon/timeout blocked claim over a live fixing run reads as run alive"
+  assert_not_contains "$out" 'firstmate inspect repeated findings' 'first auto-fix is below the intervention threshold'
+  FM_FAKE_AXI_STATUS="$(run_fixing_active_recent fm/feat-dl | sed 's/auto-fix 1\/3/auto-fix 2\/3/')"
+  out=$(run_crew_state "$d" feat-dl)
+  assert_contains "$out" 'review round 3+: firstmate inspect repeated findings' 'second auto-fix nudges supervision before another review'
+  assert_contains "$out" 'state: working' 'round nudge does not change run state'
+  for label in 'round 3' 'round 4' 'fix 2'; do
+    FM_FAKE_AXI_STATUS="$(run_fixing_active_recent fm/feat-dl | sed "s/auto-fix 1\/3/$label/")"
+    out=$(run_crew_state "$d" feat-dl)
+    assert_contains "$out" 'firstmate inspect repeated findings' "explicit counter $label nudges supervision"
+  done
+  FM_FAKE_AXI_STATUS="$(run_fixing_active_recent fm/feat-dl)
+  findings[1]{id,description}:
+    f1,\"review auto-fix 9/9\""
+  out=$(run_crew_state "$d" feat-dl)
+  assert_not_contains "$out" 'firstmate inspect repeated findings' 'finding prose cannot mint a round nudge'
+  FM_FAKE_AXI_STATUS="$(run_fixing_active_recent fm/feat-dl | sed 's/review,12m3s/test,12m3s/; s/auto-fix 1\/3/auto-fix 3\/3/')"
+  out=$(run_crew_state "$d" feat-dl)
+  assert_not_contains "$out" 'firstmate inspect repeated findings' 'test round is not a review round'
+  pass "daemon/timeout blocked claim over a live fixing run reads as run alive; round 3 review nudges supervision"
 }
 
 # A genuine refused socket outranks the persisted fixing record, which can
