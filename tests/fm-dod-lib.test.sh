@@ -599,4 +599,64 @@ test_external_review_done_with_backup_needs_the_copy
 
 test_worker_role_names_skill_and_fallback_file
 
+# The start-only entry point must examine all branch history, not merely the
+# newest head or the capped axi overview. The fake CLI never launches a model.
+test_nm_start_busy_branch_guard() {
+  local d status out rc
+  d="$TMP_ROOT/nm-start"
+  mkdir -p "$d/bin" "$d/home" "$d/repo"
+  git -C "$d/repo" init -q
+  git -C "$d/repo" checkout -qb fm/guard
+  cat > "$d/bin/no-mistakes" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  axi) printf 'repo: %s\ncount: 0 of 0 total\nruns[0]{id,branch,status,head,pr}:\n' "$GUARD_REPO" ;;
+  'axi run '*) printf '%s\n' "$*" > "$GUARD_CALLED" ;;
+  *) exit 9 ;;
+esac
+EOF
+  chmod +x "$d/bin/no-mistakes"
+  python3 - "$d/home/state.sqlite" "$d/repo" <<'PY'
+import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.executescript('CREATE TABLE repos(id TEXT, working_path TEXT); '
+                     'CREATE TABLE runs(id TEXT, repo_id TEXT, branch TEXT, status TEXT, head_sha TEXT);')
+    db.executemany('INSERT INTO repos VALUES (?, ?)', [('mine', sys.argv[2]), ('other', '/other')])
+PY
+  for status in pending running fixing ci awaiting_approval fix_review unfamiliar null completed failed cancelled; do
+    python3 - "$d/home/state.sqlite" "$status" <<'PY'
+import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.execute('DELETE FROM runs')
+    db.executemany('INSERT INTO runs VALUES (?, ?, ?, ?, ?)', [
+        ('older', 'mine', 'fm/guard', None if sys.argv[2] == 'null' else sys.argv[2], 'a'*40),
+        ('newer', 'mine', 'fm/guard', 'failed', 'b'*40),
+        ('foreign-repo', 'other', 'fm/guard', 'running', 'c'*40),
+        ('foreign-branch', 'mine', 'fm/another', 'running', 'd'*40)])
+PY
+    rm -f "$d/called"
+    out=$( (cd "$d/repo" && PATH="$d/bin:$PATH" NM_HOME="$d/home" GUARD_REPO="$d/repo" GUARD_CALLED="$d/called" \
+      bash "$ROOT/bin/fm-nm-start.sh" --intent 'test goal') 2>&1); rc=$?
+    case "$status" in
+      completed|failed|cancelled)
+        [ "$rc" -eq 0 ] && [ -f "$d/called" ] || fail "terminal $status refused: $out"
+        assert_contains "$(<"$d/called")" 'axi run --intent test goal' 'launch preserves arguments'
+        ;;
+      *)
+        [ "$rc" -ne 0 ] && [ ! -f "$d/called" ] || fail "busy $status launched a second run"
+        assert_contains "$out" 'branch busy' 'busy guard explains reattachment'
+        ;;
+    esac
+  done
+  rm -f "$d/called"
+  mv "$d/home/state.sqlite" "$d/home/saved.sqlite"
+  out=$( (cd "$d/repo" && PATH="$d/bin:$PATH" NM_HOME="$d/home" GUARD_REPO="$d/repo" GUARD_CALLED="$d/called" \
+    bash "$ROOT/bin/fm-nm-start.sh" --intent 'test goal') 2>&1); rc=$?
+  [ "$rc" -ne 0 ] && [ ! -f "$d/called" ] && [ ! -e "$d/home/state.sqlite" ] \
+    || fail 'missing inventory did not fail closed without creating a database'
+  assert_contains "$out" 'unreadable run inventory' 'unreadable guard explains refusal'
+  pass 'nm start refuses every busy branch state, even older/different-head runs; terminal and foreign runs do not block'
+}
+test_nm_start_busy_branch_guard
+
 echo "all fm-dod-lib tests passed"

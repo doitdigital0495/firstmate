@@ -29,5 +29,9 @@ Resume fleet supervision immediately after the decision lands.
 
 Judge validation by the resolved state line from [`bin/fm-crew-state.sh`](../../../bin/fm-crew-state.sh), whose header owns outcome mappings and CI-monitor/daemon exceptions, never by shell liveness, the last status event, or a raw run record.
 Workers parked at approval or fix-review must follow the active gate help.
+At review round 3, Firstmate compares the current findings with earlier rounds using the installed tool's round-history interface, not finding IDs alone (a repeated issue may get a new ID).
+If a finding repeats, route its diagnosis to a stronger worker or escalate to the captain rather than requesting another identical fix; keep the current run's worker as gate driver and do not hand-edit its branch or launch a competing run.
+For new findings, have that driver request all accepted fixes in one batch with self-check and targeted tests before resubmission.
+The crew-state round nudge is advisory and only appears when the tool exposes a recognizable active review-round counter; its absence does not waive this round-3 check.
 A worker hand-editing, committing, aborting, or restarting during an active validation run duplicates pipeline ownership outside the supersession sequence above; steer it back to the gate response flow.
 The worker reports the PR when CI first becomes green rather than waiting for merge monitoring to finish.

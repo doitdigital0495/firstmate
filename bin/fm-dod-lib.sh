@@ -464,7 +464,8 @@ EOF
 # because on gerrit, and under pr=manual (the `no-ci` argument), the ci step is
 # skipped and the drive call never reports a green PR.
 fm_nm_driving_block() {  # <forge|no-ci>
-  local pr_return_line='' pr_reattach_clause=';' drive_block wait_cfg authority_skill
+  local pr_return_line='' pr_reattach_clause=';' drive_block wait_cfg authority_skill dod_bin
+  dod_bin=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   authority_skill=${FM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/.agents/skills/ask-user-authority/SKILL.md
   if [ "$1" != gerrit ] && [ "$1" != no-ci ]; then
     pr_return_line="Only a drive call's return reports the green PR: \`no-mistakes axi status\` shows progress but never reports \`checks-passed\` while the ci step is still monitoring the PR for merge, so never wait on a status poll for the next gate or outcome.
@@ -490,6 +491,8 @@ ${pr_return_line}Whenever a drive call returns without a gate or an outcome - it
   cat <<EOF
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
+Start new runs through \`$dod_bin/fm-nm-start.sh\` with the same \`axi run\` flags; its fail-closed busy-branch guard refuses a duplicate even at a different head.
+If it reports a busy branch, reattach with \`no-mistakes axi run\` without new-run flags; do not bypass the guard, abort, or restart to resubmit quick follow-ups.
 Immediately before each \`no-mistakes axi run\` that starts a run - never while one is active - run \`git fetch origin\` and rebase your branch onto the tip of this task's base branch (the one this contract names, otherwise the repository default), so the gate starts on a fresh base.
 If that rebase conflicts or brings in changes your work depends on, resolve them and rerun your local proof first.
 If anything delays the start after that, fetch again and rebase again if the base moved.
@@ -503,7 +506,10 @@ The \`--intent\` string you pass must be self-sufficient: that string plus the c
 When the captain's intent refers to a report, decision, or PR ("do items 1, 2, 3, and 7 of the report"), write the substance of the referenced items into \`--intent\` in the captain's terms, not only the pointer; that substance is the captain's ask by reference, while Firstmate's build instructions and your own decisions still stay out.
 This replaces the no-mistakes skill's advice to enrich \`--intent\` with decisions and tradeoffs; that advice does not apply to Firstmate-dispatched work.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
-Before your first \`no-mistakes axi run\` for this task, run the project's lint and the targeted tests covering your change, never a full suite, then fix and commit what they find, so avoidable findings never reach a review round; when the project defines neither, say so in your done report and start the run.
+Before the first run, self-check the complete diff against the intent, scope, compatibility and tests; run the project's lint and targeted tests, never a full suite, then fix all findings in one batch and commit before submitting.
+When the project defines neither lint nor tests, say so in your done report.
+At a fix gate, account for every finding in one response and ask the pipeline to apply all accepted fixes together, self-check them and rerun targeted tests before resubmitting; never hand-edit an active run.
+From review round 3 onward, report the round and repeated finding IDs to firstmate before requesting another fix, following \`validation-supervision\` for escalation.
 
 $drive_block
 A killed or timed-out call is never evidence the daemon died: the daemon accepts your response immediately and runs the round in the background, so the call was only ever waiting for a read while the run kept working.

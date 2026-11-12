@@ -806,6 +806,42 @@ nm_active_steps_rows() {
   '
 }
 
+# Advisory only: the second auto-fix cycle leads into review attempt 3.
+# Read only the active review row, never a counter quoted in finding prose.
+nm_review_needs_intervention() {
+  printf '%s\n' "$RUN_OUT" | awk '
+    function clean(s) { gsub(/^[ \t"]+|[ \t"]+$/, "", s); return s }
+    /^[[:space:]]*active_steps\[[0-9]+\]\{/ {
+      hdr = index($0, "active_steps"); cols = $0
+      sub(/^[^{]*\{/, "", cols); sub(/\}.*/, "", cols)
+      n = split(cols, names, ","); step = 0; round = 0
+      for (i = 1; i <= n; i++) {
+        if (clean(names[i]) == "step") step = i
+        if (clean(names[i]) == "round") round = i
+      }
+      active = 1; next
+    }
+    active {
+      match($0, /[^ \t]/)
+      if (!RSTART || RSTART <= hdr) { active = 0; next }
+      if (split($0, values, ",") != n || !step || !round) next
+      if (clean(values[step]) != "review") next
+      value = clean(values[round])
+      if (value ~ /^auto-fix [0-9]+\/[0-9]+$/) {
+        sub(/^auto-fix /, "", value); sub(/\/.*/, "", value)
+        if (value + 0 >= 2) found = 1
+      } else if (value ~ /^round [0-9]+$/) {
+        sub(/^round /, "", value)
+        if (value + 0 >= 3) found = 1
+      } else if (value ~ /^fix [0-9]+$/) {
+        sub(/^fix /, "", value)
+        if (value + 0 >= 2) found = 1
+      }
+    }
+    END { exit !found }
+  '
+}
+
 # Rows of the `steps[N]{step,status,findings,duration_ms}:` table in the
 # captured run output ($RUN_OUT) - the full per-step ledger, present on
 # terminal runs too, unlike active_steps[] which the pipeline emits only while
@@ -1489,6 +1525,9 @@ if [ "$HAVE_RUN" = 1 ]; then
       ;;
   esac
 
+  if { [ "$RUN_STATE" = working ] || [ "$RUN_STATE" = parked ]; } && nm_review_needs_intervention; then
+    RUN_DETAIL="$RUN_DETAIL${SEP}review round 3+: firstmate inspect repeated findings (validation-supervision)"
+  fi
   READING_DETAIL=$RUN_DETAIL
   RUN_ID_FIELD=""
   [ -z "$SELECTED_RUN_ID" ] || RUN_ID_FIELD="${SEP}run: $SELECTED_RUN_ID"
