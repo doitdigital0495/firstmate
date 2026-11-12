@@ -493,6 +493,7 @@ Follow the guidance no-mistakes itself provides for the mechanics: it loads when
 Immediately before each \`no-mistakes axi run\` that starts a run - never while one is active - run \`git fetch origin\` and rebase your branch onto the tip of this task's base branch (the one this contract names, otherwise the repository default), so the gate starts on a fresh base.
 If that rebase conflicts or brings in changes your work depends on, resolve them and rerun your local proof first.
 If anything delays the start after that, fetch again and rebase again if the base moved.
+Never rebase or push a branch whose pull request is in a merge queue, because a new head drops it from the queue; wait until it merges or leaves the queue.
 When starting no-mistakes, pass \`--intent\` as only this brief's \`## Captain's intent\` subsection body, not its heading, plus any later words the captain actually said.
 Preserve the actual words without adding speaker labels or direct address; the subsection heading supplies provenance outside the pipeline input.
 For a legacy brief with no such subsection, include only words on lines marked \`[captain] \`, excluding that metadata prefix; never copy its mixed \`# Task\` wholesale.
