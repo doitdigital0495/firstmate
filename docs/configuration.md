@@ -2023,6 +2023,17 @@ All numeric values must be greater than zero and at most 100.
 The candidate line shows `weekly_estimate=<used>%used+<committed>%committed+<reserve>%new/<limit>%`, separately from published `spendPriority` and the burst spreader.
 This is a conservative fixed reserve, not a guarantee that any task fits or a forecast against resets; concurrent resolutions can still observe the same census before either launch creates metadata.
 
+**Heavy-row seat pacing**
+
+Set rule `seat_pacing: true` on planning/architecture, front-end design and security rows to spread weekly capacity without changing their allowed profiles.
+Omitted or false preserves existing routing; this is not a pipeline-row policy.
+After quota gates and open-tier selection, a seat above 1.5x weekly burn is skipped only when a different, rankable seat in that same row and reserve tier has the same numeric `reasoning_class` and known pace at or below 1.5x.
+With `preferred_provider` configured, the replacement must also share the provider, so pacing cannot bypass that preference or lower its class.
+Pace is the maximum `pace.burnMultiple` across applicable account-wide and model-scoped weekly windows, falling back to percent used divided by percent of the week elapsed when `pace.timeRemainingPercent` is available.
+Missing weekly pace, unclassed profiles, shared quota, all seats above the threshold, or no equal-class replacement leaves routing unchanged.
+The candidate line exposes `weekly_pace` and the skip reason; preview and ambiguous anchor-row routing use the same rule.
+This preserves capacity rather than reducing token prices; verify with `tests/fm-dispatch-resolve.test.sh`.
+
 **Worker five-hour guard and burst spreader**
 
 Both apply to worker and scout starts only; [pipeline seat rows](#pipeline-seat-rows) keep their own pools, tiers, weekly floor and runway test.
