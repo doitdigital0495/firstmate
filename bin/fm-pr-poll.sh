@@ -13,9 +13,11 @@
 #
 # The optional --validated state-dir and task-id arguments (and the same two
 # facts derived from the check path itself) let the Azure DevOps branch look up
-# the task's worktree for its git conflict probe; with them absent the probe is
-# skipped silently and only the forge's own conflict flag is observed. The
-# task's state directory is read for that probe alone and is never written.
+# the task's worktree for its git conflict probe, and let the GitHub branch
+# keep its merge-queue memory beside the task's other poll sidecars; with them
+# absent both are skipped silently, so only the forge's own readings are
+# observed. The task's state directory is otherwise never read, and the one
+# file this program ever writes there is that GitHub queue memory.
 #
 # The Azure DevOps branch emits two non-terminal observations while the pull
 # request is open, both data the captain can act on:
@@ -33,7 +35,17 @@
 #   The watcher wakes once per standing conflict: an "ado clear" line, printed
 #   only when the forge or the git probe positively confirms a clean merge,
 #   ends the conflict silently, while silence on a failed lookup does not.
-# GitLab, and gerrit-axi for Gerrit, so an upstream checkout needs no extra
+#
+# The GitHub branch emits one further non-terminal observation, for merge
+# queues: a pull request this poll has read as queued (isInMergeQueue) that is
+# later read open, not merged, and no longer in the queue has been ejected, and
+# an ejected pull request stays open forever otherwise - the merged line is
+# this poll's only terminal output. One "github queue ejected" line names the
+# ejection with GitHub's own recorded removal reason, and exactly one
+# re-enqueue runs with the exact flags bin/fm-pr-merge.sh names for a queue
+# base (--auto --<method>, the method read from the branch rules), recorded in
+# the queue memory so a second ejection is reported but never re-enqueued
+# again. A pull request never read as queued stays silent exactly as before.
 set -u
 LC_ALL=C
 export LC_ALL
@@ -150,6 +162,266 @@ ado_meta_worktree() {
   return 1
 }
 
+# One private per-task sidecar, <id>.pr-poll-queue, carries this poll's
+# merge-queue memory across watcher sweeps: whether this pull request was ever
+# read as queued, which removal event was already reported, and whether the
+# single re-enqueue has been used. A strict five-line shape, an exact URL
+# match, atomic publication through a same-directory temporary, and a refusal
+# to write over anything but a plain file keep the record single-writer and
+# trustworthy; when it cannot be written the poll degrades to its posture on
+# every other unreadable fact and stays silent rather than repeat a report
+# every sweep.
+github_queue_memory_read() {  # <state-dir> <task> <url>
+  local state=${1-} task=${2-} u=${3-} path line
+  local version='' rec_url='' was=false rep='' re=false
+  local LC_ALL=C
+  GQ_WAS_QUEUED=false
+  GQ_REPORTED_AT=
+  GQ_REENQUEUED=false
+  case "$task" in
+    ''|.*|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  [ "${#task}" -le 64 ] || return 1
+  [ -d "$state" ] && [ ! -L "$state" ] || return 1
+  path="$state/$task.pr-poll-queue"
+  [ -f "$path" ] && [ ! -L "$path" ] || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      fm-pr-poll-queue-v1) version=$line ;;
+      url=*) rec_url=${line#url=} ;;
+      was_queued=true|was_queued=false) was=${line#was_queued=} ;;
+      reported_removed_at=*) rep=${line#reported_removed_at=} ;;
+      reenqueued=true|reenqueued=false) re=${line#reenqueued=} ;;
+      *) return 1 ;;
+    esac
+  done < "$path" || return 1
+  [ "$version" = fm-pr-poll-queue-v1 ] && [ "$rec_url" = "$u" ] || return 1
+  GQ_WAS_QUEUED=$was
+  GQ_REPORTED_AT=$rep
+  GQ_REENQUEUED=$re
+  return 0
+}
+
+github_queue_memory_write() {  # <state-dir> <task> <url> <was-queued> <reported-at> <reenqueued>
+  local state=${1-} task=${2-} u=${3-} was=${4-} rep=${5-} re=${6-}
+  local path tmp
+  local LC_ALL=C
+  case "$task" in
+    ''|.*|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  [ "${#task}" -le 64 ] || return 1
+  [ -d "$state" ] && [ ! -L "$state" ] || return 1
+  path="$state/$task.pr-poll-queue"
+  [ ! -L "$path" ] && [ ! -d "$path" ] || return 1
+  tmp=$(mktemp "$state/.pr-poll-queue.$$.XXXXXX" 2>/dev/null) || return 1
+  if printf '%s\n' fm-pr-poll-queue-v1 "url=$u" "was_queued=$was" \
+      "reported_removed_at=$rep" "reenqueued=$re" > "$tmp" 2>/dev/null \
+    && chmod 600 "$tmp" 2>/dev/null \
+    && mv -f "$tmp" "$path" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null
+  return 1
+}
+
+# One live queue-aware read of the pull request, issuing the identical GraphQL
+# query and field lines bin/fm-pr-merge.sh's github_queue_read issues (restated
+# here because this static body can source nothing; keep the two in lockstep).
+# This copy requires exactly what its decisions depend on - state, merged,
+# queued, and the head the re-enqueue binds to - plus the latest
+# removed-from-queue event with GitHub's stated reason, which the merge script
+# quotes on its own refusals; the id, queue entry, and branch lines are parsed
+# and unused here. Any missing field fails the whole read so the plain state
+# read stays the only fallback, never a half queue-aware one.
+gq_id=
+gq_state=
+gq_merged=
+gq_queued=
+gq_entry=
+gq_head=
+gq_branch=
+gq_removed_at=
+gq_removed_reason=
+github_queue_read() {  # <host> <owner> <repo> <number>
+  local host=$1 owner=$2 repo=$3 number=$4 fields line
+  local LC_ALL=C
+  gq_id=
+  gq_state=
+  gq_merged=
+  gq_queued=
+  gq_entry=
+  gq_head=
+  gq_branch=
+  gq_removed_at=
+  gq_removed_reason=
+  # shellcheck disable=SC2016  # GraphQL variables are literal query syntax.
+  if ! fields=$(GH_HOST=$host gh api graphql \
+    -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){id state merged isInMergeQueue headRefOid headRefName mergeQueueEntry{state} timelineItems(last:1,itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}' \
+    -f "owner=$owner" -f "repo=$repo" -F "number=$number" \
+    --jq '.data.repository.pullRequest | "id=" + (.id // ""), "state=" + (.state // ""), "merged=" + (.merged | tostring), "queued=" + (.isInMergeQueue | tostring), "entry=" + (.mergeQueueEntry.state // ""), "head=" + (.headRefOid // ""), "branch=" + (.headRefName // ""), "removed_at=" + (.timelineItems.nodes[-1].createdAt // ""), "removed_reason=" + ((.timelineItems.nodes[-1].reason // "") | gsub("[\r\n]+"; " "))' \
+    2>/dev/null) || [ -z "$fields" ]; then
+    return 1
+  fi
+  while IFS= read -r line; do
+    case "$line" in
+      id=*) gq_id=${line#id=} ;;
+      state=*) gq_state=${line#state=} ;;
+      merged=*) gq_merged=${line#merged=} ;;
+      queued=*) gq_queued=${line#queued=} ;;
+      entry=*) gq_entry=${line#entry=} ;;
+      head=*) gq_head=${line#head=} ;;
+      branch=*) gq_branch=${line#branch=} ;;
+      removed_at=*) gq_removed_at=${line#removed_at=} ;;
+      removed_reason=*) gq_removed_reason=${line#removed_reason=} ;;
+      *) continue ;;
+    esac
+  done <<GQ_FIELDS
+$fields
+GQ_FIELDS
+  [ -n "$gq_state" ] && [ -n "$gq_head" ] || return 1
+  { [ "$gq_merged" = true ] || [ "$gq_merged" = false ]; } || return 1
+  { [ "$gq_queued" = true ] || [ "$gq_queued" = false ]; } || return 1
+  return 0
+}
+
+github_queue_state_is_open() {
+  case "$1" in
+    [oO][pP][eE][nN]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The effective merge-queue method for the pull request's base branch, the
+# same rules read bin/fm-pr-merge.sh performs before it names re-enqueue
+# flags (github_read_queue_method there; restated here because this static
+# body can source nothing). GQ_METHOD is set only when exactly one recognized
+# method governs the branch; every other outcome reports its own status, each
+# of which means a different thing to the operator reading the ejection line.
+GQ_METHOD=
+GQ_METHOD_STATUS=unreadable
+github_queue_method_read() {  # <host> <owner> <repo> <base>
+  local host=$1 owner=$2 repo=$3 base=${4-} methods line candidate
+  local count=0 unrecognised=false conflicting=false method='' encoded=''
+  local char octet hex
+  local LC_ALL=C
+  GQ_METHOD=
+  GQ_METHOD_STATUS=unreadable
+  [ -n "$base" ] || return 0
+  while [ -n "$base" ]; do
+    char=${base%"${base#?}"}
+    base=${base#?}
+    case "$char" in
+      [-._~a-zA-Z0-9]) encoded=$encoded$char ;;
+      *)
+        printf -v octet '%d' "'$char"
+        [ "$octet" -ge 0 ] || octet=$((octet + 256))
+        printf -v hex '%02X' "$octet"
+        encoded=$encoded%$hex
+        ;;
+    esac
+  done
+  if ! methods=$(GH_HOST=$host gh api --paginate \
+      "repos/$owner/$repo/rules/branches/$encoded" \
+      --jq '.[] | select(.type == "merge_queue") | "merge_method=" + (.parameters.merge_method // "")' \
+      2>/dev/null); then
+    return 0
+  fi
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      merge_method=*) candidate=${line#merge_method=} ;;
+      *) return 0 ;;
+    esac
+    count=$((count + 1))
+    case "$candidate" in
+      MERGE|SQUASH|REBASE) ;;
+      *) unrecognised=true ;;
+    esac
+    if [ "$count" -eq 1 ]; then
+      method=$candidate
+    elif [ "$candidate" != "$method" ]; then
+      conflicting=true
+    fi
+  done <<GQ_METHODS
+$methods
+GQ_METHODS
+  if [ "$count" -eq 0 ]; then
+    GQ_METHOD_STATUS=none
+  elif [ "$conflicting" = true ]; then
+    GQ_METHOD_STATUS=conflicting
+  elif [ "$unrecognised" = true ]; then
+    GQ_METHOD_STATUS=unrecognised
+  else
+    GQ_METHOD_STATUS=single
+    case "$method" in
+      MERGE) GQ_METHOD=merge ;;
+      SQUASH) GQ_METHOD=squash ;;
+      REBASE) GQ_METHOD=rebase ;;
+    esac
+  fi
+  return 0
+}
+
+# The ejection report. A pull request this poll has read as queued that is now
+# open, not merged, and no longer in the queue has been ejected by GitHub: the
+# landing strands silently otherwise, because the merged line is this poll's
+# only terminal output and an ejected pull request stays open. One
+# non-terminal observation names the ejection with GitHub's own recorded
+# reason, and the single re-enqueue - with the exact flags bin/fm-pr-merge.sh
+# names for a queue base, --auto --<method> from the branch rules, bound to the
+# observed head the way its merges are - runs at most once per pull request and
+# is recorded in the queue memory before anything is attempted, so it never
+# loops: a memory that cannot be written keeps the whole report silent (a
+# repeatable line is worse than a missed one), a second ejection is reported
+# without a second re-enqueue, and the write is committed before the line is
+# printed, so a crash between them cannot re-wake the same ejection.
+github_queue_ejection_report() {  # <state-dir> <task> <url> <host> <owner> <repo> <number>
+  local state=${1-} task=${2-} u=$3 host=$4 owner=$5 repo=$6 number=$7
+  local base plan=false used_next=false note
+  local LC_ALL=C
+  github_queue_memory_read "$state" "$task" "$u" || true
+  if [ "$gq_queued" = true ]; then
+    if [ "$GQ_WAS_QUEUED" != true ]; then
+      github_queue_memory_write "$state" "$task" "$u" true "$GQ_REPORTED_AT" "$GQ_REENQUEUED" || true
+    fi
+    return 0
+  fi
+  github_queue_state_is_open "$gq_state" || return 0
+  [ "$GQ_WAS_QUEUED" = true ] || return 0
+  [ "$GQ_REPORTED_AT" != "$gq_removed_at" ] || return 0
+  if [ "$GQ_REENQUEUED" != true ]; then
+    base=$(GH_HOST=$host gh pr view "$u" --json baseRefName -q .baseRefName 2>/dev/null) || base=
+    github_queue_method_read "$host" "$owner" "$repo" "$base"
+    if [ "$GQ_METHOD_STATUS" = single ]; then
+      plan=true
+      used_next=true
+    else
+      case "$GQ_METHOD_STATUS" in
+        none) note="; not re-enqueued: the base branch reports no merge queue rule" ;;
+        conflicting) note="; not re-enqueued: the base branch has conflicting merge queue methods" ;;
+        unrecognised) note="; not re-enqueued: the queue's merge method is not one this poll recognises" ;;
+        *) note="; not re-enqueued: the branch rules could not be read" ;;
+      esac
+    fi
+  else
+    note="; not re-enqueued again: its one automatic re-enqueue was already used"
+  fi
+  # The report and its used retry are committed before either is spent: a
+  # write that fails here keeps the line unprinted and the retry unattempted,
+  # because neither could then be kept from repeating every sweep.
+  github_queue_memory_write "$state" "$task" "$u" true "$gq_removed_at" "$used_next" || return 0
+  if [ "$plan" = true ]; then
+    if GH_HOST=$host gh pr merge "$number" --repo "$owner/$repo" \
+        --match-head-commit "$gq_head" --auto --"$GQ_METHOD" >/dev/null 2>&1; then
+      note="; re-enqueued once with the queue flags --auto --$GQ_METHOD"
+    else
+      note="; its one re-enqueue (--auto --$GQ_METHOD) failed"
+    fi
+  fi
+  printf 'github queue ejected: %s left the merge queue without merging (removed at %s, reason: %s)%s\n' \
+    "$u" "${gq_removed_at:-<no timestamp reported>}" "${gq_removed_reason:-<no reason reported>}" "$note"
+}
+
 # Every component is revalidated here rather than trusted from the sidecar, and
 # the stored URL must then be exactly reconstructible from those components, so
 # a doctored sidecar cannot silently address a different project or a differently
@@ -174,6 +446,19 @@ case "$provider" in
       .|..|*[!A-Za-z0-9._-]*) exit 0 ;;
     esac
     [ "$url" = "https://$host/$owner/$repo/pull/$number" ] || exit 0
+    # The queue-aware read runs first: without it (an older gh, a GitHub
+    # Enterprise without the queue fields, or a failed call) the plain state
+    # read below remains the fallback, so merged detection keeps working and
+    # queue ejection, which only this read can see, stays silent.
+    if github_queue_read "$host" "$owner" "$repo" "$number"; then
+      if [ "$gq_state" = MERGED ]; then
+        printf '%s\n' merged
+        exit 0
+      fi
+      github_queue_ejection_report "${meta_state-}" "${meta_task-}" \
+        "$url" "$host" "$owner" "$repo" "$number"
+      exit 0
+    fi
     state=$(GH_HOST=$host gh pr view "$url" --json state -q .state 2>/dev/null) || exit 0
     [ "$state" = MERGED ] && printf '%s\n' merged
     ;;

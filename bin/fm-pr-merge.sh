@@ -1712,6 +1712,8 @@ FM_PR_QUEUE_REMOVED_REASON=
 # needs it), state, merged and queued flags, its queue entry's own state, its
 # head and head branch, and the latest removed-from-queue event with GitHub's
 # stated reason. A read that does not return every field fails as a whole.
+# bin/fm-pr-poll.sh's static GitHub branch restates this exact query and field
+# lines for its ejection report; keep the two copies in lockstep.
 github_queue_read() {
   local fields line total=0 named=0
   FM_PR_QUEUE_ID=''
