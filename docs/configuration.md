@@ -438,6 +438,15 @@ The supervision protocol is chosen when the session starts, so create or remove 
 The file is local to each home and is not inherited by secondmate homes.
 [The Codex protocol](supervision-protocols/codex.md) owns the parked operating protocol, and `bin/fm-codex-stop-park.sh` owns version selection, registration, and failure fallback.
 
+## Worker conversation compaction (config/worker-compaction)
+
+Claude task workers can opt into a 300,000-token automatic compaction window and a bounded task-card replay after compaction.
+The home-local `config/worker-compaction` defaults to `off`; `half` selects a stable task-id cohort and `all` selects every Claude task worker.
+The flag is read at spawn or relaunch, not retroactively by running sessions.
+Secondmates, raw launch commands, other harnesses, and primary sessions are unchanged.
+Worker briefs ask for durable task notes independently of rollout enrollment.
+`bin/fm-worker-compact.sh --help` owns rollout mechanics, notes location, and task-card limits; [runtime verification](verification/runtime-backends.md#claude-worker-compaction-window) records the installed-version proof.
+
 ## Warm-cache compaction (config/warm-compact)
 
 Create the home-local `config/warm-compact` file to compact an idle Claude primary and the supervision host's engine conversation before their prompt cache expires.

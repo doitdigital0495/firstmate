@@ -6,6 +6,24 @@ This record contains reusable version-scoped evidence for active runtime guarant
 The backend guides own current setup, safety boundaries, and limitations.
 Exact task chronology, branch names, temporary homes, local paths, process ids, thread ids, and delivery transcripts remain in private reports or PR evidence.
 
+## Claude worker compaction window
+
+Verified on 2026-11-12 with Claude Code 2.1.323 on Linux using one disposable interactive worker and an external settings file containing `{"autoCompactWindow":300000,"skipDangerousModePermissionPrompt":true}`.
+The native `/context` diagnostic reported the configured window under empty settings sources:
+
+```sh
+claude --settings "$SETTINGS" --setting-sources '' --strict-mcp-config --tools '' --dangerously-skip-permissions --ax-screen-reader
+# Enter /context in the interactive session:
+# Auto-compact window: 300k tokens
+# Autocompact buffer: 33k tokens (11.0%)
+```
+
+Slash commands were enabled only to run this diagnostic; normal worker launches disable them.
+No model prompt was submitted, and this verifies window recognition rather than an actual 300,000-token compaction cycle.
+Refresh manually with the diagnostic above after a Claude upgrade.
+[`tests/fm-spawn-claude-settings.test.sh`](../../tests/fm-spawn-claude-settings.test.sh) covers rollout selection and executes the generated compact hook with a native-shaped payload to check task-card contents, size, and missing-file behavior.
+[Worker compaction configuration](../configuration.md#worker-conversation-compaction-configworker-compaction) owns operator setup and supported scope.
+
 ## Polytoken worker lifecycle
 
 Verified on 2026-10-14 with Polytoken 0.9.0 on macOS arm64 using the tmux worker path.
