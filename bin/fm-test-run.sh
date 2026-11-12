@@ -328,7 +328,7 @@ family_for_basename() {
     fm-turnend-foreign-owner-arm-fix.test.sh|\
     fm-wake-queue.test.sh|fm-watch-arm.test.sh|fm-watch-checkpoint.test.sh|fm-watch-recovery-loop.test.sh|\
     fm-codex-stop-park.test.sh|\
-    fm-watch-inbox-meta.test.sh|fm-watch-open-decisions.test.sh|fm-watch-away-long-waits.test.sh|\
+    fm-watch-inbox-meta.test.sh|fm-watch-open-decisions.test.sh|fm-watch-away-long-waits.test.sh|fm-watch-ci-fixing-green.test.sh|\
     fm-watch-drive-floor.test.sh|\
     fm-watch-triage.test.sh|fm-watch-triage-pause.test.sh|\
     fm-watch-triage-wedge-defer.test.sh|fm-task-inbox.test.sh|\

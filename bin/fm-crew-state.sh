@@ -129,6 +129,9 @@
 #      also reads done only when the bounded forge read confirms the PR is
 #      open (held-for-merge) or merged. Closed, missing, unreadable, or skipped
 #      forge evidence leaves the original failed or unknown classification.
+#      A working run whose ci step row itself reads fixing carries two more
+#      components, `ci step: fixing` and `pr: <url>`, so the watcher can notice a
+#      fix round that never ended while the forge is green (crew_ci_fixing_run).
 #      A monitor whose only remaining job is to observe a merge decision must not
 #      convert the absence of that decision into a failure verdict
 #      (nm_reclassify_failed_run_as_held_green). In the
@@ -1374,6 +1377,15 @@ if [ "$HAVE_RUN" = 1 ]; then
             ;;
           fixing)
             CI_LOG_STATE=not-ready
+            # The ci step itself reads fixing: its own ${SEP} component, plus the
+            # run's PR, so a watcher can tell a fix round that never ended
+            # (crew_ci_fixing_run in bin/fm-classify-lib.sh) from plain CI
+            # monitoring without re-reading the run.
+            if [ "$(nm_ci_step_status)" = fixing ]; then
+              RUN_DETAIL="$RUN_DETAIL${SEP}ci step: fixing"
+              ci_pr_url=$(strip_quotes "$(nm_field pr)")
+              [ -z "$ci_pr_url" ] || RUN_DETAIL="$RUN_DETAIL${SEP}pr: $ci_pr_url"
+            fi
             ;;
         esac
       fi
