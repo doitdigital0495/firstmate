@@ -27,7 +27,9 @@
 # T3 Code starts one native turn. The durable record IS
 # the delivery, so the record's fate alone governs the exit: 0 = the steer is
 # durably sent (recorded); nonzero = nothing was confirmed delivered and a
-# resend is appropriate (unresolvable target, an endpoint that cannot be
+# resend is appropriate (unresolvable target, a crewmate endpoint whose agent
+# is dead or missing - refused before anything is recorded, FM_SEND_ALLOW_DEAD=1
+# records it for recovery anyway - an endpoint that cannot be
 # locked and revalidated or that retired or changed, an unwritable record, a
 # failed or lost remote transport) or a decision-close append failed after
 # delivery (the error then carries the exact manual close). The remote enqueue
@@ -1396,6 +1398,26 @@ else
   fi
   if [ "$INBOX_PLANE" = 1 ]; then
     INBOX_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
+    # Liveness before send: a record written for an endpoint that is dead or
+    # gone is read by nobody, and an exit 0 hides that from the sender (the audit
+    # lost five sends, one a Lavish review round, this way). Refuse before
+    # anything is recorded. Only a confident `dead` or `missing` refuses - the same
+    # two verdicts fm_task_inbox_ring already treats as an unrung doorbell - so an
+    # ambiguous, unreadable or unverified endpoint still takes the durable steer.
+    # A second mate keeps the record-for-recovery path its relaunch machinery
+    # replays, and FM_SEND_ALLOW_DEAD=1 lets a recovery caller opt in to it.
+    if [ "${FM_SEND_ALLOW_DEAD:-0}" != 1 ] && [ "$(fm_meta_get "$TARGET_META" kind)" != secondmate ]; then
+      LIVENESS_STATE=$(fm_backend_agent_state "$TARGET_BACKEND" "$T" 2>/dev/null || true)
+      case "$LIVENESS_STATE" in
+      dead | missing)
+        if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
+          fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
+        fi
+        echo "error: steer not sent to $INBOX_TASK_ID: its endpoint $T is $LIVENESS_STATE (no live agent would read the record), so nothing was queued. Recover or respawn the task (stuck-crewmate-recovery), or set FM_SEND_ALLOW_DEAD=1 to record the steer for recovery anyway." >&2
+        exit 1
+        ;;
+      esac
+    fi
     INBOX_META_LOCK=$(fm_meta_lock_path "$TARGET_META") || exit 1
     if ! fm_task_inbox_lock_acquire "$INBOX_META_LOCK"; then
       if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then

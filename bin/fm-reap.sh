@@ -24,6 +24,15 @@
 #   stamp is the clock; a line without one uses the status file's mtime.
 #   Second mates are persistent homes and are never due; failed, blocked, and
 #   waiting tasks are left for firstmate.
+#   A lane that never wrote done is also due once it has finished its work and
+#   is only holding capacity: its newest lifecycle line is working or paused,
+#   its milestones show a passed gate-end with no gate-start or gate-obsolete
+#   after it and a pr-created (PR ready) or merge, and its status file has been
+#   quiet for FM_REAP_IDLE_SECS (default 7200; the board grace above applies
+#   while a Lavish board is registered). Its verdict reads
+#   `due gate passed, PR ready|merged, idle <n>h`. A malformed or unreadable
+#   milestone record means not due. Teardown stays the only judge of landed
+#   work, so due here never discards anything: an unlanded lane is kept.
 #
 # Mode: config/reaper holds `shadow` or `enforce`; without the file the reaper
 #   is off and its check prints nothing. Roll out with a shadow week first.
@@ -79,6 +88,7 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 DONE_SECS=${FM_REAP_DONE_SECS:-7200}
+IDLE_SECS=${FM_REAP_IDLE_SECS:-7200}
 BOARD_SECS=${FM_REAP_BOARD_SECS:-86400}
 TEARDOWN=${FM_REAP_TEARDOWN:-$SCRIPT_DIR/fm-teardown.sh}
 SWEEP_LOCK_AGE=${FM_REAP_LOCK_AGE_SECS:-86400}
@@ -88,7 +98,7 @@ REPEAT_CAP=${FM_REAP_REPEAT_CAP_SECS:-86400}
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 fail() { printf 'fm-reap: %s\n' "$1" >&2; exit 2; }
-case "$DONE_SECS$BOARD_SECS" in *[!0-9]*) fail 'FM_REAP_DONE_SECS and FM_REAP_BOARD_SECS must be whole seconds' ;; esac
+case "$DONE_SECS$BOARD_SECS$IDLE_SECS" in *[!0-9]*) fail 'FM_REAP_DONE_SECS, FM_REAP_BOARD_SECS and FM_REAP_IDLE_SECS must be whole seconds' ;; esac
 case "$SWEEP_LOCK_AGE" in '' | *[!0-9]*) fail 'FM_REAP_LOCK_AGE_SECS must be whole seconds' ;; esac
 case "$SWEEP_MARKER_AGE" in '' | *[!0-9]*) fail 'FM_REAP_MARKER_AGE_SECS must be whole seconds' ;; esac
 case "$REPEAT_BASE" in '' | *[!0-9]*) fail 'FM_REAP_REPEAT_BASE_SECS must be whole seconds' ;; esac
@@ -135,6 +145,24 @@ board_last() {
   return "$found"
 }
 
+# <task-id> -> "gate passed, PR <ready|merged>" when the lane's milestones show
+# finished, landed-or-landable work: a passed gate-end that no later gate-start or
+# gate-obsolete supersedes, plus a pr-created or merge. Nothing (rc 1) otherwise,
+# including when the milestone stream is unreadable or malformed.
+finished_work() {
+  local id=$1 recs
+  recs=$("$SCRIPT_DIR/fm-task-milestones.sh" records "$STATE/$id.status" 2>/dev/null) || return 1
+  printf '%s\n' "$recs" | awk -F'\t' '
+    $1 == "gate-end" && $7 == "passed" && $2 > passed { passed = $2 }
+    $1 == "gate-start" || $1 == "gate-obsolete" { if ($2 > restart) restart = $2 }
+    $1 == "pr-created" { pr = 1 }
+    $1 == "merge" { merged = 1 }
+    END {
+      if (passed == 0 || restart > passed || !(pr || merged)) exit 1
+      printf "gate passed, PR %s", merged ? "merged" : "ready"
+    }'
+}
+
 # One line per recorded crewmate/scout: <id> <verdict> <detail>.
 verdicts() {
   local meta id kind lc state at now board last clock ttl age
@@ -148,6 +176,29 @@ verdicts() {
     state=${lc%% *}
     at=${lc##* }
     if [ "$state" != "done" ]; then
+      case "$state" in working | paused) ;; *)
+        printf '%s active %s\n' "$id" "${state:-no-status}"
+        continue
+        ;;
+      esac
+      # Not done, but finished: gate passed and PR ready or merged, then quiet.
+      if work=$(finished_work "$id"); then
+        clock=$(stat -c %Y "$STATE/$id.status" 2>/dev/null || printf 0)
+        [ "$clock" -ge "$at" ] || clock=$at
+        ttl=$IDLE_SECS
+        if last=$(board_last "$id"); then
+          ttl=$BOARD_SECS
+          [ "$last" -le "$clock" ] || clock=$last
+          board=" board"
+        else
+          board=
+        fi
+        age=$(( now - clock ))
+        if [ "$age" -ge "$ttl" ]; then
+          printf '%s due %s, idle %sh%s\n' "$id" "$work" "$(( age / 3600 ))" "$board"
+          continue
+        fi
+      fi
       printf '%s active %s\n' "$id" "${state:-no-status}"
       continue
     fi

@@ -72,6 +72,9 @@ case "${1:-}" in
     exit 0 ;;
   display-message)
     for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
+    if [ -n "${FM_FAKE_TMUX_PANE_CMD:-}" ]; then
+      for a in "$@"; do case "$a" in *pane_current_command*) printf '%s\n' "$FM_FAKE_TMUX_PANE_CMD"; exit 0 ;; esac; done
+    fi
     printf 'fakepane\n'; exit 0 ;;
   capture-pane)
     if [ "${FM_FAKE_TMUX_COMPOSER:-}" = pending ]; then
@@ -243,6 +246,60 @@ test_failed_ring_is_still_sent() {
   assert_contains "$(cat "$err")" "watcher will re-ring" \
     "the failed-ring notice should point at the re-ring"
   pass "fm-send inbox: a failed doorbell is still a durably sent steer"
+}
+
+# Liveness before send: a crewmate whose endpoint has a bare shell (agent exited)
+# or whose window is gone has nobody to read a record, so the send refuses with a
+# clear message and queues nothing. A second mate, an explicit opt-in, and an
+# endpoint whose liveness is merely unclear keep the durable record.
+test_dead_or_missing_endpoint_refuses_the_steer() {
+  local dir err rc
+  dir=$(setup_case dead-endpoint)
+  err="$dir/send.err"
+  run_send "$dir" "$err" FM_FAKE_TMUX_PANE_CMD=bash -- t1 "steer into an exited agent"
+  rc=$?
+  expect_code 1 "$rc" "a steer to a crewmate whose agent exited must refuse"
+  [ ! -e "$dir/home/state/t1.inbox/001.msg" ] || fail "a refused steer was still queued"
+  [ ! -s "$dir/send.log" ] || fail "a refused steer rang the endpoint:"$'\n'"$(cat "$dir/send.log")"
+  assert_contains "$(cat "$err")" "is dead" "the refusal should name the dead endpoint"
+  assert_contains "$(cat "$err")" "nothing was queued" "the refusal should say nothing was queued"
+
+  # The window is gone from the session: missing, refused the same way.
+  dir=$(setup_case missing-endpoint)
+  err="$dir/send.err"
+  fm_write_meta "$dir/home/state/t1.meta" "window=sess:fm-gone" "kind=ship" "harness=claude"
+  run_send "$dir" "$err" -- t1 "steer into a torn-down window"
+  rc=$?
+  expect_code 1 "$rc" "a steer to a vanished endpoint must refuse"
+  [ ! -e "$dir/home/state/t1.inbox/001.msg" ] || fail "a steer to a vanished endpoint was queued"
+  assert_contains "$(cat "$err")" "is missing" "the refusal should name the missing endpoint"
+
+  # A task already torn down (no meta) cannot resolve at all and queues nothing.
+  dir=$(setup_case torn-down)
+  err="$dir/send.err"
+  rm -f "$dir/home/state/t1.meta"
+  run_send "$dir" "$err" -- t1 "steer into a torn-down task"
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "a steer to a torn-down task exited 0"
+  [ ! -e "$dir/home/state/t1.inbox/001.msg" ] || fail "a steer to a torn-down task was queued"
+
+  # The explicit opt-in records it for recovery, as before.
+  dir=$(setup_case dead-optin)
+  err="$dir/send.err"
+  run_send "$dir" "$err" FM_FAKE_TMUX_PANE_CMD=bash FM_SEND_ALLOW_DEAD=1 -- t1 "record for recovery"
+  rc=$?
+  expect_code 0 "$rc" "FM_SEND_ALLOW_DEAD=1 keeps the record-for-recovery path"
+  [ -f "$dir/home/state/t1.inbox/001.msg" ] || fail "the opted-in steer was not recorded"
+
+  # A second mate keeps the recovery path with no opt-in.
+  dir=$(setup_case dead-secondmate)
+  err="$dir/send.err"
+  rm -f "$dir/home/state/t1.meta"
+  fm_write_secondmate_meta "$dir/home/state/domain.meta" "$dir/home" "sess:fm-t1" alpha claude
+  run_send "$dir" "$err" FM_FAKE_TMUX_PANE_CMD=bash -- fm-domain "request for a dead second mate"
+  rc=$?
+  expect_code 0 "$rc" "a second mate steer keeps the record-for-recovery path"
+  pass "fm-send inbox: a dead or missing crewmate endpoint refuses the steer without queuing it, while opt-in and second mates keep the record"
 }
 
 # Contract: a fire-and-forget record stays outside the re-ring ladder, so a
@@ -553,3 +610,4 @@ test_meta_lock_contention_fails_bounded
 test_unwritable_inbox_fails_loudly
 test_empty_message_refused
 test_finished_worker_takes_no_new_work
+test_dead_or_missing_endpoint_refuses_the_steer

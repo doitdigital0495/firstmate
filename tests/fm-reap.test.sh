@@ -351,6 +351,78 @@ ln -s "$SWEEP_STATE" "$TMP_ROOT/state-link"
 err=$(FM_STATE_OVERRIDE="$TMP_ROOT/state-link" "$REAP" sweep-state 2>&1) && fail 'a symlinked state must refuse'
 assert_contains "$err" 'state directory unavailable' 'a symlinked state refuses'
 pass 'sweep-state: bad thresholds and a symlinked state refuse'
+# A lane that never wrote done but finished its work (passed gate, PR ready or
+# merged) is due once idle, and only then. Its own home keeps the earlier cases'
+# shadow report untouched.
+FIN="$TMP_ROOT/finished"
+mkdir -p "$FIN/state" "$FIN/config" "$FIN/data"
+SHA=0123456789abcdef0123456789abcdef01234567
+fin_lane() {  # <id> <idle-secs> <milestone-name>... (each "name:extra" milestone line body)
+  local id=$1 idle=$2 m name rest line
+  shift 2
+  printf 'kind=ship\nharness=claude\n' > "$FIN/state/$id.meta"
+  : > "$FIN/state/$id.status"
+  for m in "$@"; do
+    name=${m%%:*}
+    rest=${m#*:}
+    case "$name" in
+      gate-end) line="milestone [name=gate-end] [at=$((now - 20000))] [sha=$SHA] [run=r1] [rounds=1] [result=$rest]: gate" ;;
+      gate-start) line="milestone [name=gate-start] [at=$((now - 10000))] [sha=$SHA] [run=r2]: gate" ;;
+      pr-created) line="milestone [name=pr-created] [at=$((now - 19000))] [sha=$SHA]: PR https://example.invalid/pr/1" ;;
+      merge) line="milestone [name=merge] [at=$((now - 18000))] [sha=$SHA]: PR https://example.invalid/pr/1" ;;
+    esac
+    printf '%s\n' "$line" >> "$FIN/state/$id.status"
+  done
+  printf 'working [at=%s]: waiting\n' "$((now - idle))" >> "$FIN/state/$id.status"
+  touch -d "@$((now - idle))" "$FIN/state/$id.status"
+}
+fin_list() { FM_STATE_OVERRIDE="$FIN/state" FM_CONFIG_OVERRIDE="$FIN/config" FM_DATA_OVERRIDE="$FIN/data" "$REAP" list; }
+fin_lane ready-idle 8000 gate-end:passed pr-created:
+fin_lane merged-idle 8000 gate-end:passed merge:
+fin_lane ready-fresh 600 gate-end:passed pr-created:
+fin_lane no-gate 8000 pr-created:
+fin_lane gate-failed 8000 gate-end:failed pr-created:
+fin_lane no-pr 8000 gate-end:passed
+fin_lane regated 8000 gate-end:passed pr-created: gate-start:
+out=$(fin_list)
+assert_contains "$out" 'ready-idle due gate passed, PR ready, idle 2h' 'a passed gate with a ready PR, idle 2h, is due'
+assert_contains "$out" 'merged-idle due gate passed, PR merged, idle 2h' 'a passed gate with a merged PR, idle 2h, is due'
+assert_contains "$out" 'ready-fresh active working' 'a finished lane that is not yet idle 2h stays active'
+assert_contains "$out" 'no-gate active working' 'a PR without a passed gate is not due'
+assert_contains "$out" 'gate-failed active working' 'a failed gate is not due'
+assert_contains "$out" 'no-pr active working' 'a passed gate without a PR is not due'
+assert_contains "$out" 'regated active working' 'a gate restarted after the pass is rework, not due'
+printf 'kind=ship\nharness=claude\n' > "$FIN/state/blocked-idle.meta"
+printf 'milestone [name=gate-end] [at=%s] [sha=%s] [run=r1] [rounds=1] [result=passed]: gate\nmilestone [name=pr-created] [at=%s] [sha=%s]: PR https://example.invalid/pr/1\nblocked [at=%s]: need a key\n' \
+  "$((now - 20000))" "$SHA" "$((now - 19000))" "$SHA" "$((now - 8000))" > "$FIN/state/blocked-idle.status"
+touch -d "@$((now - 8000))" "$FIN/state/blocked-idle.status"
+printf 'kind=ship\nharness=claude\n' > "$FIN/state/garbled.meta"
+printf 'milestone [name=gate-end] [at=%s]: no sha or run\nworking [at=%s]: x\n' "$((now - 20000))" "$((now - 8000))" > "$FIN/state/garbled.status"
+touch -d "@$((now - 8000))" "$FIN/state/garbled.status"
+out=$(fin_list)
+assert_contains "$out" 'blocked-idle active blocked' 'a blocked lane is left for firstmate even with a passed gate'
+assert_contains "$out" 'garbled active working' 'a malformed milestone record is never due'
+pass 'verdicts: a lane with a passed gate and ready or merged PR is due once idle 2h, and nothing else is'
+
+# Shadow reports it; enforce hands it to teardown, which keeps unlanded work.
+printf 'shadow\n' > "$FIN/config/reaper"
+out=$(FM_STATE_OVERRIDE="$FIN/state" FM_CONFIG_OVERRIDE="$FIN/config" FM_DATA_OVERRIDE="$FIN/data" "$REAP" check)
+assert_contains "$out" 'reap (shadow, nothing closed): 2 finished worker(s)' 'shadow reports the idle finished lanes in the reap check wake'
+assert_contains "$out" 'ready-idle gate passed, PR ready, idle 2h' 'the wake names the lane and why'
+cat > "$TMP_ROOT/teardown-unlanded" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  merged-idle) printf 'tore down %s\n' "$1" ;;
+  *) printf 'error: refusing - the worktree holds work that has not landed (1 commit)\n' >&2; exit 1 ;;
+esac
+SH
+chmod +x "$TMP_ROOT/teardown-unlanded"
+out=$(FM_STATE_OVERRIDE="$FIN/state" FM_CONFIG_OVERRIDE="$FIN/config" FM_DATA_OVERRIDE="$FIN/data" FM_REAP_TEARDOWN="$TMP_ROOT/teardown-unlanded" "$REAP" run)
+assert_contains "$out" 'closed merged-idle (gate passed, PR merged, idle 2h)' 'a landed finished lane is closed'
+assert_contains "$out" 'kept ready-idle: error: refusing - the worktree holds work that has not landed' 'an unlanded finished lane is kept, never discarded'
+assert_present "$FIN/state/ready-idle.meta" 'the kept lane keeps its record'
+pass 'reap: finished-but-not-done lanes reach the check wake and teardown alone decides what lands'
+
 kill "$LIVE_PID" 2>/dev/null
 wait "$LIVE_PID" 2>/dev/null
 echo '# all fm-reap tests passed'

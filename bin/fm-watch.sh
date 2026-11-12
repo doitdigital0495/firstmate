@@ -1702,6 +1702,16 @@ wedge_wait_evidence() {  # <task> -> one wait_record on stdout
       external 'confirm the wait still holds' "$statusf"
     return 0
   fi
+  # A lane parked inside a Lavish poll (a page host) is quiet by design: its
+  # pane cannot change while the poll blocks on the captain's answer. Anchored on
+  # the status file like a declared wait, so it re-surfaces on the same bounded
+  # cadence instead of at first sight, and a lane with no poll process falls
+  # through to the unchanged ladder.
+  if crew_lavish_listener_live "$task" "$STATE"; then
+    wait_record 'parked Lavish listener' 'its worker is inside a lavish-axi poll awaiting a board answer' \
+      external 'confirm the board is still wanted, or retire the lane' "$statusf"
+    return 0
+  fi
   if task_captain_call_open "$task"; then
     wait_record "$WEDGE_BACKLOG_HOLD_KIND" 'awaiting the captain - held in the backlog' \
       captain 'answer the held decision or release the hold' ''

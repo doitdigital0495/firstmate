@@ -967,6 +967,77 @@ test_wedge_threshold_validating_run_is_off_until_armed() {
   pass "with config/wedge-defer-validating absent a running validation keeps the unchanged ladder, wording and reads"
 }
 
+# --- a parked Lavish listener is a wait, not a wedge ---------------------------
+# A page-host lane blocks inside `lavish-axi poll`, so its pane cannot change and
+# the wedge timer used to escalate it every threshold while healthy. The evidence
+# is a REAL process: a script named lavish-axi, run as `lavish-axi poll <artifact>`
+# with the artifact inside the task's worktree. A lane with no such process (a real
+# wedge), a poll that belongs to another worktree, and a poll for a secondmate
+# home all keep the unchanged ladder.
+start_fake_poll() {  # <case-dir> <artifact-dir> -> prints the pid
+  local dir=$1 art=$2
+  mkdir -p "$dir/pollbin" "$art"
+  # A bounded loop, not one long sleep: killing the script then strands at most
+  # a one-second sleep, and a test that fails before its cleanup still ends.
+  cat > "$dir/pollbin/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+n=0
+while [ "$n" -lt 120 ]; do sleep 1; n=$((n + 1)); done
+SH
+  chmod +x "$dir/pollbin/lavish-axi"
+  bash "$dir/pollbin/lavish-axi" poll "$art/board.html" >/dev/null 2>&1 &
+  printf '%s' "$!"
+}
+
+test_wedge_threshold_defers_to_a_parked_lavish_listener() {
+  local dir state fakebin out capture window key pid wt
+  local working='state: working · source: run-step · ci running'
+  window="test:fm-wedge"; key=$(printf '%s' "$window" | tr ':/.' '___')
+
+  # Healthy page host: its poll process is alive, so no wedge escalation, no count.
+  dir=$(wedge_threshold_fixture lavish-listener 'working: board armed, waiting on the captain' 0 600)
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; capture="$dir/pane.txt"
+  wt="$dir/wt"; mkdir -p "$wt"
+  printf 'worktree=%s\n' "$wt" >> "$state/wedge.meta"
+  pid=$(start_fake_poll "$dir" "$wt/board")
+  wedge_threshold_round "$state" "$fakebin" "$out" "$capture" "$window" "$working" absorb
+  local rc=$?
+  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  [ "$rc" -eq 0 ] || fail "a parked Lavish listener stopped the watcher: $(cat "$out")"
+  [ "$(wedge_stale_wakes "$state" "$window")" -eq 0 ] \
+    || fail "a parked Lavish listener queued a wedge wake: $(cat "$state/.wake-queue")"
+  grep -F 'possible wedge' "$out" >/dev/null \
+    && fail "a parked Lavish listener was reported as a possible wedge: $(cat "$out")"
+  [ ! -e "$state/.wedge-escalations-$key" ] \
+    || fail "a parked Lavish listener counted a wedge escalation"
+
+  # Same lane, same silence, no poll process: a real wedge still escalates.
+  dir=$(wedge_threshold_fixture lavish-no-poll 'working: board armed, waiting on the captain' 2000 600)
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; capture="$dir/pane.txt"
+  wt="$dir/wt"; mkdir -p "$wt"
+  printf 'worktree=%s\n' "$wt" >> "$state/wedge.meta"
+  wedge_threshold_round "$state" "$fakebin" "$out" "$capture" "$window" "$working" exit \
+    || fail "a lane with no poll process never escalated: $(cat "$out")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the no-poll escalation"
+  grep -F 'possible wedge, escalation 1' "$out" >/dev/null \
+    || fail "a lane with no poll process lost the wedge escalation: $(cat "$out")"
+
+  # A poll that belongs to ANOTHER worktree is not this lane's evidence.
+  dir=$(wedge_threshold_fixture lavish-foreign-poll 'working: board armed, waiting on the captain' 2000 600)
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; capture="$dir/pane.txt"
+  wt="$dir/wt"; mkdir -p "$wt"
+  printf 'worktree=%s\n' "$wt" >> "$state/wedge.meta"
+  pid=$(start_fake_poll "$dir" "$dir/elsewhere/board")
+  wedge_threshold_round "$state" "$fakebin" "$out" "$capture" "$window" "$working" exit
+  rc=$?
+  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  [ "$rc" -eq 0 ] || fail "a foreign poll left the lane unescalated: $(cat "$out")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the foreign-poll escalation"
+  grep -F 'possible wedge, escalation 1' "$out" >/dev/null \
+    || fail "another worktree's poll absorbed this lane's wedge: $(cat "$out")"
+  pass "a lane inside its own lavish-axi poll is deferred, while no poll or another worktree's poll keeps the wedge escalation"
+}
+
 if [ -n "${FM_TEST_ONLY:-}" ]; then
   "$FM_TEST_ONLY"
   exit 0
@@ -985,4 +1056,5 @@ fm_test_run \
   test_wedge_defer_refuses_a_half_filled_wait_record \
   test_wedge_threshold_defers_to_an_executing_validation_run \
   test_wedge_threshold_escalates_when_no_run_is_executing \
-  test_wedge_threshold_validating_run_is_off_until_armed
+  test_wedge_threshold_validating_run_is_off_until_armed \
+  test_wedge_threshold_defers_to_a_parked_lavish_listener
