@@ -176,6 +176,8 @@ settings="$HOME_DIR/state/lean-guards-s7.claude-settings.json"
 [ "$(jq -c '[.hooks.SessionStart, .enabledPlugins, (.hooks.Stop // [] | map(.hooks[].command) | index("project-stop"))]' "$settings")" = '[null,null,null]' ] \
   || fail "non-guard settings leaked into the lean worker: $(cat "$settings")"
 [ "$(jq -r '.feedbackDrafts' "$settings")" = off ] || fail "Firstmate policy keys were lost: $(cat "$settings")"
+jq -e 'any(.hooks.PreToolUse[]; .matcher == "Bash" and any(.hooks[]; .command | contains("fm-arm-pretool-check.sh") and endswith("--claude")))' "$settings" >/dev/null \
+  || fail 'Claude task worker did not install the home page/watcher guard'
 pass "Claude worker keeps user and project tool guards and deny rules without other settings"
 
 make_case bad-guards lean-bad-guards-s8

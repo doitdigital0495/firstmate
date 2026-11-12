@@ -35,6 +35,15 @@ fm_procevent_claim_root() {
   printf '%s\n' "${FM_PROCEVENT_CLAIM_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/firstmate/procevent-claims}"
 }
 
+# Page hosts yield their agent after this reply-free interval, not their source.
+# Zero disables idle-exit requests; invalid values fail closed.
+fm_procevent_page_idle_seconds() {
+  local seconds=${FM_PAGE_HOST_IDLE_SECONDS:-7200}
+  case "$seconds" in ''|*[!0-9]*) return 1 ;; esac
+  [ "${#seconds}" -le 8 ] || return 1
+  printf '%s\n' "$((10#$seconds))"
+}
+
 fm_procevent_registry_dir() { printf '%s\n' "$1/procevent"; }
 fm_procevent_inbox_dir()    { printf '%s\n' "$1/procevent-inbox"; }
 fm_procevent_capture_reservation_dir() { printf '%s\n' "$1/procevent-capture-reservations"; }

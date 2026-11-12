@@ -1,7 +1,7 @@
 ---
 name: process-event-sources
 description: >-
-  Load before arming a long-polling source firstmate owns, before registering a deterministic condition->action watch, on any `procevent <adapter> <source-id> <sequence>` check wake, and on any `process-event source stranded` or `process-event source failed to start` check wake.
+  Load before arming a long-polling source firstmate owns, before registering a deterministic condition->action watch, on any `page-host-idle` wake, on any `procevent <adapter> <source-id> <sequence>` check wake, and on any `process-event source stranded` or `process-event source failed to start` check wake.
 user-invocable: false
 metadata:
   internal: true
@@ -107,6 +107,7 @@ Two rules the commands cannot enforce for you:
   Consume a Lavish capture with `bin/fm-procevent-lavish.sh read <result-file>` rather than grepping the raw file: that command reports declared and presented item counts plus a completeness verdict, enumerates every captured queued item while retaining supplied element identity, and surfaces a `tag=message` freeform message as its own field, labeling it as session-ending only when the session ended.
   `answers` remains the keyed-choice extractor and never treats freeform prose as a decision key.
   A `feedback` result can still be the last one a review ever produces, so never assume another wake is coming just because the state is not `ended`.
+On `page-host-idle` or a captured result for a deliberately parked host, follow the idle-host exit/rehost procedure in the crew-hosted contract below before acknowledging anything.
 The crew-hosted recovery ordering and arm-and-acknowledge rule are owned by the [crew-hosted Lavish board contract](../../../docs/configuration.md#crew-hosted-lavish-review-boards); `bin/fm-brief.sh` emits its instruction at the point of use.
 : A routine no-op an adapter positively identifies never becomes a firstmate wake - it is recorded as handled and stays silent, so you never see it.
   For an ordinary firstmate-owned Lavish source that is an ended session carrying nothing, or `browser_disconnected` (classified `disconnected`): a closed review window that still has an open session.

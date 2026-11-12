@@ -860,6 +860,12 @@ $pre_existing
 EOF
       fi
       fm_procevent_source_lock_release "$id"
+      # The inbox still owns the round. A deliberately exited host also needs
+      # firstmate to launch a fresh agent; never acknowledge on its behalf.
+      if [ -f "$STATE/$owner_task.page-host-parked" ]; then
+        fm_wake_append check "procevent:$id:$seq" \
+          "check: $line; page-host parked $owner_task: rehost from page notes with bin/fm-page-host.sh resume $owner_task" || status=1
+      fi
       if [ "$new_record" -eq 1 ]; then
         ring_meta="$STATE/$owner_task.meta"
         if [ -f "$ring_meta" ] && [ ! -L "$ring_meta" ]; then
@@ -1710,6 +1716,8 @@ stranded_leaderless_detail() {  # <source-id>
 cmd_reconcile() {
   local rec id published started=0 stopped=0 uncertain=0 failed=0 claim owner pid token identity claim_state stop_state task_pending
   local launch_identity launch_stamp launch_mark unconfirmed entry
+  local page_idle page_stamp page_task page_identity page_now page_receipt page_tmp
+  page_idle=$(fm_procevent_page_idle_seconds) || die 'FM_PAGE_HOST_IDLE_SECONDS must be whole seconds (0 disables idle exit requests)'
   local -a launched=()
   # Rejected before anything is launched, and by name. A window this command
   # cannot use makes every launch unconfirmable, so validating it later would
@@ -1842,6 +1850,33 @@ cmd_reconcile() {
           # runner was started, so it ends any launch-failure episode here.
           rm -f -- "$(launch_failed_file "$id")"
           rm -f -- "$REG/.$id.cleanup-failed"
+          if [ "$page_idle" -gt 0 ] && [ "$(read_adapter "$id")" = lavish ] \
+            && [ "$(source_kind "$id")" = task-owned ]; then
+            page_task=$(source_owner_task "$id")
+            page_stamp=$(fm_path_mtime "$rec") || page_stamp=
+            page_now=$(date +%s)
+            case "$page_stamp" in
+              ''|*[!0-9]*) ;;
+              *)
+                if [ $((page_now - page_stamp)) -ge "$page_idle" ] \
+                  && [ ! -e "$STATE/$page_task.page-host-parked" ]; then
+                  page_identity="$(fm_pr_file_identity "$rec" | tr -c 'a-zA-Z0-9' '-')-$page_stamp"
+                  page_receipt="$REG/.$id.page-idle"
+                  if [ "$(head -1 "$page_receipt" 2>/dev/null || true)" != "$page_identity" ] \
+                    && fm_wake_append check "procevent:$id:page-host-idle:$page_stamp" \
+                      "check: page-host-idle $page_task: no page reply for ${page_idle}s; preserve page notes then bin/fm-page-host.sh park $page_task <notes-file>"; then
+                    # Queue first, receipt second: a crash may repeat the same
+                    # deduplicated key, but can never lose the exit request.
+                    page_tmp=$(umask 077; mktemp "$REG/.page-idle.XXXXXX") || page_tmp=
+                    if [ -n "$page_tmp" ]; then
+                      printf '%s\n' "$page_identity" > "$page_tmp"
+                      mv -f -- "$page_tmp" "$page_receipt" || rm -f -- "$page_tmp"
+                    fi
+                  fi
+                fi
+                ;;
+            esac
+          fi
         fi
       fi
       fm_procevent_source_lock_release "$id"

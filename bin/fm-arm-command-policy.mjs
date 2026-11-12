@@ -14,10 +14,11 @@
 // runs only when this module is invoked directly, never on import.
 
 import path from "node:path";
-import { realpathSync } from "node:fs";
+import { realpathSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const REASONS = {
+  "page-host-wait": "page hosts must not sleep or poll; arm the board with fm-procevent-lavish.sh arm --for and stop the turn",
   "watcher-background": "a protected watcher command cannot run in an asynchronous shell list or through nohup/disown",
   "watcher-pipeline": "a protected watcher command must not participate in a pipeline",
   "watcher-redirection": "a protected watcher command must not use shell redirection",
@@ -750,6 +751,7 @@ function analyzeProgram(command, context, depth = 0) {
   const program = splitProgram(lexed.tokens);
   const nodeInfos = [];
   let nestedProtected = false;
+  let pageWait = false;
   let broadKill = false;
   let pgrepWatcher = false;
   let unsupported = false;
@@ -765,6 +767,14 @@ function analyzeProgram(command, context, depth = 0) {
     const position = commandPosition(tokens);
     const nodeContext = contextWithAssignments(activeContext, position.words);
     const firstName = basename(position.words[0]?.value || "");
+    let waitTokens = tokens;
+    while (waitTokens[0]?.type === "word" && ["if", "then", "else", "elif", "do", "!", "time"].includes(waitTokens[0].value)) waitTokens = waitTokens.slice(1);
+    const waitPosition = commandPosition(waitTokens);
+    const executedName = basename(waitPosition.command?.value || "");
+    const executedArgs = waitPosition.words.slice(waitPosition.index + 1).map((word) => word.value);
+    pageWait ||= ["sleep", "watch", "while", "until"].includes(executedName)
+      || (["lavish-axi", "fm-procevent-lavish.sh"].includes(executedName) && executedArgs.includes("poll"))
+      || (!["echo", "printf", "rg", "grep"].includes(executedName) && executedArgs.some((arg) => /^--(?:watch|wait)(?:=|$)/.test(arg)));
     if (["if", "then", "else", "elif", "fi", "for", "while", "until", "case", "esac", "do", "done", "function", "time", "coproc"].includes(firstName)) {
       unsupported = true;
     }
@@ -774,6 +784,7 @@ function analyzeProgram(command, context, depth = 0) {
     const substitutionResults = new Map();
     for (const payload of position.wrapperPayloads) {
       const nested = analyzeProgram(payload, nodeContext, depth + 1);
+      pageWait ||= nested.pageWait;
       nodeNestedProtected ||= nested.protectedFound;
       broadKill ||= nested.broadKill;
       nodePgrepWatcher ||= nested.pgrepWatcher;
@@ -782,6 +793,7 @@ function analyzeProgram(command, context, depth = 0) {
     for (const token of tokens) {
       if (token.type === "group") {
         const nested = analyzeProgram(token.content, nodeContext, depth + 1);
+        pageWait ||= nested.pageWait;
         nodeNestedProtected ||= nested.protectedFound;
         broadKill ||= nested.broadKill;
         nodePgrepWatcher ||= nested.pgrepWatcher;
@@ -790,6 +802,7 @@ function analyzeProgram(command, context, depth = 0) {
       if (token.type === "word") {
         for (const substitution of token.subs) {
           const nested = analyzeProgram(substitution.content, nodeContext, depth + 1);
+          pageWait ||= nested.pageWait;
           substitutionResults.set(substitution, nested);
           nodeNestedProtected ||= nested.protectedFound;
           broadKill ||= nested.broadKill;
@@ -815,6 +828,7 @@ function analyzeProgram(command, context, depth = 0) {
       if (wordReferencesAny(shellPayload, nodeContext.protectedVariables)) nodeNestedProtected = true;
     } else if (shellPayload) {
       const nested = analyzeProgram(shellPayload.value, nodeContext, depth + 1);
+      pageWait ||= nested.pageWait;
       nodeNestedProtected ||= nested.protectedFound;
       broadKill ||= nested.broadKill;
       nodePgrepWatcher ||= nested.pgrepWatcher;
@@ -823,6 +837,7 @@ function analyzeProgram(command, context, depth = 0) {
     for (const payload of [literalEvalPayload, ...heredocPayloads, ...hereStringPayloads]) {
       if (payload === null) continue;
       const nested = analyzeProgram(payload, nodeContext, depth + 1);
+      pageWait ||= nested.pageWait;
       nodeNestedProtected ||= nested.protectedFound;
       broadKill ||= nested.broadKill;
       nodePgrepWatcher ||= nested.pgrepWatcher;
@@ -862,9 +877,9 @@ function analyzeProgram(command, context, depth = 0) {
   if (unclassifiableProtected) unsupported = true;
   const broadKillFound = broadKill || (unsupported && rawMentionsBroadKill(command));
   if (unsupported && (protectedFound || rawMentionsProtected(command) || broadKillFound)) {
-    return { error: "unsupported compound grammar", protectedFound: true, broadKill: broadKillFound, pgrepWatcher, watcherPids: activeContext.watcherPids, program, nodeInfos };
+    return { error: "unsupported compound grammar", pageWait, protectedFound: true, broadKill: broadKillFound, pgrepWatcher, watcherPids: activeContext.watcherPids, program, nodeInfos };
   }
-  return { error: "", protectedFound, directProtected, nestedProtected, broadKill: broadKillFound, pgrepWatcher, watcherPids: activeContext.watcherPids, program, nodeInfos };
+  return { error: "", pageWait, protectedFound, directProtected, nestedProtected, broadKill: broadKillFound, pgrepWatcher, watcherPids: activeContext.watcherPids, program, nodeInfos };
 }
 
 function xModePathAllowed(value, home) {
@@ -912,9 +927,25 @@ function blessedProgram(analysis, context) {
   return true;
 }
 
+function ownsPage() {
+  const task = process.env.FM_TASK_ID || "";
+  const inbox = process.env.FM_TASK_INBOX || "";
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(task) || path.basename(inbox) !== `${task}.inbox`) return false;
+  try {
+    const registry = path.join(path.dirname(inbox), "procevent");
+    return readdirSync(registry).filter((name) => name.endsWith(".source")).some((name) => {
+      const fields = readFileSync(path.join(registry, name), "utf8").split("\n");
+      return fields.includes("adapter=lavish") && fields.includes("kind=task-owned") && fields.includes(`owner_task=${task}`);
+    });
+  } catch {
+    return false;
+  }
+}
+
 function decision(command, root, home) {
   const context = { root: path.normalize(root), home: path.normalize(home), protectedVariables: new Set(), watcherPatterns: new Set(), watcherPids: new Set() };
   const analysis = analyzeProgram(command, context);
+  if (ownsPage() && analysis.pageWait) return deny("page-host-wait");
   if (analysis.broadKill) return deny("broad-watcher-kill");
   if (analysis.error && analysis.protectedFound) return deny("unclassifiable-protected-command");
   if (!analysis.protectedFound) return { decision: "allow" };
