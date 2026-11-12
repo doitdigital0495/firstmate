@@ -248,6 +248,35 @@ case "${1:-} ${2:-}" in
       echo 'error: could not reach the GitHub API' >&2
       exit 1
     fi
+    case "$*" in
+      *enqueuePullRequest*)
+        printf 'enqueue %s\n' "$*" >> "$FM_TEST_EVENTS"
+        if [ -f "${FM_TEST_GH_ENQUEUE_FAIL:-}" ]; then
+          echo 'error: Pull request is not mergeable' >&2
+          exit 1
+        fi
+        printf 'QUEUED\n'
+        exit 0
+        ;;
+      *REMOVED_FROM_MERGE_QUEUE_EVENT*)
+        # The queue-route reads: queue-read.N holds the Nth read's reply, and
+        # the last one repeats. A queue-read-fail.N file fails that read.
+        read_n=$(( $(cat "$FM_TEST_QUEUE_READS.n" 2>/dev/null || echo 0) + 1 ))
+        printf '%s\n' "$read_n" > "$FM_TEST_QUEUE_READS.n"
+        printf 'read %s\n' "$read_n" >> "$FM_TEST_EVENTS"
+        if [ -f "$FM_TEST_QUEUE_READS.fail.$read_n" ]; then
+          echo 'error: could not reach the GitHub API' >&2
+          exit 1
+        fi
+        read_f="$FM_TEST_QUEUE_READS.$read_n"
+        while [ ! -f "$read_f" ] && [ "$read_n" -gt 1 ]; do
+          read_n=$((read_n - 1))
+          read_f="$FM_TEST_QUEUE_READS.$read_n"
+        done
+        cat "$read_f"
+        exit 0
+        ;;
+    esac
     cat "$FM_TEST_GH_OUTCOME"
     exit 0
     ;;
@@ -294,7 +323,25 @@ case "${1:-} ${2:-}" in
 esac
 exit 0
 SH
-  chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
+  cat > "$case_dir/fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_NM_LOG"
+case "${1:-} ${2:-}" in
+  "axi status")
+    [ ! -f "$FM_TEST_NM_STATUS" ] || cat "$FM_TEST_NM_STATUS"
+    ;;
+  "axi handoff")
+    printf 'handoff\n' >> "$FM_TEST_EVENTS"
+    if [ -f "$FM_TEST_NM_HANDOFF_FAIL" ]; then
+      echo 'error: checks are still pending' >&2
+      exit 1
+    fi
+    printf 'status: completed\noutcome: handed_off\nbranch: "%s"\n' "$FM_TEST_NM_BRANCH" > "$FM_TEST_NM_STATUS"
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh" "$case_dir/fakebin/no-mistakes"
 }
 
 # gh mock that fails the merge call but succeeds live verify, so a real merge
@@ -688,6 +735,13 @@ run_pr_merge() {
   FM_TEST_AWAY_MUTATE_RC="$case_dir/away-mutate-rc" \
   FM_TEST_AWAY_WORDS_AT_MERGE="$case_dir/away-words-at-merge" \
   FM_TEST_REAL_MV="$REAL_MV" \
+  FM_TEST_EVENTS="$case_dir/events.log" \
+  FM_TEST_QUEUE_READS="$case_dir/queue-read" \
+  FM_TEST_GH_ENQUEUE_FAIL="$case_dir/github-enqueue-fail" \
+  FM_TEST_NM_LOG="$case_dir/nm.log" \
+  FM_TEST_NM_STATUS="$case_dir/nm-status" \
+  FM_TEST_NM_HANDOFF_FAIL="$case_dir/nm-handoff-fail" \
+  FM_TEST_NM_BRANCH="${FM_TEST_NM_BRANCH:-fm/queue-branch}" \
   FM_TEST_GLAB_LOG="$case_dir/glab.log" \
   FM_TEST_GLAB_JSON="$case_dir/mr.json" \
   FM_TEST_TEA_LOG="$case_dir/tea.log" \
@@ -1220,7 +1274,7 @@ test_github_unrecognised_queue_method_still_names_the_queue() {
   : > "$case_dir/gh.log"
 
   set +e
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/70 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/70 -- --subject direct-route \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
@@ -1526,7 +1580,7 @@ test_github_zero_exit_queue_required_refuses_with_exact_retry() {
   : > "$case_dir/gh.log"
 
   set +e
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/56 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/56 -- --subject direct-route \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
@@ -1540,7 +1594,7 @@ test_github_zero_exit_queue_required_refuses_with_exact_retry() {
     "github-zero-exit-queue-required: refusal did not name the exact compatible flags"
   assert_grep 'api --paginate repos/example/repo/rules/branches/release%2F2026' "$case_dir/gh.log" \
     "github-zero-exit-queue-required: queue rules were not read with pagination and encoded branch path"
-  assert_logged_gh_merge "$case_dir" 56 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 56 example/repo --squash --subject direct-route
   [ "$(grep -c '^pr merge ' "$case_dir/gh.log")" -eq 1 ] \
     || fail "github-zero-exit-queue-required: the wrapper attempted more than one merge"
   assert_no_grep --auto "$case_dir/gh.log" \
@@ -1563,7 +1617,7 @@ test_github_closed_unqueued_outcome_omits_retry_flags() {
   : > "$case_dir/gh.log"
 
   set +e
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/57 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/57 -- --subject direct-route \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
@@ -1618,7 +1672,7 @@ test_github_queue_required_refusal_names_retry_flags() {
   : > "$case_dir/gh.log"
 
   set +e
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/54 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/54 -- --subject direct-route \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
@@ -1630,7 +1684,7 @@ test_github_queue_required_refusal_names_retry_flags() {
     "github-queue-required: refusal did not name the queue requirement"
   grep -F -- '--attended-override -- --auto --merge' "$case_dir/stderr" >/dev/null \
     || fail "github-queue-required: refusal did not name the exact compatible flags"
-  assert_logged_gh_merge "$case_dir" 54 example/repo --squash
+  assert_logged_gh_merge "$case_dir" 54 example/repo --squash --subject direct-route
   assert_present "$case_dir/state/task-x1.check.sh" \
     "github-queue-required: the failed forge call did not leave the merge poll armed"
   pass "fm-pr-merge explains how to retry with the required GitHub merge queue method"
@@ -1647,7 +1701,7 @@ test_github_agreeing_queue_rules_keep_retry_guidance() {
   : > "$case_dir/gh.log"
 
   set +e
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/58 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/58 -- --subject direct-route \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
@@ -1674,7 +1728,7 @@ test_github_conflicting_queue_rules_report_ambiguity() {
   : > "$case_dir/gh.log"
 
   set +e
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/59 \
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/59 -- --subject direct-route \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
@@ -2837,6 +2891,425 @@ test_queued_github_merge_leaves_the_poll_armed() {
   pass "a queued GitHub merge stays silent and leaves confirmation to the armed poll"
 }
 
+# The merge queue route. The fake gh answers the route's GraphQL reads from
+# queue-read.N (the Nth read; the last one repeats) and logs the enqueue
+# mutation, and the fake no-mistakes answers axi status from nm-status.
+QUEUE_URL=https://github.com/example/repo/pull/91
+QUEUE_HEAD=9191919191919191919191919191919191919191
+
+# Args: name. A home case on a base branch whose rules name a SQUASH queue,
+# with the mocks installed and an empty event log.
+make_queue_case() {
+  local name=$1 case_dir
+  case_dir=$(make_home_case "$name")
+  add_gh_mocks "$case_dir" "$QUEUE_HEAD"
+  printf 'merge_method=SQUASH\n' > "$case_dir/github-rules"
+  : > "$case_dir/gh-axi.log"
+  : > "$case_dir/gh.log"
+  : > "$case_dir/events.log"
+  printf '%s\n' "$case_dir"
+}
+
+# Args: case_dir n state merged queued entry [removed_at] [removed_reason]
+write_queue_read() {
+  local case_dir=$1 n=$2 state=$3 merged=$4 queued=$5 entry=$6 removed_at=${7:-} reason=${8:-}
+  printf '%s\n' id=PR_queue_node "state=$state" "merged=$merged" "queued=$queued" \
+    "entry=$entry" "head=${QUEUE_READ_HEAD:-$QUEUE_HEAD}" branch=fm/queue-branch \
+    "removed_at=$removed_at" "removed_reason=$reason" > "$case_dir/queue-read.$n"
+}
+
+# Run the merge with the queue wait made instant. Args: case_dir [merge args]
+run_queue_merge() {
+  local case_dir=$1
+  shift
+  FM_PR_MERGE_QUEUE_POLL_INTERVAL=0 FM_PR_MERGE_QUEUE_RECHECK_DELAY=0 \
+  FM_TEST_HOME="$case_dir/home" \
+    run_pr_merge "$case_dir" task-x1 "$QUEUE_URL" "$@" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+}
+
+assert_nothing_enqueued_or_merged() {
+  local case_dir=$1 label=$2
+  assert_no_grep '^enqueue' "$case_dir/events.log" "$label: a pull request was enqueued"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "$label: gh pr merge ran"
+}
+
+test_github_queue_base_enqueues_and_waits_until_merged() {
+  local case_dir rc posture
+  for posture in attended away; do
+    case_dir=$(make_queue_case "queue-merge-$posture")
+    write_queue_read "$case_dir" 1 OPEN false false ''
+    write_queue_read "$case_dir" 2 OPEN false true AWAITING_CHECKS
+    write_queue_read "$case_dir" 3 OPEN false true MERGEABLE
+    write_queue_read "$case_dir" 4 MERGED true false ''
+    [ "$posture" = attended ] || write_away_record "$case_dir" --words 'merge task-x1 when green'
+
+    set +e
+    run_queue_merge "$case_dir"
+    rc=$?
+    set -e
+
+    expect_code 0 "$rc" "queue-merge-$posture: a merged queue entry must succeed"
+    assert_grep "verified: $QUEUE_URL is merged" "$case_dir/stdout" \
+      "queue-merge-$posture: the landing was not reported as verified"
+    [ "$(grep -c '^enqueue' "$case_dir/events.log")" -eq 1 ] \
+      || fail "queue-merge-$posture: the pull request was not enqueued exactly once"
+    assert_grep "id=PR_queue_node" "$case_dir/events.log" \
+      "queue-merge-$posture: the enqueue did not name the pull request"
+    assert_grep "oid=$QUEUE_HEAD" "$case_dir/events.log" \
+      "queue-merge-$posture: the enqueue was not bound to the verified head"
+    assert_no_grep 'pr merge' "$case_dir/gh.log" \
+      "queue-merge-$posture: gh pr merge ran on a queue base"
+    [ "$(sed -n 1p "$case_dir/events.log")" = 'read 1' ] \
+      && [ "$(sed -n 2p "$case_dir/events.log" | cut -d' ' -f1)" = enqueue ] \
+      || fail "queue-merge-$posture: the enqueue did not follow the pre-enqueue read"
+    [ "$(grep -c '^read' "$case_dir/events.log")" -eq 4 ] \
+      || fail "queue-merge-$posture: the wait did not poll until the merge"
+    assert_grep "pr=$QUEUE_URL" "$case_dir/state/task-x1.meta" \
+      "queue-merge-$posture: the pull request was not recorded"
+    assert_grep "pr_head=$QUEUE_HEAD" "$case_dir/state/task-x1.meta" \
+      "queue-merge-$posture: the verified head was not recorded"
+    [ "$(grep -c -F "$QUEUE_URL" "$case_dir/state/.wake-queue")" -eq 1 ] \
+      || fail "queue-merge-$posture: the landing did not leave exactly one durable outcome"
+  done
+  pass "fm-pr-merge enqueues on a queue base and waits until merged, attended and away"
+}
+
+test_github_queue_wait_notes_a_method_the_queue_overrides() {
+  local case_dir rc
+  case_dir=$(make_queue_case queue-method-note)
+  write_queue_read "$case_dir" 1 OPEN false false ''
+  write_queue_read "$case_dir" 2 MERGED true false ''
+
+  set +e
+  run_queue_merge "$case_dir" -- --merge
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "queue-method-note: a method flag must not stop a queue merge"
+  assert_grep "merge queue, whose own method (SQUASH) applies instead of --merge" "$case_dir/stderr" \
+    "queue-method-note: the overridden method was not noted"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "queue-method-note: gh pr merge ran"
+  pass "fm-pr-merge notes a caller method the queue's own method overrides"
+}
+
+# FM-2: leaving the queue without merging is a refusal, never a landing.
+test_github_queue_entry_that_leaves_without_merging_is_refused() {
+  local case_dir rc
+  case_dir=$(make_queue_case queue-ejected)
+  write_queue_read "$case_dir" 1 OPEN false false '' ''
+  write_queue_read "$case_dir" 2 OPEN false true AWAITING_CHECKS
+  write_queue_read "$case_dir" 3 OPEN false false '' \
+    2026-11-12T10:00:00Z 'Required status check "check" failed'
+
+  set +e
+  run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "queue-ejected: a pull request ejected from the queue must refuse"
+  assert_grep 'left the merge queue without merging' "$case_dir/stderr" \
+    "queue-ejected: the refusal did not say the pull request left the queue"
+  assert_grep 'error: > Required status check "check" failed' "$case_dir/stderr" \
+    "queue-ejected: GitHub's removal reason was not quoted"
+  assert_grep 'a refusal, not a merge' "$case_dir/stderr" \
+    "queue-ejected: the outcome was not called a refusal"
+  assert_no_grep 'verified:' "$case_dir/stdout" "queue-ejected: an ejected entry was reported verified"
+  assert_absent "$case_dir/state/.wake-queue" "queue-ejected: an ejected entry was reported as landed"
+  [ -f "$case_dir/state/task-x1.check.sh" ] \
+    || fail "queue-ejected: the merge poll was not left armed"
+  pass "fm-pr-merge refuses, never reports landed, a pull request that left the queue unmerged"
+}
+
+test_github_queue_ejection_needs_consecutive_reads_to_count() {
+  local case_dir rc
+  case_dir=$(make_queue_case queue-lagging-flag)
+  write_queue_read "$case_dir" 1 OPEN false false ''
+  write_queue_read "$case_dir" 2 OPEN false false ''
+  write_queue_read "$case_dir" 3 MERGED true false ''
+
+  set +e
+  run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "queue-lagging-flag: a lagging queue flag must not read as an ejection"
+  assert_grep "verified: $QUEUE_URL is merged" "$case_dir/stdout" \
+    "queue-lagging-flag: the landing was not verified"
+  pass "fm-pr-merge does not read one lagging queue flag as an ejection"
+}
+
+test_github_queue_entry_closed_without_merging_is_refused() {
+  local case_dir rc
+  case_dir=$(make_queue_case queue-closed)
+  write_queue_read "$case_dir" 1 OPEN false false ''
+  write_queue_read "$case_dir" 2 CLOSED false false '' 2026-11-12T10:00:00Z 'The pull request was closed'
+
+  set +e
+  run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "queue-closed: a closed pull request must refuse"
+  assert_grep 'state=CLOSED, merged=false, isInMergeQueue=false' "$case_dir/stderr" \
+    "queue-closed: the refusal did not name the observed state"
+  assert_no_grep 'verified:' "$case_dir/stdout" "queue-closed: a closed pull request was reported verified"
+  pass "fm-pr-merge refuses a queued pull request that was closed without merging"
+}
+
+test_github_queue_removal_older_than_the_enqueue_is_not_blamed() {
+  local case_dir rc
+  case_dir=$(make_queue_case queue-old-removal)
+  write_queue_read "$case_dir" 1 OPEN false false '' 2026-11-10T08:00:00Z 'an earlier removal'
+  write_queue_read "$case_dir" 2 OPEN false false '' 2026-11-10T08:00:00Z 'an earlier removal'
+
+  set +e
+  run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "queue-old-removal: an entry that never stayed queued must refuse"
+  assert_no_grep 'an earlier removal' "$case_dir/stderr" \
+    "queue-old-removal: a removal from before this enqueue was quoted as its reason"
+  assert_grep 'recorded no removal reason' "$case_dir/stderr" \
+    "queue-old-removal: the missing reason was not stated"
+  pass "fm-pr-merge does not blame a removal that predates its own enqueue"
+}
+
+test_github_queue_wait_that_runs_out_is_refused() {
+  local case_dir rc
+  case_dir=$(make_queue_case queue-timeout)
+  write_queue_read "$case_dir" 1 OPEN false false ''
+  write_queue_read "$case_dir" 2 OPEN false true AWAITING_CHECKS
+
+  set +e
+  FM_PR_MERGE_QUEUE_TIMEOUT=1 FM_PR_MERGE_QUEUE_POLL_INTERVAL=1 \
+    run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "queue-timeout: a wait that runs out must refuse"
+  assert_grep 'was still in the merge queue after' "$case_dir/stderr" \
+    "queue-timeout: the refusal did not say the entry was still queued"
+  assert_grep 'running this command again waits again without enqueueing twice' "$case_dir/stderr" \
+    "queue-timeout: the refusal gave no next step"
+  assert_no_grep 'verified:' "$case_dir/stdout" "queue-timeout: an unproved merge was reported verified"
+  [ -f "$case_dir/state/task-x1.check.sh" ] \
+    || fail "queue-timeout: the merge poll was not left armed"
+  pass "fm-pr-merge refuses a queue wait that runs out before the merge is proved"
+}
+
+test_github_queue_run_for_an_already_queued_pull_request_only_waits() {
+  local case_dir rc
+  case_dir=$(make_queue_case queue-resume)
+  write_queue_read "$case_dir" 1 OPEN false true MERGEABLE
+  write_queue_read "$case_dir" 2 MERGED true false ''
+
+  set +e
+  run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "queue-resume: resuming the wait on a queued pull request must succeed"
+  assert_grep 'is already in the merge queue; waiting' "$case_dir/stderr" \
+    "queue-resume: the resumed wait was not announced"
+  assert_nothing_enqueued_or_merged "$case_dir" queue-resume
+  pass "fm-pr-merge only waits for a pull request that is already queued"
+}
+
+test_github_queue_unreadable_state_is_never_a_landing() {
+  local case_dir rc n
+  case_dir=$(make_queue_case queue-unreadable)
+  write_queue_read "$case_dir" 1 OPEN false false ''
+  write_queue_read "$case_dir" 2 OPEN false true AWAITING_CHECKS
+  for n in 3 4 5 6 7; do : > "$case_dir/queue-read.fail.$n"; done
+
+  set +e
+  FM_TEST_GH_MERGE_STATE=open run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "queue-unreadable: an unreadable queue state must refuse"
+  assert_grep 'could not be read 5 times in a row, so its merge is unproved' "$case_dir/stderr" \
+    "queue-unreadable: the refusal did not name the unreadable state"
+  assert_no_grep 'verified:' "$case_dir/stdout" "queue-unreadable: an unproved merge was reported verified"
+
+  case_dir=$(make_queue_case queue-unreadable-landed)
+  write_queue_read "$case_dir" 1 OPEN false false ''
+  write_queue_read "$case_dir" 2 OPEN false true AWAITING_CHECKS
+  for n in 3 4 5 6 7; do : > "$case_dir/queue-read.fail.$n"; done
+  set +e
+  run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "queue-unreadable-landed: a landing gh-axi proves must be accepted"
+  assert_grep "verified: $QUEUE_URL is merged" "$case_dir/stdout" \
+    "queue-unreadable-landed: the gh-axi proof was not reported"
+  pass "fm-pr-merge never reports an unreadable queue state as a landing"
+}
+
+test_github_queue_enqueue_that_is_not_accepted_refuses_without_waiting() {
+  local case_dir rc
+  case_dir=$(make_queue_case queue-rejected)
+  write_queue_read "$case_dir" 1 OPEN false false ''
+  : > "$case_dir/github-enqueue-fail"
+
+  set +e
+  run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "queue-rejected: a rejected enqueue must refuse"
+  assert_grep 'error: Pull request is not mergeable' "$case_dir/stderr" \
+    "queue-rejected: the forge's own error was not surfaced"
+  assert_grep 'the merge queue did not accept' "$case_dir/stderr" \
+    "queue-rejected: the refusal did not say nothing was queued"
+  [ "$(grep -c '^read' "$case_dir/events.log")" -eq 2 ] \
+    || fail "queue-rejected: the run polled for a merge that was never enqueued"
+  pass "fm-pr-merge refuses an enqueue GitHub did not accept"
+}
+
+test_github_queue_head_that_moved_is_not_enqueued() {
+  local case_dir rc
+  case_dir=$(make_queue_case queue-head-moved)
+  QUEUE_READ_HEAD=ffffffffffffffffffffffffffffffffffffffff \
+    write_queue_read "$case_dir" 1 OPEN false false ''
+
+  set +e
+  run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "queue-head-moved: a moved head must refuse"
+  assert_grep 'moved to ffffffffffffffffffffffffffffffffffffffff after head' "$case_dir/stderr" \
+    "queue-head-moved: the refusal did not name the moved head"
+  assert_nothing_enqueued_or_merged "$case_dir" queue-head-moved
+  pass "fm-pr-merge does not enqueue a head it did not verify"
+}
+
+test_github_queue_route_is_for_method_only_callers() {
+  local case_dir rc
+  # An explicit --auto keeps the direct route and its own contract.
+  case_dir=$(make_queue_case queue-auto-direct)
+  write_github_outcome "$case_dir" OPEN false true main
+  set +e
+  run_queue_merge "$case_dir" --attended-override -- --auto --squash
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "queue-auto-direct: an explicit --auto must keep the direct route"
+  assert_no_grep '^enqueue' "$case_dir/events.log" "queue-auto-direct: --auto was enqueued directly"
+  assert_grep 'pr merge' "$case_dir/gh.log" "queue-auto-direct: --auto did not reach gh pr merge"
+
+  # Any other extra argument cannot ride an enqueue, so it keeps the direct route.
+  case_dir=$(make_queue_case queue-body-direct)
+  write_github_outcome "$case_dir" MERGED true false main
+  set +e
+  run_queue_merge "$case_dir" -- --subject direct-route
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "queue-body-direct: a caller argument the enqueue cannot carry must keep the direct route"
+  assert_no_grep '^enqueue' "$case_dir/events.log" "queue-body-direct: the argument was dropped by an enqueue"
+  pass "fm-pr-merge sends only method-only callers down the queue route"
+}
+
+test_github_queue_with_unreadable_rules_still_refuses_while_away() {
+  local case_dir rc
+  case_dir=$(make_queue_case queue-away-unreadable)
+  : > "$case_dir/github-rules-fail"
+  write_away_record "$case_dir" --words 'merge task-x1 when green'
+
+  set +e
+  run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+
+  expect_code 2 "$rc" "queue-away-unreadable: unreadable rules must refuse while away"
+  assert_grep 'merge-queue state does not prove an immediate merge' "$case_dir/stderr" \
+    "queue-away-unreadable: the refusal did not explain the away restriction"
+  assert_nothing_enqueued_or_merged "$case_dir" queue-away-unreadable
+  pass "fm-pr-merge still refuses an away merge whose queue state cannot be read"
+}
+
+# FM-3: nothing may rebase or push to a pull request once it is queued.
+write_nm_run() {  # <case_dir> <branch> <status>
+  printf 'id: "01RUN"\nbranch: "%s"\nstatus: %s\n' "$2" "$3" > "$1/nm-status"
+}
+
+test_github_queue_ends_the_ci_monitor_before_enqueueing() {
+  local case_dir rc
+  case_dir=$(make_queue_case queue-monitor-ended)
+  write_nm_run "$case_dir" fm/queue-branch ci
+  write_queue_read "$case_dir" 1 OPEN false false ''
+  write_queue_read "$case_dir" 2 MERGED true false ''
+
+  set +e
+  run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "queue-monitor-ended: ending the monitor must let the merge proceed"
+  grep -qxF 'axi handoff' "$case_dir/nm.log" \
+    || fail "queue-monitor-ended: the CI monitor was not handed off"
+  [ "$(grep -n '^handoff' "$case_dir/events.log" | cut -d: -f1)" -lt \
+    "$(grep -n '^enqueue' "$case_dir/events.log" | cut -d: -f1)" ] \
+    || fail "queue-monitor-ended: the monitor was ended after the enqueue"
+  assert_grep 'ended the no-mistakes CI monitor for fm/queue-branch before enqueueing' "$case_dir/stderr" \
+    "queue-monitor-ended: the handoff was not reported"
+  pass "fm-pr-merge ends the no-mistakes CI monitor before it enqueues"
+}
+
+test_github_queue_refuses_while_a_pipeline_could_still_push() {
+  local case_dir rc status
+  for status in running fixing ci-handoff-fails; do
+    case_dir=$(make_queue_case "queue-monitor-$status")
+    write_queue_read "$case_dir" 1 OPEN false false ''
+    case "$status" in
+      ci-handoff-fails)
+        write_nm_run "$case_dir" fm/queue-branch ci
+        : > "$case_dir/nm-handoff-fail"
+        ;;
+      *) write_nm_run "$case_dir" fm/queue-branch "$status" ;;
+    esac
+
+    set +e
+    run_queue_merge "$case_dir"
+    rc=$?
+    set -e
+
+    expect_code 1 "$rc" "queue-monitor-$status: a pipeline that can push must refuse the enqueue"
+    assert_grep 'could rebase or push to the pull request once it is queued' "$case_dir/stderr" \
+      "queue-monitor-$status: the refusal did not say why"
+    assert_nothing_enqueued_or_merged "$case_dir" "queue-monitor-$status"
+  done
+  pass "fm-pr-merge refuses to enqueue while a no-mistakes run could still rebase or push"
+}
+
+test_github_queue_ignores_a_run_on_another_branch_or_none() {
+  local case_dir rc
+  case_dir=$(make_queue_case queue-monitor-elsewhere)
+  write_nm_run "$case_dir" fm/some-other-branch ci
+  write_queue_read "$case_dir" 1 OPEN false false ''
+  write_queue_read "$case_dir" 2 MERGED true false ''
+  set +e
+  run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "queue-monitor-elsewhere: another branch's run must not stop the merge"
+  assert_no_grep '^axi handoff' "$case_dir/nm.log" \
+    "queue-monitor-elsewhere: another branch's run was handed off"
+
+  case_dir=$(make_queue_case queue-monitor-none)
+  write_queue_read "$case_dir" 1 OPEN false false ''
+  write_queue_read "$case_dir" 2 MERGED true false ''
+  set +e
+  run_queue_merge "$case_dir"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "queue-monitor-none: a task with no run must merge"
+  assert_no_grep '^axi handoff' "$case_dir/nm.log" "queue-monitor-none: a handoff ran with no run"
+  pass "fm-pr-merge leaves alone a no-mistakes run that is not on the queued branch"
+}
+
 test_distinct_merged_prs_keep_distinct_wakes() {
   local case_dir first_url second_url
   first_url=https://github.com/example/repo/pull/68
@@ -3767,7 +4240,7 @@ test_away_posture_refuses_asynchronous_merge_paths() {
   printf 'merge_method=MERGE\n' > "$case_dir/github-rules"
   write_away_record "$case_dir" --words 'merge task-x1 when green'
   set +e
-  run_pr_merge "$case_dir" task-x1 "$url" \
+  run_pr_merge "$case_dir" task-x1 "$url" -- --subject direct-route \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
@@ -4593,6 +5066,22 @@ test_failed_merge_reports_nothing
 test_gitlab_refusal_reports_nothing
 test_main_home_merge_leaves_a_durable_wake
 test_queued_github_merge_leaves_the_poll_armed
+test_github_queue_base_enqueues_and_waits_until_merged
+test_github_queue_wait_notes_a_method_the_queue_overrides
+test_github_queue_entry_that_leaves_without_merging_is_refused
+test_github_queue_ejection_needs_consecutive_reads_to_count
+test_github_queue_entry_closed_without_merging_is_refused
+test_github_queue_removal_older_than_the_enqueue_is_not_blamed
+test_github_queue_wait_that_runs_out_is_refused
+test_github_queue_run_for_an_already_queued_pull_request_only_waits
+test_github_queue_unreadable_state_is_never_a_landing
+test_github_queue_enqueue_that_is_not_accepted_refuses_without_waiting
+test_github_queue_head_that_moved_is_not_enqueued
+test_github_queue_route_is_for_method_only_callers
+test_github_queue_with_unreadable_rules_still_refuses_while_away
+test_github_queue_ends_the_ci_monitor_before_enqueueing
+test_github_queue_refuses_while_a_pipeline_could_still_push
+test_github_queue_ignores_a_run_on_another_branch_or_none
 test_distinct_merged_prs_keep_distinct_wakes
 test_uncommitted_marker_retry_is_never_silent
 test_secondmate_without_parent_binding_is_loud

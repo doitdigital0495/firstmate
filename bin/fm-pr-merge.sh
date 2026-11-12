@@ -72,8 +72,26 @@
 # own view still proves a landed merge, and every outcome it cannot prove
 # refuses, reporting the failed gh read and naming both failed reads when the
 # gh-axi view could not prove the outcome either.
-# If the pull request remains open and the base branch has an effective
-# merge_queue rule, an attended refusal names the queue's configured merge
+# A base branch with an effective merge_queue rule merges through the queue when
+# the caller passed nothing beyond an optional merge method (the queue's own
+# method applies; the flag is only noted), in attended and away posture alike:
+# the task's no-mistakes CI monitor on that branch is ended with axi handoff so
+# nothing rebases or pushes to a queued pull request (a run that cannot be ended
+# refuses the enqueue), the pull request is enqueued through GraphQL
+# enqueuePullRequest bound to the verified head with expectedHeadOid, the
+# accepted authority is persisted, and both locks are released before this script
+# waits synchronously until GitHub reports it merged. That wait is what the away
+# rule asks of a queued merge; a fire-and-forget enqueue is never done. A pull
+# request that left the queue without merging (removed, failed required check,
+# closed), a wait longer than FM_PR_MERGE_QUEUE_TIMEOUT seconds (default 7200),
+# and a queue state unreadable five polls in a row (gh-axi may still prove a
+# landing) are refusals, never landings; a removal quotes GitHub's recorded
+# reason, and the poll stays armed. FM_PR_MERGE_QUEUE_POLL_INTERVAL
+# (default 30) sets the poll gap. A run against an already queued pull request
+# only waits. An explicit --auto, or any extra argument beyond a merge method,
+# keeps the direct gh route below.
+# If the pull request remains open after that direct route and the base branch
+# has an effective merge_queue rule, an attended refusal names the queue's configured merge
 # method and exact --attended-override -- --auto --<method> retry flags. While
 # the away-posture record exists, asynchronous merge requests are refused and
 # queue retry flags are not offered because they would outlive away authority.
@@ -217,6 +235,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# shellcheck source=bin/fm-nm-run-lib.sh
+. "$SCRIPT_DIR/fm-nm-run-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -380,6 +400,26 @@ caller_merge_method() {
     esac
   done
   printf '%s' "$method"
+}
+
+# Whether every extra argument the caller passed is a merge method (--squash,
+# --merge, --rebase and their short forms, --method <value>, --method=<value>),
+# or there are none. The merge queue route takes nothing else, because the
+# enqueue has no subject, body, bypass or branch-deletion field to carry it.
+caller_args_are_method_only() {
+  local arg pending=false
+  for arg in "$@"; do
+    if [ "$pending" = true ]; then
+      pending=false
+      continue
+    fi
+    case "$arg" in
+      --squash | --merge | --rebase | -s | -m | -r | --method=*) ;;
+      --method) pending=true ;;
+      *) return 1 ;;
+    esac
+  done
+  [ "$pending" = false ]
 }
 
 # Whether the caller's own extra arguments asked for auto-merge, including the
@@ -1485,23 +1525,38 @@ persist_accepted_merge_authority() {
   return 1
 }
 
-# While away, a merge proceeds only when the base branch's rules prove no
-# merge queue, because a queued merge can land after its away authority
-# lapses with the record's archive. A repository whose
-# plan does not expose branch rules at all (GitHub's "Upgrade to GitHub Pro or
-# make this repository public" 403) proves that on its own, since such a
-# repository cannot have a merge_queue rule either; see
+# Which way a GitHub merge runs. A base branch whose rules prove no merge queue
+# merges directly (gh pr merge), as ever. A base branch with a merge_queue rule
+# merges through the queue route below when the caller asked for nothing but a
+# merge method: the queue's own configured method applies, so a method flag is
+# only noted, and any other extra argument (or an explicit --auto) keeps the
+# direct route, which its own contract owns. While away, a merge may run only
+# when it is synchronous, so a queue base takes the queue route (a synchronous
+# wait until merged or failed) or is refused, and a base whose rules cannot be
+# read refuses because neither an immediate merge nor a queue can be proved. A
+# repository whose plan does not expose branch rules at all (GitHub's "Upgrade
+# to GitHub Pro or make this repository public" 403) proves no queue on its own,
+# since such a repository cannot have a merge_queue rule either; see
 # github_read_queue_method, which resolves that specific 403 to status=none.
 # Every other failure to read the queue state (auth, rate limit, network, a
-# 404, or an unrelated 403) stays unreadable and refuses the merge. The merge
-# stays synchronous (--auto is refused earlier) and every other gate still
-# applies.
-refuse_github_queue_while_away() {
-  [ "$FM_PR_AWAY_POSTURE" = true ] || return 0
+# 404, or an unrelated 403) stays unreadable and refuses the merge while away,
+# and merges directly while attended, as before.
+FM_PR_GITHUB_MERGE_ROUTE=direct
+github_resolve_merge_route() {  # <caller extra args>
+  FM_PR_GITHUB_MERGE_ROUTE=direct
   # Accepted confused-agent-grade limitation, as in bin/fm-lease-lib.sh, not an
   # oversight: a queue rule or PR base change after this preflight can still
   # enqueue the merge, which can land after its away authority lapses.
   github_read_queue_method
+  case "$FM_PR_GITHUB_QUEUE_STATUS" in
+    single | conflicting | unrecognised)
+      if [ "$FM_PR_GITHUB_AUTO_REQUESTED" != true ] && caller_args_are_method_only "$@"; then
+        FM_PR_GITHUB_MERGE_ROUTE=queue
+        return 0
+      fi
+      ;;
+  esac
+  [ "$FM_PR_AWAY_POSTURE" = true ] || return 0
   [ "$FM_PR_GITHUB_QUEUE_STATUS" = none ] && return 0
   echo "error: GitHub merge refused while away because the base branch's merge-queue state does not prove an immediate merge; nothing was handed to the forge" >&2
   return 2
@@ -1633,6 +1688,247 @@ github_report_unmerged_outcome() {
   github_report_queue_rules
 }
 
+# The merge queue route. When the base branch requires a merge queue, a pull
+# request is enqueued through GitHub's GraphQL enqueuePullRequest mutation, bound
+# to the verified head with expectedHeadOid exactly as --match-head-commit binds
+# the direct merge, and this script then waits, synchronously, until GitHub
+# reports the pull request merged. Only a merged pull request counts as landed.
+# A pull request that leaves the queue without merging (removed by a person,
+# ejected after a failed required check, or closed) is a refusal, never a
+# landing, and a wait that runs out is a refusal too, because a queued merge
+# nothing observed to completion is exactly the unproved outcome this script
+# refuses everywhere else. The wait, not the enqueue, is what keeps a queued
+# merge inside the away rule that a merge is synchronous.
+FM_PR_QUEUE_ID=
+FM_PR_QUEUE_STATE=
+FM_PR_QUEUE_MERGED=
+FM_PR_QUEUE_QUEUED=
+FM_PR_QUEUE_ENTRY=
+FM_PR_QUEUE_HEAD=
+FM_PR_QUEUE_BRANCH=
+FM_PR_QUEUE_REMOVED_AT=
+FM_PR_QUEUE_REMOVED_REASON=
+# One live read of the pull request's queue state: its node id (the mutation
+# needs it), state, merged and queued flags, its queue entry's own state, its
+# head and head branch, and the latest removed-from-queue event with GitHub's
+# stated reason. A read that does not return every field fails as a whole.
+github_queue_read() {
+  local fields line total=0 named=0
+  FM_PR_QUEUE_ID=''
+  FM_PR_QUEUE_STATE=''
+  FM_PR_QUEUE_MERGED=''
+  FM_PR_QUEUE_QUEUED=''
+  FM_PR_QUEUE_ENTRY=''
+  FM_PR_QUEUE_HEAD=''
+  FM_PR_QUEUE_BRANCH=''
+  FM_PR_QUEUE_REMOVED_AT=''
+  FM_PR_QUEUE_REMOVED_REASON=''
+  # shellcheck disable=SC2016  # GraphQL variables are literal query syntax.
+  if ! fields=$(gh api graphql \
+    -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){id state merged isInMergeQueue headRefOid headRefName mergeQueueEntry{state} timelineItems(last:1,itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}' \
+    -f "owner=$PR_OWNER" -f "repo=$PR_REPO" -F "number=$PR_NUMBER" \
+    --jq '.data.repository.pullRequest | "id=" + (.id // ""), "state=" + (.state // ""), "merged=" + (.merged | tostring), "queued=" + (.isInMergeQueue | tostring), "entry=" + (.mergeQueueEntry.state // ""), "head=" + (.headRefOid // ""), "branch=" + (.headRefName // ""), "removed_at=" + (.timelineItems.nodes[-1].createdAt // ""), "removed_reason=" + ((.timelineItems.nodes[-1].reason // "") | gsub("[\r\n]+"; " "))' \
+    2>/dev/null) || [ -z "$fields" ]; then
+    return 1
+  fi
+  while IFS= read -r line; do
+    total=$((total + 1))
+    case "$line" in
+      id=*) FM_PR_QUEUE_ID=${line#id=} ;;
+      state=*) FM_PR_QUEUE_STATE=${line#state=} ;;
+      merged=*) FM_PR_QUEUE_MERGED=${line#merged=} ;;
+      queued=*) FM_PR_QUEUE_QUEUED=${line#queued=} ;;
+      entry=*) FM_PR_QUEUE_ENTRY=${line#entry=} ;;
+      head=*) FM_PR_QUEUE_HEAD=${line#head=} ;;
+      branch=*) FM_PR_QUEUE_BRANCH=${line#branch=} ;;
+      removed_at=*) FM_PR_QUEUE_REMOVED_AT=${line#removed_at=} ;;
+      removed_reason=*) FM_PR_QUEUE_REMOVED_REASON=${line#removed_reason=} ;;
+      *) continue ;;
+    esac
+    named=$((named + 1))
+  done <<FIELDS
+$fields
+FIELDS
+  if [ "$named" -ne 9 ] || [ "$total" -ne 9 ] || [ -z "$FM_PR_QUEUE_STATE" ] \
+    || [ -z "$FM_PR_QUEUE_ID" ] || [ -z "$FM_PR_QUEUE_HEAD" ] \
+    || { [ "$FM_PR_QUEUE_MERGED" != true ] && [ "$FM_PR_QUEUE_MERGED" != false ]; } \
+    || { [ "$FM_PR_QUEUE_QUEUED" != true ] && [ "$FM_PR_QUEUE_QUEUED" != false ]; }; then
+    return 1
+  fi
+}
+
+# A bounded non-negative integer from an environment override, else the default.
+github_queue_setting() {  # <value> <default> <max>
+  case "$1" in
+    '' | *[!0-9]*) printf '%s' "$2" ;;
+    *) if [ "$1" -le "$3" ]; then printf '%s' "$1"; else printf '%s' "$2"; fi ;;
+  esac
+}
+
+# FM-3: a pull request in the merge queue must not be rebased or pushed to,
+# because a new head drops it from the queue and invalidates the queue builds
+# behind it. The only thing in this home that rebases and pushes a task's
+# branch on its own is the no-mistakes CI monitor, which "watches CI and
+# auto-rebases when the base branch advances" until its pull request is merged,
+# and a queued pull request waits through exactly such base advances. So before
+# the enqueue the task's own run on this pull request's head branch is ended
+# with no-mistakes axi handoff, which leaves the pull request open. A run that
+# cannot be handed off (still working, parked at a gate, or its handoff
+# refused) refuses the enqueue rather than leave a pipeline that can push. A
+# task with no worktree, no no-mistakes, or no run on the branch has nothing
+# to end; the query is read-only and fails open, as teardown's does.
+github_release_branch_before_enqueue() {
+  local wt kind out run_status timeout
+  kind=$(sed -n 's/^kind=//p' "$META" | tail -n 1)
+  [ "${kind:-ship}" = ship ] || return 0
+  wt=$(sed -n 's/^worktree=//p' "$META" | tail -n 1)
+  [ -n "$wt" ] && [ -d "$wt" ] || return 0
+  command -v no-mistakes >/dev/null 2>&1 || return 0
+  timeout=$(github_queue_setting "${FM_PR_MERGE_NM_TIMEOUT:-}" 10 600)
+  out=$(fm_nm_run "$wt" "$timeout" axi status)
+  [ -n "$out" ] || return 0
+  [ "$(fm_nm_strip_quotes "$(fm_nm_field "$out" branch)")" = "$FM_PR_QUEUE_BRANCH" ] || return 0
+  fm_nm_run_is_active "$out" || return 0
+  run_status=$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")
+  if [ "$run_status" = ci ] && ! fm_nm_run_is_parked "$out" \
+    && fm_nm_run_checked "$wt" "$timeout" axi handoff >/dev/null; then
+    out=$(fm_nm_run "$wt" "$timeout" axi status)
+    fm_nm_run_is_active "$out" || {
+      printf 'ended the no-mistakes CI monitor for %s before enqueueing, so nothing rebases or pushes to the queued pull request\n' \
+        "$FM_PR_QUEUE_BRANCH" >&2
+      return 0
+    }
+  fi
+  printf 'error: a no-mistakes run is still driving branch %s and could rebase or push to the pull request once it is queued, which would drop it from the merge queue; end it first (no-mistakes axi handoff, or axi abort), then retry; nothing was enqueued\n' \
+    "$FM_PR_QUEUE_BRANCH" >&2
+  return 1
+}
+
+github_enqueue_pull_request() {
+  local output
+  # shellcheck disable=SC2016  # GraphQL variables are literal query syntax.
+  if output=$(gh api graphql \
+    -f query='mutation($id:ID!,$oid:GitObjectID){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$oid}){mergeQueueEntry{state}}}' \
+    -f "id=$FM_PR_QUEUE_ID" -f "oid=$FM_PR_MERGE_HEAD" \
+    --jq '.data.enqueuePullRequest.mergeQueueEntry.state // ""' 2>&1); then
+    return 0
+  fi
+  [ -z "$output" ] || printf '%s\n' "$output" >&2
+  return 1
+}
+
+github_queue_refuse_left() {  # <how it was observed>
+  printf 'error: %s left the merge queue without merging (state=%s, merged=%s, isInMergeQueue=%s), so nothing landed and this is a refusal, not a merge\n' \
+    "$URL" "$FM_PR_QUEUE_STATE" "$FM_PR_QUEUE_MERGED" "$FM_PR_QUEUE_QUEUED" >&2
+  if [ -n "$FM_PR_QUEUE_REMOVED_AT" ] && [ "$FM_PR_QUEUE_REMOVED_AT" != "${1:-}" ]; then
+    printf 'error: GitHub recorded its removal at %s with this reason, quoted; it is the forge'"'"'s text, not this script'"'"'s verdict:\n' \
+      "$FM_PR_QUEUE_REMOVED_AT" >&2
+    printf 'error: > %s\n' "${FM_PR_QUEUE_REMOVED_REASON:-<no reason reported>}" >&2
+  else
+    printf 'error: GitHub recorded no removal reason for this entry; read the queue entry'"'"'s checks on the pull request\n' >&2
+  fi
+  printf 'error: fix the cause, then run this command again to enqueue it afresh; the merge poll for %s stays armed\n' "$URL" >&2
+}
+
+# The queue route's whole merge: read, end any branch-pushing pipeline, enqueue,
+# persist the accepted authority, release both locks, then wait. Returns 0 only
+# for a proved merge; every other outcome exits 1 with its refusal.
+github_merge_through_queue() {
+  local interval timeout started elapsed baseline_removed_at last_entry=''
+  local left_reads=0 read_failures=0
+  interval=$(github_queue_setting "${FM_PR_MERGE_QUEUE_POLL_INTERVAL:-}" 30 3600)
+  timeout=$(github_queue_setting "${FM_PR_MERGE_QUEUE_TIMEOUT:-}" 7200 604800)
+  [ "$timeout" -gt 0 ] || timeout=7200
+  if [ -n "$FM_PR_GITHUB_CALLER_METHOD" ] && [ "$FM_PR_GITHUB_QUEUE_STATUS" = single ] \
+    && ! github_caller_method_is "$(printf '%s' "$FM_PR_GITHUB_QUEUE_METHOD" | tr '[:upper:]' '[:lower:]')"; then
+    printf 'notice: base branch %s merges through its merge queue, whose own method (%s) applies instead of --%s\n' \
+      "$FM_PR_GITHUB_BASE" "$FM_PR_GITHUB_QUEUE_METHOD" "$FM_PR_GITHUB_CALLER_METHOD" >&2
+  fi
+  if ! github_queue_read; then
+    echo "error: the merge queue state of $URL could not be read, so nothing was enqueued" >&2
+    exit 1
+  fi
+  if [ "$FM_PR_QUEUE_HEAD" != "$FM_PR_MERGE_HEAD" ]; then
+    printf 'error: %s moved to %s after head %s was verified; nothing was enqueued\n' \
+      "$URL" "$FM_PR_QUEUE_HEAD" "$FM_PR_MERGE_HEAD" >&2
+    exit 1
+  fi
+  baseline_removed_at=$FM_PR_QUEUE_REMOVED_AT
+  github_release_branch_before_enqueue || exit 1
+  if [ "$FM_PR_QUEUE_QUEUED" = true ]; then
+    printf 'queued: %s is already in the merge queue; waiting for it to merge\n' "$URL" >&2
+  else
+    if ! github_enqueue_pull_request; then
+      # A failed call can still have enqueued; only the live read decides.
+      if ! github_queue_read || [ "$FM_PR_QUEUE_QUEUED" != true ]; then
+        echo "error: the merge queue did not accept $URL, so nothing was enqueued or merged" >&2
+        exit 1
+      fi
+    fi
+    printf 'queued: %s entered the merge queue; waiting up to %ss for it to merge\n' "$URL" "$timeout" >&2
+  fi
+  FM_PR_GITHUB_MERGE_ACCEPTED=true
+  persist_accepted_merge_authority || exit 1
+  fm_afk_contract_lock_release || true
+  fm_lock_release "$MERGE_CONTROL_LOCK" || true
+  MERGE_CONTROL_LOCK=
+  started=$SECONDS
+  while :; do
+    if github_queue_read; then
+      read_failures=0
+      if [ "$FM_PR_QUEUE_MERGED" = true ]; then
+        printf 'verified: %s is merged (state=%s, merged=%s, isInMergeQueue=%s)\n' \
+          "$URL" "$FM_PR_QUEUE_STATE" "$FM_PR_QUEUE_MERGED" "$FM_PR_QUEUE_QUEUED"
+        return 0
+      fi
+      if [ "$FM_PR_QUEUE_QUEUED" = true ]; then
+        left_reads=0
+        if [ "$FM_PR_QUEUE_ENTRY" != "$last_entry" ]; then
+          last_entry=$FM_PR_QUEUE_ENTRY
+          printf 'queued: %s queue entry is %s\n' "$URL" "${last_entry:-unknown}" >&2
+        fi
+      else
+        # Not queued and not merged. A closed pull request has left for good; an
+        # open one is read twice more so a lagging flag is not mistaken for an
+        # ejection, then it is a refusal.
+        left_reads=$((left_reads + 1))
+        if ! github_state_is_open_value "$FM_PR_QUEUE_STATE" || [ "$left_reads" -ge 3 ]; then
+          github_queue_refuse_left "$baseline_removed_at"
+          exit 1
+        fi
+        sleep "$(github_queue_setting "${FM_PR_MERGE_QUEUE_RECHECK_DELAY:-}" 5 60)"
+        continue
+      fi
+    else
+      read_failures=$((read_failures + 1))
+      if [ "$read_failures" -ge 5 ]; then
+        if github_read_outcome_with_gh_axi && [ "$FM_PR_GITHUB_MERGED" = true ]; then
+          printf 'verified: %s is merged (state=%s, merged=%s)\n' \
+            "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED"
+          return 0
+        fi
+        printf 'error: the merge queue state of %s could not be read %s times in a row, so its merge is unproved; the merge poll remains armed\n' \
+          "$URL" "$read_failures" >&2
+        exit 1
+      fi
+    fi
+    elapsed=$((SECONDS - started))
+    if [ "$elapsed" -ge "$timeout" ]; then
+      printf 'error: %s was still in the merge queue after %ss, so its merge is unproved; the merge poll remains armed and records the landing if it happens, and running this command again waits again without enqueueing twice\n' \
+        "$URL" "$elapsed" >&2
+      exit 1
+    fi
+    sleep "$interval"
+  done
+}
+
+github_state_is_open_value() {
+  case "$1" in
+    [oO][pP][eE][nN]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 gitlab_confirm_merged() {
   local json state
   if ! json=$(GITLAB_HOST="$FM_PR_HOST" glab mr view "$PR_NUMBER" \
@@ -1728,47 +2024,51 @@ case "$PROVIDER" in
     away_status=0
     require_current_away_authority || away_status=$?
     [ "$away_status" -eq 0 ] || exit "$away_status"
-    refuse_github_queue_while_away || exit 2
-    merge_status=0
-    merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
-      --match-head-commit "$FM_PR_MERGE_HEAD" \
-      "${merge_args[@]+"${merge_args[@]}"}" "$@" 2>&1) || merge_status=$?
-    if [ "$merge_status" -eq 0 ]; then
-      FM_PR_GITHUB_MERGE_ACCEPTED=true
-      persist_accepted_merge_authority || exit 1
-      fm_afk_contract_lock_release || true
-      fm_lock_release "$MERGE_CONTROL_LOCK" || true
-      MERGE_CONTROL_LOCK=
+    github_resolve_merge_route "$@" || exit 2
+    if [ "$FM_PR_GITHUB_MERGE_ROUTE" = queue ]; then
+      github_merge_through_queue
     else
-      fm_afk_contract_lock_release || true
-      fm_lock_release "$MERGE_CONTROL_LOCK" || true
-      MERGE_CONTROL_LOCK=
-      [ -z "$merge_output" ] || printf '%s\n' "$merge_output" >&2
-      if github_read_outcome; then
-        if [ "$FM_PR_GITHUB_MERGED" != true ] && [ "$FM_PR_GITHUB_QUEUED" != true ]; then
-          github_report_unmerged_outcome
-        else
-          printf 'actionable: the merge command for %s failed, but the pull request reads back as state=%s, merged=%s, isInMergeQueue=%s\n' \
-            "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED" >&2
+      merge_status=0
+      merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
+        --match-head-commit "$FM_PR_MERGE_HEAD" \
+        "${merge_args[@]+"${merge_args[@]}"}" "$@" 2>&1) || merge_status=$?
+      if [ "$merge_status" -eq 0 ]; then
+        FM_PR_GITHUB_MERGE_ACCEPTED=true
+        persist_accepted_merge_authority || exit 1
+        fm_afk_contract_lock_release || true
+        fm_lock_release "$MERGE_CONTROL_LOCK" || true
+        MERGE_CONTROL_LOCK=
+      else
+        fm_afk_contract_lock_release || true
+        fm_lock_release "$MERGE_CONTROL_LOCK" || true
+        MERGE_CONTROL_LOCK=
+        [ -z "$merge_output" ] || printf '%s\n' "$merge_output" >&2
+        if github_read_outcome; then
+          if [ "$FM_PR_GITHUB_MERGED" != true ] && [ "$FM_PR_GITHUB_QUEUED" != true ]; then
+            github_report_unmerged_outcome
+          else
+            printf 'actionable: the merge command for %s failed, but the pull request reads back as state=%s, merged=%s, isInMergeQueue=%s\n' \
+              "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED" >&2
+          fi
         fi
+        exit "$merge_status"
       fi
-      exit "$merge_status"
-    fi
-    if ! github_read_outcome; then
-      github_report_forge_output "$merge_output"
-      exit 1
-    fi
-    if [ "$FM_PR_GITHUB_MERGED" = true ]; then
-      printf 'verified: %s is merged (state=%s, merged=%s, isInMergeQueue=%s)\n' \
-        "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED"
-    elif [ "$FM_PR_GITHUB_QUEUED" = true ]; then
-      printf 'verified: %s is queued (state=%s, merged=%s, isInMergeQueue=%s)\n' \
-        "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED"
-      exit 0
-    else
-      github_report_forge_output "$merge_output"
-      github_report_unmerged_outcome
-      exit 1
+      if ! github_read_outcome; then
+        github_report_forge_output "$merge_output"
+        exit 1
+      fi
+      if [ "$FM_PR_GITHUB_MERGED" = true ]; then
+        printf 'verified: %s is merged (state=%s, merged=%s, isInMergeQueue=%s)\n' \
+          "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED"
+      elif [ "$FM_PR_GITHUB_QUEUED" = true ]; then
+        printf 'verified: %s is queued (state=%s, merged=%s, isInMergeQueue=%s)\n' \
+          "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED"
+        exit 0
+      else
+        github_report_forge_output "$merge_output"
+        github_report_unmerged_outcome
+        exit 1
+      fi
     fi
     ;;
   gitlab)
