@@ -3210,6 +3210,42 @@ crew_worktree_written_since() {  # <id> <state> <anchor-file>
   [ -n "$hit" ]
 }
 
+# 0 when a task's lane is a parked Lavish listener: a live `lavish-axi poll` or
+# `fm-procevent-lavish.sh poll` process that belongs to the task's worktree. Such a
+# lane is quiet by design (it blocks on the captain's board answer, so its pane
+# never changes), which makes it a bounded wait rather than a wedge candidate.
+# Ownership is the task's recorded worktree: the poll's argv names a path inside it
+# (the board artifact) or its working directory is inside it (read from /proc where
+# the host has one, so the check degrades to argv alone elsewhere). A poll that
+# belongs to no worktree, to another task, or to a kind=secondmate home is not
+# evidence, and an unreadable process table is no evidence either, so every
+# failure keeps the caller's unchanged wedge ladder - a real wedge has no poll
+# process at all. One `ps` per call: reach it only when otherwise about to escalate.
+crew_lavish_listener_live() {  # <id> <state>
+  local id=$1 state=$2 wt kind pid args cwd
+  [ -n "$id" ] || return 1
+  wt=$(grep '^worktree=' "$state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+  wt=${wt%/}
+  [ -n "$wt" ] && [ -d "$wt" ] || return 1
+  kind=$(grep '^kind=' "$state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+  [ "$kind" != secondmate ] || return 1
+  while read -r pid args; do
+    [ -n "$pid" ] && [ "$pid" != "$$" ] || continue
+    case "$args" in
+      *"lavish-axi poll"*|*"lavish-axi  poll"*|*"fm-procevent-lavish.sh poll"*) ;;
+      *) continue ;;
+    esac
+    case "$args" in
+      *"$wt/"*) return 0 ;;
+    esac
+    cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)
+    case "$cwd" in
+      "$wt"|"$wt"/*) return 0 ;;
+    esac
+  done < <(LC_ALL=C ps -axo pid=,args= 2>/dev/null)
+  return 1
+}
+
 # 0 (benign/absorb) if EVERY task referenced by a no-verb "signal:" wake is provably
 # working; 1 (actionable/surface) if any is not, or no task can be resolved. Pass the
 # same space-separated file list the caller classified with the span read above.
