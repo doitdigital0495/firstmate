@@ -3517,6 +3517,24 @@ The Lavish version floors and feature probe are owned by `bin/fm-bootstrap.sh`.
 - An interruption between those two durable steps leaves the board unregistered with its terminal round still open, which nothing relaunches and the same `handled` call finishes.
 - It concludes only a round that is still open, so a repeated acknowledgement of an already-closed round reports `already-handled` and never touches whatever registration holds the board by then.
 
+**Idle page hosts**
+
+Page-owning workers keep durable page notes (artifact, report, decisions so far, outstanding questions, and next action) current before each arm, then end the turn rather than sleeping or polling.
+The existing command guard denies explicit sleep, polling loops, Lavish polls, and watch/wait commands when its worker identity owns a task-registered page; this is a semantic shell guard, not a sandbox against arbitrary programs implementing their own waits.
+Claude task launches install that guard independently of project hooks; other harnesses use their existing PreToolUse-equivalent integration where available.
+A live task-owned listener with no open round suppresses possible-wedge alarms, but a dead/uncertain listener or an open feedback round does not.
+
+Reconcile requests `page-host-idle` through the durable wake queue after the configured reply-free interval, once per registration generation rather than once per poll.
+On that wake firstmate checks the page notes, asks the host to finish them if needed, then uses `bin/fm-page-host.sh park` to exit the agent without removing its worktree or its independently supervised listener.
+The helper refuses early exits, empty notes, and hosts with open or unconfirmed rounds; its header and `--help` own the commands and `FM_PAGE_HOST_IDLE_SECONDS` setting (default two hours).
+It records the notes pointer before exiting, and retains that pointer on control failure for explicit recovery rather than guessing whether an exit completed.
+
+Feedback still goes to the durable worker inbox; while the parked pointer exists, publication also wakes firstmate with the ordinary captured-result event.
+Firstmate uses `bin/fm-page-host.sh resume` to relaunch a fresh conversation from the original brief and page notes, leaving the inbox message and round unacknowledged for the replacement worker to handle normally.
+A terminal round also needs rehosting for conclusion, never an automatic re-arm.
+The lifecycle helper delegates all endpoint/harness safety decisions to `fm-control.sh`; unsupported control backends refuse without deleting the recovery pointer.
+No timeout or restart consumes feedback or transfers page ownership.
+
 **Ownership and recovery**
 
 - A second armer is refused with the current owner named, and the source list derives `listening`, `round-open`, or `dead` from the claim and handled captures without a second ownership record.

@@ -463,6 +463,32 @@ test_shellcheck_clean() {
   pass "bin/fm-arm-pretool-check.sh is clean under bin/fm-lint.sh"
 }
 
+test_page_host_waits() {
+  local home cmd out rc
+  home=$(fm_test_tmproot page-host-policy)
+  mkdir -p "$home/state/procevent" "$home/state/page.inbox"
+  printf 'adapter=lavish\nkind=task-owned\nowner_task=page\n' > "$home/state/procevent/board.source"
+  for cmd in 'sleep 30' 'command /bin/sleep 3' 'if true; then sleep 3; fi' 'while true; do echo checking; done' \
+    'until test -e reply; do sleep 1; done' 'lavish-axi poll board.html' \
+    'gh-axi pr checks 1 --watch' 'bash -lc "sleep 5"' 'echo "$(sleep 2)"' \
+    'bash -s <<EOF
+sleep 2
+EOF'; do
+    rc=0
+    out=$(FM_TASK_ID=page FM_TASK_INBOX="$home/state/page.inbox" "$CHECK" --command "$cmd" 2>&1) || rc=$?
+    [ "$rc" -eq 2 ] || fail "page wait allowed: $cmd ($out)"
+    assert_contains "$out" page-host-wait "wrong page wait reason"
+  done
+  for cmd in 'echo sleep' 'printf "%s" --wait' 'rg "while true; do sleep" docs' 'bin/fm-procevent-lavish.sh arm board.html --for page' 'git status'; do
+    FM_TASK_ID=page FM_TASK_INBOX="$home/state/page.inbox" "$CHECK" --command "$cmd" >/dev/null 2>&1 \
+      || fail "page host normal work denied: $cmd"
+  done
+  FM_TASK_ID=other FM_TASK_INBOX="$home/state/other.inbox" "$CHECK" --command 'sleep 2' \
+    || fail 'page wait policy leaked into a non-page worker'
+  pass 'page hosts cannot sleep or poll, while ordinary work and other workers remain allowed'
+}
+
+test_page_host_waits
 test_full_acceptance_matrix
 test_direct_policy_contract
 test_command_equals_form

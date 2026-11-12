@@ -826,6 +826,45 @@ assert_contains "$(cat "$MULTI_ROOT/firstmate-arm.err")" "owned by task worker-1
 list_out=$(FM_HOME="$HMULTI" "$ROOT/bin/fm-procevent.sh" list)
 assert_contains "$list_out" "task:worker-1/listening" \
   "arm did not leave the worker-owned board with a live listener"
+# Page idle lifecycle: use the real listener and production helper, with only
+# the control executable replaced so no test drives a real worker endpoint.
+PAGE_BIN="$TMP_ROOT/page-host/bin"
+mkdir -p "$PAGE_BIN"
+for page_file in "$ROOT/bin/"*; do
+  case "${page_file##*/}" in fm-control.sh|fm-page-host.sh) continue ;; esac
+  ln -s "$page_file" "$PAGE_BIN/${page_file##*/}"
+done
+cp "$ROOT/bin/fm-page-host.sh" "$PAGE_BIN/fm-page-host.sh"
+# shellcheck disable=SC2016 # The fake control reads its own runtime environment.
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$PAGE_CONTROL_LOG"\nexit "${PAGE_CONTROL_RC:-0}"\n' > "$PAGE_BIN/fm-control.sh"
+chmod +x "$PAGE_BIN/fm-control.sh"
+export PAGE_CONTROL_LOG="$TMP_ROOT/page-control.log"
+printf 'Board: %s; open: round one; next: read inbox and reply.\n' "$MULTI_ART" > "$MULTI_ROOT/page-notes.md"
+FM_HOME="$HMULTI" "$ROOT/bin/fm-page-host.sh" armed worker-1 || fail 'live page was not armed'
+bash -c '. "$1/bin/fm-classify-lib.sh"; crew_page_armed worker-1 "$2/state"' bash "$ROOT" "$HMULTI" \
+  || fail 'registered page did not suppress wedge classification'
+if FM_HOME="$HMULTI" "$PAGE_BIN/fm-page-host.sh" park worker-1 "$MULTI_ROOT/page-notes.md"; then
+  fail 'fresh page host exited before its idle interval'
+fi
+touch -t 202001010000 "$HMULTI/state/procevent/$multi_id.source"
+FM_PAGE_HOST_IDLE_SECONDS=0 pe "$HMULTI" reconcile >/dev/null
+[ -z "$(wake_payloads "$HMULTI")" ] || fail 'disabled page timeout queued an exit request'
+FM_PAGE_HOST_IDLE_SECONDS=1 pe "$HMULTI" reconcile >/dev/null
+assert_contains "$(wake_payloads "$HMULTI")" 'page-host-idle worker-1' 'aged page host did not request exit'
+FM_PAGE_HOST_IDLE_SECONDS=1 pe "$HMULTI" reconcile >/dev/null
+[ "$(wake_payloads "$HMULTI" | grep -c page-host-idle)" -eq 1 ] || fail 'idle request repeated for one registration'
+# Leave no idle-request row behind for the existing round-routing assertions.
+rm -f "$HMULTI/state/.wake-queue"
+FM_PAGE_HOST_IDLE_SECONDS=1 FM_HOME="$HMULTI" "$PAGE_BIN/fm-page-host.sh" park worker-1 "$MULTI_ROOT/page-notes.md" >/dev/null \
+  || fail 'aged page host did not park'
+[ -f "$HMULTI/state/worker-1.page-host-parked" ] || fail 'park did not retain its notes pointer'
+assert_contains "$(cat "$PAGE_CONTROL_LOG")" 'worker-1 exit' 'park did not use exit (worktree preserving)'
+[ -f "$HMULTI/state/procevent/$multi_id.source" ] || fail 'park removed the listener'
+# Restore the ordinary no-parent-wake expectation for the first feedback.
+FM_HOME="$HMULTI" "$PAGE_BIN/fm-page-host.sh" resume worker-1 >/dev/null || fail 'fresh rehost failed'
+assert_contains "$(cat "$PAGE_CONTROL_LOG")" 'worker-1 relaunch --note-file' 'rehost did not pass page notes'
+[ ! -e "$HMULTI/state/worker-1.page-host-parked" ] || fail 'successful rehost retained parked pointer'
+pass 'page-host timeout is configurable, deduplicated, preserves listener, and rehosts from notes'
 PATH="$MULTI_BIN:$PATH" LAVISH_AXI_HOST=recovery.example LAVISH_AXI_PORT=34387 FM_HOME="$HMULTI" \
   pe "$HMULTI" start "$multi_id" > "$MULTI_ROOT/run1" 2>&1 &
 MULTI_RUN=$!
@@ -836,6 +875,27 @@ for _ in $(seq 1 100); do [ -f "$HMULTI/state/worker-1.inbox/001.msg" ] && break
   || fail "worker-owned feedback did not reach the worker inbox"
 [ -z "$(wake_payloads "$HMULTI")" ] \
   || fail "worker-owned feedback woke firstmate: $(wake_payloads "$HMULTI")"
+
+if FM_HOME="$HMULTI" "$ROOT/bin/fm-page-host.sh" armed worker-1; then
+  fail 'open feedback round still suppressed the page wedge alarm'
+fi
+if bash -c '. "$1/bin/fm-classify-lib.sh"; crew_page_armed worker-1 "$2/state"' bash "$ROOT" "$HMULTI"; then
+  fail 'open page round still suppressed wedge classification'
+fi
+if FM_HOME="$HMULTI" "$PAGE_BIN/fm-page-host.sh" park worker-1 "$MULTI_ROOT/page-notes.md"; then
+  fail 'host with open feedback was parked'
+fi
+# Feedback captured during an exit/control failure still wakes firstmate on
+# reconcile, including when its inbox message was already delivered.
+printf '%s\n' "$MULTI_ROOT/page-notes.md" > "$HMULTI/state/worker-1.page-host-parked"
+pe "$HMULTI" reconcile >/dev/null
+assert_contains "$(wake_payloads "$HMULTI")" 'page-host parked worker-1' 'parked feedback did not wake firstmate'
+FM_HOME="$HMULTI" PAGE_CONTROL_RC=1 "$PAGE_BIN/fm-page-host.sh" resume worker-1 >/dev/null 2>&1 \
+  && fail 'failed control was reported as a successful rehost'
+[ -f "$HMULTI/state/worker-1.page-host-parked" ] || fail 'failed rehost discarded recovery pointer'
+FM_HOME="$HMULTI" "$PAGE_BIN/fm-page-host.sh" resume worker-1 >/dev/null || fail 'retry rehost failed'
+rm -f "$HMULTI/state/.wake-queue"
+pass 'open page rounds stay actionable and parked feedback wakes firstmate without acknowledging the round'
 
 # An open nonterminal round keeps the board with worker-1 through every
 # retirement and registration path: the one source record cannot be retired out

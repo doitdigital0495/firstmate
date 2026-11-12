@@ -7887,6 +7887,12 @@ case "$HARNESS" in
           fi
           printf '%s\n' "$claude_guarded" > "$STATE_REAL/$ID.claude-settings.json"
         fi
+        # Page owners need the home guard even when their project supplies no
+        # Firstmate hooks. Non-page workers retain the existing allow policy.
+        claude_guarded=$(jq --arg guard "$(shell_quote "$FM_ROOT/bin/fm-arm-pretool-check.sh") --claude" '
+          .hooks.PreToolUse += [{matcher:"Bash",hooks:[{type:"command",command:$guard}]}]
+        ' "$STATE_REAL/$ID.claude-settings.json") || exit 1
+        printf '%s\n' "$claude_guarded" > "$STATE_REAL/$ID.claude-settings.json"
       fi
     fi
     ;;

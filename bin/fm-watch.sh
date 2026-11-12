@@ -2147,6 +2147,12 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
   local _wkey _wrollback_sentinel _wrb_ts _wrb_cap_reason _wrb_cap_status _wrb_rm_status
   local _wrb_since _wrb_now _wrb_age _wrb_cap_ts _wrb_gate
   _wkey=$(window_key "$win")
+  # An armed, externally owned page listener is a zero-turn wait, not a wedge.
+  # Open rounds and dead/uncertain listeners fail this proof and keep the ladder.
+  if crew_page_armed "$task" "$STATE"; then
+    wedge_episode_end "$_wkey"
+    return 0
+  fi
   # Cap-fire short-circuit: a previous poll wrote a rollback-failure sentinel,
   # from any of the routes that have to defend cap state this state dir would not
   # persist - the cap-marker write whose own rollback also failed, the
@@ -3492,7 +3498,7 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted=""
+  local key reason captured="" stranded="" unstarted="" page_idle=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
@@ -3507,6 +3513,7 @@ procevent_surface_queued() {
     case "$key" in
       procevent:*:stranded:*) stranded="$stranded $key" ;;
       procevent:*:launch-failed:*) unstarted="$unstarted $key" ;;
+      procevent:*:page-host-idle:*) page_idle="$page_idle $key" ;;
       *) captured="$captured $key" ;;
     esac
   done < <(fm_wake_queued_keys_locked check)
@@ -3516,6 +3523,7 @@ procevent_surface_queued() {
   fi
   reason="check:"
   [ -z "$captured" ] || reason="$reason process-event result captured:$captured"
+  [ -z "$page_idle" ] || reason="$reason page-host-idle:$page_idle (preserve notes and exit with fm-page-host.sh park)"
   if [ -n "$stranded" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason process-event source stranded:$stranded"

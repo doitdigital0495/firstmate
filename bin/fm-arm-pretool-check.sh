@@ -163,8 +163,10 @@ PREFILTER=${PREFILTER//\"/}
 PREFILTER=${PREFILTER//\'/}
 PREFILTER=${PREFILTER//$'\n'/}
 PREFILTER=${PREFILTER//$'\r'/}
-case "$CMD" in
-  *"\$'"*|*'$"'*) ;;
+# Worker identity forces semantic analysis even without an fm-watch token:
+# the policy also protects task-owned page hosts from conversational waits.
+case "${FM_TASK_ID:-}:${FM_TASK_INBOX:-}:$CMD" in
+  ?*:?*:*|*"\$'"*|*'$"'*) ;;
   *)
     case "$PREFILTER" in
       *fm-watch*) ;;

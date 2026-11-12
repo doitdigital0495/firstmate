@@ -3269,6 +3269,14 @@ crew_worktree_written_since() {  # <id> <state> <anchor-file>
   [ -n "$hit" ]
 }
 
+# A registered external listener (rather than a poll in the worker process tree)
+# also proves a zero-turn page wait. Open rounds and uncertain listeners do not.
+crew_page_armed() {  # <id> <state>
+  [ -n "$1" ] && [ -d "$2/procevent" ] || return 1
+  FM_HOME="$(dirname "$2")" FM_STATE_OVERRIDE="$2" \
+    "$_FM_CLASSIFY_LIB_DIR/fm-page-host.sh" armed "$1" >/dev/null 2>&1
+}
+
 # 0 when a task's lane is a parked Lavish listener: a live `lavish-axi poll` or
 # `fm-procevent-lavish.sh poll` process that belongs to the task's worktree. Such a
 # lane is quiet by design (it blocks on the captain's board answer, so its pane
