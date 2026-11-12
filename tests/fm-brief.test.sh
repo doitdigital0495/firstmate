@@ -301,6 +301,7 @@ test_work_economy_in_all_worker_briefs() {
     assert_grep 'never take sleep-then-check turns' "$brief" "$kind: missing sleep-check prohibition"
     assert_grep 'Search before reading; read files over ~300 lines by range, and never re-read a whole large file' "$brief" "$kind: missing range-read rule"
     assert_grep 'Combine related probes into one script run; filter or limit command output' "$brief" "$kind: missing batched-probe rule"
+    assert_grep "Keep short notes in \`$home/data/$kind/notes.md\` and update them at each milestone: decisions, open work, and next steps" "$brief" "$kind: missing task-specific durable notes instruction"
   done
   FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
     "$ROOT/bin/fm-brief.sh" supervisor --secondmate --no-projects >/dev/null || fail "secondmate scaffold failed"

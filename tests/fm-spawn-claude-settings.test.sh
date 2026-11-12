@@ -154,5 +154,52 @@ AUTO_SETTINGS="$AUTO/home/state/$AUTO_ID.claude-settings.json"
 RESULT=$(settings_check "$AUTO_SETTINGS" yes no)
 [ "$RESULT" = ok ] || fail "auto-mode settings file rejected: $RESULT"
 
+# Rollout stays off by default and never changes secondmate settings.
+jq -e 'has("autoCompactWindow") | not' "$CREW_SETTINGS" >/dev/null || fail "rollout is not default-off"
+printf 'all\n' > "$AUTO/home/config/worker-compaction"
+run_spawn "$AUTO/home" "$AUTO_FAKE" "$AUTO/wt" "$AUTO_ID" "$AUTO/project" --mode no-mistakes --yolo off
+jq -e '.autoCompactWindow == 300000 and .hooks.SessionStart[0].matcher == "compact" and (.hooks.Stop | length > 0)' "$AUTO_SETTINGS" >/dev/null || fail "enabled worker lacks compact window/hook or lost Stop hook"
+printf 'all\n' > "$SM/home/config/worker-compaction"
+run_spawn "$SM/home" "$SM_FAKE" "$SM_HOME" "$SM_ID" "$SM_HOME" --secondmate
+jq -e 'has("autoCompactWindow") | not' "$SM_SETTINGS" >/dev/null || fail "secondmate joined worker rollout"
+
+# Exercise the generated hook command itself, including quoted paths and limits.
+CARD_BRIEF="$AUTO/home/data/$AUTO_ID/launch-brief.md"
+[ -f "$CARD_BRIEF" ] || CARD_BRIEF="$AUTO/home/data/$AUTO_ID/brief.md"
+printf '\n# Definition of done\nShip tested change.\n' >> "$CARD_BRIEF"
+printf 'working: last status proof\n' > "$AUTO/home/state/$AUTO_ID.status"
+printf 'decision: preserve the goal\n' > "$AUTO/home/data/$AUTO_ID/notes.md"
+HOOK=$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$AUTO_SETTINGS")
+CARD=$(printf '{"source":"compact"}' | bash -c "$HOOK")
+assert_contains "$CARD" 'Exercise the generated claude settings file.' "task and goal missing"
+assert_contains "$CARD" 'Ship tested change.' "done rule missing"
+assert_contains "$CARD" 'last status proof' "status missing"
+assert_contains "$CARD" 'decision: preserve the goal' "notes missing"
+assert_contains "$CARD" "$AUTO/home/state/$AUTO_ID.inbox" "inbox path missing"
+[ -z "$(printf '{"source":"startup"}' | bash -c "$HOOK")" ] || fail "noncompact hook emitted a card"
+python3 - "$AUTO/home/data/$AUTO_ID/notes.md" <<'PY'
+import sys
+with open(sys.argv[1], 'w') as f: f.write('é' * 15000)
+PY
+printf '{"source":"compact"}' | bash -c "$HOOK" > "$AUTO/card"
+python3 - "$AUTO/card" <<'PY'
+import sys
+assert len(open(sys.argv[1]).read()) <= 10000
+PY
+expect_code 0 "$?" "card exceeded 10000 characters"
+rm "$AUTO/home/data/$AUTO_ID/notes.md" "$AUTO/home/state/$AUTO_ID.status"
+printf '{"source":"compact"}' | bash -c "$HOOK" >/dev/null || fail "missing notes/status broke hook"
+
+# Stable half-cohort selection, with both cohorts represented and hooks retained.
+printf 'half\n' > "$AUTO/home/config/worker-compaction"
+on=0 off=0
+for id in cohort-a cohort-b cohort-c cohort-d cohort-e cohort-f; do
+  one=$(bash "$ROOT/bin/fm-worker-compact.sh" --settings "$AUTO/home/config" "$AUTO/home/state" "$id" "$CARD_BRIEF" "$CREW_SETTINGS")
+  two=$(bash "$ROOT/bin/fm-worker-compact.sh" --settings "$AUTO/home/config" "$AUTO/home/state" "$id" "$CARD_BRIEF" "$CREW_SETTINGS")
+  [ "$one" = "$two" ] || fail "half cohort changed for same task id"
+  if jq -e '.autoCompactWindow == 300000' <<< "$one" >/dev/null; then on=$((on+1)); else off=$((off+1)); fi
+done
+[ "$on" -gt 0 ] && [ "$off" -gt 0 ] || fail "half rollout did not split cohorts"
+pass "worker compaction default-off/all/half rollout, generated compact card, cap and missing files"
 pass "bin/fm-spawn.sh writes valid claude settings JSON with the owned hooks for crewmates and secondmates, accepting bypass only for bypass launches"
 echo "all fm-spawn-claude-settings tests passed"

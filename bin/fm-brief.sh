@@ -715,6 +715,7 @@ Search before reading; read files over ~300 lines by range, and never re-read a 
 Combine related probes into one script run; filter or limit command output.
 EOF
 WORK_ECONOMY_SECTION=${WORK_ECONOMY_SECTION%$'\n'}
+WORK_ECONOMY_SECTION+=$'\n'"Keep short notes in \`$DATA/$ID/notes.md\` and update them at each milestone: decisions, open work, and next steps, so conversation compaction loses no essential task state."
 # One shared string keeps the ship and scout infrastructure rule identical.
 # Rule 2 governs file edits, so it does not prohibit pool administration.
 # The secondmate charter deliberately omits this rule because a secondmate
