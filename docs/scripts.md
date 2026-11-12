@@ -70,6 +70,8 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-arm-pretool-check.sh` | Stable PreToolUse transport for the watcher-arm command policy (docs/arm-pretool-check.md) |
 | `fm-arm-command-policy.mjs` | Semantic owner of the watcher-arm PreToolUse policy (docs/arm-pretool-check.md)   |
 | `fm-subagent-pretool-check.sh` | Primary-home delegation-shape PreToolUse guard (docs/subagent-guard.md) |
+| `fm-wait-pretool-check.sh` | Task-worker PreToolUse advisory that flags a sleep-then-check Bash turn and points at the one-call wait (header owns modes) |
+| `tools/quota-weekly-report.py` | Read-only weekly Claude usage report from the local transcripts; the header owns how to schedule it |
 | `fm-supervision-instructions.sh` | Render the session-start primary-harness supervision block, its current-state summary for a context re-emit, or the one-line repair instruction |
 | `fm-home-seed.sh`        | Transactionally provision a local secondmate home and maintain `data/secondmates.md` |
 | `fm-remote-home-seed.sh` | Register and provision a whole secondmate home on an SSH-reachable host              |

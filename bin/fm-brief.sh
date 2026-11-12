@@ -609,6 +609,7 @@ Before treating an investigation or visual review as complete, load \`captain-ho
 $LAVISH_OPEN_RULE}
 A message with NO marker is the captain typing directly into your pane: treat it as authoritative captain intervention and stay conversational exactly as you would for any captain message; do not force it onto the status path.
 A request arriving through the instruction inbox below follows the same marker and reply rules.
+Handle each wake in one step: load \`process-event-sources\` and follow "Keeping a wake to few calls" - read the drain once, then run your last handling action and its printed acknowledgement as one \`&&\` call, so a routine wake that needs no action is those two calls and nothing more.
 
 $INBOX_SECTION
 
@@ -713,6 +714,7 @@ IFS= read -r -d '' WORK_ECONOMY_SECTION <<'EOF' || true
 For CI, pipelines, deploys, and long jobs, wait outside the conversation with ONE blocking command per run that loops internally and prints only the final state; never take sleep-then-check turns.
 Search before reading; read files over ~300 lines by range, and never re-read a whole large file.
 Combine related probes into one script run; filter or limit command output.
+One task per worker: this session carries only this task; finish it and stop, and never take on a second unrelated task, because firstmate starts a fresh worker for any other work (a steer or promotion for this same task still arrives in your inbox).
 EOF
 WORK_ECONOMY_SECTION=${WORK_ECONOMY_SECTION%$'\n'}
 WORK_ECONOMY_SECTION+=$'\n'"Keep short notes in \`$DATA/$ID/notes.md\` and update them at each milestone: decisions, open work, and next steps, so conversation compaction loses no essential task state."

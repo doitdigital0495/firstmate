@@ -7831,6 +7831,13 @@ case "$HARNESS" in
       # unescaped "{" inside that expansion closes it at the first "}", which
       # silently emitted a stray brace and invalid JSON.
       claude_hooks_json=
+      # A task worker also gets the advisory sleep-then-check flag: one Bash
+      # PreToolUse entry (bin/fm-wait-pretool-check.sh owns the rule), logging
+      # each flagged command to state/<id>.wait-flags for the weekly report.
+      if [ "$CLAUDE_TASK_WORKER" -eq 1 ] && [ -x "$FM_ROOT/bin/fm-wait-pretool-check.sh" ]; then
+        claude_wait_cmd=$(json_escape "FM_WAIT_GUARD_LOG=$(shell_quote "$STATE_REAL/$ID.wait-flags") $(shell_quote "$FM_ROOT/bin/fm-wait-pretool-check.sh")")
+        CLAUDE_HOOK_ENTRIES="$CLAUDE_HOOK_ENTRIES${CLAUDE_HOOK_ENTRIES:+,}\"PreToolUse\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"$claude_wait_cmd\"}]}]"
+      fi
       if [ -n "$CLAUDE_HOOK_ENTRIES" ]; then
         claude_hooks_json=",\"hooks\":{$CLAUDE_HOOK_ENTRIES}"
       fi

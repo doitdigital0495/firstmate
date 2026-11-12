@@ -302,10 +302,13 @@ test_work_economy_in_all_worker_briefs() {
     assert_grep 'Search before reading; read files over ~300 lines by range, and never re-read a whole large file' "$brief" "$kind: missing range-read rule"
     assert_grep 'Combine related probes into one script run; filter or limit command output' "$brief" "$kind: missing batched-probe rule"
     assert_grep "Keep short notes in \`$home/data/$kind/notes.md\` and update them at each milestone: decisions, open work, and next steps" "$brief" "$kind: missing task-specific durable notes instruction"
+    assert_grep 'One task per worker: this session carries only this task' "$brief" "$kind: missing one-task-per-worker rule"
   done
   FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
     "$ROOT/bin/fm-brief.sh" supervisor --secondmate --no-projects >/dev/null || fail "secondmate scaffold failed"
   assert_no_grep '# Work economy' "$home/data/supervisor/brief.md" "secondmate charter received worker execution guidance"
+  assert_no_grep 'One task per worker' "$home/data/supervisor/brief.md" "secondmate charter received the worker one-task rule"
+  assert_grep 'Keeping a wake to few calls' "$home/data/supervisor/brief.md" "secondmate charter missing one-step wake handling"
   pass "fm-brief.sh: every ship/scout variant carries harness-neutral work economy; secondmate does not"
 }
 
