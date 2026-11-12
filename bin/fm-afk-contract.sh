@@ -44,6 +44,17 @@
 # HARD RULE: destructive, irreversible, and security-sensitive actions are never
 # pre-authorizable whatever the words say.
 #
+# AWAY QUEUE LIST (state/.afk-contract.queue; a sidecar, not part of the
+# record, so the record's schema and its "words run to the end" rule stay
+# untouched). bin/fm-pr-merge.sh records there every pull request it enqueues
+# in a merge queue under away authority, as one `pr=<canonical-url>` line,
+# while it still holds this script's cross-subsystem lock. The captain's return
+# archives the record, and the archive sweeps the list: every entry the forge
+# still reports `isInMergeQueue` for is dequeued (GraphQL dequeuePullRequest),
+# because a queued merge would land on away authority that lapsed with the
+# return. Entries that merged or left the queue on their own resolve; an entry
+# whose state cannot be read or dequeued stays recorded with the reason logged,
+# so a forge hiccup never blocks the return, and `queue-sweep` retries.
 # RECORD (state/.afk-contract; written only by this script; YAML-shaped so a
 # human can read it, but parsed only here - consumers use the read subcommands):
 #   version: 2
@@ -107,6 +118,8 @@
 #     below). Reads no record, so it answers before an entry as well as during
 #     one.
 #   fm-afk-contract.sh archive              move the record aside; print its path
+#                                            and sweep the away queue list
+#   fm-afk-contract.sh queue-sweep           retry the away queue list sweep
 #   fm-afk-contract.sh archived <entered_epoch>   print that archived record's path
 #
 # CROSS-SUBSYSTEM LOCK (state/.afk-contract.lock; this script is its one owner).
@@ -616,14 +629,124 @@ fm_afk_contract_cmd_enter() {
 fm_afk_contract_cmd_archive() {
   local record target
   record=$(fm_afk_contract_path)
-  [ -f "$record" ] || return 0
+  if [ ! -f "$record" ]; then
+    [ ! -f "$(fm_afk_contract_queue_path)" ] \
+      || fm_afk_contract_log "no record to archive, but the away queue list at $(fm_afk_contract_queue_path) still holds entries; run queue-sweep to dequeue anything still queued"
+    return 0
+  fi
   if ! fm_afk_contract_validate "$record"; then
     fm_afk_contract_log "away-posture record at $record is invalid; refusing to archive"
     return 1
   fi
   target=$(fm_afk_contract_archive_target "$record") || return 1
   mv "$record" "$target" || return 1
+  if ! fm_afk_contract_queue_sweep; then
+    fm_afk_contract_log "away queue entries remain at $(fm_afk_contract_queue_path); run fm-afk-contract.sh queue-sweep to retry their dequeue"
+  fi
   printf '%s\n' "$target"
+}
+
+# --- the away queue list (AWAY QUEUE LIST in the header) --------------------
+
+fm_afk_contract_queue_path() {  # [state-dir]
+  printf '%s/.afk-contract.queue' "${1:-$FM_AFK_CONTRACT_STATE}"
+}
+
+# Record one pull request enqueued under away authority, as one
+# `pr=<canonical-url>` line. bin/fm-pr-merge.sh owns every call and holds the
+# cross-subsystem lock across it, so an accepted enqueue can never be lost when
+# the locks release. An exact duplicate line changes nothing.
+fm_afk_contract_queue_record() {  # [state-dir] <pr-url>
+  local state="${1:-$FM_AFK_CONTRACT_STATE}" url=$2 queue
+  queue=$(fm_afk_contract_queue_path "$state")
+  mkdir -p "$state" || return 1
+  if grep -qxF "pr=$url" "$queue" 2>/dev/null; then
+    return 0
+  fi
+  printf 'pr=%s\n' "$url" >>"$queue"
+}
+
+# One entry's queue state from the forge: prints `<id> <state> <merged>
+# <isInMergeQueue>` or returns 1 with the forge's own error on stderr.
+fm_afk_contract_queue_read() {  # <host> <owner> <repo> <number>
+  local host=$1 owner=$2 repo=$3 number=$4
+  # shellcheck disable=SC2016  # GraphQL variables are literal query syntax.
+  GH_HOST=$host gh api graphql \
+    -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){id state merged isInMergeQueue}}}' \
+    -f "owner=$owner" -f "repo=$repo" -F "number=$number" \
+    --jq '.data.repository.pullRequest | "\(.id) \(.state) \(.merged) \(.isInMergeQueue)"'
+}
+
+# Dequeue one entry still sitting in its merge queue.
+fm_afk_contract_queue_dequeue() {  # <host> <id>
+  local host=$1 id=$2
+  # shellcheck disable=SC2016  # GraphQL variables are literal query syntax.
+  GH_HOST=$host gh api graphql \
+    -f query='mutation($id:ID!){dequeuePullRequest(input:{id:$id}){clientMutationId}}' \
+    -f "id=$id" --jq '.data.dequeuePullRequest.clientMutationId // ""'
+}
+
+# Sweep the away queue list: every entry the forge still reports queued is
+# dequeued; merged and ejected entries resolve; unreadable or undequeuable
+# entries stay recorded with the reason logged. Returns 0 only when the list is
+# fully resolved and removed. A line that is not a pull request URL stays too,
+# because keeping an entry is the safe direction for a damaged write.
+fm_afk_contract_queue_sweep() {  # [state-dir]
+  local state="${1:-$FM_AFK_CONTRACT_STATE}" queue line url host owner repo number
+  local id pr_state merged queued output failed=0
+  local kept=()
+  queue=$(fm_afk_contract_queue_path "$state")
+  [ -f "$queue" ] || return 0
+  local pattern='^https://([^/]+)/([^/]+)/([^/]+)/pull/([0-9]+)$'
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    url=${line#pr=}
+    if [[ "$url" =~ $pattern ]]; then
+      host=${BASH_REMATCH[1]} owner=${BASH_REMATCH[2]} repo=${BASH_REMATCH[3]} number=${BASH_REMATCH[4]}
+      if ! output=$(fm_afk_contract_queue_read "$host" "$owner" "$repo" "$number" 2>&1); then
+        fm_afk_contract_log "could not read $url from the forge, so it stays recorded for the next sweep: $output"
+        failed=1
+        kept+=("$url")
+        continue
+      fi
+      read -r id pr_state merged queued <<EOF
+$output
+EOF
+      if [ "$merged" = true ] || [ "$queued" != true ]; then
+        fm_afk_contract_log "$url already left the merge queue (state=$pr_state, merged=$merged, isInMergeQueue=$queued); no dequeue needed"
+        continue
+      fi
+      if ! output=$(fm_afk_contract_queue_dequeue "$host" "$id" 2>&1); then
+        fm_afk_contract_log "the forge refused to dequeue $url, so it stays recorded for the next sweep: $output"
+        failed=1
+        kept+=("$url")
+        continue
+      fi
+      fm_afk_contract_log "dequeued $url, which was still in the merge queue when the away posture ended"
+    else
+      fm_afk_contract_log "line '$line' in $queue is not a pull request URL; it stays recorded for a human to resolve"
+      failed=1
+      kept+=("${line#pr=}")
+    fi
+  done <"$queue"
+  if [ "$failed" -eq 0 ]; then
+    rm -f "$queue"
+  elif [ "${#kept[@]}" -gt 0 ]; then
+    printf 'pr=%s\n' "${kept[@]}" | fm_afk_contract_write_atomic "$queue"
+  else
+    : >"$queue"
+  fi
+  [ "$failed" -eq 0 ]
+}
+
+# The manual retry after a sweep left entries behind.
+fm_afk_contract_cmd_queue_sweep() {
+  if fm_afk_contract_queue_sweep; then
+    fm_afk_contract_log "the away queue list is fully resolved"
+    return 0
+  fi
+  fm_afk_contract_log "the away queue list at $(fm_afk_contract_queue_path) still holds entries; fix the logged cause and run queue-sweep again"
+  return 1
 }
 
 fm_afk_contract_select_path() {  # <args...> -> prints the record path chosen by --path
@@ -692,6 +815,7 @@ fm_afk_contract_main() {
       fm_afk_contract_log "'$cmd' was retired with the clause and merge-grant apparatus: the record is the captain's words (read them with 'words' or 'readback')"
       return 2 ;;
     archive) fm_afk_contract_locked_cmd fm_afk_contract_cmd_archive ;;
+    queue-sweep) fm_afk_contract_locked_cmd fm_afk_contract_cmd_queue_sweep ;;
     archived)
       [ "$#" -eq 1 ] || { fm_afk_contract_usage >&2; return 2; }
       path="$(fm_afk_contract_archive_dir)/$1.afk-contract"

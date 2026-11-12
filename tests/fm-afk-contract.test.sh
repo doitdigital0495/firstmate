@@ -390,6 +390,103 @@ test_archive_moves_the_record_aside_and_is_idempotent() {
   pass "archive keys the record by its entry time, empties the posture, and is idempotent"
 }
 
+# A stubbed forge for the away queue list sweep: `gh api graphql` answers the
+# queue read with the line $home/forge/<number> holds (a missing file is an
+# unreadable forge) and logs each dequeue mutation, which fails when
+# $home/forge/dequeue-fails exists. No network is touched.
+make_queue_forge() {  # <home>
+  local home=$1
+  mkdir -p "$home/fakebin" "$home/forge"
+  cat >"$home/fakebin/gh" <<'STUB'
+#!/usr/bin/env bash
+home=${FM_TEST_FORGE_HOME:?}
+query='' number=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -f) case "$2" in query=*) query=${2#query=} ;; id=*) id=${2#id=} ;; esac; shift 2 ;;
+    -F) case "$2" in number=*) number=${2#number=} ;; esac; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$query" in
+  mutation*)
+    [ ! -e "$home/forge/dequeue-fails" ] || { echo "forge refused the dequeue" >&2; exit 1; }
+    echo "dequeue $id" >>"$home/forge/dequeue.log"
+    echo ok ;;
+  *)
+    [ -f "$home/forge/$number" ] || { echo "forge unreachable" >&2; exit 1; }
+    cat "$home/forge/$number" ;;
+esac
+STUB
+  chmod +x "$home/fakebin/gh"
+}
+
+queue_contract() {  # <home> <args...>
+  local home=$1
+  shift
+  FM_TEST_FORGE_HOME="$home" PATH="$home/fakebin:$PATH" contract "$home" "$@"
+}
+
+test_archive_dequeues_every_recorded_pull_request_still_queued() {
+  local home epoch out base=https://github.com/example/repo/pull
+  home=$(make_home queue-sweep)
+  make_queue_forge "$home"
+  printf 'ID1 OPEN false true\n' >"$home/forge/1"        # still queued: dequeued
+  printf 'ID2 MERGED true false\n' >"$home/forge/2"      # merged on its own: resolved
+  printf 'ID3 OPEN false false\n' >"$home/forge/3"       # ejected on its own: resolved
+  contract "$home" enter --words 'queue words' >/dev/null 2>&1 || fail "entry failed"
+  (
+    # shellcheck source=bin/fm-afk-contract.sh
+    . "$CONTRACT"
+    fm_afk_contract_queue_record "$home/state" "$base/1"
+    fm_afk_contract_queue_record "$home/state" "$base/2"
+    fm_afk_contract_queue_record "$home/state" "$base/3"
+    fm_afk_contract_queue_record "$home/state" "$base/1"   # a duplicate changes nothing
+  ) || fail "recording queue entries failed"
+  [ "$(grep -c . "$home/state/.afk-contract.queue")" -eq 3 ] || fail "a duplicate entry was written twice"
+  out=$(queue_contract "$home" archive 2>&1) || fail "archive failed: $out"
+  epoch=$(printf '%s\n' "$out" | tail -1)
+  [ -f "$epoch" ] || fail "archive did not print the archived record path: $out"
+  [ "$(cat "$home/forge/dequeue.log")" = 'dequeue ID1' ] \
+    || fail "only the still-queued entry may be dequeued: $(cat "$home/forge/dequeue.log" 2>&1)"
+  [ ! -e "$home/state/.afk-contract.queue" ] || fail "a fully resolved queue list was not removed"
+  pass "archive dequeues the recorded pull request still in the merge queue and resolves the rest"
+}
+
+test_archive_keeps_entries_the_forge_cannot_read_or_dequeue_and_sweep_retries() {
+  local home out base=https://github.com/example/repo/pull
+  home=$(make_home queue-sweep-keeps)
+  make_queue_forge "$home"
+  printf 'ID7 OPEN false true\n' >"$home/forge/7"
+  : >"$home/forge/dequeue-fails"
+  contract "$home" enter --words 'queue words' >/dev/null 2>&1 || fail "entry failed"
+  (
+    # shellcheck source=bin/fm-afk-contract.sh
+    . "$CONTRACT"
+    fm_afk_contract_queue_record "$home/state" "$base/7"
+    fm_afk_contract_queue_record "$home/state" "$base/8"   # no forge answer: unreadable
+  ) || fail "recording queue entries failed"
+  # A forge hiccup never blocks the return: the record is archived regardless.
+  out=$(queue_contract "$home" archive 2>&1) || fail "a forge failure blocked the archive: $out"
+  [ ! -f "$home/state/.afk-contract" ] || fail "the record still stands after archive"
+  printf '%s\n' "$out" | grep -q 'run fm-afk-contract.sh queue-sweep' || fail "the left-behind entries were not reported: $out"
+  [ "$(sort "$home/state/.afk-contract.queue")" = "$(printf 'pr=%s\npr=%s\n' "$base/7" "$base/8")" ] \
+    || fail "unresolved entries were not kept: $(cat "$home/state/.afk-contract.queue")"
+  # The forge recovers: queue-sweep retries and resolves everything.
+  rm -f "$home/forge/dequeue-fails"
+  printf 'ID8 CLOSED false false\n' >"$home/forge/8"
+  queue_contract "$home" queue-sweep >/dev/null 2>&1 || fail "queue-sweep did not resolve after the forge recovered"
+  [ "$(cat "$home/forge/dequeue.log")" = 'dequeue ID7' ] || fail "the retry did not dequeue the queued entry"
+  [ ! -e "$home/state/.afk-contract.queue" ] || fail "the resolved queue list was not removed"
+  # A damaged line is kept for a human, never silently dropped.
+  printf 'pr=not-a-url\n' >"$home/state/.afk-contract.queue"
+  if queue_contract "$home" queue-sweep >/dev/null 2>&1; then
+    fail "a non-URL entry must keep the sweep failing"
+  fi
+  [ "$(cat "$home/state/.afk-contract.queue")" = 'pr=not-a-url' ] || fail "the damaged entry was dropped"
+  pass "archive never blocks on a forge failure, keeps unresolved queue entries, and queue-sweep retries them"
+}
+
 test_inputs_are_validated() {
   local home out rc
   home=$(make_home inputs)
@@ -678,6 +775,8 @@ test_failed_final_replacement_rolls_back_the_superseded_archive
 test_validation_rejects_damaged_words_blocks
 test_a_damaged_words_line_never_truncates_the_mandate
 test_archive_moves_the_record_aside_and_is_idempotent
+test_archive_dequeues_every_recorded_pull_request_still_queued
+test_archive_keeps_entries_the_forge_cannot_read_or_dequeue_and_sweep_retries
 test_inputs_are_validated
 test_retired_clause_and_grant_inputs_are_usage_errors_by_name
 test_version_1_record_still_validates_reads_and_archives

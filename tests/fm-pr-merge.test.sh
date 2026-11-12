@@ -2969,6 +2969,13 @@ test_github_queue_base_enqueues_and_waits_until_merged() {
       "queue-merge-$posture: the pull request was not recorded"
     assert_grep "pr_head=$QUEUE_HEAD" "$case_dir/state/task-x1.meta" \
       "queue-merge-$posture: the verified head was not recorded"
+    if [ "$posture" = away ]; then
+      assert_grep "pr=$QUEUE_URL" "$case_dir/state/.afk-contract.queue" \
+        "queue-merge-away: the enqueue was not recorded in the away queue list"
+    else
+      [ ! -e "$case_dir/state/.afk-contract.queue" ] \
+        || fail "queue-merge-attended: an attended enqueue was recorded in the away queue list"
+    fi
     [ "$(grep -c -F "$QUEUE_URL" "$case_dir/state/.wake-queue")" -eq 1 ] \
       || fail "queue-merge-$posture: the landing did not leave exactly one durable outcome"
   done
@@ -3199,6 +3206,8 @@ test_github_queue_route_is_for_method_only_callers() {
   expect_code 0 "$rc" "queue-auto-direct: an explicit --auto must keep the direct route"
   assert_no_grep '^enqueue' "$case_dir/events.log" "queue-auto-direct: --auto was enqueued directly"
   assert_grep 'pr merge' "$case_dir/gh.log" "queue-auto-direct: --auto did not reach gh pr merge"
+  [ ! -e "$case_dir/state/.afk-contract.queue" ] \
+    || fail "queue-auto-direct: an attended --auto was recorded in the away queue list"
 
   # Any other extra argument cannot ride an enqueue, so it keeps the direct route.
   case_dir=$(make_queue_case queue-body-direct)
@@ -3228,6 +3237,115 @@ test_github_queue_with_unreadable_rules_still_refuses_while_away() {
     "queue-away-unreadable: the refusal did not explain the away restriction"
   assert_nothing_enqueued_or_merged "$case_dir" queue-away-unreadable
   pass "fm-pr-merge still refuses an away merge whose queue state cannot be read"
+}
+
+# FM-1: the one asynchronous request away authority allows is the exact
+# --auto --<method> enqueue of a single recognised queue method. It rides the
+# direct route, runs the same pre-enqueue queue read and no-mistakes handoff as
+# the queue route (FM-3), and is recorded in the away queue list so the
+# record's archive can dequeue it.
+test_away_queue_method_auto_enqueue_runs_under_away_authority() {
+  local case_dir rc
+  case_dir=$(make_queue_case queue-away-auto)
+  write_nm_run "$case_dir" fm/queue-branch ci
+  write_queue_read "$case_dir" 1 OPEN false false ''
+  write_github_outcome "$case_dir" OPEN false true main
+  write_away_record "$case_dir" --words 'merge task-x1 when green'
+
+  set +e
+  run_queue_merge "$case_dir" --attended-override -- --auto --squash
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "queue-away-auto: the exact enqueue flags must run under away authority"
+  assert_logged_gh_merge "$case_dir" 91 example/repo --auto --squash
+  [ "$(sed -n 1p "$case_dir/events.log")" = 'read 1' ] \
+    || fail "queue-away-auto: the enqueue ran without a pre-enqueue queue read"
+  grep -qxF 'axi handoff' "$case_dir/nm.log" \
+    || fail "queue-away-auto: the CI monitor was not ended before the enqueue"
+  [ "$(grep -n '^handoff' "$case_dir/events.log" | cut -d: -f1)" -gt 1 ] \
+    || fail "queue-away-auto: the handoff ran before the queue read"
+  assert_no_grep '^enqueue' "$case_dir/events.log" \
+    "queue-away-auto: the --auto path enqueued directly through GraphQL"
+  assert_grep "pr=$QUEUE_URL" "$case_dir/state/.afk-contract.queue" \
+    "queue-away-auto: the enqueued pull request was not recorded in the away queue list"
+  assert_grep 'queued under away authority' "$case_dir/stderr" \
+    "queue-away-auto: the recording was not reported"
+  assert_grep "verified: $QUEUE_URL is queued" "$case_dir/stdout" \
+    "queue-away-auto: the queue entry was not reported verified"
+
+  # An accepted enqueue that cannot be recorded can never be dequeued by the
+  # archive, so the run refuses loudly instead of reporting it.
+  case_dir=$(make_queue_case queue-away-auto-unrecordable)
+  write_queue_read "$case_dir" 1 OPEN false false ''
+  write_github_outcome "$case_dir" OPEN false true main
+  write_away_record "$case_dir" --words 'merge task-x1 when green'
+  mkdir "$case_dir/state/.afk-contract.queue"
+  set +e
+  run_queue_merge "$case_dir" --attended-override -- --auto --squash
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "queue-away-auto-unrecordable: an enqueue that cannot be recorded must refuse"
+  assert_grep 'actionable: the forge accepted the queue enqueue' "$case_dir/stderr" \
+    "queue-away-auto-unrecordable: the failed recording was not loud"
+  pass "fm-pr-merge runs the exact --auto --<method> enqueue under away authority, hands off first, and records it for the archive"
+}
+
+test_away_auto_enqueue_shapes_without_a_proven_method_are_refused() {
+  local case_dir rc label
+  # A single queue method with the wrong method flag, no method flag, or an
+  # extra argument riding along is not the enqueue away authority allows.
+  for label in wrong-method no-method extra-arg; do
+    case_dir=$(make_queue_case "queue-away-auto-$label")
+    write_away_record "$case_dir" --words 'merge task-x1 when green'
+    set +e
+    case "$label" in
+      wrong-method) run_queue_merge "$case_dir" --attended-override -- --auto --merge ;;
+      no-method) run_queue_merge "$case_dir" --attended-override -- --auto ;;
+      extra-arg) run_queue_merge "$case_dir" --attended-override -- --auto --squash --subject riding-along ;;
+    esac >"$case_dir/stdout" 2>"$case_dir/stderr"
+    rc=$?
+    set -e
+    expect_code 2 "$rc" "queue-away-auto-$label: the shape must refuse while away"
+    assert_grep 'only the exact enqueue flags --auto --squash and nothing else may run' "$case_dir/stderr" \
+      "queue-away-auto-$label: the refusal did not name the one allowed enqueue"
+    assert_nothing_enqueued_or_merged "$case_dir" "queue-away-auto-$label"
+    [ ! -e "$case_dir/state/.afk-contract.queue" ] \
+      || fail "queue-away-auto-$label: a refused enqueue was recorded in the away queue list"
+  done
+
+  # Conflicting or unreadable queue rules prove no single method, so no away
+  # enqueue can be named at all.
+  for label in conflicting unreadable; do
+    case_dir=$(make_queue_case "queue-away-auto-$label")
+    [ "$label" = conflicting ] \
+      && printf 'merge_method=SQUASH\nmerge_method=MERGE\n' >"$case_dir/github-rules" \
+      || : >"$case_dir/github-rules-fail"
+    write_away_record "$case_dir" --words 'merge task-x1 when green'
+    set +e
+    run_queue_merge "$case_dir" --attended-override -- --auto --squash >"$case_dir/stdout" 2>"$case_dir/stderr"
+    rc=$?
+    set -e
+    expect_code 2 "$rc" "queue-away-auto-$label: the rules must refuse the away --auto"
+    assert_grep 'merge-queue state does not prove an immediate merge' "$case_dir/stderr" \
+      "queue-away-auto-$label: the refusal did not explain the away restriction"
+    assert_nothing_enqueued_or_merged "$case_dir" "queue-away-auto-$label"
+  done
+
+  # A base with no merge queue rule has no enqueue that could carry --auto.
+  case_dir=$(make_queue_case queue-away-auto-no-queue)
+  : > "$case_dir/github-rules"
+  write_away_record "$case_dir" --words 'merge task-x1 when green'
+  set +e
+  run_queue_merge "$case_dir" --attended-override -- --auto --squash
+  rc=$?
+  set -e
+  expect_code 2 "$rc" "queue-away-auto-no-queue: --auto on a base with no queue must refuse while away"
+  assert_grep '--auto is attended-only while the away-posture record exists' "$case_dir/stderr" \
+    "queue-away-auto-no-queue: the refusal did not keep --auto attended-only"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "queue-away-auto-no-queue: gh pr merge ran for an away --auto with no queue"
+  pass "fm-pr-merge refuses every away --auto shape but the one proven enqueue"
 }
 
 # FM-3: nothing may rebase or push to a pull request once it is queued.
@@ -5079,6 +5197,8 @@ test_github_queue_enqueue_that_is_not_accepted_refuses_without_waiting
 test_github_queue_head_that_moved_is_not_enqueued
 test_github_queue_route_is_for_method_only_callers
 test_github_queue_with_unreadable_rules_still_refuses_while_away
+test_away_queue_method_auto_enqueue_runs_under_away_authority
+test_away_auto_enqueue_shapes_without_a_proven_method_are_refused
 test_github_queue_ends_the_ci_monitor_before_enqueueing
 test_github_queue_refuses_while_a_pipeline_could_still_push
 test_github_queue_ignores_a_run_on_another_branch_or_none
