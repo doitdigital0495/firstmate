@@ -3121,6 +3121,65 @@ crew_away_long_wait_class() {  # <id>
   [ -z "$class" ] || printf '%s\n' "$class"
 }
 
+# 0 when crew <id>'s authoritative current state is an attributed no-mistakes run
+# whose ci step reads fixing: the whole `ci step: fixing` component and the whole
+# `run: <id>` and `pr: <url>` components that bin/fm-crew-state.sh mints. A run
+# with no PR, a parked, terminal, coarse or unreadable verdict, and free text that
+# merely contains the words are not this evidence, because nothing then names a PR
+# to land. On success it prints `<run-id> <pr-url>`.
+# The forge read is skipped (FM_CREW_STATE_NO_FORGE=1) like every periodic scan;
+# one fm-crew-state.sh read per call, with the usual caveat that it may make a
+# bounded no-mistakes call.
+crew_ci_fixing_run() {  # <id> -> "<run-id> <pr-url>" on stdout
+  local id=$1 line state src rest part fixing='' run='' pr=''
+  [ -n "$id" ] || return 1
+  line=$(FM_CREW_STATE_NO_FORGE=1 "$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+  case "$line" in state:*) ;; *) return 1 ;; esac
+  state=${line#state: }; state=${state%% *}
+  [ "$state" = working ] || return 1
+  src=${line#*source: }; src=${src%% *}
+  [ "$src" = run-step ] || return 1
+  rest="$line · "
+  while [ -n "$rest" ]; do
+    part=${rest%% · *}
+    rest=${rest#* · }
+    case "$part" in
+      'ci step: fixing') fixing=1 ;;
+      "run: "?*) run=${part#run: } ;;
+      "pr: "?*) pr=${part#pr: } ;;
+    esac
+  done
+  [ -n "$fixing" ] && [ -n "$run" ] && [ -n "$pr" ] || return 1
+  case "$run$pr" in *[[:space:]]*) return 1 ;; esac
+  printf '%s %s\n' "$run" "$pr"
+}
+
+# 0 when a GitHub pull request is OPEN, not a draft, and every check the forge
+# reports on its current head is green (a check run COMPLETED as SUCCESS, NEUTRAL
+# or SKIPPED, or a status context in SUCCESS), with at least one check reported.
+# Anything else - another forge, an unreadable or empty answer, no checks, a
+# pending or red check, a closed or merged PR - is 1, so a failed read can never
+# read as green. The rollup is the forge's own current-head view, where a re-run
+# check replaces the run it superseded, so the strict reading needs no
+# supersession rule of its own (bin/fm-pr-merge.sh keeps that for the merge gate,
+# which this never replaces). One `gh` call bounded to FM_FORGE_READ_SECS (15).
+# Needs bin/fm-pr-lib.sh sourced, as bin/fm-watch.sh does.
+pr_forge_checks_green() {  # <pr-url>
+  local url=$1 json secs=${FM_FORGE_READ_SECS:-15}
+  fm_pr_url_parse "$url" 2>/dev/null && [ "$FM_PR_PROVIDER" = github ] || return 1
+  case "$secs" in ''|0*|*[!0-9]*) secs=15 ;; esac
+  json=$(fm_pr_github_host_export "$FM_PR_HOST"; fm_run_timed "$secs" gh pr view "$url" --json state,isDraft,statusCheckRollup 2>/dev/null) || return 1
+  [ -n "$json" ] || return 1
+  printf '%s' "$json" | jq -e '
+    type == "object" and .state == "OPEN" and .isDraft == false
+    and (.statusCheckRollup | type) == "array" and (.statusCheckRollup | length) > 0
+    and all(.statusCheckRollup[];
+      if .__typename == "CheckRun" then
+        .status == "COMPLETED" and (.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED")
+      else .state == "SUCCESS" end)
+  ' >/dev/null 2>&1
+}
+
 # Directories excluded from the worktree write probe below, and the depth it walks.
 # The excluded set is everything a supervisor read or a package manager can write
 # without the crew doing any work - .git first, so firstmate's own read-only git

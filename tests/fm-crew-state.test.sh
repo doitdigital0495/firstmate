@@ -1544,6 +1544,69 @@ test_top_level_fixing_ci_running_after_green_stays_working() {
   pass "top-level fixing is not overridden by a stale ci running row"
 }
 
+run_ci_status_fixing_step() {  # <branch> <pr>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: ci
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: "$2"
+  findings: none
+  steps[4]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,completed,0,0
+    push,completed,0,0
+    ci,fixing,0,0
+EOF
+}
+
+# A ci step that reads fixing is its own whole component, with the run's PR, so a
+# watcher can recognise a fix round that never ended (crew_ci_fixing_run). Neither
+# a plain ci monitor nor a fix round outside the ci step may mint it.
+test_ci_step_fixing_mints_its_own_components() {
+  reset_fakes
+  local d; d=$(new_case ci-step-fixing-components)
+  make_repo_on_branch "$d/wt" fm/feat-cistepfix
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-cistepfix.meta" "window=fm:fm-feat-cistepfix" "worktree=$d/wt" "kind=ship"
+  local out
+  # Only the inventory path assigns a run id (see the run-id-last test above), so
+  # the fixture carries a real overview and the same run's detail answer.
+  FM_FAKE_AXI_HOME="count: 1 of 1 total
+runs[1]{id,branch,status,head,pr}:
+  01RUN,fm/feat-cistepfix,running,${FM_FAKE_RUN_HEAD},\"https://github.com/o/r/pull/2\""
+  FM_FAKE_AXI_STATUS="$(run_ci_status_fixing_step fm/feat-cistepfix https://github.com/o/r/pull/2)"
+  FM_FAKE_AXI_STATUS_RUN="$FM_FAKE_AXI_STATUS"
+  out=$(run_crew_state "$d" feat-cistepfix)
+  assert_contains "$out" "state: working" "a ci step in fixing stays working"
+  assert_contains "$out" " · ci step: fixing" "ci step fixing is its own component"
+  assert_contains "$out" " · pr: https://github.com/o/r/pull/2" "the run's PR is its own component"
+  assert_contains "$out" " · run: 01RUN" "the run id is still named"
+
+  FM_FAKE_AXI_STATUS="$(run_ci_status_fixing_step fm/feat-cistepfix "")"
+  FM_FAKE_AXI_STATUS_RUN="$FM_FAKE_AXI_STATUS"
+  out=$(run_crew_state "$d" feat-cistepfix)
+  assert_contains "$out" " · ci step: fixing" "a run with no PR still names the ci step"
+  assert_not_contains "$out" " · pr: " "a run with no PR names none"
+
+  FM_FAKE_AXI_STATUS="$(run_ci_fixing fm/feat-cistepfix)"
+  FM_FAKE_AXI_STATUS_RUN="$FM_FAKE_AXI_STATUS"
+  out=$(run_crew_state "$d" feat-cistepfix)
+  assert_contains "$out" " · ci step: fixing" "a top-level fixing run whose ci row fixes names the ci step"
+
+  FM_FAKE_AXI_STATUS="$(run_fixing fm/feat-cistepfix)"
+  FM_FAKE_AXI_STATUS_RUN="$FM_FAKE_AXI_STATUS"
+  out=$(run_crew_state "$d" feat-cistepfix)
+  assert_not_contains "$out" "ci step: fixing" "a fix round outside the ci step does not mint it"
+
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-cistepfix)"
+  FM_FAKE_AXI_STATUS_RUN="$FM_FAKE_AXI_STATUS"
+  out=$(run_crew_state "$d" feat-cistepfix)
+  assert_not_contains "$out" "ci step: fixing" "a plain ci monitor does not mint it"
+  pass "the ci step reading fixing is minted as its own component with the run's PR"
+}
+
 test_top_level_fixing_done_log_stays_working() {
   reset_fakes
   local d; d=$(new_case top-level-fixing-done-log)
@@ -6798,6 +6861,7 @@ test_ci_ready_done_log_relapse_stays_working
 test_ci_fixing_after_green_stays_working
 test_top_level_fixing_ci_running_after_green_stays_working
 test_top_level_fixing_done_log_stays_working
+test_ci_step_fixing_mints_its_own_components
 test_terminal_passed
 test_terminal_passed_with_override
 test_terminal_passed_with_skips

@@ -131,6 +131,12 @@
 #                          while away only, lanes CI-active, parked at a base
 #                          rebase, or idle on a green PR past their threshold;
 #                          away_long_wait_tick owns the scan and its repeats
+#   check: run stuck at ci=fixing with forge green: <task> <pr-url> run <id> <age>s (threshold <n>s)[; ...]
+#                          opt-in config/ci-fixing-green: a no-mistakes run whose
+#                          ci step has read fixing for the hold while the forge
+#                          reports the PR open with every check green: land it through bin/fm-pr-merge.sh, never
+#                          automatically; ci_fixing_green_tick owns the scan and
+#                          its repeats
 #   check: drive floor: <n> working < <floor> <age>s (threshold <n>s): idle: <task>=<state>[, ...]
 #                          opt-in config/drive-floor busy-lane backstop: fewer
 #                          than the configured floor of lanes actually working
@@ -3018,6 +3024,88 @@ EOF
   fm_wake_append check away-long-wait "$AWAY_LONG_WAIT" || return 1
 }
 
+# A no-mistakes run can stay at ci=fixing after its flaky-test rerun succeeded:
+# the forge is green, yet the pipeline never reports done, and the lane's ci step
+# looks like ordinary working so no stale or wedge path ever surfaces it. Scan each
+# task with a meta record once per CI_FIXING_GREEN_SCAN_SECS; a lane whose run has
+# held the `ci step: fixing` reading (crew_ci_fixing_run, bin/fm-classify-lib.sh)
+# for CI_FIXING_GREEN_HOLD_SECS (FM_CI_FIXING_GREEN_HOLD_SECS, default 900) is then
+# checked against the forge once (pr_forge_checks_green), and only a PR the forge
+# reports open with every check green becomes ONE check wake naming the PR, so
+# firstmate can land it through bin/fm-pr-merge.sh. Nothing here merges, tears
+# down or touches the run. A red, pending, unreadable or absent forge answer stays
+# silent: that run really is fixing, or nothing proves otherwise.
+# STATE/.ci-fixing-green stores <task> TAB <run> TAB <first-seen> TAB
+# <last-escalated>; a lane that leaves the reading or changes run drops its row, so
+# the next episode starts fresh. An escalated lane repeats once per
+# PAUSE_RESURFACE_SECS while it stays put. OFF unless the home creates
+# config/ci-fixing-green: the scan costs one crew-state read per lane, and an
+# unarmed home keeps the byte-identical behaviour of spending none (the same
+# opt-in shape as config/wedge-defer-validating). Read-only: the crew-state read
+# skips the forge, and removing the flag drops the ledger.
+CI_FIXING_GREEN_SCAN_SECS=${FM_CI_FIXING_GREEN_SCAN_SECS:-}
+case "$CI_FIXING_GREEN_SCAN_SECS" in ''|*[!0-9]*) CI_FIXING_GREEN_SCAN_SECS=300 ;; esac
+CI_FIXING_GREEN_HOLD_SECS=${FM_CI_FIXING_GREEN_HOLD_SECS:-}
+case "$CI_FIXING_GREEN_HOLD_SECS" in ''|0*|*[!0-9]*) CI_FIXING_GREEN_HOLD_SECS=900 ;; esac
+[ "${#CI_FIXING_GREEN_HOLD_SECS}" -le 9 ] || CI_FIXING_GREEN_HOLD_SECS=900
+ci_fixing_green_tick() {  # [now-epoch], for deterministic clock callers
+  local now=${1:-} ledger="$STATE/.ci-fixing-green" scan="$STATE/.ci-fixing-green-scan"
+  local old='' rows='' due='' f task verdict run pr since last exclude tmp kind
+  local old_task old_run old_since old_last
+  CI_FIXING_GREEN=
+  if [ ! -e "$CONFIG/ci-fixing-green" ]; then
+    rm -f -- "$ledger" "$scan"
+    return 0
+  fi
+  [ -n "$now" ] || fm_epoch_seconds_to now
+  if [ -f "$scan" ]; then
+    last=$(cat "$scan" 2>/dev/null) || last=
+    case "$last" in ''|*[!0-9]*) last=0 ;; esac
+    [ "$now" -lt "$last" ] || [ "$((now - last))" -ge "$CI_FIXING_GREEN_SCAN_SECS" ] || return 0
+  fi
+  printf '%s\n' "$now" > "$scan" || return 1
+  if [ -e "$ledger" ] || [ -L "$ledger" ]; then
+    [ -f "$ledger" ] && [ -r "$ledger" ] && [ ! -L "$ledger" ] || return 1
+    old=$(cat "$ledger") || return 1
+  fi
+  exclude=$(status_scan_parent_channel_exclude "$STATE")
+  for f in "$STATE"/*.status; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    [ "$f" != "$exclude" ] || continue
+    task=${f##*/}; task=${task%.status}
+    [ -f "$STATE/$task.meta" ] || continue
+    kind=$(grep '^kind=' "$STATE/$task.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+    [ "$kind" != secondmate ] || continue
+    verdict=$(crew_ci_fixing_run "$task") || continue
+    run=${verdict%% *}; pr=${verdict#* }
+    since=$now; last=0
+    while IFS=$'\t' read -r old_task old_run old_since old_last; do
+      [ "$old_task" = "$task" ] && [ "$old_run" = "$run" ] || continue
+      case "$old_since:$old_last" in *[!0-9:]*|:*) continue ;; esac
+      [ "${#old_since}" -le 12 ] && [ "${#old_last}" -le 12 ] || continue
+      since=$((10#$old_since)); last=$((10#${old_last:-0}))
+      break
+    done <<EOF
+$old
+EOF
+    if [ "$now" -ge "$since" ] && [ "$((now - since))" -ge "$CI_FIXING_GREEN_HOLD_SECS" ] \
+      && { [ "$last" -eq 0 ] || [ "$((now - last))" -ge "$PAUSE_RESURFACE_SECS" ]; } \
+      && pr_forge_checks_green "$pr"; then
+      due="${due:+$due; }$task $pr run $run $((now - since))s (threshold ${CI_FIXING_GREEN_HOLD_SECS}s)"
+      last=$now
+    fi
+    rows="$rows$task"$'\t'"$run"$'\t'"$since"$'\t'"$last"$'\n'
+  done
+  tmp=$(mktemp "$STATE/.ci-fixing-green.XXXXXX") || return 1
+  if ! printf '%s' "$rows" > "$tmp" || ! mv -f "$tmp" "$ledger"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  [ -n "$due" ] || return 0
+  CI_FIXING_GREEN="check: run stuck at ci=fixing with forge green: $due"
+  fm_wake_append check ci-fixing-green "$CI_FIXING_GREEN" || return 1
+}
+
 # Drive-floor backstop (docs/configuration.md "Drive floor"): with the floor
 # configured, fewer than that many ACTUALLY WORKING lanes is a defect to
 # explain even when many lanes merely look busy. A lane counts as working only
@@ -4333,6 +4421,12 @@ while :; do
     exit 1
   }
   [ -z "$AWAY_LONG_WAIT" ] || wake "$AWAY_LONG_WAIT"
+
+  ci_fixing_green_tick || {
+    echo 'watcher: ci-fixing-green check failed' >&2
+    exit 1
+  }
+  [ -z "$CI_FIXING_GREEN" ] || wake "$CI_FIXING_GREEN"
 
   drive_floor_tick || {
     echo 'watcher: drive-floor check failed' >&2

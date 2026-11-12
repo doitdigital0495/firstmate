@@ -1091,6 +1091,22 @@ With the flag absent the wedge timer spends no current-state read for it and kee
 The flag is a home-local supervision-noise preference and is not inherited by secondmate homes.
 [`architecture.md`](architecture.md) owns the deferral contract and `bin/fm-classify-lib.sh`'s `crew_run_is_validating` owns which verdicts count.
 
+## Stuck ci=fixing recognition (config/ci-fixing-green)
+
+The optional local, gitignored `config/ci-fixing-green` presence flag opts this home into a default-off watcher scan for a no-mistakes run that stays at `ci=fixing` after the forge went green.
+Such a run looks like ordinary working validation, so no stale or wedge path ever surfaces the finished lane.
+With the flag present, the watcher reads each lane through `bin/fm-crew-state.sh`, which names a ci step that reads fixing as its own `ci step: fixing` component beside the run's `pr: <url>`.
+Once a run has held that reading for `FM_CI_FIXING_GREEN_HOLD_SECS` seconds (default `900`), the watcher asks the forge once whether that GitHub pull request is open, not a draft, and has every reported check green on its current head.
+Only then does it queue one `check: run stuck at ci=fixing with forge green: <task> <pr-url> run <id> <age>s (threshold <n>s)` wake naming the pull request, so firstmate can land it through `bin/fm-pr-merge.sh`.
+A pending, red, absent, unreadable or non-GitHub forge answer stays silent, and nothing merges, tears down or touches the run or the lane.
+
+The wake repeats once per `FM_PAUSE_RESURFACE_SECS` while the lane stays put.
+Scans run at most once per `FM_CI_FIXING_GREEN_SCAN_SECS` seconds (default `300`) and cost one current-state read per lane plus one bounded forge read for a lane past the hold.
+A lane that leaves the reading or changes run starts a fresh clock, and removing the flag drops the ledger.
+With the flag absent the watcher spends no current-state or forge read for it.
+The flag is home-local and is not inherited by secondmate homes.
+`bin/fm-watch.sh`'s `ci_fixing_green_tick` owns the scan and its repeats, which persist across watcher restarts, and `bin/fm-classify-lib.sh`'s `crew_ci_fixing_run` and `pr_forge_checks_green` own which verdicts and forge answers count.
+
 ## Spawn base from the primary checkout (config/spawn-base-primary-checkout)
 
 The optional local, gitignored `config/spawn-base-primary-checkout` presence flag opts this home into a default-off base for fresh task worktrees on projects that land work locally.
