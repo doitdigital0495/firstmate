@@ -441,7 +441,7 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
     elif any($c[]; type != "object" or any(.[]; type != "number")) then "each capability entry must be an object of numbers (index, terminal_bench, gdpval)"
     else null end;
   def known_top: ["preferred_provider", "shared_quota", "weekly_guard", "ranking", "plan_value", "rules", "default", "pipeline_rows", "seat_tiers_by_delivery", "model_notes", "claude3_policy", "ladder_policy", "ladder_rungs", "default_ladder", "capability"];
-  def known_rule: ["when", "use", "label", "why", "approval", "min_confidence", "select", "floor", "never_providers", "never_models", "strict_tiers", "ladder"];
+  def known_rule: ["when", "use", "label", "why", "approval", "min_confidence", "select", "floor", "never_providers", "never_models", "strict_tiers", "seat_pacing", "ladder"];
   ([(.rules // []) | to_entries[] | .key as $i | claude3_problem("rule \($i + 1)"; profiles(.value.use))]
     + [claude3_problem("default"; profiles(.default // null))] | map(select(. != null))) as $c3 |
   ([keys_unsorted[] | . as $k | select(known_top | index($k) == null)]) as $top_unknown |
@@ -475,6 +475,7 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   elif any(((.rules // [])[] | profiles(.use)[]), profiles(.default)[], ((.pipeline_rows // [])[] | .use[]);
     . as $p | (.harness == "claude" and ((.model == "opus" or .model == "sonnet") and .effort == "max" or .model == "fable" and (["xhigh", "max", "ultra"] | index($p.effort)) != null)) or
     ((.harness == "pi" or .harness == "pi-signed") and (.provider == "anthropic" or .provider == "claude" or ((.model // "") | startswith("anthropic/"))))) then "forbidden routing profile: no Claude max, Fable above high, or Claude through Pi"
+  elif any((.rules // [])[]; has("seat_pacing") and (.seat_pacing | type) != "boolean") then "seat_pacing must be boolean"
   elif any((.rules // [])[]; has("strict_tiers") and (.strict_tiers | type) != "boolean") then "strict_tiers must be boolean"
   elif any((.rules // [])[]; has("approval") and .approval != "captain") then "approval must be \"captain\" when present"
   elif any((.rules // [])[]; has("min_confidence") and ((.min_confidence | type) != "number" or .min_confidence < 0 or .min_confidence > 1)) then "min_confidence must be a number from 0 through 1 when present"
@@ -1252,6 +1253,32 @@ FM_DR_SEAT_JQ='
          reading_age: $reading_age, eligible: true, reason: "ok"}
       end
     end;
+  # Weekly pacing is advisory: unknown pace never authorizes skipping a seat.
+  def weekly_pace($c):
+    (provider_of($c)) as $p | (lane_of($c)) as $lane |
+    (account_quota($c) | applicable_window_ids($p; $lane; ($c.model // ""); ($c.quota_scope // null))) as $ids |
+    (account_quota($c) | [provider_windows($p; $lane)[] |
+      select(.kind == "weekly" or .id == "seven_day") |
+      select(.id as $id | $ids | index($id)) |
+      if (.pace.burnMultiple | type) == "number" then .pace.burnMultiple
+      elif (.percentRemaining | type) == "number" and (.pace.timeRemainingPercent | type) == "number" and .pace.timeRemainingPercent < 100
+      then (100 - .percentRemaining) / (100 - .pace.timeRemainingPercent)
+      else null end]) as $paces |
+    if ($paces | length) == 0 or any($paces[]; . == null) then null else $paces | max end;
+  def pace_guard($enabled):
+    def ready: .eligible and ((.unranked // false) | not) and ((.incomplete // false) | not) and ((.sq // false) | not);
+    if $enabled != true or $sq then .
+    else map(if ready then . + {weekly_pace: weekly_pace(.profile)} else . end) as $cs |
+      $cs | map(. as $c |
+        if ready and (.weekly_pace // 0) > 1.5 and (.profile.reasoning_class | type) == "number" and
+          any($cs[]; ready and .weekly_pace != null and .weekly_pace <= 1.5 and
+            .profile.reasoning_class == $c.profile.reasoning_class and
+            (.profile.account // .provider) != ($c.profile.account // $c.provider) and
+            (.reserve // false) == ($c.reserve // false) and
+            ($cfg.preferred_provider == null or .provider == $c.provider))
+        then . + {eligible: false, pacing_skipped: true, reason: "weekly pace \(.weekly_pace)x exceeds 1.5x; equal-class seat available"}
+        else . end)
+    end;
   # A five-hour window that cannot hold the seat stays visible on its line.
   def five_hour_state($w):
     if ($w.percentRemaining | type) != "number" then "unreadable, does not block"
@@ -1524,7 +1551,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
       ([row_use($id)[] | . as $c | (provider_of($c)) as $p |
         (if $rf == "below" then {profile: $c, provider: $p, eligible: false, reason: "row floor \(rule_at($id).floor.scope) below \(rule_at($id).floor.min_percent)%"}
          elif fable_gated($c) then {profile: $c, provider: $p, eligible: false, reason: fable_gate_reason($c)}
-         else evaluate($c) end) + plan_for($c; $p)] | weekly_guard | claude3_floor(row_use($id)) | reserve_tier | seat_tier_hold(rule_at($id).strict_tiers == true) | skip_unreadable) as $cs |
+         else evaluate($c) end) + plan_for($c; $p)] | weekly_guard | claude3_floor(row_use($id)) | reserve_tier | seat_tier_hold(rule_at($id).strict_tiers == true) | skip_unreadable | pace_guard(rule_at($id).seat_pacing)) as $cs |
       ([$cs[] | select(.eligible and ((.unranked // false) | not) and ((.incomplete // false) | not)) | .profile.reasoning_class | select(type == "number")] | max // null) as $strongest |
       {id: $id, order: $order, when: (if $id == "default" then $none_criterion else rule_at($id).when end),
        approval: (rule_at($id).approval // null), row_floor: $rf,
@@ -1645,7 +1672,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
        five_hour_guard_hit(.) as $w |
        if $w == null then . else . + {guard_waived: "five-hour guard waived: \($w.id) \($w.percentRemaining)% left, under \($guard.floor)% \($guard.period), but no other seat can start"} end
      else . end]
-   else $guarded end | burst_adjust) as $cands |
+   else $guarded end | burst_adjust | pace_guard(if $ladder_row_id == null then false else rule_at($ladder_row_id).seat_pacing end)) as $cands |
   ([$cands[] | select(.incomplete)]) as $incomplete |
   def when_of($c): (if rule_at($c) == null then $none_criterion else rule_at($c).when end | .[0:60]);
   ({
@@ -1722,6 +1749,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
                + (if ($winner.reserve_active // false) then "; \($winner.reason)" else "" end)
                + ([$cands[] | select(.unreadable) | seat_label] as $skipped | if ($skipped | length) > 0 then "; quota unreadable, skipped: \($skipped | join(", "))" else "" end)
                + ([$cands[] | select(.five_hour_guard) | seat_label] as $held | if ($held | length) > 0 then "; five-hour guard held: \($held | join(", "))" else "" end)
+               + ([$cands[] | select(.pacing_skipped) | seat_label] as $paced | if ($paced | length) > 0 then "; weekly pacing skipped: \($paced | join(", "))" else "" end)
                + ([$cands[] | select(.burst) | "\(seat_label) \(.spendPriority) -> \(.rank_priority) after \(.burst.starts) recent start(s)"] as $debited
                   | if ($debited | length) > 0 then "; burst debit: \($debited | join(", "))" else "" end)), candidates: $cands, chosen: $winner, row: $winner_row}
         + (if $tb.tie_break then {tie_break: $tb.tie_break, tie_round_robin: ($tb.round_robin // false)} else {} end)
@@ -1944,6 +1972,7 @@ TEXT=$(jq -r '
       + (if .five_hour_open then "  " + (.five_hour_open | map(flat) | join("  ")) else "" end)
       + (if .surplus != null then "  surplus=\(.surplus) value=\(.value) band=\(if .band then "yes" else "no" end)" else "" end)
       + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))"
+          + (if .weekly_pace != null then " weekly_pace=\(.weekly_pace | flat)x" else "" end)
           + (if .burst then " burst_debit=\(.burst.debit | flat)pt/\(.burst.starts | flat)start(s) ranks=\(.rank_priority | flat)" else "" end)
           + "  runway=\(show(.runway))" else "" end)
       + (if (.bounds // [] | length) > 1 then "  bounds=" + ([.bounds[] | "\(.scope | flat):\(show(.pct))%/\((.runway // .status) | flat)"] | join(",")) else "" end)

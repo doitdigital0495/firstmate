@@ -315,6 +315,7 @@
         "codex",
         "zai"
       ],
+      "seat_pacing": true,
       "label": "Plan or architecture"
     },
     {
@@ -501,6 +502,7 @@
       "never_providers": [
         "zai"
       ],
+      "seat_pacing": true,
       "label": "Front-end design"
     },
     {
@@ -578,6 +580,7 @@
     },
     {
       "label": "Security-sensitive or destructive change",
+      "seat_pacing": true,
       "when": "security-sensitive or destructive change: writing or changing code, configuration or infrastructure that handles credentials or secrets, sign-in, permissions or access grants, payments, deletes or migrates stored data, or changes production infrastructure - whatever its size. This rule takes precedence over the implementation and trivial-edit rules. A pure review of such a diff stays with the hard-bug and pre-ship review rule",
       "use": [
         {

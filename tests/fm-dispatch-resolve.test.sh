@@ -894,6 +894,55 @@ JSON
 run preview --json
 expect_code 0 "$code" "default ranking preview: $out"
 assert_equals claude2 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'default keeps spendPriority'
+# Heavy rows opt in explicitly; light and existing rows keep their ranking.
+cp "$RULES" "$TMP_ROOT/pre-pace-rules"
+rank_quota "$TMP_ROOT/rank-c1" claude 80 50 1 2030-01-04T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 20 50 9 2030-01-05T00:00:00Z
+run preview --json
+assert_equals claude2 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'unconfigured light row ignores 1.6x burn'
+jq '.rules[0].seat_pacing=true' "$RULES" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$RULES"
+run preview --json
+expect_code 0 "$code" "paced preview: $out"
+assert_equals claude1 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'equal-class seat replaces 1.6x seat'
+assert_equals true "$(jq '.workers[0].candidates[] | select(.profile.account=="claude2") | .pacing_skipped' <<< "$out")" 'preview discloses paced seat'
+write_response rule_1 0.95 '{"rule_1":0.95,"default":0.05}'
+run "$BRIEF" --task pace-start
+expect_code 0 "$code" "paced real start: $out"
+assert_contains "$out" "--account 'claude1'" 'real dispatch uses equal-class replacement'
+assert_contains "$out" 'weekly pace 1.6x exceeds 1.5x' 'real dispatch explains skip'
+# Strictly above the threshold, not equal to it.
+rank_quota "$TMP_ROOT/rank-c2" claude 25 50 9 2030-01-05T00:00:00Z
+run preview --json
+assert_equals claude2 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'exactly 1.5x remains available'
+rank_quota "$TMP_ROOT/rank-c2" claude 20 50 9 2030-01-05T00:00:00Z
+cp "$RULES" "$TMP_ROOT/pace-rules"
+for mutation in '.rules[0].use[0].reasoning_class=4' '.rules[0].use[0].seat_tier=2 | .rules[0].use[1].seat_tier=1' '.rules[0].use[0].floor={scope:"all_models",min_percent:90}' '.rules[0].use[0] |= del(.reasoning_class)'; do
+  jq "$mutation" "$TMP_ROOT/pace-rules" > "$RULES"
+  run preview --json
+  expect_code 0 "$code" "paced row with unavailable replacement: $out"
+  assert_equals claude2 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'pacing never opens later tiers, lowers class or uses an ineligible replacement'
+done
+cp "$TMP_ROOT/pace-rules" "$RULES"
+rank_quota "$TMP_ROOT/rank-c1" claude 10 50 1 2030-01-04T00:00:00Z
+run preview --json
+assert_equals claude2 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'all seats fast does not empty the row'
+rank_quota "$TMP_ROOT/rank-c1" claude 80 50 1 2030-01-04T00:00:00Z
+jq 'del(.providers[0].windows[1].pace)' "$TMP_ROOT/rank-c1" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$TMP_ROOT/rank-c1"
+run preview --json
+assert_equals claude2 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'unknown replacement pace cannot authorize skipping'
+# Model-scoped weekly pace can be the binding burn, independently of score.
+rank_quota "$TMP_ROOT/rank-c1" claude 80 50 1 2030-01-04T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 80 50 9 2030-01-05T00:00:00Z
+jq '.providers[0] |= (.windows += [{id:"opus_week",kind:"weekly",percentRemaining:80,resetsAt:"2030-01-04T00:00:00Z",pace:{burnMultiple:2}}] | .quotaSemantics.effectiveAvailability[0].boundedBy += ["opus_week"])' "$TMP_ROOT/rank-c2" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$TMP_ROOT/rank-c2"
+run preview --json
+assert_equals claude1 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'model weekly burnMultiple also protects capacity'
+jq '.rules[0].seat_pacing="yes"' "$RULES" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$RULES"
+run preview --json
+expect_code 2 "$code" 'invalid seat pacing flag refused'
+cp "$TMP_ROOT/pre-pace-rules" "$RULES"
+rank_quota "$TMP_ROOT/rank-c1" claude 60 50 1 2030-01-04T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 80 24 9 2030-01-05T00:00:00Z
+pass 'heavy-row pacing preserves class, tier, eligibility, threshold and unknown-pace compatibility'
 jq '.ranking={mode:"surplus_value",reset_horizon_hours:12,reset_horizon_min_percent:10}' "$RULES" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$RULES"
 run preview --json
 expect_code 0 "$code" "surplus ranking preview: $out"
