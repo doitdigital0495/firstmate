@@ -93,11 +93,18 @@
 # If the pull request remains open after that direct route and the base branch
 # has an effective merge_queue rule, an attended refusal names the queue's configured merge
 # method and exact --attended-override -- --auto --<method> retry flags. While
-# the away-posture record exists, asynchronous merge requests are refused and
-# queue retry flags are not offered because they would outlive away authority.
-# An attended caller that already passed the configured method with --auto is
-# told instead that the accepted request has not entered the queue and its queue
-# state has to be re-checked.
+# the away-posture record exists, the one asynchronous request that may run is
+# exactly those retry flags with a single recognised queue method: --auto with
+# any other method, with no method, on a base whose rules disagree or cannot be
+# read, or with any argument beyond the method, is refused, and a base with no
+# queue rule refuses --auto outright because no enqueue can carry it. Every
+# pull request enqueued under away authority (this --auto route and the queue
+# route alike) is recorded in the away queue list (bin/fm-afk-contract.sh),
+# which the record's archive sweeps: an entry still in the merge queue when the
+# away posture ends is dequeued, so a queued merge never lands on lapsed
+# authority. An attended caller that already passed the configured method with
+# --auto is told instead that the accepted request has not entered the queue and
+# its queue state has to be re-checked.
 # No method is selected for the caller in any case. A rules response that names
 # no queue rule, one that could not be read, rules that disagree, and a method
 # this script does not recognise are four distinct outcomes and are reported
@@ -174,8 +181,11 @@
 # authority lapses when the record is archived.
 # The authority read and synchronous forge command share the away record's
 # cross-subsystem lock, which bin/fm-afk-contract.sh owns, closing the common
-# live-owner TOCTOU; failure to take it refuses before the forge call. Async and
-# queued paths are refused while away. Two confused-agent-grade limitations are
+# live-owner TOCTOU; failure to take it refuses before the forge call. While
+# away, every asynchronous merge path is refused except the merge-queue
+# enqueues the away-posture record's archive can dequeue: the queue route and
+# the exact --auto --<method> enqueue (see the queue notes above). Two
+# confused-agent-grade limitations are
 # accepted rather than hidden: queue or base changes after GitHub's preflight can
 # still enqueue, and killing this shell can orphan a forge child after stale-lock
 # recovery. docs/architecture.md owns those away-merge limits, while
@@ -1480,12 +1490,14 @@ hold_away_record_for_merge() {
 
 require_current_away_authority() {
   FM_PR_AWAY_POSTURE=false
+  # GitHub --auto is not refused here: whether an --auto may run under away
+  # authority depends on the base branch's merge-queue state, which only
+  # github_resolve_merge_route reads (inside the away-record lock, after this
+  # read), so that route owns the whole decision. GitLab's auto-merge has no
+  # queue to enqueue through, so it stays refused here. Every other away gate
+  # below is posture-only and never sees the queue state.
   if fm_afk_contract_away_present "$STATE"; then
     FM_PR_AWAY_POSTURE=true
-    if [ "$PROVIDER" = github ] && [ "$FM_PR_GITHUB_AUTO_REQUESTED" = true ]; then
-      echo "error: --auto is attended-only; while the away-posture record exists only a synchronous merge may run under its authority lock" >&2
-      return 2
-    fi
     if [ "$PROVIDER" = gitlab ] \
       && { [ "$FM_PR_GITLAB_ASYNC_REQUESTED" = true ] || [ "$FM_PR_GITLAB_ASYNC_CONFIGURED" = true ]; }; then
       echo "error: GitLab auto-merge is attended-only; while the away-posture record exists only an immediate merge may run under its authority lock" >&2
@@ -1525,15 +1537,36 @@ persist_accepted_merge_authority() {
   return 1
 }
 
+# FM-1: record each pull request enqueued in a merge queue under away authority
+# in the away-posture record's queue list (bin/fm-afk-contract.sh), so the
+# record's archive dequeues any entry that has not landed when the away posture
+# ends and a queued merge never lands on lapsed authority. Runs while the away
+# record lock is still held; a failure is loud and refuses the run, because an
+# accepted enqueue that cannot be recorded can no longer be dequeued.
+record_away_queue_enqueue() {
+  if fm_afk_contract_queue_record "$STATE" "$URL"; then
+    printf 'queued under away authority: %s is recorded in the away queue list and is dequeued if it is still queued when the away posture ends\n' \
+      "$URL" >&2
+    return 0
+  fi
+  printf 'actionable: the forge accepted the queue enqueue for %s under away authority, but it could not be recorded in the away queue list, so the away archive cannot dequeue it; the merge poll remains armed\n' \
+    "$URL" >&2
+  return 1
+}
+
 # Which way a GitHub merge runs. A base branch whose rules prove no merge queue
 # merges directly (gh pr merge), as ever. A base branch with a merge_queue rule
 # merges through the queue route below when the caller asked for nothing but a
 # merge method: the queue's own configured method applies, so a method flag is
 # only noted, and any other extra argument (or an explicit --auto) keeps the
 # direct route, which its own contract owns. While away, a merge may run only
-# when it is synchronous, so a queue base takes the queue route (a synchronous
-# wait until merged or failed) or is refused, and a base whose rules cannot be
-# read refuses because neither an immediate merge nor a queue can be proved. A
+# when it is synchronous or when the away queue list can carry it to the
+# archive's dequeue: a queue base takes the queue route (a synchronous wait
+# until merged or failed), the exact --auto --<method> enqueue of a single
+# recognised queue method runs on the direct route and is recorded for the
+# archive sweep (FM_PR_GITHUB_AWAY_QUEUE_ENQUEUE below), and every other shape
+# on a queue base is refused. A base whose rules cannot be read refuses because
+# neither an immediate merge nor a queue can be proved. A
 # repository whose plan does not expose branch rules at all (GitHub's "Upgrade
 # to GitHub Pro or make this repository public" 403) proves no queue on its own,
 # since such a repository cannot have a merge_queue rule either; see
@@ -1542,8 +1575,11 @@ persist_accepted_merge_authority() {
 # 404, or an unrelated 403) stays unreadable and refuses the merge while away,
 # and merges directly while attended, as before.
 FM_PR_GITHUB_MERGE_ROUTE=direct
+FM_PR_GITHUB_AWAY_QUEUE_ENQUEUE=false
 github_resolve_merge_route() {  # <caller extra args>
+  local queue_method
   FM_PR_GITHUB_MERGE_ROUTE=direct
+  FM_PR_GITHUB_AWAY_QUEUE_ENQUEUE=false
   # Accepted confused-agent-grade limitation, as in bin/fm-lease-lib.sh, not an
   # oversight: a queue rule or PR base change after this preflight can still
   # enqueue the merge, which can land after its away authority lapses.
@@ -1557,7 +1593,33 @@ github_resolve_merge_route() {  # <caller extra args>
       ;;
   esac
   [ "$FM_PR_AWAY_POSTURE" = true ] || return 0
-  [ "$FM_PR_GITHUB_QUEUE_STATUS" = none ] && return 0
+  if [ "$FM_PR_GITHUB_QUEUE_STATUS" = none ]; then
+    # No queue rule: no enqueue can carry an --auto through the away posture,
+    # and a direct auto-merge could land after away authority lapses.
+    if [ "$FM_PR_GITHUB_AUTO_REQUESTED" != true ]; then
+      return 0
+    fi
+    printf 'error: --auto is attended-only while the away-posture record exists; base branch %s has no merge queue rule, so no enqueue can carry it and an auto-merge could land after away authority lapses\n' \
+      "$FM_PR_GITHUB_BASE" >&2
+    return 2
+  fi
+  if [ "$FM_PR_GITHUB_QUEUE_STATUS" = single ]; then
+    queue_method=$(printf '%s' "$FM_PR_GITHUB_QUEUE_METHOD" | tr '[:upper:]' '[:lower:]')
+    if [ "$FM_PR_GITHUB_AUTO_REQUESTED" = true ] \
+      && github_caller_method_is "$queue_method" \
+      && caller_args_are_auto_method_only "$@"; then
+      # The one asynchronous request away authority allows: the exact enqueue
+      # the queue's own rule names, recorded in the away queue list so the
+      # archive dequeues it if the away posture ends first.
+      FM_PR_GITHUB_AWAY_QUEUE_ENQUEUE=true
+      return 0
+    fi
+    if [ "$FM_PR_GITHUB_AUTO_REQUESTED" = true ]; then
+      printf 'error: --auto is attended-only while the away-posture record exists; base branch %s requires the merge queue, so under away authority only the exact enqueue flags --auto --%s and nothing else may run\n' \
+        "$FM_PR_GITHUB_BASE" "$queue_method" >&2
+      return 2
+    fi
+  fi
   echo "error: GitHub merge refused while away because the base branch's merge-queue state does not prove an immediate merge; nothing was handed to the forge" >&2
   return 2
 }
@@ -1608,6 +1670,24 @@ github_state_is_open() {
   esac
 }
 
+# Whether the caller's extra arguments are exactly an auto-merge request plus
+# merge method flags (--auto or --auto=true with the method flags
+# caller_args_are_method_only accepts), the one enqueue shape the away
+# authority allows a --auto to take. Anything else riding along (a subject, a
+# bypass, branch deletion) is not that enqueue.
+caller_args_are_auto_method_only() {
+  local arg auto=false
+  local rest=()
+  for arg in "$@"; do
+    case "$arg" in
+      --auto | --auto=true) auto=true ;;
+      *) rest+=("$arg") ;;
+    esac
+  done
+  [ "$auto" = true ] || return 1
+  caller_args_are_method_only "${rest[@]+"${rest[@]}"}"
+}
+
 # Whether the caller's own named method is the one the queue is configured for,
 # compared without regard to the spelling either side happens to use.
 github_caller_method_is() {
@@ -1621,10 +1701,6 @@ github_caller_method_is() {
 
 github_report_queue_rules() {
   local queue_method methods_display
-  if [ "$FM_PR_AWAY_POSTURE" = true ]; then
-    printf 'error: the direct merge did not land while the away-posture record exists; merge-queue retry flags are unavailable because a queued merge would outlive its authority\n' >&2
-    return 0
-  fi
   github_read_queue_method
   case "$FM_PR_GITHUB_QUEUE_STATUS" in
     single)
@@ -1639,8 +1715,9 @@ github_report_queue_rules() {
         printf 'error: this run refuses even though the request for %s was accepted with the exact flags base branch %s requires (--auto --%s): the pull request has still not entered the merge queue, so no landed or queued outcome is proven; re-check the pull request'"'"'s merge queue state before retrying\n' \
           "$URL" "$FM_PR_GITHUB_BASE" "$queue_method" >&2
       else
-        printf 'error: base branch %s requires the merge queue; retry with: %s %s %s --attended-override -- --auto --%s\n' \
-          "$FM_PR_GITHUB_BASE" "$0" "$ID" "$URL" "$queue_method" >&2
+        printf 'error: base branch %s requires the merge queue; retry with: %s %s %s --attended-override -- --auto --%s%s\n' \
+          "$FM_PR_GITHUB_BASE" "$0" "$ID" "$URL" "$queue_method" \
+          "$( [ "$FM_PR_AWAY_POSTURE" = true ] && printf ' (away authority allows exactly that enqueue, and records it for the archive to dequeue)' )" >&2
       fi
       ;;
     conflicting)
@@ -1678,7 +1755,7 @@ github_report_unmerged_outcome() {
   fi
   if [ "$FM_PR_GITHUB_QUEUE_OBSERVED" != true ]; then
     if [ "$FM_PR_AWAY_POSTURE" = true ]; then
-      printf 'error: the synchronous merge did not land while the away-posture record exists; no asynchronous merge or queue retry is available under away authority\n' >&2
+      printf 'error: the synchronous merge did not land while the away-posture record exists, and the queue-aware read was unavailable, so a pull request already in the merge queue cannot be told apart from one that never entered it; if this run enqueued it under away authority it is recorded in the away queue list for the archive to dequeue; re-check the pull request'"'"'s merge queue state before retrying\n' >&2
     else
       printf 'error: the merge queue could not be observed for %s because the queue-aware read was unavailable, so a pull request already in the merge queue cannot be told apart from one that never entered it; re-check the pull request'"'"'s merge queue state before retrying\n' \
         "$URL" >&2
@@ -1804,6 +1881,22 @@ github_release_branch_before_enqueue() {
   return 1
 }
 
+# One live queue read that binds this run to the entry it is about to enqueue,
+# for both paths that hand a pull request to a merge queue: refuses when the
+# queue state cannot be read or the head moved after verification, because in
+# both cases nothing was handed to the forge.
+github_require_queue_entry_ready() {
+  if ! github_queue_read; then
+    echo "error: the merge queue state of $URL could not be read, so nothing was enqueued" >&2
+    exit 1
+  fi
+  if [ "$FM_PR_QUEUE_HEAD" != "$FM_PR_MERGE_HEAD" ]; then
+    printf 'error: %s moved to %s after head %s was verified; nothing was enqueued\n' \
+      "$URL" "$FM_PR_QUEUE_HEAD" "$FM_PR_MERGE_HEAD" >&2
+    exit 1
+  fi
+}
+
 github_enqueue_pull_request() {
   local output
   # shellcheck disable=SC2016  # GraphQL variables are literal query syntax.
@@ -1844,15 +1937,7 @@ github_merge_through_queue() {
     printf 'notice: base branch %s merges through its merge queue, whose own method (%s) applies instead of --%s\n' \
       "$FM_PR_GITHUB_BASE" "$FM_PR_GITHUB_QUEUE_METHOD" "$FM_PR_GITHUB_CALLER_METHOD" >&2
   fi
-  if ! github_queue_read; then
-    echo "error: the merge queue state of $URL could not be read, so nothing was enqueued" >&2
-    exit 1
-  fi
-  if [ "$FM_PR_QUEUE_HEAD" != "$FM_PR_MERGE_HEAD" ]; then
-    printf 'error: %s moved to %s after head %s was verified; nothing was enqueued\n' \
-      "$URL" "$FM_PR_QUEUE_HEAD" "$FM_PR_MERGE_HEAD" >&2
-    exit 1
-  fi
+  github_require_queue_entry_ready
   baseline_removed_at=$FM_PR_QUEUE_REMOVED_AT
   github_release_branch_before_enqueue || exit 1
   if [ "$FM_PR_QUEUE_QUEUED" = true ]; then
@@ -1869,6 +1954,7 @@ github_merge_through_queue() {
   fi
   FM_PR_GITHUB_MERGE_ACCEPTED=true
   persist_accepted_merge_authority || exit 1
+  [ "$FM_PR_AWAY_POSTURE" != true ] || record_away_queue_enqueue || exit 1
   fm_afk_contract_lock_release || true
   fm_lock_release "$MERGE_CONTROL_LOCK" || true
   MERGE_CONTROL_LOCK=
@@ -2028,6 +2114,13 @@ case "$PROVIDER" in
     if [ "$FM_PR_GITHUB_MERGE_ROUTE" = queue ]; then
       github_merge_through_queue
     else
+      # The away --auto enqueue rides the direct route, but nothing may hand a
+      # queued pull request a forge command before its queue entry is read at
+      # the verified head and any branch-pushing pipeline is ended (FM-3).
+      if [ "$FM_PR_GITHUB_AWAY_QUEUE_ENQUEUE" = true ]; then
+        github_require_queue_entry_ready
+        github_release_branch_before_enqueue || exit 1
+      fi
       merge_status=0
       merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
         --match-head-commit "$FM_PR_MERGE_HEAD" \
@@ -2035,6 +2128,7 @@ case "$PROVIDER" in
       if [ "$merge_status" -eq 0 ]; then
         FM_PR_GITHUB_MERGE_ACCEPTED=true
         persist_accepted_merge_authority || exit 1
+        [ "$FM_PR_GITHUB_AWAY_QUEUE_ENQUEUE" != true ] || record_away_queue_enqueue || exit 1
         fm_afk_contract_lock_release || true
         fm_lock_release "$MERGE_CONTROL_LOCK" || true
         MERGE_CONTROL_LOCK=
@@ -2049,6 +2143,12 @@ case "$PROVIDER" in
           else
             printf 'actionable: the merge command for %s failed, but the pull request reads back as state=%s, merged=%s, isInMergeQueue=%s\n' \
               "$URL" "$FM_PR_GITHUB_STATE" "$FM_PR_GITHUB_MERGED" "$FM_PR_GITHUB_QUEUED" >&2
+            # A failed command can still have enqueued (gh may fail after the
+            # forge accepted it); a queue entry read back under away authority is
+            # recorded for the archive like any other.
+            if [ "$FM_PR_GITHUB_AWAY_QUEUE_ENQUEUE" = true ] && [ "$FM_PR_GITHUB_QUEUED" = true ]; then
+              record_away_queue_enqueue || exit 1
+            fi
           fi
         fi
         exit "$merge_status"
