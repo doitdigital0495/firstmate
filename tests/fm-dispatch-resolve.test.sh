@@ -878,7 +878,7 @@ jq -n --arg root "$TMP_ROOT" '{crossAccount:{enabled:true},accounts:{claude1:{cl
 for seat in codex1-seat codex2-seat codex2-pi glm-seat; do mkdir -p "$TMP_ROOT/$seat"; done
 rank_quota() { # file provider remaining time-percent score reset
   jq --arg p "$2" --argjson left "$3" --argjson time "$4" --argjson score "$5" --arg reset "$6" '
-    .providers[0] |= (.provider=$p | .windows[1] |= (.percentRemaining=$left | .resetsAt=$reset | .pace={timeRemainingPercent:$time, reservePercentPoints:($time-$left)}) |
+    .providers[0] |= (.provider=$p | .windows[1] |= (.percentRemaining=$left | .resetsAt=$reset | .pace={timeRemainingPercent:$time, reservePercentPoints:($left-$time)}) |
       .quotaSemantics.effectiveAvailability[0] |= (.effectivePercentRemaining=$left | .selection.spendPriority=$score))' "$QUOTA" > "$1"
 }
 rank_quota "$TMP_ROOT/rank-c1" claude 60 50 1 2030-01-04T00:00:00Z
@@ -985,6 +985,80 @@ rank_quota "$TMP_ROOT/rank-c2" claude 80 24 9 2030-01-05T00:00:00Z
 jq '.providers[0] |= (.windows += [{id:"opus_week",kind:"weekly",percentRemaining:30,resetsAt:"2030-01-04T00:00:00Z",pace:{timeRemainingPercent:29}}] | .quotaSemantics.effectiveAvailability[0].boundedBy += ["opus_week"])' "$TMP_ROOT/rank-c1" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$TMP_ROOT/rank-c1"
 run preview --json
 assert_equals claude2 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'model weekly minimum limits value'
+# Non-full quota-axi --json carries only pace.{status,reservePercentPoints,burnMultiple},
+# where reservePercentPoints = percentRemaining - timeRemainingPercent (positive is
+# under-spent). The under-spent account must win, and the full-JSON branch must agree.
+cp "$RULES" "$TMP_ROOT/pre-reserve-rules"
+jq '.plan_value={claude1:200,claude2:200}' "$RULES" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$RULES"
+rank_quota "$TMP_ROOT/rank-c1" claude 80 42.32 1 2030-01-04T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 72 91.73 9 2030-01-05T00:00:00Z
+run preview --json
+assert_equals claude1 "$(jq -r '.workers[0].pick.seat' <<< "$out")" "full pace JSON: under-spent claude1 wins"
+full_surplus=$(jq -c '.workers[0].chosen | [.surplus,.value]' <<< "$out")
+for f in rank-c1 rank-c2; do
+  jq '.providers[0].windows[1].pace |= {status:(if .reservePercentPoints >= 0 then "behind" else "ahead" end), reservePercentPoints:.reservePercentPoints, burnMultiple:1}' "$TMP_ROOT/$f" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$TMP_ROOT/$f"
+  assert_equals null "$(jq -c '.providers[0].windows[1].pace.timeRemainingPercent' "$TMP_ROOT/$f")" "$f fixture drops timeRemainingPercent like non-full quota-axi"
+done
+run preview --json
+expect_code 0 "$code" "non-full pace preview: $out"
+assert_equals claude1 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'non-full pace JSON: under-spent claude1 beats over-spent claude2'
+assert_equals "$full_surplus" "$(jq -c '.workers[0].chosen | [.surplus,.value]' <<< "$out")" 'fallback surplus and value equal the full-JSON branch'
+assert_equals '37.68 75.36' "$(jq -r '.workers[0].chosen | [.surplus,.value] | map(. * 100 | round / 100 | tostring) | join(" ")' <<< "$out")" 'under-spent seat carries positive surplus'
+# Swap the roles: with claude1 over-spent and claude2 under-spent, claude2 wins.
+nonfull() { jq '.providers[0].windows[1].pace |= {status:(if .reservePercentPoints >= 0 then "behind" else "ahead" end), reservePercentPoints:.reservePercentPoints, burnMultiple:1}' "$1" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$1"; }
+rank_quota "$TMP_ROOT/rank-c1" claude 72 91.73 1 2030-01-04T00:00:00Z; nonfull "$TMP_ROOT/rank-c1"
+rank_quota "$TMP_ROOT/rank-c2" claude 80 42.32 9 2030-01-05T00:00:00Z; nonfull "$TMP_ROOT/rank-c2"
+run preview --json
+assert_equals claude2 "$(jq -r '.workers[0].pick.seat' <<< "$out")" 'non-full pace JSON: under-spent claude2 beats over-spent claude1'
+assert_equals true "$(jq '.workers[0].chosen.surplus > 0' <<< "$out")" 'winning under-spent seat has positive surplus'
+cp "$TMP_ROOT/pre-reserve-rules" "$RULES"
+rank_quota "$TMP_ROOT/rank-c1" claude 60 50 1 2030-01-04T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 80 24 9 2030-01-05T00:00:00Z
+pass 'surplus_value ranks the under-spent account first from non-full quota-axi pace and agrees with the full-JSON branch'
+# reset_first: among same-provider seats the sooner weekly reset goes first; guards,
+# equal resets and cross-provider order keep their existing behavior. No pace forecast.
+jq '.ranking={mode:"reset_first"}' "$RULES" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$RULES"
+rf_pick() { run preview --json; expect_code 0 "$code" "reset_first preview: $out"; RF_SEAT=$(jq -r '.workers[0].pick.seat' <<< "$out"); }
+# claude1 resets sooner but spendPriority prefers claude2 (default mode picks claude2).
+rank_quota "$TMP_ROOT/rank-c1" claude 60 50 1 2030-01-04T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 80 24 9 2030-01-05T00:00:00Z
+rf_pick; assert_equals claude1 "$RF_SEAT" 'reset_first: claude1 resets first, so it wins over the higher spendPriority claude2'
+assert_contains "$out" 'reset_first' 'reset_first is named in the rationale'
+assert_equals '"2030-01-04T00:00:00Z"' "$(jq -c '.workers[0].chosen.binding_reset' <<< "$out")" 'preview exposes the weekly binding_reset'
+write_response rule_1 0.95 '{"rule_1":0.95,"default":0.05}'
+run "$BRIEF" --task rf-text
+expect_code 0 "$code" "reset_first start: $out"
+assert_contains "$out" "--account 'claude1'" "reset_first start takes the sooner reset: $out"
+assert_contains "$out" 'reset_first binding_reset=2030-01-04T00:00:00Z' 'candidate line shows binding_reset'
+assert_contains "$out" 'reset_first: ' 'start note carries the reset_first rationale'
+# Monday-style flip: the seat resetting later in the week now resets first.
+rank_quota "$TMP_ROOT/rank-c1" claude 60 50 9 2030-01-08T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 80 24 1 2030-01-05T00:00:00Z
+rf_pick; assert_equals claude2 "$RF_SEAT" 'reset_first: claude2 resets first after the data flip'
+# A sooner seat held out by the weekly guard hands over to the other seat.
+rank_quota "$TMP_ROOT/rank-c1" claude 1 50 9 2030-01-04T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 80 24 1 2030-01-05T00:00:00Z
+rf_pick; assert_equals claude2 "$RF_SEAT" 'reset_first: the sooner seat at the 98 percent weekly guard drops out'
+# Equal resets leave the decision to spendPriority.
+rank_quota "$TMP_ROOT/rank-c1" claude 60 50 1 2030-01-04T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 80 24 9 2030-01-04T00:00:00Z
+rf_pick; assert_equals claude2 "$RF_SEAT" 'reset_first: equal resets fall back to spendPriority'
+# The reset ignores a sooner five-hour reset: only the weekly window counts.
+rank_quota "$TMP_ROOT/rank-c1" claude 60 50 9 2030-01-08T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 80 24 1 2030-01-05T00:00:00Z
+jq '.providers[0].windows[0].resetsAt="2030-01-01T02:00:00Z"' "$TMP_ROOT/rank-c1" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$TMP_ROOT/rank-c1"
+rf_pick; assert_equals claude2 "$RF_SEAT" 'reset_first: a five-hour reset never counts as the binding reset'
+# Cross-provider comparisons keep spendPriority: codex1 resets later but ranks higher.
+jq '.rules[0].use += [{"harness":"codex","model":"gpt-5.4","effort":"high","account":"codex1","reasoning_class":5}]' "$RULES" > "$TMP_ROOT/next"; mv "$TMP_ROOT/next" "$RULES"
+rank_quota "$TMP_ROOT/rank-c1" claude 60 50 1 2030-01-04T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 80 24 2 2030-01-05T00:00:00Z
+rank_quota "$TMP_ROOT/rank-x1" codex 90 10 20 2030-01-09T00:00:00Z
+rf_pick; assert_equals codex1 "$RF_SEAT" 'reset_first: cross-provider order stays spendPriority'
+cp "$TMP_ROOT/pre-reserve-rules" "$RULES"
+rank_quota "$TMP_ROOT/rank-c1" claude 60 50 1 2030-01-04T00:00:00Z
+rank_quota "$TMP_ROOT/rank-c2" claude 80 24 9 2030-01-05T00:00:00Z
+rank_quota "$TMP_ROOT/rank-x1" codex 90 10 20 2030-01-04T00:00:00Z
+pass 'reset_first ranks the sooner weekly reset first within a provider and keeps guards, ties and cross-provider order'
 # Invalid config and hard policy checks fail before quota/transport.
 cp "$RULES" "$TMP_ROOT/rank-rules"
 for bad in 'del(.plan_value.claude1)' '.ranking.mode="bogus"' '.ranking.reset_horizon_hours=-1' '.rules[0].use[0].effort="max"' '.rules[0].use[0] |= (.model="sonnet" | .effort="max")' '.rules[0].use[0] |= (.model="fable" | .effort="xhigh")' '.rules[0].use[0] |= (.model="fable" | .effort="max")' '.rules[0].use[0] |= (.harness="pi" | .provider="anthropic" | .model="anthropic/claude-opus")'; do
