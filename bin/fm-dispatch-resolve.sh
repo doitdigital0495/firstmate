@@ -104,6 +104,11 @@
 #   for those accounts. With no tier declared, behavior is unchanged.
 #   docs/configuration.md "Crew dispatch profiles" owns the declared fields.
 #
+# worker_banned_accounts (top-level, optional): account IDs, such as claude3,
+#   that no worker, scout or no-mistakes pipeline candidate may seat, whatever
+#   row matched. A listed seat is ineligible and holds no tier; only a
+#   secondmate charter brief (fm-brief.sh --secondmate) is exempt.
+#
 # Worker five-hour guard and burst spreader (worker mode only; pipeline rows
 #   are untouched). Before the reserve and seat tier holds, a rankable seat
 #   with a five-hour window that has a published reset and less room left
@@ -443,7 +448,7 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
     if ($c | type) != "object" then "capability must be an object keyed family/model:effort"
     elif any($c[]; type != "object" or any(.[]; type != "number")) then "each capability entry must be an object of numbers (index, terminal_bench, gdpval)"
     else null end;
-  def known_top: ["preferred_provider", "shared_quota", "weekly_guard", "ranking", "plan_value", "rules", "default", "pipeline_rows", "seat_tiers_by_delivery", "model_notes", "claude3_policy", "ladder_policy", "ladder_rungs", "default_ladder", "capability"];
+  def known_top: ["preferred_provider", "shared_quota", "weekly_guard", "ranking", "plan_value", "rules", "default", "pipeline_rows", "seat_tiers_by_delivery", "model_notes", "claude3_policy", "worker_banned_accounts", "ladder_policy", "ladder_rungs", "default_ladder", "capability"];
   def known_rule: ["when", "use", "label", "why", "approval", "min_confidence", "select", "floor", "never_providers", "never_models", "strict_tiers", "seat_pacing", "ladder"];
   ([(.rules // []) | to_entries[] | .key as $i | claude3_problem("rule \($i + 1)"; profiles(.value.use))]
     + [claude3_problem("default"; profiles(.default // null))] | map(select(. != null))) as $c3 |
@@ -492,6 +497,8 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
     "never_models must be a non-empty array of model IDs when present"
   elif any((.rules // [])[]; . as $r | has("never_models") and any(profiles($r.use)[]; (.model // null) as $m | $m != null and ($r.never_models | index($m)) != null)) then
     "a rule lists a profile of a model its own never_models bans: " + ([(.rules // []) | to_entries[] | .key as $i | .value as $r | select($r | has("never_models")) | profiles($r.use)[] | select((.model // null) as $m | $m != null and ($r.never_models | index($m)) != null) | "rule \($i + 1) \(.harness):\(.model)"] | join(", "))
+  elif has("worker_banned_accounts") and ((.worker_banned_accounts | type) != "array" or (.worker_banned_accounts | length) == 0 or any(.worker_banned_accounts[]; (type != "string") or (test("^[a-z][a-z0-9-]*$") | not))) then
+    "worker_banned_accounts must be a non-empty array of account IDs when present"
   elif has("claude3_policy") and (
     (.claude3_policy | type) != "object" or
     (.claude3_policy | keys_unsorted | map(. as $k | select((["worker_rows", "weekly_floor_percent", "note"] | index($k)) == null)) | length) > 0 or
@@ -654,6 +661,14 @@ task_sections() {
   done
 }
 LAT_MS=null
+# worker_banned_accounts applies to every task except a secondmate charter (the
+# persistent supervisor brief fm-brief.sh --secondmate writes, which opens with
+# this line). Ship and scout briefs, previews and every pipeline step are
+# workers, so the ban never depends on which row Jev matched.
+WORKER_TASK=true
+if [ "$MODE" = worker ] && [ -n "$BRIEF" ]; then
+  case "$(head -n 1 "$BRIEF")" in 'You are a persistent second mate managed by'*) WORKER_TASK=false ;; esac
+fi
 # Pipeline mode resolves a fixed row, so nothing below reaches the socket.
 if [ "$MODE" = worker ]; then
   SECTIONS=$(task_sections)
@@ -1019,6 +1034,16 @@ fi
 # shellcheck disable=SC2016  # a jq program, expanded by jq and not the shell
 FM_DR_SEAT_JQ='
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
+  # worker_banned_accounts: no worker, scout or no-mistakes pipeline candidate
+  # seats a banned account, whatever row matched. Only a secondmate charter
+  # ($worker false) is exempt. A banned seat is ineligible and out of the tier
+  # hold, so the next tier takes over exactly as for a never_providers ban.
+  def worker_ban($worker):
+    ($cfg.worker_banned_accounts // []) as $wb |
+    map((.profile.account // null) as $acct | if $worker and $acct != null and ($wb | index($acct)) != null
+        then del(.incomplete, .windows_missing, .unranked) + {eligible: false, banned: true,
+          reason: "account \(.profile.account) is banned for worker tasks (worker_banned_accounts)"}
+        else . end);
   def account_quota($c): (if $c.account then $account_quotas[$c.account].snapshot else $q end);
   def prov($p; $lane): quota_row(.; $p; $lane);
   def lane_of($c): quota_lane($c.harness; $c.model);
@@ -1463,7 +1488,7 @@ fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
     elif ($weekly | type) == "string" then clean_reset($weekly)
     else $emptied end;
   ([($cfg.pipeline_rows // [])[] | select(.steps | index($step))] | first) as $row |
-  ($row.use | map(. as $c | evaluate($c) | apply_weekly_floor | . + plan_for($c; provider_of($c))) | weekly_guard | map(. + {out_reason: .reason}) | seat_tier_hold(true)) as $cands |
+  ($row.use | map(. as $c | evaluate($c) | apply_weekly_floor | . + plan_for($c; provider_of($c))) | worker_ban(true) | weekly_guard | map(. + {out_reason: .reason}) | seat_tier_hold(true)) as $cands |
   def seat_view: {seat: .profile.account, pool: .profile.pool, tier: .profile.seat_tier, eligible: (.eligible // false), reason: .reason,
     remaining: (.pct // null), spendPriority: (.spendPriority // null), surplus: (.surplus // null), value: (.value // null), band: (.band // false), runway: (.runway // null)};
   ([$cands[] | select(.incomplete)]) as $incomplete |
@@ -1518,7 +1543,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   jq -n --arg project "${PROJECT:-unset}" --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" --argjson account_quotas "$ACCOUNT_QUOTAS" --argjson plan_config "$PLAN_CONFIG" --argjson quota_attempts "$1" --argjson warmups "$2" --argjson sq "$SQ" --argjson rr "$TIE_RR" \
     --argjson final "${3:-false}" --arg jev_failed "$JEV_FAILED_REASON" --argjson force_pick "$FORCE_PICK" --arg delivery "$BRIEF_DELIVERY" \
     --argjson now "$NOW_EPOCH" --argjson guard "$FIVE_HOUR_GUARD" --argjson debits "$BURST_DEBITS" --argjson demand "$WEEKLY_DEMAND" \
-    --argjson ladder_hist "$LADDER_HIST" \
+    --argjson ladder_hist "$LADDER_HIST" --argjson worker_task "$WORKER_TASK" \
     --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ$FM_DL_JQ"'
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
 '"$FM_DR_SEAT_JQ"'
@@ -1704,7 +1729,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
   def hold_and_skip:
     reserve_tier | seat_tier_hold(if $ambiguous then any($union_ids[]; rule_at(.).strict_tiers == true) else $rule.strict_tiers == true end)
     | if ($sel.rule_floor_incomplete // false) or ($ambiguous and any($union_floors[]; .state == "unmeasured")) then . else skip_unreadable end;
-  ($unbanned_m | claude3_floor($decision_use) | weekly_guard) as $weekly_safe |
+  ($unbanned_m | worker_ban($worker_task) | claude3_floor($decision_use) | weekly_guard) as $weekly_safe |
   ($weekly_safe | five_hour_guard | hold_and_skip) as $guarded |
   (if any($guarded[]; .five_hour_guard // false) and (any($guarded[]; .eligible and ((.unranked // false) | not)) | not)
    then [$weekly_safe | hold_and_skip | .[] |

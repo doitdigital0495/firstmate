@@ -15,6 +15,7 @@
 #   P   pipeline mode: fixed row per step, pools, per-tier reasoning class, weekly floor, live five-hour window
 #   S10 lane 1 resolver: claude3 worker seating and weekly floor, never_models bans
 #       inside blended unions, the optional fable_projects allowlist, and their load refusals
+#   S12 worker_banned_accounts: claude3 never seats a worker, scout, default or pipeline step; a secondmate charter keeps it
 #   S11 lane 3 resolver: the escalation ladder from per-task capability history, Fable limits,
 #       bans, lenses, default_ladder, fail-closed history, and the ladder load refusals
 #   A   provider-aware, symlink-canonical seat lookup and the one-shot migration
@@ -1185,6 +1186,58 @@ expect_code 2 "$code" 'an empty allowlist is a configuration error'
 assert_contains "$out" 'ladder_policy needs fable_projects' 'the ladder_policy error is actionable'
 cp "$TMP_ROOT/rules-original" "$RULES"
 pass 'S10: claude3 seats hold behind the worker tiers under their weekly floor, blended never_models bans reach the anchor, and fable_projects stays an optional allowlist'
+
+# ---- S12: worker_banned_accounts - claude3 is never a worker or pipeline seat ----
+# Captain 2026-11-12: claude3 is reserved for firstmate and secondmates. The
+# orchestration row (rule_7) seats claude3 first, and Jev sometimes picks it for
+# an ordinary worker brief. The ban sits on the candidates, not on the row
+# choice: whatever row matched, a worker, a scout and every pipeline step skip
+# the banned account, and only a secondmate charter may still take it.
+jq '.worker_banned_accounts = ["claude3"]
+  | .pipeline_rows = [{"steps":["review"],"never_providers":["zai"],"use":[
+      {"harness":"claude","model":"opus","effort":"medium","account":"claude3","pool":1,"seat_tier":1,"reasoning_class":4},
+      {"harness":"claude","model":"opus","effort":"medium","account":"claude1","pool":2,"seat_tier":2,"reasoning_class":4}]}]' "$TMP_ROOT/rules-lane1" > "$TMP_ROOT/rules-ban"
+cp "$TMP_ROOT/rules-ban" "$RULES"
+reset_quota
+set_quota claude3 claude 95 9
+write_response rule_7 0.95 '{"rule_1":0.0,"rule_2":0.0,"rule_3":0.0,"rule_4":0.0,"rule_5":0.0,"rule_6":0.0,"rule_7":0.95,"default":0.05}'
+# A worker brief matched to the orchestration row lands on the next tier.
+run "$BRIEF" --task six-ban
+expect_code 0 "$code" "a worker brief on the orchestration row still dispatches: $out"
+assert_not_contains "$(chosen)" 'claude3' "the worker never takes claude3: $out"
+assert_contains "$(chosen)" "--account 'claude" 'the worker lands on a claude1 or claude2 seat'
+assert_contains "$out" 'account claude3 is banned for worker tasks (worker_banned_accounts)' "the claude3 candidate names the ban: $out"
+# A scout brief is a worker too.
+printf '# Task\n## Captain%s intent\nLook around.\n## Firstmate spec\nReport only.\nThis is a SCOUT task: the deliverable is a written report, not a PR.\n' "'" > "$HOME_DIR/data/scout-brief.md"
+run "$HOME_DIR/data/scout-brief.md" --task six-ban-scout
+assert_not_contains "$(chosen)" 'claude3' "a scout never takes claude3: $out"
+# A secondmate charter keeps the orchestration seat.
+printf 'You are a persistent second mate managed by the main firstmate. Work on your own; do not wait for a human.\n\n# Charter\nOrchestrate.\n' > "$HOME_DIR/data/charter-brief.md"
+run "$HOME_DIR/data/charter-brief.md" --task six-ban-sm
+expect_code 0 "$code" "a secondmate charter resolves: $out"
+assert_contains "$(chosen)" "--account 'claude3'" "a secondmate charter may still take claude3: $out"
+# The default row is covered as well as the orchestration row.
+jq '.default = [{"harness":"claude","model":"opus","effort":"medium","account":"claude3","seat_tier":1,"reasoning_class":4},
+    {"harness":"claude","model":"opus","effort":"medium","account":"claude1","seat_tier":2,"reasoning_class":4}]' "$TMP_ROOT/rules-ban" > "$RULES"
+write_response default 0.95 '{"rule_1":0.0,"rule_2":0.0,"rule_3":0.0,"rule_4":0.0,"rule_5":0.0,"rule_6":0.0,"rule_7":0.0,"default":1.0}'
+run "$BRIEF" --task six-ban-default
+assert_not_contains "$(chosen)" 'claude3' "the default row never gives a worker claude3: $out"
+# A no-mistakes pipeline step never picks claude3, even as the only tier-1 seat.
+cp "$TMP_ROOT/rules-ban" "$RULES"
+pipe review
+expect_code 0 "$code" "the pipeline step resolves: $pout $perr"
+assert_equals 'claude1' "$(pfield .seat)" 'the pipeline step skips the banned seat'
+assert_contains "$(pfield '[.candidates[] | select(.seat == "claude3") | .reason] | first')" 'worker_banned_accounts' 'the pipeline candidate names the ban'
+# Load checks: the key must be a non-empty array of account IDs.
+for bad in '[]' '"claude3"' '[3]' '["Claude 3"]'; do
+  jq --argjson b "$bad" '.worker_banned_accounts = $b' "$TMP_ROOT/rules-ban" > "$RULES"
+  run rows --json
+  expect_code 2 "$code" "worker_banned_accounts $bad is a configuration error"
+  assert_contains "$out" 'worker_banned_accounts must be a non-empty array of account IDs' "worker_banned_accounts $bad error is actionable: $out"
+done
+cp "$TMP_ROOT/rules-original" "$RULES"
+reset_quota
+pass 'S12: worker_banned_accounts keeps claude3 off every worker, scout, default and pipeline seat while a secondmate charter keeps it'
 
 # ---- S11: lane 3 resolver - the escalation ladder with per-task capability history ----
 # A task starts on its rule's own use list (k=0) and runs rung start+k of its
