@@ -39,7 +39,10 @@
 #   --json snapshots, the optional preferred_provider family restriction, and the
 #   configured ranking over eligible candidates (spendPriority by default;
 #   ranking.mode=surplus_value uses weekly surplus times plan_value, with the
-#   configured 12-hour/10-percent dump band first). An eligible but wholly
+#   configured 12-hour/10-percent dump band first; ranking.mode=reset_first
+#   lets the seat whose weekly window resets soonest go first among eligible
+#   seats of the same provider, with spendPriority deciding ties and every
+#   cross-provider comparison). An eligible but wholly
 #   unrankable preferred family escalates rather than authorizing another
 #   family. The model never sees quota, catalogs, approvals, preferred_provider,
 #   `why`, account labels, or credential paths.
@@ -460,7 +463,7 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
     (.weekly_guard | has("reserve_by_plan") and ((.reserve_by_plan | type) != "object" or any(.reserve_by_plan[]; type != "number" or . <= 0 or . > 100)))
   ) then "weekly_guard needs max_used_percent, reserve_percent and reserve_by_plan values greater than 0 and at most 100"
   elif has("ranking") and ((.ranking | type) != "object") then "ranking must be an object"
-  elif ((.ranking.mode // "spend_priority") as $mode | (["spend_priority", "surplus_value"] | index($mode)) == null) then "ranking.mode must be spend_priority or surplus_value"
+  elif ((.ranking.mode // "spend_priority") as $mode | (["spend_priority", "surplus_value", "reset_first"] | index($mode)) == null) then "ranking.mode must be spend_priority, surplus_value or reset_first"
   elif any([.ranking.reset_horizon_hours // 12, .ranking.reset_horizon_min_percent // 10][]; type != "number" or . < 0) then "ranking reset horizon values must be nonnegative numbers"
   elif (.ranking.reset_horizon_min_percent // 10) > 100 then "ranking.reset_horizon_min_percent must be at most 100"
   elif has("plan_value") and (.plan_value | type) != "object" then "plan_value must be an object"
@@ -1285,7 +1288,10 @@ FM_DR_SEAT_JQ='
     elif ($w.percentRemaining >= 100) then "not started (idle window), does not block"
     else "\(100 - $w.percentRemaining)% used, no published reset, does not block" end;
   # Score weekly windows only, including every model-scoped weekly bound.
-  # quota-axi reserve is time remaining minus allowance remaining.
+  # quota-axi reservePercentPoints is allowance remaining minus time remaining:
+  # positive is under-spent (behind pace), negative is over-spent (ahead).
+  # Non-full quota-axi --json omits timeRemainingPercent, so the reserve is the
+  # surplus itself; the full-JSON branch computes the same number directly.
   def surplus_score($c):
     if $cfg.ranking.mode != "surplus_value" or (.eligible | not) or (.unranked // false) or (.sq // false) then .
     else . as $e | provider_of($c) as $p | lane_of($c) as $lane |
@@ -1296,14 +1302,27 @@ FM_DR_SEAT_JQ='
       if ($weekly | length) == 0 or any($weekly[]; (.percentRemaining | type) != "number" or ((.pace.timeRemainingPercent | type) != "number" and (.pace.reservePercentPoints | type) != "number")) then
         . + {unranked: true, reason: "weekly pace missing: not rankable for surplus_value"}
       else
-        ($weekly | map(. + {surplus: (if (.pace.timeRemainingPercent | type) == "number" then .percentRemaining - .pace.timeRemainingPercent else -.pace.reservePercentPoints end)}) | min_by(.surplus)) as $limiting |
+        ($weekly | map(. + {surplus: (if (.pace.timeRemainingPercent | type) == "number" then .percentRemaining - .pace.timeRemainingPercent else .pace.reservePercentPoints end)}) | min_by(.surplus)) as $limiting |
         ([$weekly[] | (.resetsAt | clean_reset(.) | try fromdateiso8601 catch null) as $reset |
           select($reset != null and $reset >= $now and $reset - $now <= (($cfg.ranking.reset_horizon_hours // 12) * 3600) and .percentRemaining >= ($cfg.ranking.reset_horizon_min_percent // 10)) | $reset] | min) as $band_reset |
         . + {surplus: $limiting.surplus, value: ($limiting.surplus * $cfg.plan_value[$c.account] / 100), band: ($band_reset != null), band_reset: $band_reset}
       end
     end;
+  # reset_first: the binding reset is the soonest reset among the applicable
+  # weekly windows (never a five-hour window). No pace forecast is involved.
+  def reset_first_score($c):
+    if $cfg.ranking.mode != "reset_first" or (.eligible | not) or (.unranked // false) or (.sq // false) then .
+    else . as $e | provider_of($c) as $p | lane_of($c) as $lane |
+      (account_quota($c) | applicable($p; $lane; ($c.model // ""); ($c.quota_scope // null)) | [ .[] | (.boundedBy // [])[] ] | unique) as $ids |
+      ([account_quota($c) | provider_windows($p; $lane)[] |
+        select(.kind == "weekly" or .id == "seven_day") |
+        select(.id as $id | $ids | index($id)) |
+        (.resetsAt | if type == "string" then clean_reset(.) else null end) | select(. != null) |
+        select(try fromdateiso8601 catch null | . != null)] | sort | first // null) as $weekly_reset |
+      . + {reset_first: true, binding_reset: $weekly_reset}
+    end;
   def evaluate($c):
-    evaluate_seat($c) | surplus_score($c) |
+    evaluate_seat($c) | surplus_score($c) | reset_first_score($c) |
     if .windows == null then .
     else (account_quota($c) | five_hour_ids(provider_of($c); lane_of($c)) as $five | provider_windows(provider_of($c); lane_of($c)) as $windows |
       [$windows[] | select(five_hour_cannot_hold(.id; $five; $windows)) | "\(.id)=\(five_hour_state(.))"]) as $open |
@@ -1370,7 +1389,23 @@ FM_DR_SEAT_JQ='
       {winner: $ordered[$slot], round_robin: (($ordered | length) > 1),
        tie_break: "quota unknown; round-robin slot \($slot + 1) of \($ordered | length) -> \($ordered[$slot] | seat_label)"}
     end;
-  def rank_winner:
+  # reset_first: inside one provider the seat resetting soonest ranks first and
+  # the later ones drop out of the argmax; a seat with no known weekly reset
+  # never outranks one with a known reset. Cross-provider seats are untouched,
+  # and equal resets leave the group to spendPriority.
+  def reset_first_pick:
+    if $cfg.ranking.mode != "reset_first" then {kept: ., note: null}
+    else . as $all |
+      ([$all | group_by(.provider)[] |
+        ([.[] | reset_epoch(.)] | map(select(. != null)) | min) as $soonest |
+        if $soonest == null then {keep: ., drop: []}
+        else {keep: [.[] | select(reset_epoch(.) == $soonest)], drop: [.[] | select(reset_epoch(.) != $soonest)]} end]) as $groups |
+      {kept: [$groups[].keep[]],
+       note: ([$groups[] | select((.drop | length) > 0) |
+         "\(.keep | map("\(seat_label) resets \(reset_epoch(.) | todate)") | join(", ")) before \(.drop | map("\(seat_label) \(reset_epoch(.) | if . == null then "reset unknown" else "resets " + todate end)") | join(", "))"] as $n |
+         if ($n | length) > 0 then "reset_first: " + ($n | join("; ")) else null end)}
+    end;
+  def rank_winner_core:
     . as $ranked |
     ($ranked | max_by(rank_priority)) as $best |
     ([$ranked[] | select(rank_priority == ($best | rank_priority))]) as $ties |
@@ -1386,6 +1421,11 @@ FM_DR_SEAT_JQ='
           (if ($ordered | length) > 1 then "; round-robin slot \($slot + 1) of \($ordered | length)" else "" end) +
           " -> \($ordered[$slot].profile.harness):\($ordered[$slot].profile.model // "default")\(if $ordered[$slot].profile.account then " @" + $ordered[$slot].profile.account else "" end)")}
      end);
+  def rank_winner:
+    (reset_first_pick) as $rf |
+    $rf.kept as $ranked |
+    (if $rf.note != null then {reset_first_note: $rf.note} else {} end) +
+    ($ranked | rank_winner_core);
 '
 # Pipeline resolution for one step's fixed row (see the header): no model, no
 # receipt, and every pool decision made by the shared seat logic above.
@@ -1449,7 +1489,7 @@ fm_dispatch_pipeline_json() {  # <quota attempts> <warm-ups run> [final]
      reason: ("pool \($w.profile.pool) tier \($w.profile.seat_tier): " +
        (if ($tb.measured | not) then "quota unreadable, round-robin in the open tier"
         elif $sq then "quota ranking off, declared order"
-        else "best \($cfg.ranking.mode // "spend_priority") of \($ranked | length) seat(s)" end) +
+        else "best \($cfg.ranking.mode // "spend_priority") of \($ranked | length) seat(s)" + (if $tb.reset_first_note then " (\($tb.reset_first_note))" else "" end) end) +
        (if ($short | length) > 0 and ($lasting | length) > 0 then "; \($short | join(", ")) will not last to reset" else "" end) +
        (if ($n_ready > 0 and ($lasting | length) == 0) then "; no open seat lasts to reset" else "" end) +
        (if $w.profile.pool != ([$row.use[].pool] | min) then "; pool \([$row.use[].pool] | min) has no seat with room" else "" end)),
@@ -1747,6 +1787,7 @@ fm_dispatch_resolve_json() {  # <quota attempts> <warm-ups run>
           elif ($ranked | length) < ($pickable | length) then "\($sel.note); strongest reasoning class \($strongest), \(($pickable | length) - ($ranked | length)) weaker eligible candidate(s) outranked"
           else $sel.note end)
                + (if ($winner.reserve_active // false) then "; \($winner.reason)" else "" end)
+               + (if $tb.reset_first_note then "; \($tb.reset_first_note)" else "" end)
                + ([$cands[] | select(.unreadable) | seat_label] as $skipped | if ($skipped | length) > 0 then "; quota unreadable, skipped: \($skipped | join(", "))" else "" end)
                + ([$cands[] | select(.five_hour_guard) | seat_label] as $held | if ($held | length) > 0 then "; five-hour guard held: \($held | join(", "))" else "" end)
                + ([$cands[] | select(.pacing_skipped) | seat_label] as $paced | if ($paced | length) > 0 then "; weekly pacing skipped: \($paced | join(", "))" else "" end)
@@ -1970,6 +2011,7 @@ TEXT=$(jq -r '
              else "" end)
         elif .windows then "  windows=\(winstr(.windows))" else "" end)
       + (if .five_hour_open then "  " + (.five_hour_open | map(flat) | join("  ")) else "" end)
+      + (if .reset_first then "  reset_first binding_reset=\(show(.binding_reset))" else "" end)
       + (if .surplus != null then "  surplus=\(.surplus) value=\(.value) band=\(if .band then "yes" else "no" end)" else "" end)
       + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))"
           + (if .weekly_pace != null then " weekly_pace=\(.weekly_pace | flat)x" else "" end)

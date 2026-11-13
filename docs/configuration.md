@@ -2062,7 +2062,7 @@ Resolutions that run at the same moment read the ledger before either writes, so
 
 ### Ranking mode
 
-Optional top-level `ranking.mode` accepts `spend_priority` (the default, preserving the existing burst-adjusted ranking) or `surplus_value`.
+Optional top-level `ranking.mode` accepts `spend_priority` (the default, preserving the existing burst-adjusted ranking), `surplus_value`, or `reset_first`.
 The latter requires a positive numeric `plan_value` monthly price for every profile's named account, including pipeline profiles.
 For example:
 
@@ -2074,10 +2074,16 @@ For example:
 After eligibility, seat tiers and reasoning class, seats in the dump band rank first: an applicable weekly window resets within `reset_horizon_hours` (default 12) and has at least `reset_horizon_min_percent` remaining (default 10).
 Within that band the soonest reset wins, then value; outside it the highest value wins.
 Value is `(weekly percentRemaining - burst debit - pace.timeRemainingPercent) * plan_value / 100`, taking the minimum surplus across applicable account-wide and model-scoped weekly windows.
-When only `pace.reservePercentPoints` is available, its negation supplies the pre-debit surplus.
+When only `pace.reservePercentPoints` is available, it supplies the pre-debit surplus directly (`reservePercentPoints` is allowance remaining minus time remaining, so positive means under-spent).
 Missing weekly pace leaves the candidate unranked rather than inventing a score.
 Five-hour windows remain gates, never scoring inputs; the weekly start gate and burst debit cost and decay are unchanged.
 Candidate lines and receipts retain `spendPriority` and add `surplus`, `value`, and `band` evidence.
+
+`reset_first` needs no `plan_value`. Among eligible seats of the same provider (claude1 against claude2, codex1 against codex2) the seat whose applicable weekly window resets soonest ranks first; five-hour windows never count.
+Equal resets, a seat with no known weekly reset next to one with a known reset, and every cross-provider comparison keep the `spendPriority` order.
+Eligibility is unchanged: the weekly start gate, auth, the five-hour floor, `seat_tier`, `never_providers` and the burst debit still apply, so a sooner seat that hits a guard drops out and the other seat takes over.
+There is no pace forecast: a sooner seat projected to run empty before its reset still goes first, and the usage-limit move handles hitting the limit.
+Candidate lines show `binding_reset` (the weekly reset used) and start notes and pipeline reasons name `reset_first`.
 Pipeline rows use this mode within their open tier, without worker burst debits.
 `rows --json` exports `ranking`, `plan_value`, and each rule's `strict_tiers` alongside the existing schema-version-1 fields.
 Switching `ranking.mode` back to `spend_priority` restores legacy ranking without migrating receipts or state.
