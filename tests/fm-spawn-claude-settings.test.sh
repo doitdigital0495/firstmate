@@ -116,6 +116,16 @@ CREW_SETTINGS="$CREW/home/state/$CREW_ID.claude-settings.json"
 [ -f "$CREW_SETTINGS" ] || fail "a crewmate claude launch wrote no settings file at $CREW_SETTINGS"
 RESULT=$(settings_check "$CREW_SETTINGS" yes)
 [ "$RESULT" = ok ] || fail "crewmate settings file rejected: $RESULT"
+# A task worker also carries the advisory sleep-then-check guard on Bash, logging
+# to its own wait-flags file; a secondmate (a supervisor, not a worker) does not.
+python3 - "$CREW_SETTINGS" "$CREW_ID" <<'PY' || fail "crewmate settings lack the sleep-then-check PreToolUse guard"
+import json, sys
+doc = json.load(open(sys.argv[1]))
+entries = doc.get("hooks", {}).get("PreToolUse", [])
+cmds = [h["command"] for e in entries if e.get("matcher") == "Bash" for h in e.get("hooks", [])]
+ok = any("fm-wait-pretool-check.sh" in c and sys.argv[2] + ".wait-flags" in c for c in cmds)
+sys.exit(0 if ok else 1)
+PY
 
 # --- 2. secondmate launch: policy keys and parent-home busy hooks ------------
 SM="$TMP_ROOT/sm"
@@ -135,6 +145,8 @@ SM_SETTINGS="$SM/home/state/$SM_ID.claude-settings.json"
 [ -f "$SM_SETTINGS" ] || fail "a secondmate claude launch wrote no settings file at $SM_SETTINGS"
 RESULT=$(settings_check "$SM_SETTINGS" yes)
 [ "$RESULT" = ok ] || fail "secondmate settings file rejected: $RESULT"
+! grep -F 'fm-wait-pretool-check' "$SM_SETTINGS" >/dev/null \
+  || fail "a secondmate must not carry the worker sleep-then-check guard: $(cat "$SM_SETTINGS")"
 ! grep -F 'turn-ended' "$SM_SETTINGS" >/dev/null \
   || fail "a secondmate's hooks must not touch the parent's turn-ended marker: $(cat "$SM_SETTINGS")"
 
