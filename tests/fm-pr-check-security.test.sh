@@ -142,6 +142,29 @@ printf 'host=%s\n' "${GH_HOST:-}" >> "$FM_TEST_GH_LOG"
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case "${1:-} ${2:-}" in
   "api graphql")
+    # The static poll's queue-aware read (the same query shape bin/fm-pr-merge.sh
+    # issues) is answered from the FM_TEST_GH_QUEUE_* fixture below, and only
+    # when a case opts in with FM_TEST_GH_QUEUE=1: a gh that cannot answer it
+    # keeps the poll on its plain state read, so pre-queue cases see exactly the
+    # outcomes they always saw. Every other GraphQL query keeps the plain
+    # four-line outcome reply.
+    case " $* " in
+      *REMOVED_FROM_MERGE_QUEUE_EVENT*)
+        [ "${FM_TEST_GH_QUEUE:-0}" = 1 ] || exit 1
+        [ "${FM_TEST_GH_QUEUE_FAIL:-0}" = 0 ] || exit 1
+        printf '%s\n' \
+          'id=PULLREQUESTID_1' \
+          "state=${FM_TEST_GH_QUEUE_STATE:-OPEN}" \
+          "merged=${FM_TEST_GH_QUEUE_MERGED:-false}" \
+          "queued=${FM_TEST_GH_QUEUE_QUEUED:-false}" \
+          "entry=${FM_TEST_GH_QUEUE_ENTRY:-}" \
+          "head=${FM_TEST_GH_QUEUE_HEAD:-0123456789abcdef0123456789abcdef01234567}" \
+          "branch=${FM_TEST_GH_QUEUE_BRANCH:-fm/task-a}" \
+          "removed_at=${FM_TEST_GH_QUEUE_REMOVED_AT:-}" \
+          "removed_reason=${FM_TEST_GH_QUEUE_REMOVED_REASON:-}"
+        exit 0
+        ;;
+    esac
     printf '%s\n' \
       "state=${FM_TEST_GH_GRAPHQL_STATE:-MERGED}" \
       "merged=${FM_TEST_GH_GRAPHQL_MERGED:-true}" \
@@ -163,10 +186,17 @@ case "${1:-} ${2:-}" in
         printf '%s\n' "{\"headRefOid\":\"${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}\",\"reviewDecision\":\"APPROVED\"}"
         exit 0
         ;;
+      *" --json baseRefName "*)
+        printf '%s\n' "${FM_TEST_GH_BASE:-main}"
+        exit 0
+        ;;
     esac
     ;;
   "pr merge")
-    [ -z "${FM_TEST_GH_MERGE_HOOK:-}" ] || "$FM_TEST_GH_MERGE_HOOK"
+    if [ -n "${FM_TEST_GH_MERGE_HOOK:-}" ]; then
+      "$FM_TEST_GH_MERGE_HOOK"
+      exit $?
+    fi
     exit 0
     ;;
 esac
@@ -181,6 +211,7 @@ case " $* " in
     printf '%s\n' '[[]]'
     ;;
   *" api --paginate repos/"*"/rules/branches/"*merge_queue*)
+    [ -z "${FM_TEST_GH_QUEUE_RULES:-}" ] || cat "$FM_TEST_GH_QUEUE_RULES" 2>/dev/null
     ;;
   *" api --paginate repos/"*"/rules/branches/"*)
     printf '%s\n' '[]'
@@ -1521,6 +1552,208 @@ test_static_poll_contract() {
   pass "static poll is silent except for one merged line and remains watcher-bounded"
 }
 
+test_github_poll_reports_queue_ejection_and_reenqueues_once() {
+  local dir state url out mem
+  url=https://github.com/o/r/pull/1
+
+  # Never queued: silent, and no queue memory is ever created - a pull request
+  # this poll never saw in the queue is not this poll's to report.
+  dir=$(make_case github-queue-never-queued)
+  state="$dir/home/state"
+  make_poll_fixture "$dir"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=false \
+    FM_TEST_GH_QUEUE_REMOVED_AT=2026-11-12T10:00:00Z run_poll "$dir")
+  [ -z "$out" ] || fail "never-queued GitHub poll emitted: $out"
+  [ ! -e "$state/task-a.pr-poll-queue" ] || fail "never-queued poll wrote queue memory"
+
+  # Queued, then ejected: one observation naming the pull request with
+  # GitHub's own removal timestamp and reason, and the single re-enqueue with
+  # the exact queue flags bin/fm-pr-merge.sh names, bound to the observed head.
+  dir=$(make_case github-queue-ejection)
+  state="$dir/home/state"
+  make_poll_fixture "$dir"
+  printf 'merge_method=SQUASH\n' > "$dir/queue-rules"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=true run_poll "$dir")
+  [ -z "$out" ] || fail "queued GitHub poll emitted: $out"
+  mem=$(cat "$state/task-a.pr-poll-queue") || fail "queued poll did not record queue memory"
+  [ "$mem" = "$(printf '%s\n' fm-pr-poll-queue-v1 "url=$url" was_queued=true reported_removed_at= reenqueued=false)" ] \
+    || fail "queue memory recorded the wrong shape: $mem"
+  [ "$(file_mode "$state/task-a.pr-poll-queue")" = 600 ] || fail "queue memory is not owner-private"
+  : > "$dir/gh.log"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=false \
+    FM_TEST_GH_QUEUE_REMOVED_AT=2026-11-12T11:00:00Z \
+    FM_TEST_GH_QUEUE_REMOVED_REASON='A failing check removed this pull request from the queue.' \
+    FM_TEST_GH_QUEUE_RULES="$dir/queue-rules" run_poll "$dir")
+  [ "$out" = "github queue ejected: $url left the merge queue without merging (removed at 2026-11-12T11:00:00Z, reason: A failing check removed this pull request from the queue.); re-enqueued once with the queue flags --auto --squash" ] \
+    || fail "ejected GitHub poll printed: $out"
+  assert_grep "pr merge 1 --repo o/r --match-head-commit 0123456789abcdef0123456789abcdef01234567 --auto --squash" \
+    "$dir/gh.log" "the ejection did not re-enqueue with the queue's exact flags"
+  [ "$(grep -c '^pr merge ' "$dir/gh.log")" -eq 1 ] || fail "the ejection re-enqueued more than once"
+  assert_no_grep " --json state " "$dir/gh.log" "the queue-aware read fell back to the state read"
+  mem=$(cat "$state/task-a.pr-poll-queue")
+  [ "$mem" = "$(printf '%s\n' fm-pr-poll-queue-v1 "url=$url" was_queued=true reported_removed_at=2026-11-12T11:00:00Z reenqueued=true)" ] \
+    || fail "queue memory did not record the report and its used retry: $mem"
+
+  # The same standing ejection stays silent, and a second ejection after a
+  # requeue is reported but never re-enqueued again.
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=false \
+    FM_TEST_GH_QUEUE_REMOVED_AT=2026-11-12T11:00:00Z \
+    FM_TEST_GH_QUEUE_REMOVED_REASON='A failing check removed this pull request from the queue.' \
+    FM_TEST_GH_QUEUE_RULES="$dir/queue-rules" run_poll "$dir")
+  [ -z "$out" ] || fail "a standing ejection woke again: $out"
+  [ "$(grep -c '^pr merge ' "$dir/gh.log")" -eq 1 ] || fail "a standing ejection re-enqueued again"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=true run_poll "$dir")
+  [ -z "$out" ] || fail "requeued GitHub poll emitted: $out"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=false \
+    FM_TEST_GH_QUEUE_REMOVED_AT=2026-11-12T12:00:00Z \
+    FM_TEST_GH_QUEUE_REMOVED_REASON='The merge attempt failed.' \
+    FM_TEST_GH_QUEUE_RULES="$dir/queue-rules" run_poll "$dir")
+  [ "$out" = "github queue ejected: $url left the merge queue without merging (removed at 2026-11-12T12:00:00Z, reason: The merge attempt failed.); not re-enqueued again: its one automatic re-enqueue was already used" ] \
+    || fail "second ejection printed: $out"
+  [ "$(grep -c '^pr merge ' "$dir/gh.log")" -eq 1 ] || fail "a second ejection re-enqueued again"
+
+  # A re-enqueue that fails is still the one retry: reported as failed,
+  # recorded as used, and never attempted again.
+  dir=$(make_case github-queue-retry-fails)
+  state="$dir/home/state"
+  make_poll_fixture "$dir"
+  printf 'merge_method=SQUASH\n' > "$dir/queue-rules"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$dir/merge-hook.sh"
+  chmod 0700 "$dir/merge-hook.sh"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=true run_poll "$dir")
+  [ -z "$out" ] || fail "queued GitHub poll emitted: $out"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=false \
+    FM_TEST_GH_QUEUE_REMOVED_AT=2026-11-12T11:30:00Z \
+    FM_TEST_GH_MERGE_HOOK="$dir/merge-hook.sh" \
+    FM_TEST_GH_QUEUE_RULES="$dir/queue-rules" run_poll "$dir")
+  [ "$out" = "github queue ejected: $url left the merge queue without merging (removed at 2026-11-12T11:30:00Z, reason: <no reason reported>); its one re-enqueue (--auto --squash) failed" ] \
+    || fail "failed-retry ejection printed: $out"
+  mem=$(cat "$state/task-a.pr-poll-queue")
+  [ "$mem" = "$(printf '%s\n' fm-pr-poll-queue-v1 "url=$url" was_queued=true reported_removed_at=2026-11-12T11:30:00Z reenqueued=true)" ] \
+    || fail "a failed retry was not recorded as used: $mem"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=false \
+    FM_TEST_GH_QUEUE_REMOVED_AT=2026-11-12T11:30:00Z \
+    FM_TEST_GH_MERGE_HOOK="$dir/merge-hook.sh" \
+    FM_TEST_GH_QUEUE_RULES="$dir/queue-rules" run_poll "$dir")
+  [ -z "$out" ] || fail "a failed standing retry woke again: $out"
+  [ "$(grep -c '^pr merge ' "$dir/gh.log")" -eq 1 ] || fail "a failed retry was attempted again"
+
+  # Conflicting queue methods on the base branch: observed, never re-enqueued,
+  # with the reason stated so the operator can fix the branch rules.
+  dir=$(make_case github-queue-conflicting-methods)
+  state="$dir/home/state"
+  make_poll_fixture "$dir"
+  printf 'merge_method=SQUASH\nmerge_method=MERGE\n' > "$dir/queue-rules"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=true run_poll "$dir")
+  [ -z "$out" ] || fail "queued GitHub poll emitted: $out"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=false \
+    FM_TEST_GH_QUEUE_REMOVED_AT=2026-11-12T11:45:00Z \
+    FM_TEST_GH_QUEUE_REMOVED_REASON='Conflicting branch rules.' \
+    FM_TEST_GH_QUEUE_RULES="$dir/queue-rules" run_poll "$dir")
+  [ "$out" = "github queue ejected: $url left the merge queue without merging (removed at 2026-11-12T11:45:00Z, reason: Conflicting branch rules.); not re-enqueued: the base branch has conflicting merge queue methods" ] \
+    || fail "conflicting-methods ejection printed: $out"
+  assert_no_grep '^pr merge ' "$dir/gh.log" "a conflict of methods still re-enqueued"
+
+  # Watcher level: the observation lands as exactly one non-terminal check
+  # wake naming the ejection, and the queue memory keeps later sweeps quiet.
+  dir=$(make_case github-queue-watcher)
+  state="$dir/home/state"
+  make_poll_fixture "$dir"
+  printf 'merge_method=SQUASH\n' > "$dir/queue-rules"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=true run_poll "$dir")
+  [ -z "$out" ] || fail "queued GitHub poll emitted: $out"
+  write_poll_meta "$state" task-a "$url"
+  seed_canonical_poll "$dir" task-a "$url"
+  add_stop_custom_check "$dir"
+  : > "$dir/wakes"
+  github_queue_cycle() {
+    FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GH_QUEUE=1 \
+    FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=false \
+    FM_TEST_GH_QUEUE_REMOVED_AT=2026-11-12T13:00:00Z \
+    FM_TEST_GH_QUEUE_REMOVED_REASON='A failing check removed this pull request from the queue.' \
+    FM_TEST_GH_QUEUE_RULES="$dir/queue-rules" \
+      run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2>&1 || true
+    grep -q 'stop-cycle\|github queue ejected: ' "$state/.wake-queue" \
+      || fail "the watcher cycle did not run its checks: $(cat "$dir/watch.out")"
+    cat "$state/.wake-queue" >> "$dir/wakes"
+    rm -f "$state/.wake-queue" "$state/.watcher-down"
+  }
+  github_queue_cycle
+  github_queue_cycle
+  [ "$(grep -c 'github queue ejected: ' "$dir/wakes")" -eq 1 ] \
+    || fail "the ejection observation woke more than once: $(cat "$dir/wakes")"
+  assert_grep 'github queue ejected: https://github.com/o/r/pull/1 left the merge queue without merging (removed at 2026-11-12T13:00:00Z, reason: A failing check removed this pull request from the queue.); re-enqueued once with the queue flags --auto --squash' \
+    "$dir/wakes" "the ejection wake did not carry the observation: $(cat "$dir/wakes")"
+  [ "$(grep -c '^pr merge ' "$dir/gh.log")" -eq 1 ] \
+    || fail "the watcher's ejection re-enqueued more than once"
+  pass "a GitHub merge queue ejection is observed once and self-heals with one re-enqueue"
+}
+
+test_github_poll_lands_queued_and_degrades_gracefully() {
+  local dir state url out
+  url=https://github.com/o/r/pull/1
+
+  # Queued, then merged through the queue-aware read: exactly the terminal
+  # merged line - no ejection observation, no re-enqueue, no fallback read.
+  dir=$(make_case github-queue-merged)
+  state="$dir/home/state"
+  make_poll_fixture "$dir"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=true run_poll "$dir")
+  [ -z "$out" ] || fail "queued GitHub poll emitted: $out"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=MERGED FM_TEST_GH_QUEUE_MERGED=true run_poll "$dir")
+  [ "$out" = merged ] || fail "a merged pull request did not print its terminal line: $out"
+  assert_no_grep '^pr merge ' "$dir/gh.log" "a merged pull request was re-enqueued"
+  assert_no_grep ' --json state ' "$dir/gh.log" "merged detection needed the fallback read"
+
+  # A queue-aware read that fails wholesale keeps the poll honest through the
+  # plain state read: merged is still detected, and nothing else is invented.
+  dir=$(make_case github-queue-unreadable)
+  state="$dir/home/state"
+  make_poll_fixture "$dir"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_FAIL=1 FM_TEST_GH_STATE=MERGED run_poll "$dir")
+  [ "$out" = merged ] || fail "an unreadable queue read lost merged detection: $out"
+  assert_grep ' --json state ' "$dir/gh.log" "the degraded poll did not use its state read"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_FAIL=1 FM_TEST_GH_STATE=OPEN run_poll "$dir")
+  [ -z "$out" ] || fail "an unreadable queue read invented output: $out"
+  assert_no_grep '^pr merge ' "$dir/gh.log" "the degraded poll re-enqueued"
+
+  # A queued pull request that closes instead of landing is not an open
+  # ejection; the poll stays silent and its memory stays unused.
+  dir=$(make_case github-queue-closed)
+  state="$dir/home/state"
+  make_poll_fixture "$dir"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=true run_poll "$dir")
+  [ -z "$out" ] || fail "queued GitHub poll emitted: $out"
+  out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=CLOSED FM_TEST_GH_QUEUE_QUEUED=false \
+    FM_TEST_GH_QUEUE_REMOVED_AT=2026-11-12T11:00:00Z run_poll "$dir")
+  [ -z "$out" ] || fail "a closed pull request was reported as ejected: $out"
+
+  # Queue memory that cannot be written keeps the whole report silent and the
+  # retry unspent: a repeatable line or re-attempt every sweep would be worse
+  # than one missed observation.
+  dir=$(make_case github-queue-unwritable)
+  state="$dir/home/state"
+  make_poll_fixture "$dir"
+  printf 'merge_method=SQUASH\n' > "$dir/queue-rules"
+  printf '%s\n' fm-pr-poll-queue-v1 "url=$url" was_queued=true reported_removed_at= reenqueued=false \
+    > "$state/task-a.pr-poll-queue"
+  chmod 0600 "$state/task-a.pr-poll-queue"
+  if [ "$(id -u)" -ne 0 ]; then
+    chmod 0555 "$state"
+    out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=false \
+      FM_TEST_GH_QUEUE_REMOVED_AT=2026-11-12T11:00:00Z \
+      FM_TEST_GH_QUEUE_RULES="$dir/queue-rules" run_poll "$dir")
+    [ -z "$out" ] || fail "an unwritable memory still published the observation: $out"
+    out=$(FM_TEST_GH_QUEUE=1 FM_TEST_GH_QUEUE_STATE=OPEN FM_TEST_GH_QUEUE_QUEUED=false \
+      FM_TEST_GH_QUEUE_REMOVED_AT=2026-11-12T11:00:00Z \
+      FM_TEST_GH_QUEUE_RULES="$dir/queue-rules" run_poll "$dir")
+    [ -z "$out" ] || fail "the unwritable memory looped: $out"
+    chmod 0755 "$state"
+    assert_no_grep '^pr merge ' "$dir/gh.log" "an unwritable memory still spent the retry"
+  fi
+  pass "a queued landing stays terminal and unreadable queue facts degrade silently"
+}
+
 test_atomic_interruption_leaves_no_partial_artifact() {
   local dir rc
   dir=$(make_case interrupted-write)
@@ -2006,6 +2239,7 @@ test_teardown_removes_poll_artifacts() {
   printf 'data\n' > "$dir/home/state/task-a.pr-poll"
   printf 'registration\n' > "$dir/home/state/task-a.pr-poll-registration"
   printf 'trust\n' > "$dir/home/state/task-a.check-trust"
+  printf 'queue\n' > "$dir/home/state/task-a.pr-poll-queue"
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -2020,6 +2254,7 @@ SH
   [ ! -e "$dir/home/state/task-a.pr-poll" ] || fail "teardown left the sidecar"
   [ ! -e "$dir/home/state/task-a.pr-poll-registration" ] || fail "teardown left the PR poll registration"
   [ ! -e "$dir/home/state/task-a.check-trust" ] || fail "teardown left the custom check registration"
+  [ ! -e "$dir/home/state/task-a.pr-poll-queue" ] || fail "teardown left the queue memory"
 
   dir=$(make_case teardown-retirement-receipt)
   fakebin="$dir/fakebin"
@@ -4272,6 +4507,8 @@ test_direct_pr_unpushed_commit_refuses_registration
 test_valid_recording_and_merge_derivation
 test_rejected_metacharacter_bytes_are_inert
 test_static_poll_contract
+test_github_poll_reports_queue_ejection_and_reenqueues_once
+test_github_poll_lands_queued_and_degrades_gracefully
 test_atomic_interruption_leaves_no_partial_artifact
 test_concurrent_watcher_sees_only_complete_publication
 test_poll_publication_refuses_unsafe_destinations
