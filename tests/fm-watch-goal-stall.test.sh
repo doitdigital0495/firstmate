@@ -41,7 +41,7 @@ PAUSE_RESURFACE_SECS=10000
 GOAL="$ROOT/bin/fm-goal.sh"
 
 reset_case() {
-  rm -rf -- "$STATE"/* "$STATE"/.[!.]* "$CONFIG"/* "$FM_DATA_OVERRIDE"/*
+  rm -rf -- "${STATE:?}"/* "${STATE:?}"/.[!.]* "${CONFIG:?}"/* "${FM_DATA_OVERRIDE:?}"/*
   mkdir -p "$STATE/procevent"
   DRIVE_FLOOR=
   GOAL_STALL=
@@ -83,7 +83,7 @@ test_startable_command_lists_only_startable_items() {
   case "$out" in "G1"$'\t'"build"$'\t'"main"$'\t'"t-build"$'\t'[0-9]*) ;; *) fail "unexpected startable row: $out" ;; esac
   "$GOAL" mark G1 build running -- 'on it' >/dev/null
   [ -z "$("$GOAL" startable)" ] || fail "a running item stayed startable"
-  "$GOAL" mark G1 build done -- 'landed' >/dev/null
+  "$GOAL" mark G1 build "done" -- 'landed' >/dev/null
   out=$("$GOAL" startable)
   case "$out" in "G1"$'\t'"verify"$'\t'*) ;; *) fail "finishing build did not unlock verify: $out" ;; esac
   pass "fm-goal.sh startable prints one row per startable item and follows marks"
