@@ -91,7 +91,7 @@ test_away_record_drives_named_and_unnamed_goals() {
   out="$dir/drain.out"
   lab_env "$dir" "$DRAIN" > "$out" 2>&1 || fail "drain failed under an away record: $(cat "$out")"
   [ "$(grep -m1 '^GOAL I' "$out" | cut -c1-8)" = 'GOAL I2 ' ] || fail "the named goal did not come first: $(cat "$out")"
-  grep -Fq 'GOAL I2 (active since' "$out" && grep -F 'GOAL I2 (active since' "$out" | grep -Fq 'driven while away: yes, named' \
+  grep -F 'GOAL I2 (active since' "$out" | grep -Fq 'driven while away: yes, named' \
     || fail "the named goal is not labeled driven: $(cat "$out")"
   grep -F 'GOAL I1 (active since' "$out" | grep -Fq 'driven while away: yes, active goal' \
     || fail "the unnamed active goal is not labeled driven while away: $(cat "$out")"
@@ -109,7 +109,7 @@ test_mark_moves_an_item_in_the_next_drain() {
   lab_env "$dir" "$DRAIN" > "$out" 2>&1 || fail "first drain failed"
   grep -Fq 'startable, nobody on it: build [main]' "$out" || fail "build was not startable first: $(cat "$out")"
   grep -Fq 'waiting: verify after build' "$out" || fail "verify did not wait on build: $(cat "$out")"
-  lab_env "$dir" bash "$GOAL" mark I1 build done -- landed >/dev/null || fail "mark failed"
+  lab_env "$dir" bash "$GOAL" mark I1 build 'done' -- landed >/dev/null || fail "mark failed"
   lab_env "$dir" "$DRAIN" > "$out" 2>&1 || fail "second drain failed"
   grep -Fq 'progress: 1/3 items done or dropped' "$out" || fail "the mark did not move progress: $(cat "$out")"
   grep -Fq 'startable, nobody on it: verify [main]' "$out" || fail "verify did not become startable after the mark: $(cat "$out")"
