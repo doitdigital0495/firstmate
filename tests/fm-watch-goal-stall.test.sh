@@ -261,9 +261,55 @@ test_watcher_loop() {
   grep -F 'goal-stall' "$dir/state/.wake-queue" >/dev/null \
     || fail "real watcher did not durably queue the goal-stall wake"
   pass "the actual watcher wakes and exits on a stalled goal item, keeping the clock across a restart"
+
+  dir="$TMP_ROOT/watcher-expiry"; i=0
+  mkdir -p "$dir/state" "$dir/config" "$dir/data"
+  fm_test_track_watcher_state "$dir/state"
+  touch "$dir/state/home-summary.json"
+  printf '%s\n' 'item [id=x] [owner=main]: pause me' > "$dir/items"
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_DATA_OVERRIDE="$dir/data" \
+    "$GOAL" start X --title X --done-when 'done' --named-by pause --plan p --items-file "$dir/items" >/dev/null || fail 'start expiry goal'
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_DATA_OVERRIDE="$dir/data" \
+    "$GOAL" pause X --words 'pause X until then' --until 2020-01-01T00:00Z >/dev/null || fail 'pause expiry goal'
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_DATA_OVERRIDE="$dir/data" FM_CREW_STATE_BIN="$STUB" \
+    bash "$ROOT/bin/fm-watch.sh" > "$dir/out" 2> "$dir/err" &
+  pid=$!
+  while [ "$i" -lt 200 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    fail 'real watcher failed to wake on timed pause expiry'
+  fi
+  wait "$pid" || fail "expiry watcher failed: $(cat "$dir/err")"
+  assert_grep 'check: goal pause expired: X' "$dir/out" 'expiry wake without drive-floor config'
+  assert_grep 'goal-pause:X' "$dir/state/.wake-queue" 'durable expiry wake'
+  pass 'the actual watcher wakes on a timed pause without drive-floor configuration'
 }
 
-fm_test_run test_startable_command_lists_only_startable_items \
+test_paused_goal_is_not_floor_work_or_stalled() {
+  reset_case
+  floor 8
+  start_goal X 'item [id=x] [owner=main] [task=tx]: pause me'
+  start_goal Y 'item [id=y] [owner=main] [task=ty]: keep going'
+  drive_floor_tick 1000
+  "$GOAL" pause X --words 'pause goal X, keep Y' >/dev/null
+  drive_floor_tick 1900
+  assert_not_contains "$GOAL_STALL" 'X:' 'paused goal not stalled'
+  assert_contains "$GOAL_STALL" 'Y: y' 'other goal still stalls'
+  assert_not_contains "$DRIVE_FLOOR" 'goal:X/' 'paused goal not floor work'
+  assert_contains "$DRIVE_FLOOR" 'goal:Y/y=startable' 'other goal still floor work'
+  "$GOAL" pause Y --words 'pause Y too' >/dev/null
+  drive_floor_tick 2000
+  assert_absent "$STATE/.goal-stall" 'all paused clears stall ledger'
+  assert_equals '' "$DRIVE_FLOOR" 'no floor wake for paused-only goals'
+  "$GOAL" resume X --words 'resume X' >/dev/null
+  drive_floor_tick 3000
+  drive_floor_tick 3900
+  assert_contains "$GOAL_STALL" 'X: x' 'resume restarts stall clock'
+  pass 'paused X is ignored by stall and floor while Y keeps driving; resume re-arms X'
+}
+
+fm_test_run test_paused_goal_is_not_floor_work_or_stalled test_startable_command_lists_only_startable_items \
   test_idle_startable_item_wakes_after_the_hold \
   test_an_item_with_a_working_task_or_a_mark_is_not_stalled \
   test_an_orphaned_running_item_is_stalled_like_an_open_one \

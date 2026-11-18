@@ -1,7 +1,7 @@
 ---
 name: drive-goal
 description: >-
-  Load when the captain names a goal to keep driving, on "show goal" or "close goal", when /afk words name a goal, when writing or editing a goal's items from its plan, and when steering an owner's marks or closing a goal through bin/fm-goal.sh.
+  Load when the captain names a goal to keep driving, on "show goal", "close goal", "pause goal", "resume goal" or "stop goal", when /afk words name a goal, when writing or editing a goal's items from its plan, and when steering an owner's marks or closing a goal through bin/fm-goal.sh.
 user-invocable: false
 metadata:
   internal: true
@@ -35,7 +35,7 @@ When the plan changes later, `bin/fm-goal.sh edit <id> --items-file <path>` keep
 Attended or away, the drain's GOAL section is the live state and its GOAL DUTY line is the standing duty: start or advance every startable item nobody is on.
 An item listed as `orphaned running, no live task` is such an item: its `running` mark has nothing live behind it, so dispatch a fresh task for it or re-mark it honestly, and never leave the mark standing.
 Steer the owning second mate with `bin/fm-send.sh`, or, for an item this home owns, dispatch it within the spend cap from a backlog item filed for exactly that step.
-When `/afk` words name a goal, the afk skill's entry carries the id through `--drive-goal`; every active goal drives while away whether or not the record names it, and the entry output lists the goals that will drive.
+When `/afk` words name a goal, the afk skill's entry carries the id through `--drive-goal`; every unpaused active goal drives while away whether or not the record names it, and the entry output lists the goals that will drive.
 
 A merged PR is not the end of an item with a target: the GOAL section lists it as short of target until its stage mark reaches the target.
 At each drive turn run `bin/fm-goal.sh probe <id>` so the stage marks follow the world; a probe marks only what its ladder proves, and a rung no probe can prove (a captain-only click) stays for the captain.
@@ -56,6 +56,19 @@ The runner announces that answer as an ordinary board wake, because the keyed-an
 On that wake run `bin/fm-drive-board.sh apply --result <result-file>` as main: it starts or edits the goal through `fm-goal.sh` and, when the captain ticked the box, enters `/afk` through `fm-afk-launch.sh enter --drive-goal`.
 Then finish the `/afk` entry as the afk skill says, rebuild the board so it shows the new state, and echo every action in chat.
 A refusal names its reason and leaves the goal and the away record untouched, so relay it instead of forcing the answer.
+
+## Pausing, resuming and stopping
+
+On "pause goal X", main runs the pause command with the captain's verbatim words; "pause all goals" uses its all-goals form.
+On "resume goal X", main runs resume with those words; on "stop goal X", main runs stop, the captain-close alias.
+Use `bin/fm-goal.sh --help` for flags and the soft-stop contract; `docs/configuration.md` owns the operator limits and timed-pause behavior.
+Resolve X to one exact goal id from `show`; if the title is ambiguous, ask rather than choosing a goal.
+A secondmate forwards the request to parent main rather than mutating a goal itself.
+After pause or stop, steer every item's owner to let busy workers finish their current step, save their branch and park through `bin/fm-control.sh exit` (which keeps the worktree); do not interrupt a busy step or tear down its worktree.
+Inspect queued forge merges too: a merge already submitted to a provider is not recalled by a local goal control, so main must disarm it through the existing provider path before confirming the goal is safely parked.
+On resume, inspect the parked tasks and relaunch them from their existing branches through the normal control path, not as duplicate fresh tasks.
+A `check: goal pause expired` wake asks main to resume or renew the pause with a reason; expiry never resumes work silently.
+Echo which goal changed and which other goals keep driving, including any owners still finishing their current step.
 
 ## Showing and closing
 

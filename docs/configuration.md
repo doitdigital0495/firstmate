@@ -261,7 +261,7 @@ While the away-posture record `state/.afk-contract` exists:
 - The branch takes every actionable row.
 - No processing turn opens on the parked main.
 - Main's standing authority moves to the branch through the guarded scripts, each retaining its own gate.
-- Every active goal drives, whether or not `/afk --drive-goal` named it, and the drain's GOAL section is its live state; `bin/fm-afk-contract.sh` owns the `drive_goals` field and the spend cap, which defaults to 50 and drops lower only on the captain's own quoted words.
+- Every unpaused active goal drives, whether or not `/afk --drive-goal` named it, and the drain's GOAL section is its live state; `bin/fm-afk-contract.sh` owns the `drive_goals` field and the spend cap, which defaults to 50 and drops lower only on the captain's own quoted words.
 
 [docs/pi-supervision-branch.md](pi-supervision-branch.md#postures) defines that posture.
 
@@ -1106,6 +1106,22 @@ An invalid expiry refuses the send before delivery; an invalid scan interval fal
 Pass them in the environment - the expiry at send time, the scan setting in the watcher's environment or `config/watch.env` for watchers started through `bin/fm-watch-arm.sh`.
 `bin/fm-watch.sh`'s `imposed_hold_expiry_tick` owns the wake schedule and `bin/fm-classify-lib.sh` owns the hold records it reads.
 
+## Per-goal pause, resume and stop
+
+Main can pause, resume or stop one goal at the captain's word, including through the drive-goal skill's chat commands.
+Pause is a soft stop: no new starts or merges for that goal; busy workers finish their current step, save and park, retaining their worktree and branch.
+Other goals keep driving.
+Resume restores the goal's eligibility and main relaunches its parked workers from their branches; stop archives the goal through the existing captain-close path rather than deleting workers or branches.
+A timed pause produces one actionable expiry wake asking main to resume or renew it, not an automatic restart.
+Paused goals remain visible in the wake drain, JSON export and return brief, but their items are not startable, so the drive floor and goal-stall tick ignore them.
+The shared admission gate in spawn and PR merge refuses tasks linked by a goal item's stored or marked `task=`, including local secondmate parent records and captain-stopped archives.
+Keep those links accurate: unlinked tasks cannot be identified as belonging to a goal, and an unreadable goal record fails admission closed.
+A new active mandate for the same goal id supersedes its stopped archive.
+Remote parent goals require owner steering rather than local mechanical admission; only that home's own goals are checked, and no remote endpoint is inspected.
+An unreadable secondmate identity or missing parent binding fails admission closed.
+Already submitted provider merges are not recalled by a local pause or stop; main must inspect and disarm those before confirming the goal is parked.
+`bin/fm-goal.sh --help` owns the commands and record format; `tests/fm-goal.test.sh` and `tests/fm-watch-goal-stall.test.sh` cover control and wake behavior.
+
 ## Drive floor (config/drive-floor)
 
 The optional local, gitignored `config/drive-floor` file enables a default-off watcher backstop for an under-driven fleet: its first line is the integer floor of lanes that should be ACTUALLY working.
@@ -1122,7 +1138,7 @@ What startable means includes an orphaned-running item: one marked `running` who
 Such an item is listed as startable with the marker `orphaned running, no live task` - a running mark over no live work is waiting, not working - while a `working` or `parked` verdict keeps the item running and out of the startable list.
 
 The same tick also raises `check: goal stalled: <goal>: <item> (owner=<owner>) <age>s[, ...] (threshold <n>s)[; ...]` once such an item has sat unstarted for the hold, whether or not the floor is met, so an idle startable item never stays silent; an orphaned-running item counts as unstarted, so a `running` mark alone does not silence the alarm.
-The age runs from the watcher's first sight of the item as waiting, repeats once per `FM_PAUSE_RESURFACE_SECS`, and restarts when the item is marked, finishes, or leaves the record; closing the goal or removing the config drops the ledger.
+The age runs from the watcher's first sight of the item as waiting, repeats once per `FM_PAUSE_RESURFACE_SECS`, and restarts when the item is marked, finishes, or leaves the record; pausing or closing the goal or removing the config drops the ledger.
 `bin/fm-goal.sh` owns what startable means, and the supervising firstmate answers the wake by steering the item's owner or starting the item itself.
 
 The condition must hold for `FM_DRIVE_FLOOR_HOLD_SECS` seconds (default `900`) before the first wake, then repeats once per `FM_PAUSE_RESURFACE_SECS` while it stays below the floor.

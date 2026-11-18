@@ -3894,14 +3894,39 @@ test_secondmate_without_parent_binding_is_loud() {
   rc=$?
   set -e
 
-  expect_code 0 "$rc" "unbound-secondmate: the merge itself landed and must not be reported as failed"
-  assert_grep 'could not report it upward' "$case_dir/stderr" \
-    "unbound-secondmate: a merge that could not be reported upward said nothing about it"
+  expect_code 1 "$rc" "unbound-secondmate: goal admission must fail closed without a parent binding"
+  assert_grep 'unreadable secondmate identity' "$case_dir/stderr" \
+    "unbound-secondmate: refusal must name missing identity/binding"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" 'unbound-secondmate: no forge merge call'
   assert_absent "$case_dir/state/.wake-queue" \
     "unbound-secondmate: a secondmate home fell back to the main-home record"
-  pass "a secondmate home that cannot report upward says so instead of merging in silence"
+  pass "a secondmate home without a parent binding refuses before merging with a named goal-admission error"
 }
 
+test_paused_goal_refuses_merge_and_resume_allows_it() {
+  local case_dir rc url=https://github.com/example/repo/pull/65
+  case_dir=$(make_home_case goal-pause-merge)
+  add_gh_mocks "$case_dir" 8888888888888888888888888888888888888888
+  printf '%s\n' 'item [id=ship] [owner=main] [task=task-x1]: ship' > "$case_dir/items"
+  FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" bash "$ROOT/bin/fm-goal.sh" start X \
+    --title X --done-when shipped --named-by 'ship X' --plan plan.md --items-file "$case_dir/items" >/dev/null || fail 'start goal'
+  FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" bash "$ROOT/bin/fm-goal.sh" pause X \
+    --words 'pause X' >/dev/null || fail 'pause goal'
+  rc=0
+  FM_TEST_HOME="$case_dir/home" run_pr_merge "$case_dir" task-x1 "$url" \
+    >"$case_dir/stdout" 2>"$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" 'paused task cannot merge'
+  assert_grep 'linked to paused goal X' "$case_dir/stderr" 'goal admission reason'
+  assert_no_grep 'pr merge' "$case_dir/gh.log" 'no provider merge when paused'
+  FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" bash "$ROOT/bin/fm-goal.sh" resume X \
+    --words 'resume X' >/dev/null || fail 'resume goal'
+  FM_TEST_HOME="$case_dir/home" run_pr_merge "$case_dir" task-x1 "$url" \
+    >"$case_dir/stdout2" 2>"$case_dir/stderr2" || fail 'resumed task cannot merge'
+  assert_grep 'pr merge' "$case_dir/gh.log" 'provider merge after resume'
+  pass 'goal pause refuses a real merge entrypoint before forge mutation; resume permits it'
+}
+
+test_paused_goal_refuses_merge_and_resume_allows_it
 test_github_zero_exit_queue_required_refuses_with_exact_retry
 test_github_closed_unqueued_outcome_omits_retry_flags
 test_github_agreeing_queue_rules_keep_retry_guidance

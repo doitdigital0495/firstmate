@@ -130,6 +130,11 @@
 #   fm-goal.sh mark <id> <item> stage=<stage> [--task <task-id>] -- <note>
 #   fm-goal.sh probe [<id> [<item>]] [--dry-run]
 #   fm-goal.sh close <id> --done | --captain --words <text>
+#   fm-goal.sh pause <id>|--all --words <text> [--until <YYYY-MM-DDTHH:MM[:SS]Z>]
+#   fm-goal.sh resume <id> --words <text>
+#   fm-goal.sh stop <id> --words <text>
+#   fm-goal.sh admit <task-id>
+#   fm-goal.sh expire [<now-epoch>]
 #   fm-goal.sh show [<id>]
 #   fm-goal.sh brief
 #   fm-goal.sh active
@@ -138,6 +143,15 @@
 #   fm-goal.sh exists <id>
 #   fm-goal.sh window <id> --since <epoch>
 #   fm-goal.sh driven --since <epoch>
+#
+# Pause is main-only at the captain's word: no fresh starts or merges; workers
+# finish their current step and park. Resume restores startability; stop aliases
+# close --captain (archives, never deletes workers or their branches).
+# v3 records carry control_words, control_at and optional paused_until (UTC ISO).
+# Paused goals stay visible and accept progress marks, but are not startable.
+# expire emits one actionable check wake per timed pause, never auto-resumes.
+# admit refuses tasks linked by stored or folded task= to paused/stopped goals,
+# including a local secondmate's parent goals. Remote parents are not readable.
 #
 # `driven` renders every goal active at any point of the window (active now,
 # or closed since <epoch>) in the captain's words, for the return brief's
@@ -536,6 +550,7 @@ _fm_goal_load_record() {  # <path>
   local named_by='' plan='' done_when='' closed='' closed_epoch='' closed_reason='' closed_words=''
   local have_version=0 have_id=0 have_state=0 have_started=0 have_started_epoch=0
   local have_title=0 have_named_by=0 have_plan=0 have_done_when=0
+  local control_words='' control_at='' paused_until='' seen_control=' '
   _fm_goal_items_reset
   FM_GOAL_PROJECTION=()
   _FM_GOAL_READ_ERROR=''
@@ -597,6 +612,15 @@ _fm_goal_load_record() {  # <path>
           [ "$have_done_when" -eq 0 ] || { _fm_goal_read_error "duplicate done_when"; return 1; }
           have_done_when=1; done_when=$value
           ;;
+        control_words|control_at|paused_until)
+          case "$seen_control" in *" $field "*) _fm_goal_read_error "duplicate $field"; return 1 ;; esac
+          seen_control="$seen_control$field "
+          case "$field" in
+            control_words) control_words=$value ;;
+            control_at) control_at=$value ;;
+            paused_until) paused_until=$value ;;
+          esac
+          ;;
         items)
           seen_items=1
           ;;
@@ -641,7 +665,7 @@ _fm_goal_load_record() {  # <path>
   done < "$path"
   [ "$have_version" -eq 1 ] || { _FM_GOAL_READ_ERROR='no version'; return 1; }
   case "$version" in
-    1|2) ;;
+    1|2|3) ;;
     *) _FM_GOAL_READ_ERROR="unsupported version: $version"; return 1 ;;
   esac
   [ "$have_id" -eq 1 ] || { _FM_GOAL_READ_ERROR='no id'; return 1; }
@@ -649,9 +673,18 @@ _fm_goal_load_record() {  # <path>
   [ "$have_title" -eq 1 ] && [ -n "$title" ] || { _FM_GOAL_READ_ERROR='no title'; return 1; }
   [ "$have_state" -eq 1 ] || { _FM_GOAL_READ_ERROR='no state'; return 1; }
   case "$state" in
-    active|closed) ;;
+    active|paused|closed) ;;
     *) _FM_GOAL_READ_ERROR="unknown state: $state"; return 1 ;;
   esac
+  if [ -n "$control_at$control_words$paused_until" ] || [ "$state" = paused ]; then
+    [ "$version" = 3 ] || { _fm_goal_read_error 'control fields require v3'; return 1; }
+    case "$control_at" in ''|*[!0-9]*|0[0-9]*) _fm_goal_read_error 'invalid control_at'; return 1 ;; esac
+    [ "${#control_at}" -le 12 ] && [ -n "$control_words" ] || { _fm_goal_read_error 'invalid control provenance'; return 1; }
+    [ -z "$paused_until" ] || fm_utc_iso_to_epoch "$paused_until" >/dev/null || { _fm_goal_read_error 'invalid paused_until'; return 1; }
+  fi
+  FM_GOAL_REC_CONTROL_WORDS=$control_words
+  FM_GOAL_REC_CONTROL_AT=$control_at
+  FM_GOAL_REC_PAUSED_UNTIL=$paused_until
   [ "$have_started" -eq 1 ] || { _FM_GOAL_READ_ERROR='no started'; return 1; }
   [ "$have_started_epoch" -eq 1 ] || { _FM_GOAL_READ_ERROR='no started_epoch'; return 1; }
   case "$started_epoch" in ''|*[!0-9]*|0[0-9]*) _FM_GOAL_READ_ERROR='malformed started_epoch'; return 1 ;; esac
@@ -1185,6 +1218,7 @@ _fm_goal_item_orphaned_running() {  # <idx> [state-dir]
 # startable, an item past its until never is, and an item with unmet after ids
 # waits.
 _fm_goal_item_startable() {  # <idx> [state-dir]
+  [ "$FM_GOAL_REC_STATE" = active ] || return 1
   [ "${FM_GOAL_ITEMS_CLASSES[$1]}" = drive ] || return 1
   case "${FM_GOAL_M_STATES[$1]}" in
     open) ;;
@@ -1254,7 +1288,7 @@ fm_goal_project() {  # <id> [state-dir] [data-dir] [now]
       "$FM_GOAL_REC_ID" "$FM_GOAL_REC_STARTED_EPOCH" "$FM_GOAL_REC_CLOSED_EPOCH" "${FM_GOAL_REC_CLOSED_REASON}"
   else
     fm_goal_fold "$id" "$state" "$data" "$now"
-    printf 'goal %s state=active started=%s\n' "$FM_GOAL_REC_ID" "$FM_GOAL_REC_STARTED_EPOCH"
+    printf 'goal %s state=%s started=%s\n' "$FM_GOAL_REC_ID" "$FM_GOAL_REC_STATE" "$FM_GOAL_REC_STARTED_EPOCH"
   fi
   i=0
   while [ "$i" -lt "$FM_GOAL_ITEM_COUNT" ]; do
@@ -1298,7 +1332,7 @@ _fm_goal_open_record() {  # <id> [state-dir]
     *) fm_goal_log "the goal record path is not a regular file: $path"; return 1 ;;
   esac
   fm_goal_validate "$path" "$id" || return 1
-  [ "$FM_GOAL_REC_STATE" = active ] || {
+  [ "$FM_GOAL_REC_STATE" != closed ] || {
     fm_goal_log "goal '$id' is not active (${FM_GOAL_REC_STATE})"
     return 1
   }
@@ -1339,7 +1373,7 @@ fm_goal_active_records() {  # [state-dir]
       fm_goal_log "skipping unreadable goal record $path: $_FM_GOAL_READ_ERROR"
       continue
     fi
-    [ "$FM_GOAL_REC_STATE" = active ] || continue
+    [ "$FM_GOAL_REC_STATE" != closed ] || continue
     rows="$rows$(printf '%010d\t%s\t%s' "$FM_GOAL_REC_STARTED_EPOCH" "$FM_GOAL_REC_ID" "$path")"$'\n'
   done
   [ -n "$rows" ] || return 1
@@ -1415,6 +1449,7 @@ fm_goal_render_show() {  # <id> [state-dir] [data-dir]
   printf '  state: %s, started %s (%s ago), named by %s\n' \
     "$FM_GOAL_REC_STATE" "$FM_GOAL_REC_STARTED" \
     "$(fm_goal_age $((now - FM_GOAL_REC_STARTED_EPOCH)))" "$FM_GOAL_REC_NAMED_BY"
+  _fm_goal_control_render
   printf '  plan: %s\n' "$FM_GOAL_REC_PLAN"
   printf '  done when: %s\n' "$FM_GOAL_REC_DONE_WHEN"
   printf '  progress: %s/%s items done or dropped; last goal update %s\n' \
@@ -1481,14 +1516,17 @@ _fm_goal_brief_block() {  # <id> <state> <data> <away>
   now=$(date +%s)
   _fm_goal_open_record "$id" "$state" || return 1
   fm_goal_fold "$id" "$state" "$data" "$now"
-  line="GOAL $id (active since $FM_GOAL_REC_STARTED"
+  line="GOAL $id ($FM_GOAL_REC_STATE since $FM_GOAL_REC_STARTED"
+  [ "$FM_GOAL_REC_STATE" != paused ] || away=paused
   case "$away" in
+    paused) line="$line; driven while away: no, paused)" ;;
     named) line="$line; driven while away: yes, named)" ;;
     unnamed) line="$line; driven while away: yes, active goal)" ;;
     *) line="$line)" ;;
   esac
   line="$line: $FM_GOAL_REC_TITLE"
   fm_cap_line_var "$line"; printf '%s\n' "$FM_LINE_CAP_LINE"
+  _fm_goal_control_render
   fm_cap_line_var "  done when: $FM_GOAL_REC_DONE_WHEN"; printf '%s\n' "$FM_LINE_CAP_LINE"
   if [ -n "$FM_GOAL_FOLD_LAST_AT" ]; then
     line="  progress: $(_fm_goal_closed_count)/$FM_GOAL_ITEM_COUNT items done or dropped; last goal update $(fm_goal_age $((now - FM_GOAL_FOLD_LAST_AT))) ago (${FM_GOAL_FOLD_LAST_OWNER:--})"
@@ -1576,8 +1614,9 @@ _fm_goal_brief_block_mate() {  # <id> <state> <data> <mate> <away>
     i=$((i + 1))
   done
   [ "$mine" -ge 1 ] || return 2
-  fm_cap_line_var "PARENT GOAL $id (your items; the parent firstmate owns the record): $FM_GOAL_REC_TITLE"
+  fm_cap_line_var "PARENT GOAL $id (your items; state=$FM_GOAL_REC_STATE; the parent firstmate owns the record): $FM_GOAL_REC_TITLE"
   printf '%s\n' "$FM_LINE_CAP_LINE"
+  _fm_goal_control_render
   fm_cap_line_var "  done when: $FM_GOAL_REC_DONE_WHEN"; printf '%s\n' "$FM_LINE_CAP_LINE"
   i=0
   while [ "$i" -lt "$FM_GOAL_ITEM_COUNT" ]; do
@@ -1643,7 +1682,7 @@ fm_goal_render_brief() {
   local home=$FM_GOAL_HOME state=$FM_GOAL_STATE data=$FM_GOAL_DATA
   local rc=0 id block out='' used=0 named='' away_kind='' mate away
   local block_len path paths duty invalid=0
-  duty='GOAL DUTY: start every startable item now (steer its owner or dispatch it); record with bin/fm-goal.sh mark <goal> <item> <state> -- <note>; full view: bin/fm-goal.sh show <goal>'
+  duty='GOAL DUTY: start every startable item now (steer its owner or dispatch it); record with bin/fm-goal.sh mark <goal> <item> <state> -- <note>; full view: bin/fm-goal.sh show <goal>; paused goals: no starts or merges, finish current step and park'
   local -a order=()
   fm_parent_channel_destination "$home" "$state" >/dev/null 2>&1 || rc=$?
   if [ "$rc" -eq 0 ]; then
@@ -1720,7 +1759,8 @@ fm_goal_render_brief() {
 "
       used=$((used + block_len + 1))
     else
-      fm_cap_line_var "GOAL $id (active; collapsed): run bin/fm-goal.sh show $id"
+      _fm_goal_open_record "$id" "$state" >/dev/null 2>&1 || FM_GOAL_REC_STATE=unknown
+      fm_cap_line_var "GOAL $id ($FM_GOAL_REC_STATE; collapsed): run bin/fm-goal.sh show $id"
       if [ $((used + ${#FM_LINE_CAP_LINE} + ${#duty} + 2)) -le "$FM_GOAL_BRIEF_TOTAL_BYTES" ]; then
         out="$out$FM_LINE_CAP_LINE
 "
@@ -1833,6 +1873,7 @@ _fm_goal_load_items_file() {  # <path>
 # stays byte-compatible with a v1 reader.
 _fm_goal_record_version() {
   local i=0
+  if [ -n "${FM_GOAL_REC_CONTROL_AT:-}" ]; then printf 3; return 0; fi
   while [ "$i" -lt "$FM_GOAL_ITEM_COUNT" ]; do
     if [ -n "${FM_GOAL_ITEMS_PROJECTS[$i]}${FM_GOAL_ITEMS_TARGETS[$i]}${FM_GOAL_ITEMS_UNTILS[$i]}${FM_GOAL_ITEMS_STOPONS[$i]}" ]; then
       printf 2
@@ -1850,6 +1891,10 @@ _fm_goal_render_record() {
   printf 'id: %s\n' "$FM_GOAL_REC_ID"
   printf 'title: %s\n' "$FM_GOAL_REC_TITLE"
   printf 'state: %s\n' "$FM_GOAL_REC_STATE"
+  if [ -n "${FM_GOAL_REC_CONTROL_AT:-}" ]; then
+    printf 'control_at: %s\ncontrol_words: %s\n' "$FM_GOAL_REC_CONTROL_AT" "$FM_GOAL_REC_CONTROL_WORDS"
+    [ -z "${FM_GOAL_REC_PAUSED_UNTIL:-}" ] || printf 'paused_until: %s\n' "$FM_GOAL_REC_PAUSED_UNTIL"
+  fi
   printf 'started: %s\n' "$FM_GOAL_REC_STARTED"
   printf 'started_epoch: %s\n' "$FM_GOAL_REC_STARTED_EPOCH"
   printf 'named_by: %s\n' "$FM_GOAL_REC_NAMED_BY"
@@ -1988,7 +2033,7 @@ cmd_edit() {
   _fm_goal_load_items_file "$items_file" || { fm_goal_lock_release; exit 2; }
   FM_GOAL_REC_ID=$r_id
   FM_GOAL_REC_TITLE=$(_fm_goal_clean_field "${title:-$r_title}")
-  FM_GOAL_REC_STATE=active
+  # Editing the plan must not implicitly resume a paused goal.
   FM_GOAL_REC_STARTED=$r_started
   FM_GOAL_REC_STARTED_EPOCH=$r_started_epoch
   FM_GOAL_REC_NAMED_BY=$r_named_by
@@ -2081,7 +2126,7 @@ cmd_mark() {
         fm_goal_log "the parent's goal record for '$id' is invalid"
         exit 1
       }
-      [ "$FM_GOAL_REC_STATE" = active ] || { fm_goal_log 'parent goal is not active'; exit 1; }
+      [ "$FM_GOAL_REC_STATE" != closed ] || { fm_goal_log 'parent goal is closed'; exit 1; }
       _fm_goal_index_of "$item" >/dev/null || {
         fm_goal_log "unknown item '$item' in goal '$id'"
         exit 1
@@ -2338,9 +2383,11 @@ _fm_goal_export_one() {  # <id>
     --arg id "$FM_GOAL_REC_ID" --arg title "$FM_GOAL_REC_TITLE" --arg state "$FM_GOAL_REC_STATE" \
     --arg named_by "$FM_GOAL_REC_NAMED_BY" --arg plan "$FM_GOAL_REC_PLAN" \
     --arg done_when "$FM_GOAL_REC_DONE_WHEN" --argjson started "$FM_GOAL_REC_STARTED_EPOCH" \
+    --arg paused_until "${FM_GOAL_REC_PAUSED_UNTIL:-}" --arg control_words "${FM_GOAL_REC_CONTROL_WORDS:-}" \
     --arg last "${FM_GOAL_FOLD_LAST_AT:-}" '
     {id: $id, title: $title, state: $state, named_by: $named_by, plan: $plan,
      done_when: $done_when, started_epoch: $started,
+     paused_until: (if $paused_until == "" then null else $paused_until end), control_words: $control_words,
      last_progress_epoch: (if $last == "" then null else ($last | tonumber) end),
      progress: {total: length, closed: ([.[] | select(.state == "done" or .state == "dropped")] | length),
                 at_target: ([.[] | select(.target_reached)] | length),
@@ -2576,12 +2623,13 @@ cmd_window() {
   fi
   printf 'GOAL %s window %s .. %s:\n' "$id" "$(fm_goal_epoch_iso "$since")" "$(fm_goal_epoch_iso "$end")"
   if [ "$state_kind" = active ]; then
-    printf '  state: active\n'
+    printf '  state: %s\n' "$FM_GOAL_REC_STATE"
   elif [ "$end" -ge "$since" ]; then
     printf '  state: closed (%s) at %s\n' "$FM_GOAL_REC_CLOSED_REASON" "$FM_GOAL_REC_CLOSED"
   else
     printf '  state: closed (%s) at %s (before this window)\n' "$FM_GOAL_REC_CLOSED_REASON" "$FM_GOAL_REC_CLOSED"
   fi
+  _fm_goal_control_render
   i=0
   while [ "$i" -lt "$FM_GOAL_ITEM_COUNT" ]; do
     if _fm_goal_item_doneish "$i" && [ -n "${FM_GOAL_M_ATS[$i]}" ] && [ "${FM_GOAL_M_ATS[$i]}" -ge "$since" ]; then
@@ -2707,10 +2755,15 @@ _fm_goal_driven_render() {  # <since> <end>
   local start_stage now_stage target words line n rows quiet_from=''
   local -a hour_cells=() hour_counts=() out_rows=()
   case "$FM_GOAL_REC_STATE" in
+    paused) head_state="paused, started $(fm_goal_epoch_iso "$FM_GOAL_REC_STARTED_EPOCH")" ;;
     active) head_state="active, started $(fm_goal_epoch_iso "$FM_GOAL_REC_STARTED_EPOCH")" ;;
     *) head_state="finished $(fm_goal_epoch_iso "$FM_GOAL_REC_CLOSED_EPOCH")" ;;
   esac
   fm_cap_line_var "  $FM_GOAL_REC_TITLE ($head_state):"; printf '%s\n' "$FM_LINE_CAP_LINE"
+  _fm_goal_control_render
+  if [ "$FM_GOAL_REC_STATE" = closed ] && [ "$FM_GOAL_REC_CLOSED_REASON" = captain ]; then
+    printf '  stopped by captain: %s\n' "$FM_GOAL_REC_CLOSED_WORDS"
+  fi
   i=0
   while [ "$i" -lt "$FM_GOAL_ITEM_COUNT" ]; do
     start_stage=$(_fm_goal_stage_before "$i" "$since")
@@ -2841,6 +2894,163 @@ cmd_driven() {
   return 0
 }
 
+# Control presentation is shared by drain, show and the return brief.
+_fm_goal_control_render() {
+  [ -n "${FM_GOAL_REC_CONTROL_AT:-}" ] || return 0
+  printf '  control: %s at %s: %s\n' "$FM_GOAL_REC_STATE" \
+    "$(fm_goal_epoch_iso "$FM_GOAL_REC_CONTROL_AT")" "$FM_GOAL_REC_CONTROL_WORDS"
+  if [ "$FM_GOAL_REC_STATE" = paused ] && [ -n "${FM_GOAL_REC_PAUSED_UNTIL:-}" ]; then
+    printf '  paused until: %s (resume or renew at expiry)\n' "$FM_GOAL_REC_PAUSED_UNTIL"
+  fi
+  return 0
+}
+
+_fm_goal_control() {  # <pause|resume> <id|--all> --words <text> [--until <ISO>]
+  local action=$1 id=${2-} words='' until='' path staged ids item
+  shift
+  [ "$#" -ge 1 ] || _fm_goal_usage_error "$action needs a goal id"
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --words) [ "$#" -ge 2 ] || _fm_goal_usage_error '--words needs a value'; words=$2; shift 2 ;;
+      --until) [ "$action" = pause ] && [ "$#" -ge 2 ] || _fm_goal_usage_error '--until is pause-only and needs a value'; until=$2; shift 2 ;;
+      *) _fm_goal_usage_error "unknown flag for $action: $1" ;;
+    esac
+  done
+  [ -n "$words" ] || _fm_goal_usage_error "$action needs --words"
+  case "$words" in *$'\n'*|*$'\r'*) _fm_goal_usage_error '--words must be one verbatim line' ;; esac
+  [ -z "$until" ] || fm_utc_iso_to_epoch "$until" >/dev/null || _fm_goal_usage_error 'invalid --until UTC ISO timestamp'
+  if [ "$id" = --all ]; then
+    [ "$action" = pause ] || _fm_goal_usage_error '--all is pause-only'
+  else
+    fm_goal_id_valid "$id" || _fm_goal_usage_error "unsafe goal id: $id"
+  fi
+  _fm_goal_parent_home || return 1
+  _fm_goal_require_actor main || return 1
+  fm_goal_lock_hold || return 1
+  if [ "$id" = --all ]; then
+    ids=$(fm_goal_active_ids) || { fm_goal_lock_release; return 1; }
+  else ids=$id; fi
+  for item in $ids; do
+    _fm_goal_open_record "$item" || { fm_goal_lock_release; return 1; }
+    FM_GOAL_REC_STATE=paused
+    [ "$action" = pause ] || FM_GOAL_REC_STATE=active
+    FM_GOAL_REC_CONTROL_WORDS=$(_fm_goal_clean_field "$words")
+    FM_GOAL_REC_CONTROL_AT=$(date +%s)
+    FM_GOAL_REC_PAUSED_UNTIL=$until
+    path=$(fm_goal_path "$item")
+    staged=$(mktemp "$(fm_goal_dir)/.goal.control.XXXXXX") || { fm_goal_lock_release; return 1; }
+    if ! _fm_goal_render_record > "$staged" || ! fm_goal_validate "$staged" "$item" || ! mv "$staged" "$path"; then
+      rm -f -- "$staged"; fm_goal_lock_release; return 1
+    fi
+    # A new pause, even in the same second, must have its own expiry reminder.
+    rm -f -- "$(fm_goal_dir)/.$item.pause-woke"
+    printf '%s goal %s: %s\n' "$action" "$item" "$words"
+  done
+  fm_goal_lock_release
+}
+cmd_pause() { _fm_goal_control pause "$@"; }
+cmd_resume() { _fm_goal_control resume "$@"; }
+cmd_stop() {
+  [ "$#" -ge 1 ] || _fm_goal_usage_error 'stop needs a goal id'
+  local id=$1; shift
+  cmd_close "$id" --captain "$@"
+}
+
+# Read-only admission, shared across all harnesses, providers and backends.
+# Check both the original link and the latest owner mark so rebinding a task
+# cannot make the original linked task escape a pause.
+_fm_goal_admit_home() {  # <task> <state> <data> [owner]
+  local task=$1 state=$2 data=$3 owner=${4-} path i archived id
+  local original=()
+  if [ -L "$(fm_goal_dir "$state")" ] || [ -L "$(fm_goal_closed_dir "$state")" ]; then
+    fm_goal_log 'refused: symlinked goals directory or archive'; return 1
+  fi
+  for path in "$(fm_goal_dir "$state")"/*.goal "$(fm_goal_closed_dir "$state")"/*.goal; do
+    [ -e "$path" ] || [ -L "$path" ] || continue
+    _fm_goal_load_record "$path" || { fm_goal_log "admission refused: $_FM_GOAL_READ_ERROR"; return 1; }
+    archived=0
+    case "$path" in */closed/*) archived=1 ;; esac
+    id=$FM_GOAL_REC_ID
+    original=("${FM_GOAL_ITEMS_TASKS[@]}")
+    if [ "$archived" -eq 1 ]; then
+      [ "$FM_GOAL_REC_CLOSED_REASON" = captain ] || continue
+      # A new mandate for this id supersedes its old archive.
+      [ ! -e "$(fm_goal_path "$id" "$state")" ] || continue
+      fm_goal_fold "$id" "$state" "$data" "$(date +%s)" "${path%.goal}.marks"
+    else
+      [ "$FM_GOAL_REC_STATE" = paused ] || continue
+      fm_goal_fold "$id" "$state" "$data" "$(date +%s)"
+    fi
+    i=0
+    while [ "$i" -lt "$FM_GOAL_ITEM_COUNT" ]; do
+      if { [ -z "$owner" ] || [ "${FM_GOAL_ITEMS_OWNERS[$i]}" = "$owner" ]; } &&
+        { [ "${original[$i]}" = "$task" ] || [ "${FM_GOAL_ITEMS_TASKS[$i]}" = "$task" ]; }; then
+        fm_goal_log "refused: task $task is linked to $FM_GOAL_REC_STATE goal $id item ${FM_GOAL_ITEMS_IDS[$i]}"
+        return 1
+      fi
+      i=$((i + 1))
+    done
+  done
+  return 0
+}
+cmd_admit() {
+  if [ "$#" -ne 1 ] || ! fm_goal_id_valid "$1"; then
+    _fm_goal_usage_error 'admit needs a safe task id'
+  fi
+  _fm_goal_admit_home "$1" "$FM_GOAL_STATE" "$FM_GOAL_DATA" || return 1
+  local rc=0
+  fm_parent_channel_destination "$FM_GOAL_HOME" "$FM_GOAL_STATE" >/dev/null || rc=$?
+  case "$rc" in
+    1) return 0 ;;
+    0)
+      if [ "$FM_SECONDMATE_PARENT_ROUTE" = remote ]; then
+        # No endpoint reads: a remote parent's owner must enforce its pause
+        # through steering. Local goal admission still applies above.
+        return 0
+      fi
+      _fm_goal_admit_home "$1" "$FM_SECONDMATE_PARENT_HOME/state" "$FM_SECONDMATE_PARENT_HOME/data" "$FM_PARENT_CHANNEL_ID"
+      ;;
+    *) fm_goal_log 'admission refused: unreadable secondmate identity'; return 1 ;;
+  esac
+}
+
+cmd_expire() {  # one wake per timed pause; watcher calls this independently of drive-floor
+  local now=${1:-$(date +%s)} path id until marker token old='' reason
+  local STATE=$FM_GOAL_STATE
+  [ "$#" -le 1 ] || _fm_goal_usage_error 'expire takes at most an epoch'
+  case "$now" in ''|*[!0-9]*|0[0-9]*) _fm_goal_usage_error 'expire needs an epoch' ;; esac
+  [ -d "$(fm_goal_dir)" ] || return 0
+  fm_goal_lock_hold || return 1
+  _fm_goal_lock_helpers || { fm_goal_lock_release; return 1; }
+  for path in "$(fm_goal_dir)"/*.goal; do
+    [ -f "$path" ] && [ ! -L "$path" ] || continue
+    _fm_goal_load_record "$path" || continue
+    [ "$FM_GOAL_REC_STATE" = paused ] && [ -n "$FM_GOAL_REC_PAUSED_UNTIL" ] || continue
+    until=$(fm_utc_iso_to_epoch "$FM_GOAL_REC_PAUSED_UNTIL") || continue
+    [ "$now" -ge "$until" ] || continue
+    id=$FM_GOAL_REC_ID
+    marker="$(fm_goal_dir)/.$id.pause-woke"
+    [ ! -L "$marker" ] || { fm_goal_lock_release; return 1; }
+    token="$FM_GOAL_REC_CONTROL_AT/$FM_GOAL_REC_PAUSED_UNTIL"
+    old=''; [ ! -f "$marker" ] || IFS= read -r old < "$marker" || true
+    [ "$old" != "$token" ] || continue
+    reason="check: goal pause expired: $id ($token) - resume the goal or renew its pause with a reason"
+    fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || { fm_goal_lock_release; return 1; }
+    if ! fm_wake_queued_carries_locked check "goal-pause:$id" "$token"; then
+      if ! fm_wake_append_locked check "goal-pause:$id" "$reason"; then
+        fm_lock_release "$FM_WAKE_QUEUE_LOCK"; fm_goal_lock_release; return 1
+      fi
+      printf '%s\n' "$reason"
+    fi
+    printf '%s\n' "$token" | _fm_goal_write_atomic "$marker" || {
+      fm_lock_release "$FM_WAKE_QUEUE_LOCK"; fm_goal_lock_release; return 1;
+    }
+    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  done
+  fm_goal_lock_release
+}
+
 # --- main --------------------------------------------------------------------
 
 main() {
@@ -2848,7 +3058,7 @@ main() {
   [ "$#" -ge 1 ] || _fm_goal_usage_error 'needs a subcommand'
   shift
   case "$cmd" in
-    start|edit|mark|probe|show|brief|active|startable|export|exists|window|driven|close) ;;
+    start|edit|mark|probe|show|brief|active|startable|export|exists|window|driven|close|pause|resume|stop|admit|expire) ;;
     help|-h|--help) fm_goal_usage; return 0 ;;
     *) _fm_goal_usage_error "unknown subcommand: $cmd" ;;
   esac

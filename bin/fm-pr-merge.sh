@@ -608,6 +608,14 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 }
 META="$STATE/$ID.meta"
 
+# Applies to synchronous merges, queue arms and requeues for every provider.
+# A paused goal's running worker may finish its step, but cannot land it.
+goal_merge_admit() {
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+    bash "$SCRIPT_DIR/fm-goal.sh" admit "$ID"
+}
+goal_merge_admit || exit 1
+
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # Role partition: merging is MAIN-owned while attended; the Pi supervision
@@ -2227,6 +2235,7 @@ github_require_queue_entry_ready() {
 }
 
 github_enqueue_pull_request() {
+  goal_merge_admit || return 1
   local output
   # shellcheck disable=SC2016  # GraphQL variables are literal query syntax.
   if output=$(gh api graphql \
@@ -2484,6 +2493,7 @@ github_arm_queue_at_green() {
   github_release_branch_before_enqueue || exit 1
   merge_output=
   arm_status=0
+  goal_merge_admit || return 1
   if ! merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
     --match-head-commit "$FM_PR_MERGE_HEAD" --auto "--$queue_method" 2>&1); then
     arm_status=$?
@@ -2719,6 +2729,9 @@ forgejo_confirm_merged() {
   [ "$merged" = true ]
 }
 
+# Recheck after provider reads and waits, before recording or mutating a merge.
+goal_merge_admit || exit 1
+
 # Record before either forge call. This arms the merge poll without claiming a
 # landed outcome, so even a provider read failure after a real merge cannot
 # leave teardown without the PR identity it needs to verify the result.
@@ -2814,6 +2827,7 @@ case "$PROVIDER" in
         github_release_branch_before_enqueue || exit 1
       fi
       merge_status=0
+      goal_merge_admit || exit 1
       merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
         --match-head-commit "$FM_PR_MERGE_HEAD" \
         "${merge_args[@]+"${merge_args[@]}"}" "$@" 2>&1) || merge_status=$?
@@ -2880,6 +2894,7 @@ case "$PROVIDER" in
     if [ "$FM_PR_AWAY_POSTURE" = true ]; then
       gitlab_merge_args=(--auto-merge=false)
     fi
+    goal_merge_admit || exit 1
     GITLAB_HOST="$FM_PR_HOST" glab mr merge "$PR_NUMBER" -R "$PROJECT_URL" \
       --sha "$FM_PR_MERGE_HEAD" --yes "$@" "${gitlab_merge_args[@]+"${gitlab_merge_args[@]}"}" || merge_status=$?
     if [ "$merge_status" -ne 0 ]; then
@@ -2912,6 +2927,7 @@ case "$PROVIDER" in
     # against a real instance), matching --match-head-commit/--sha above. tea
     # exposes no such flag on its own merge subcommand, so the API is called
     # directly through "tea api" instead.
+    goal_merge_admit || exit 1
     merge_output=$(tea api --login "$FORGEJO_LOGIN" --repo "$PR_OWNER/$PR_REPO" \
       -X POST "/repos/{owner}/{repo}/pulls/$PR_NUMBER/merge" \
       -f "Do=$forgejo_method" -f "head_commit_id=$FM_PR_MERGE_HEAD" 2>&1) || true

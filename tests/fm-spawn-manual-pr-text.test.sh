@@ -79,6 +79,24 @@ test_spawn_refuses_a_pr_text_mismatch_before_launch() {
   pass "fm-spawn: a brief and registry that disagree on pr=manual refuse before launch in both directions"
 }
 
+test_paused_goal_blocks_spawn_until_resume() {
+  local id=goal-spawn out status
+  make_case goal-pause "$id" no-mistakes
+  printf 'item [id=ship] [owner=main] [task=%s]: ship\n' "$id" > "$CASE_DIR/items"
+  FM_HOME="$HOME_DIR" bash "$ROOT/bin/fm-goal.sh" start X --title X --done-when shipped \
+    --named-by 'ship X' --plan plan.md --items-file "$CASE_DIR/items" >/dev/null || fail 'start goal'
+  FM_HOME="$HOME_DIR" bash "$ROOT/bin/fm-goal.sh" pause X --words 'pause X' >/dev/null || fail 'pause goal'
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off); status=$?
+  [ "$status" -ne 0 ] || fail 'paused goal spawned'
+  assert_contains "$out" 'linked to paused goal X' 'spawn admission reason'
+  assert_absent "$HOME_DIR/state/$id.meta" 'no task published while paused'
+  FM_HOME="$HOME_DIR" bash "$ROOT/bin/fm-goal.sh" resume X --words 'resume X' >/dev/null || fail 'resume goal'
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off); status=$?
+  expect_code 0 "$status" "resumed goal launches: $out"
+  pass 'fm-spawn refuses a paused linked goal before publication and launches after resume'
+}
+
+test_paused_goal_blocks_spawn_until_resume
 test_spawn_launches_when_brief_and_registry_agree_on_pr_text
 test_spawn_refuses_a_pr_text_mismatch_before_launch
 
