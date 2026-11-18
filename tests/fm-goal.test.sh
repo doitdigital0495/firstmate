@@ -630,7 +630,65 @@ test_driven() {
   pass 'driven reports start, now and target per item and an hourly timeline'
 }
 
-fm_test_run test_start test_validation test_marks test_local_mate test_remote_mate \
+test_pause_resume_stop() {
+  fixture; start X >/dev/null
+  cp "$ITEMS" "$H/x-items"
+  printf '%s\n' 'item [id=y] [owner=main] [task=other]: keep going' > "$ITEMS"
+  start Y >/dev/null
+  goal pause X --words 'pause goal X, keep Y' --until 2020-01-01T00:00Z >/dev/null
+  assert_contains "$(goal show X)" 'state: paused' 'pause is visible'
+  assert_not_contains "$(project X)" 'startable=yes' 'all paused items not startable'
+  assert_not_contains "$(goal startable)" $'X\t' 'paused goal skipped by machine reader'
+  assert_contains "$(goal startable)" $'Y\ty' 'other goal still startable'
+  assert_contains "$(goal brief)" 'driven while away: no, paused' 'drain does not promise to drive pause'
+  assert_contains "$(goal driven --since 0)" 'Production goal (paused,' 'return brief names pause'
+  assert_equals paused "$(goal export X | jq -r '.goals[0].state')" 'export state'
+  expect_rc 1 goal admit child
+  expect_rc 0 goal admit other
+  goal mark X a running --task rebound -- 'finishing current step' >/dev/null
+  expect_rc 1 goal admit rebound
+  expect_rc 1 goal admit child
+  goal edit X --items-file "$H/x-items" >/dev/null
+  assert_contains "$(goal show X)" 'state: paused' 'plan edits never resume'
+  assert_contains "$(goal expire)" 'goal pause expired: X' 'timed pause queues wake'
+  assert_equals '' "$(goal expire)" 'expiry wakes once'
+  assert_contains "$(goal show X)" 'state: paused' 'expiry does not auto-resume'
+  goal resume X --words 'resume goal X' >/dev/null
+  expect_rc 0 goal admit rebound
+  assert_contains "$(project X)" 'state=active' 'resumed state'
+  goal pause --all --words 'pause all goals' >/dev/null
+  assert_equals '' "$(goal startable)" 'pause all goals'
+  goal stop X --words 'stop goal X' >/dev/null
+  expect_rc 1 goal exists X
+  expect_rc 1 goal admit rebound
+  assert_contains "$(goal driven --since 0)" 'stopped by captain: stop goal X' 'stop visible in return brief'
+  expect_rc 1 goal resume X --words 'too late'
+  pass 'pause isolates X from Y, blocks stored and marked task links, expires once, resumes and stops durably'
+}
+
+test_control_authority_and_validation() {
+  fixture; start >/dev/null
+  expect_rc 2 goal pause I1
+  expect_rc 2 goal pause I1 --words pause --until invalid
+  expect_rc 2 goal resume I1 --words resume --until 2020-01-01T00:00Z
+  expect_rc 2 goal pause ../bad --words pause
+  expect_rc 2 goal pause I1 --words $'pause\nnot one line'
+  expect_rc 1 goal pause missing --words pause
+  FM_SUPERVISION_ACTOR=branch expect_rc 1 goal pause I1 --words pause
+  FM_SUPERVISION_ACTOR=branch expect_rc 1 goal resume I1 --words resume
+  FM_SUPERVISION_ACTOR=branch expect_rc 1 goal stop I1 --words stop
+  local_mate
+  expect_rc 1 mate_goal pause I1 --words pause
+  expect_rc 1 mate_goal resume I1 --words resume
+  expect_rc 1 mate_goal stop I1 --words stop
+  goal pause I1 --words pause >/dev/null
+  expect_rc 1 mate_goal admit child
+  goal resume I1 --words resume >/dev/null
+  expect_rc 0 mate_goal admit child
+  pass 'controls enforce main ownership and validate arguments; parent pause gates local secondmate tasks'
+}
+
+fm_test_run test_pause_resume_stop test_control_authority_and_validation test_start test_validation test_marks test_local_mate test_remote_mate \
   test_projection test_main_landing test_symlinks test_edit test_brief test_large_brief test_close test_authority test_window test_quiet_status \
   test_v2_schema test_stage_marks test_ladder_targets test_probe test_probe_bounds test_probe_authority \
   test_probe_pr_merged test_limits test_orphaned_running test_target_close_and_brief test_export test_driven

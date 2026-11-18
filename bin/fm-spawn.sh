@@ -2391,6 +2391,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
     exit 1
   fi
 fi
+# Goal pause admission precedes every backend's resource creation, including
+# relaunches; it is shared rather than duplicated in harness adapters.
+FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+  bash "$SCRIPT_DIR/fm-goal.sh" admit "$ID" || exit 1
+
 ORCA_LAUNCH_ENV_ENABLED=0
 ORCA_LAUNCH_ENV_ARGS=
 if [ "$RELAUNCH" -eq 0 ]; then

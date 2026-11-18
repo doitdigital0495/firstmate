@@ -4804,6 +4804,14 @@ while :; do
   }
   [ -z "$OPEN_DECISION_REMINDER" ] || wake "$OPEN_DECISION_REMINDER"
 
+  # Timed goal pauses use the same one-actionable-wake expiry posture as
+  # imposed holds, independently of whether this home enables the drive floor.
+  GOAL_PAUSE_EXPIRY=$("$FM_GOAL_BIN" expire 2>/dev/null) || {
+    echo 'watcher: goal-pause expiry check failed' >&2
+    exit 1
+  }
+  [ -z "$GOAL_PAUSE_EXPIRY" ] || wake "$GOAL_PAUSE_EXPIRY"
+
   imposed_hold_expiry_tick || {
     echo 'watcher: imposed-hold expiry check failed' >&2
     exit 1
