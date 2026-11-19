@@ -481,16 +481,19 @@ adapter_autohandle() {  # <adapter> <source-id> <result-file>
 # source, an adapter with no `answers` command, and a failure on either side all
 # leave the capture untouched and still announced, because this never
 # acknowledges anything (see the keyed-answer note in the header).
-feed_keyed_answers() {  # <adapter> <source-id> <result-file>
+feed_keyed_answers() {  # <adapter> <source-id> <result-file> [prepared-rows]
   local adapter=$1 id=$2 result=$3 script origin seq
   script=$(adapter_script "$adapter")
   [ -f "$script" ] && [ ! -L "$script" ] || return 1
   origin=$("$SCRIPT_DIR/fm-captain-hold.sh" binding "$id" 2>/dev/null) || return 1
   [ -n "$origin" ] || return 1
   seq=$(fm_procevent_result_sequence "$result") || return 1
-  "$script" answers "$result" 2>/dev/null \
-    | "$SCRIPT_DIR/fm-captain-hold.sh" answers "$origin" \
-        --source "the captured result $id sequence $seq" >/dev/null 2>&1
+  if [ "$#" -ge 4 ]; then
+    printf '%s\n' "$4"
+  else
+    "$script" answers "$result" 2>/dev/null
+  fi | "$SCRIPT_DIR/fm-captain-hold.sh" answers "$origin" \
+    --source "the captured result $id sequence $seq" >/dev/null 2>&1
 }
 
 feed_reconcile_requests() {  # <adapter> <source-id> <result-file>
@@ -932,9 +935,10 @@ publish_result() {  # <result-file>
         answer_origin=$("$SCRIPT_DIR/fm-captain-hold.sh" binding "$id" 2>/dev/null || true)
         answer_script=$(adapter_script "$adapter")
         if [ -n "$answer_origin" ] && [ -f "$answer_script" ] && [ ! -L "$answer_script" ]; then
-          answer_rows=$("$answer_script" answers "$result" 2>/dev/null \
-            | "$SCRIPT_DIR/fm-captain-hold.sh" answers "$answer_origin" --prepare \
-              --source "the captured result $id sequence $seq" 2>/dev/null) || {
+          answer_rows=$(set -o pipefail
+            "$answer_script" answers "$result" 2>/dev/null \
+              | "$SCRIPT_DIR/fm-captain-hold.sh" answers "$answer_origin" --prepare \
+                --source "the captured result $id sequence $seq" 2>/dev/null) || {
             fm_procevent_source_lock_release "$id"
             fm_wake_append check "procevent:$id:$seq" "check: $line"
             return 1
@@ -986,7 +990,7 @@ EOF
       if [ "$status" -eq 0 ]; then
         # Answerer-closes, like fm-send --resolve-key: durable enqueue is
         # delivery, not the best-effort ring. Replay uses the same intake.
-        [ -z "$answer_rows" ] || feed_keyed_answers "$adapter" "$id" "$result" || true
+        [ -z "$answer_rows" ] || feed_keyed_answers "$adapter" "$id" "$result" "$answer_rows" || true
       else
         fm_wake_append check "procevent:$id:$seq" "check: $line" || true
       fi

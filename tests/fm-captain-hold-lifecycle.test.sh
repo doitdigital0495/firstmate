@@ -1866,6 +1866,9 @@ EOF
   assert_not_contains "$out" "unknown-call" "preparation emitted an unknown key"
   show=$(tasks_in "$home" show owner-call --full)
   assert_contains "$show" "held: yes" "preparing rows closed the decision"
+  out=$(printf 'owner-call\tstale\tStale\tdone\t2000-01-01T00:00:00Z#0\n' \
+    | run_captain "$home" answers --prepare --source "stale capture" 2>/dev/null)
+  [ -z "$out" ] || fail "preparation accepted a stale lifecycle"
 
   # A non-directory inbox forces durable enqueue to fail, independent of uid.
   printf 'not a directory\n' > "$home/state/owner-worker.inbox"
@@ -1885,7 +1888,13 @@ EOF
   assert_not_contains "$out" "never-deliver" "unknown answer reached the owner"
   show=$(tasks_in "$home" show owner-call --full)
   assert_contains "$show" "state: done" "durable delivery did not close the decision"
+  # A once-unknown key becoming real must not be closed by a replay: it was
+  # never part of this capture's validated, durably delivered answer set.
+  run_captain "$home" hold unknown-call --title "New call" \
+    --category captain-only-fact --reason "new choice pending" --repo sample >/dev/null
   run_procevent "$home" reconcile >/dev/null || fail "answer replay failed"
+  show=$(tasks_in "$home" show unknown-call --full)
+  assert_contains "$show" "held: yes" "replay closed a key absent from the delivered rows"
   count=$(find "$home/state/owner-worker.inbox" -name '*.msg' | wc -l | tr -d ' ')
   [ "$count" = 1 ] || fail "answer retry duplicated the owner record"
   mv "$home/state/owner-worker.inbox/001.msg" "$home/state/owner-worker.inbox/handled/001.msg"
@@ -2790,7 +2799,7 @@ case "${1:-}" in
     for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
     printf 'fakepane\n'; exit 0 ;;
   capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows) printf '%s\n' fm-sample-chat-review; exit 0 ;;
 esac
 exit 0
 SH
