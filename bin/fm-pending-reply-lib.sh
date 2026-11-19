@@ -69,7 +69,8 @@
 #                           escalation was closed again (see the escalation
 #                           lifecycle note below); empty until then
 #   resolved_epoch=
-#   resolved_via=           status | document | helper | expired-unanswered | empty
+#   resolved_via=           status | document | helper | operator-resolve-key |
+#                           expired-unanswered | empty
 #   wrong_home_hits=        count of corr sightings under the secondmate home
 #   wrong_home_first_sighting= encoded path:line identity of the first sighting
 #   wrong_home_sightings=   comma-separated encoded path:line identities
@@ -99,7 +100,11 @@
 # The operator-facing close of that same keyed decision is still
 # fm-send --resolve-key (bin/fm-send.sh header): it must speak the close note
 # owned below (fm_pending_reply_resolved_note), because a bare answered: note is
-# not a reserved-key transition and would leave the decision open.
+# not a reserved-key transition and would leave the decision open. That close
+# note is also the record-side terminal for a delivered escalation: the next
+# tick's try_resolve settles the record with resolved_via=operator-resolve-key
+# (see fm_pending_reply_line_resolves), so an operator-answered escalation
+# cannot linger open forever once the mate never correlates.
 #
 # Retryable undelivered escalation: a delivery-unknown escalation reports that
 # the request may never have reached the mate, so the request stays the owner's
@@ -240,10 +245,23 @@ fm_pending_reply_text_has_corr() {  # <text> <corr_id>
   [[ $text =~ $re ]]
 }
 
+# 0 if <text> names <corr_id> as <label>=<corr_id>, both sides word-bounded:
+# a pending-reply-id=<id> payload field, not a substring of a longer token.
+# <label> is restricted to [a-z-]+ so it can never inject regex metacharacters.
+fm_pending_reply_text_has_labeled_id() {  # <text> <label> <corr_id>
+  local text=$1 label=$2 corr=$3 re
+  case "$label" in
+    ''|*[!a-z-]*) return 2 ;;
+  esac
+  re="(^|[^[:alnum:]_])${label}=${corr}([^[:alnum:]_]|\$)"
+  [[ $text =~ $re ]]
+}
+
 # Print "<line-number>:<line>" for each line of <status-file> that could
 # resolve <corr_id>, in file order, from one grep process. A resolving line
-# must contain the literal token corr=<corr_id>, so that fixed-string match is
-# a superset of fm_pending_reply_line_resolves, which each caller still applies
+# must contain the correlation token as a whole word - corr=<corr_id>, or
+# pending-reply-id=<corr_id> for the reserved-key close - so that match is a
+# superset of fm_pending_reply_line_resolves, which each caller still applies
 # to every candidate; a status log thousands of lines long then costs one fork
 # rather than one per line. Line numbers count lines exactly as a read loop
 # does, an unterminated final line included. A correlation id that is not
@@ -254,7 +272,7 @@ _fm_pending_reply_corr_candidates() {  # <status-file> <corr_id>
   [ -f "$status_file" ] && [ -n "$corr" ] || return 0
   case "$corr" in
     *[!A-Za-z0-9_]*) LC_ALL=C grep -an '' "$status_file" 2>/dev/null || true ;;
-    *) LC_ALL=C grep -anF "corr=$corr" "$status_file" 2>/dev/null || true ;;
+    *) LC_ALL=C grep -anE "(^|[^[:alnum:]_])(corr|pending-reply-id)=${corr}([^[:alnum:]_]|\$)" "$status_file" 2>/dev/null || true ;;
   esac
 }
 
@@ -654,24 +672,44 @@ fm_pending_reply_discard_undelivered() {  # <state-dir> <corr_id>
 # Accepts short status replies and status lines that point at a document.
 # Unrelated verbs without the token never match. Stale/wrong corr never match.
 # The parent's own pending-reply-missed escalation line must not self-resolve:
-# it names the request with pending-reply-id= rather than corr=.
-fm_pending_reply_line_resolves() {  # <line> <corr_id>
-  local line=$1 corr=$2
+# it names the request with pending-reply-id= rather than corr=. The one
+# pending-reply-id= line that DOES resolve is the reserved-key close of this
+# request's own escalation - pending-reply-resolved: ... pending-reply-id=<corr>
+# ... via=operator-resolve-key, written by fm-send --resolve-key when the
+# operator answers the escalation, and the matching close this library writes
+# itself (fm_pending_reply_close_escalation). Without it, a delivered request
+# the operator settled would stay escalated forever: expired-unanswered never
+# applies to an escalated record, so the operator close is the only terminal
+# for it once the mate never correlates. That form settles only a DELIVERED
+# record (the default): a caller holding an undelivered, still-resendable
+# record passes <mode>=undelivered, because the owner may still resend the
+# same correlation after the operator closed the decision (the retryable
+# undelivered escalation contract below).
+fm_pending_reply_line_resolves() {  # <line> <corr_id> [mode]
+  local line=$1 corr=$2 mode=${3:-}
   [ -n "$line" ] && [ -n "$corr" ] || return 1
   case "$line" in
     *pending-reply-missed*) return 1 ;;
+  esac
+  case "$line" in
+    *pending-reply-resolved:*)
+      if [ "$mode" != undelivered ] \
+        && fm_pending_reply_text_has_labeled_id "$line" pending-reply-id "$corr"; then
+        return 0
+      fi
+      ;;
   esac
   fm_pending_reply_text_has_corr "$line" "$corr"
 }
 
 # Scan a status file for a correlated resolve. Prints the matching line or empty.
-fm_pending_reply_find_resolve_line() {  # <status-file> <corr_id>
+fm_pending_reply_find_resolve_line() {  # <status-file> <corr_id> [mode]
   local status_file=$1 corr=$2 line
   [ -f "$status_file" ] || return 0
   while IFS= read -r line; do
     line=${line#*:}
     [ -n "$line" ] || continue
-    if fm_pending_reply_line_resolves "$line" "$corr"; then
+    if fm_pending_reply_line_resolves "$line" "$corr" "${3:-}"; then
       printf '%s' "$line"
       return 0
     fi
@@ -704,6 +742,9 @@ fm_pending_reply_status_set_signature() {  # <status-dir>
 fm_pending_reply_resolve_via_of_line() {  # <line>
   local line=$1
   case "$line" in
+    *via=operator-resolve-key*)
+      printf 'operator-resolve-key'
+      ;;
     *data/*report*|*report.md*|*document*|*pointer*)
       printf 'document'
       ;;
@@ -741,7 +782,7 @@ fm_pending_reply_try_resolve() {  # <state-dir> <corr_id> [status-file-override]
 _fm_pending_reply_try_resolve_locked() {  # <state-dir> <corr_id> [status-file-override]
   local state=$1 corr=$2 status_override=${3-}
   local rec phase delivered marker delivery_entry delivery_state status_file signature previous line via now
-  local unconfirmed=0
+  local unconfirmed=0 resolve_mode=''
   rec=$(fm_pending_reply_path "$state" "$corr")
   [ -f "$rec" ] || return 1
   phase=$(fm_pending_reply_get "$rec" phase)
@@ -758,6 +799,10 @@ _fm_pending_reply_try_resolve_locked() {  # <state-dir> <corr_id> [status-file-o
     delivery_state=${delivery_entry%%=*}
     case "$delivery_state" in attempted|confirmed) ;; *) return 1 ;; esac
     unconfirmed=1
+    # The operator's reserved-key close settles a DELIVERED escalation; an
+    # undelivered record stays resendable under the same correlation and so
+    # must not read that close as its own answer.
+    resolve_mode=undelivered
   fi
   status_file=$(fm_pending_reply_get "$rec" parent_status)
   # Only the asked task's own status log answers its request: another mate's
@@ -771,7 +816,7 @@ _fm_pending_reply_try_resolve_locked() {  # <state-dir> <corr_id> [status-file-o
     previous=$(fm_pending_reply_get "$rec" parent_status_scan_signature)
     [ "$signature" != "$previous" ] || return 1
   fi
-  line=$(fm_pending_reply_find_resolve_line "$status_file" "$corr")
+  line=$(fm_pending_reply_find_resolve_line "$status_file" "$corr" "$resolve_mode")
   if [ -z "$line" ]; then
     if [ -z "$status_override" ] && [ "$unconfirmed" = 0 ]; then
       fm_pending_reply_set "$rec" parent_status_scan_signature "$signature" || return 1

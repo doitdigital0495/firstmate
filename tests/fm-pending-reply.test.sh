@@ -2228,6 +2228,7 @@ test_same_kind_escalation_reopens_after_operator_close() {
     home=$(setup_parent same-kind)
     state="$home/state"
     fm_write_secondmate_meta "$state/mate.meta" "$home/sm" "sess:fm-mate"
+    # shellcheck disable=SC2030 # This fixture owns its subshell clock.
     export FM_PENDING_REPLY_NOW=10000
     corr=$(fm_pending_reply_create "$home" "$state" mate "wake after lost transport")
     status="$state/mate.status"
@@ -2291,6 +2292,61 @@ test_same_kind_escalation_reopens_after_operator_close() {
   ) || fail "same-kind re-escalation after an operator close failed"
   pass "a same-kind escalation after an operator close opens the decision again"
 }
+
+test_operator_close_settles_the_escalated_record() (
+  local home state corr rec status open resolved_lines
+  home=$(setup_parent operator-settle)
+  state="$home/state"
+  unset FM_PENDING_REPLY_NOW FM_PENDING_REPLY_SEND_HOOK
+  # shellcheck disable=SC2030,SC2031 # Fresh clock/hook for this fixture, not the prior subshell's.
+  export FM_PENDING_REPLY_SEND_HOOK='true'
+  # shellcheck disable=SC2030,SC2031
+  export FM_PENDING_REPLY_NOW=6000
+  corr=$(fm_pending_reply_create "$home" "$state" "hibit" "refresh the board")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  complete_request_turn "$state" "$corr"
+  fm_pending_reply_send_recovery "$state" "$corr" || fail "recovery send failed"
+  fm_pending_reply_mark_turn_completed "$state" "$corr" recovery
+  fm_pending_reply_maybe_escalate "$state" "$corr" || fail "escalation should fire"
+  [ "$(phase_of "$state" "$corr")" = escalated ] || fail "phase should be escalated"
+  status="$state/hibit.status"
+  # Every pending-reply-id= line that is not the reserved-key close - the
+  # blocked payloads - still never resolves, exactly as before.
+  if fm_pending_reply_line_resolves \
+  "blocked: pending-reply-missed: task=hibit pending-reply-id=$corr request=refresh the board" "$corr"; then
+  fail "the escalation payload must not self-resolve"
+  fi
+  if fm_pending_reply_line_resolves \
+  "blocked: pending-reply-delivery-unknown: task=hibit pending-reply-id=$corr request=refresh the board" "$corr"; then
+  fail "the delivery-unknown payload must not self-resolve"
+  fi
+  # The operator answers the escalation exactly as fm-send --resolve-key
+  # writes it (fm_send_resolve_close_note).
+  printf 'resolved [key=pending-reply-%s] [at=6100]: %s\n' \
+  "$corr" "$(fm_pending_reply_resolved_note hibit "$corr" operator-resolve-key 'Captain refresh settled by hand')" \
+  >> "$status"
+  open=$(status_open_decisions "$status")
+  [ -z "$open" ] || fail "the operator close should close the decision first: $open"
+  # The watcher's periodic path for an escalated record settles it now.
+  fm_pending_reply_tick_one "$state" "$corr" unknown || fail "post-close tick failed"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  [ "$(fm_pending_reply_get "$rec" phase)" = resolved ] \
+  || fail "the operator close must settle the escalated record, not leave it a zombie"
+  [ "$(fm_pending_reply_get "$rec" resolved_via)" = operator-resolve-key ] \
+  || fail "resolved_via must name the operator close, got '$(fm_pending_reply_get "$rec" resolved_via)'"
+  [ -n "$(fm_pending_reply_get "$rec" escalation_closed_epoch)" ] \
+  || fail "the escalation close bookkeeping must be recorded"
+  [ "$(fm_pending_reply_get "$rec" inbox_closed)" = 1 ] \
+  || fail "the settled record should acknowledge its inbox"
+  resolved_lines=$(grep -cF "resolved [key=pending-reply-$corr]" "$status")
+  [ "$resolved_lines" = 1 ] \
+  || fail "the already-closed decision must not be appended again, got $resolved_lines"
+  # Settled terminal: a further tick is a no-op, never a re-escalation.
+  fm_pending_reply_tick_one "$state" "$corr" unknown || fail "settled tick failed"
+  [ "$(grep -cF "blocked [key=pending-reply-$corr]" "$status")" = 1 ] \
+  || fail "a settled record must never re-escalate"
+  pass "an operator --resolve-key close settles the escalated record"
+)
 
 test_summary_keeps_accents_and_caps_by_character() {
   local out long cap_chars loc
@@ -2663,6 +2719,7 @@ test_remote_parent_replies_is_not_wrong_home
 test_local_parent_replies_is_wrong_home_evidence
 test_escalated_undelivered_correlation_stays_retryable
 test_same_kind_escalation_reopens_after_operator_close
+test_operator_close_settles_the_escalated_record || exit 1
 test_summary_keeps_accents_and_caps_by_character
 test_old_backlog_expires_without_a_repost_burst || exit 1
 test_repost_cap_spreads_a_recent_backlog_over_windows || exit 1
