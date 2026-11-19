@@ -133,6 +133,14 @@
 #                                 older than this, counted from created_epoch, is
 #                                 never reposted: it is closed as
 #                                 expired-unanswered. 0 turns the cutoff off
+#   FM_PENDING_REPLY_RESOLVED_RETAIN_SECS
+#                                 default 1209600 (14 d); how long a fully
+#                                 settled record - resolved, inbox acknowledged,
+#                                 escalation closed - is kept after resolved_epoch
+#                                 before the tick's cleanup sweep removes it
+#                                 (fm_pending_reply_sweep_settled). Open records
+#                                 are never removed, whatever their age.
+#                                 0 turns the sweep off
 #   FM_PENDING_REPLY_REPOST_CAP   default 3; most recovery reposts one task may
 #                                 start inside one window, so a backlog cannot
 #                                 flood a single inbox (the rest wait for the
@@ -171,6 +179,7 @@ FM_PENDING_REPLY_SCHEMA='fm-pending-reply.v1'
 FM_PENDING_REPLY_CORR_RE='corr=[A-Fa-f0-9]{16}'
 FM_PENDING_REPLY_GRACE_DEFAULT=120
 FM_PENDING_REPLY_MAX_AGE_DEFAULT=21600
+FM_PENDING_REPLY_RESOLVED_RETAIN_DEFAULT=1209600
 FM_PENDING_REPLY_REPOST_CAP_DEFAULT=3
 FM_PENDING_REPLY_REPOST_WINDOW_DEFAULT=600
 
@@ -2001,7 +2010,99 @@ fm_pending_reply_tick() {  # <state-dir>
     fi
     fm_pending_reply_tick_one "$state" "$corr" "$busy" "$sm_home" || true
   done
+  # With the per-record work done, drain records the tick has no work left
+  # for and no retention reason to keep (audit item 11: the store otherwise
+  # grows forever and every scan pays for it).
+  fm_pending_reply_sweep_settled "$state" || true
   return 0
+}
+
+# One awk pass over the record files: print the paths that are fully settled
+# (resolved, inbox acknowledged, escalation closed if it ever escalated) and
+# whose resolved_epoch is older than <cutoff>. Values follow
+# fm_pending_reply_get: the last line for a key wins. This is the selection
+# half of fm_pending_reply_sweep_settled, kept beside
+# _fm_pending_reply_select_needing_work so both one-fork passes stay auditable
+# side by side; the callers still re-verify every shape under the lock.
+_fm_pending_reply_select_sweepable() {  # <cutoff-epoch> <record-path>...
+  [ "$#" -gt 1 ] || return 0
+  local cutoff=$1
+  shift
+  printf '%s\n' "$@" | LC_ALL=C awk -v cutoff="$cutoff" '
+    {
+      path = $0
+      phase = ""; escalated = ""; closed = ""; inbox_closed = ""; resolved = ""
+      while ((rc = (getline line < path)) > 0) {
+        if (index(line, "phase=") == 1) phase = substr(line, 7)
+        else if (index(line, "escalated_epoch=") == 1) escalated = substr(line, 17)
+        else if (index(line, "escalation_closed_epoch=") == 1) closed = substr(line, 25)
+        else if (index(line, "inbox_closed=") == 1) inbox_closed = substr(line, 14)
+        else if (index(line, "resolved_epoch=") == 1) resolved = substr(line, 16)
+      }
+      close(path)
+      if (rc < 0) next
+      if (phase != "resolved") next
+      if (inbox_closed != "1") next
+      if (escalated != "" && closed == "") next
+      if (resolved !~ /^[0-9]+$/) next
+      # cutoff arrives through -v as a string, so both sides are coerced:
+      # "5000" >= "19900" is true as a string comparison.
+      if (resolved + 0 >= cutoff + 0) next
+      print path
+    }
+  '
+}
+
+# 0 when the record on <path> resolved before <cutoff-epoch>.
+fm_pending_reply_record_resolved_before() {  # <record-path> <cutoff-epoch>
+  local resolved
+  resolved=$(fm_pending_reply_get "$1" resolved_epoch)
+  case "$resolved" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$resolved" -lt "$2" ]
+}
+
+# Remove fully settled records older than FM_PENDING_REPLY_RESOLVED_RETAIN_SECS
+# (default 14 days; 0 disables the sweep). A record is removable only when it
+# is resolved, its inbox is acknowledged, and an escalation it opened is
+# closed - the exact shape the tick has no remaining work for. Every open
+# record (awaiting_report, delivery_unknown, recovery_*, escalated) is
+# retained forever, whatever its age: the never-silently-expire property is
+# unchanged, and closing stale unanswered requests stays
+# fm_pending_reply_expire_stale. The durable story stays readable in the task
+# status lines this library published (the blocked escalation and its reserved
+# close, or the mate's correlated report), so removing the record loses no
+# history the home still needs. Each removal re-verifies the settled shape
+# under the per-correlation lock, so the sweep cannot race a resolve or an
+# escalation write into deleting an open record.
+fm_pending_reply_sweep_settled() {  # <state-dir>
+  local state=$1 dir retain now cutoff rec corr lock rc=0
+  local STATE FM_WAKE_QUEUE FM_WAKE_QUEUE_LOCK
+  retain=$(_fm_pending_reply_uint_knob "${FM_PENDING_REPLY_RESOLVED_RETAIN_SECS:-}" "$FM_PENDING_REPLY_RESOLVED_RETAIN_DEFAULT")
+  [ "$retain" -gt 0 ] || return 0
+  dir=$(fm_pending_reply_dir "$state")
+  [ -d "$dir" ] || return 0
+  now=$(fm_pending_reply_now)
+  cutoff=$((now - retain))
+  STATE=$state
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$_FM_PENDING_REPLY_LIB_DIR/fm-wake-lib.sh"
+  while IFS= read -r rec; do
+    [ -f "$rec" ] && [ ! -L "$rec" ] || continue
+    corr=$(fm_pending_reply_get "$rec" corr_id)
+    case "$corr" in ''|*[!A-Za-z0-9_]*|*$'\n'*) continue ;; esac
+    lock="$state/.pending-reply-$corr.lock"
+    fm_lock_acquire_wait "$lock" || { rc=1; continue; }
+    if [ "$(fm_pending_reply_get "$rec" phase)" = resolved ] \
+      && [ "$(fm_pending_reply_get "$rec" inbox_closed)" = 1 ] \
+      && { [ -z "$(fm_pending_reply_get "$rec" escalated_epoch)" ] \
+           || [ -n "$(fm_pending_reply_get "$rec" escalation_closed_epoch)" ]; } \
+      && fm_pending_reply_record_resolved_before "$rec" "$cutoff"; then
+      rm -f -- "$(fm_pending_reply_delivery_confirmation_path "$state" "$corr")" 2>/dev/null || true
+      rm -f -- "$rec"
+    fi
+    fm_lock_release "$lock"
+  done < <(_fm_pending_reply_select_sweepable "$cutoff" "$dir"/*)
+  return "$rc"
 }
 
 # True when any open (non-resolved) pending reply exists for a task.
