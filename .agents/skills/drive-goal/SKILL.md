@@ -1,7 +1,7 @@
 ---
 name: drive-goal
 description: >-
-  Load when the captain names a goal to keep driving, on "show goal" or "close goal", when /afk words name a goal, when writing or editing a goal's items from its plan, and when steering an owner's marks or closing a goal through bin/fm-goal.sh.
+  Load when the captain names a goal to keep driving, before listing anything as a goal on a cockpit or Lavish page, on "show goal" or "close goal", when /afk words name a goal, when writing or editing a goal's items from its plan, and when steering an owner's marks or closing a goal through bin/fm-goal.sh.
 user-invocable: false
 metadata:
   internal: true
@@ -16,6 +16,8 @@ The wake drain prints the live state as a GOAL section at every wake, so no goal
 ## Writing a goal from its plan
 
 When the captain names a goal, write its items from the plan the captain approved, in the same turn when a plan exists.
+A goal list on a cockpit or Lavish page is a rendering of the goal records: file the record first, confirm it with `bin/fm-goal.sh show <id>`, and only then let a secondmate or page worker list it, so a card with no record is never presented as a goal.
+When the captain says something is, or should be, "the goal", that is naming a goal even without the word "start".
 If `/afk` names a goal that has no record yet, write it in that same entry turn so the away session never drives a goal with no record.
 Record the captain's naming words verbatim through `--named-by` and the plan's path or URL through `--plan`; the record, not the conversation, is the mandate's provenance.
 When the plan lives in a secondmate's own material, ask that secondmate for the item file with `bin/fm-send.sh` instead of inventing the items here; for Miko I1 the plan lives on the secondmate's page.
