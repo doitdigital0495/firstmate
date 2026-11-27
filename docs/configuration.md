@@ -496,6 +496,11 @@ This feature does not set `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` or any other autocom
 The tracked `.tasks.toml` pins the default `tasks-axi` markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
 A home may instead select another tasks-axi adapter such as Beads through its own `.tasks.toml` or `TASKS_AXI_BACKEND`; firstmate still uses only tasks-axi verbs for routine backlog reads and mutations, and the adapter maps `start` and evidence-bearing `done` transitions to its native statuses and evidence fields.
 
+Queued rows that were never started lapse on their own: `bin/fm-tasks-axi.sh lapse-due` lists them and `lapse` closes them with the note `lapsed unstarted`.
+`config/record-sweep` holds `shadow` or `on`; an absent switch is shadow, where `lapse` only lists, and only `on` closes rows.
+The wrapper header owns which rows are due and the output lines, including the one `queued-over-limit` line a home still over 30 Queued rows gets.
+A lapsed row that matters is re-filed, because the note in the done-archive is the only record of the lapse.
+
 ### Captain holds on Beads
 
 Captain-hold row creation is owned by [`bin/fm-captain-hold.sh`](../bin/fm-captain-hold.sh) `hold`: when no work item exists, it creates an ordinary backlog row (`--kind captain` metadata; Beads native type `task`) and then applies the captain hold.
