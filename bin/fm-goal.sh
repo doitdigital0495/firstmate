@@ -2217,6 +2217,17 @@ cmd_evidence() {
   FM_GOAL_RECORDING_EVIDENCE=1 cmd_mark "$id" "$item" evidence --task "$FM_TASK_ID" -- "$*"
 }
 
+# Automatic reconciliation may not overwrite a newer mark or touch an OFF
+# goal. The main-home call checks under the same lock as the drive switch.
+_fm_goal_mark_push_guard() {  # <goal> <item> <state-dir> <data-dir>
+  [ -n "${FM_GOAL_PUSH_EXPECT:-}" ] || return 0
+  [ "$FM_GOAL_REC_DRIVE" = driven ] || return 1
+  local idx
+  fm_goal_fold "$1" "$3" "$4" "$(date +%s)"
+  idx=$(_fm_goal_index_of "$2") || return 1
+  [ "$FM_GOAL_PUSH_EXPECT" = "${FM_GOAL_ITEMS_OWNERS[$idx]}:${FM_GOAL_M_STATES[$idx]}:${FM_GOAL_M_ATS[$idx]}" ]
+}
+
 cmd_mark() {
   [ -z "${FM_TASK_ID-}" ] || [ "${FM_GOAL_RECORDING_EVIDENCE-}" = 1 ] || _fm_goal_die 1 'workers may only record evidence'
   local id item state='' task='' stage='' note='' dash_seen=0 flag what
@@ -2270,6 +2281,9 @@ cmd_mark() {
   fm_parent_channel_destination "$FM_GOAL_HOME" "$FM_GOAL_STATE" >/dev/null 2>&1 || rc=$?
   if [ "$rc" -eq 0 ]; then
     # secondmate home: publish through the parent channel.
+    if [ "${FM_GOAL_PUSH_EXPECT:-}" != '' ] && [ "$FM_PARENT_CHANNEL_ROUTE" != local ]; then
+      return 1
+    fi
     if [ "${FM_GOAL_RECORDING_EVIDENCE-}" = 1 ] && [ "$FM_PARENT_CHANNEL_ROUTE" != local ]; then
       _fm_goal_die 1 'worker evidence needs a readable local parent record'
     fi
@@ -2287,6 +2301,7 @@ cmd_mark() {
         exit 1
       }
       [ "$FM_GOAL_REC_STATE" = active ] || { fm_goal_log 'parent goal is not active'; exit 1; }
+      _fm_goal_mark_push_guard "$id" "$item" "$FM_SECONDMATE_PARENT_HOME/state" "$FM_SECONDMATE_PARENT_HOME/data" || return 1
       _fm_goal_index_of "$item" >/dev/null || {
         fm_goal_log "unknown item '$item' in goal '$id'"
         exit 1
@@ -2322,6 +2337,7 @@ cmd_mark() {
     fm_goal_lock_release
     exit 1
   fi
+  _fm_goal_mark_push_guard "$id" "$item" "$FM_GOAL_STATE" "$FM_GOAL_DATA" || { fm_goal_lock_release; return 1; }
   if [ "${FM_GOAL_RECORDING_EVIDENCE-}" = 1 ]; then
     _fm_goal_check_evidence_link "$id" "$FM_GOAL_STATE" "$FM_GOAL_DATA" "$item" || { fm_goal_lock_release; return 1; }
   else
