@@ -17,7 +17,7 @@
 #   fm-suggestions.sh bundle <suggestion-id>... --into <suggestion-or-task-id>
 #   fm-suggestions.sh drop <suggestion-id>...
 #   fm-suggestions.sh restore <suggestion-id>...
-#   fm-suggestions.sh expire
+#   fm-suggestions.sh expire [--dry-run]
 #   fm-suggestions.sh archive [--json]
 #
 # Recorded outcomes (the `outcome` field):
@@ -48,7 +48,9 @@
 # restore    Moves each dropped record back to the list as waiting, its 30 days
 #            starting again. Prints `restored <id>`; any other record is refused.
 # expire     Moves past-due records to the archive. Idempotent, also after a crash
-#            between the archive append and the list rewrite.
+#            between the archive append and the list rewrite. Prints `expired <n>`.
+#            --dry-run is read-only and lock-free: it prints `would-expire <n>`
+#            and moves nothing (bin/fm-reap.sh sweep-records shadow uses it).
 # archive    Lists the "not picked" archive.
 #
 # Environment: FM_SUGGESTIONS_NOW (epoch override), FM_SUGGESTIONS_EXPIRE_DAYS.
@@ -361,7 +363,17 @@ cmd_restore() {
 }
 
 cmd_expire() {
-  [ $# -eq 0 ] || die "expire: takes no arguments" 2
+  case "${1-}" in
+    --dry-run)
+      [ $# -eq 1 ] || die "expire: takes no other argument with --dry-run" 2
+      local list
+      list=$(read_store "$LIST") || exit 1
+      printf 'would-expire %s\n' "$(jq --argjson now "$NOW" --argjson days "$EXPIRE_DAYS" "$JQ_DEFS"'
+        [ .[] | select(past_due($now; $days)) ] | length' <<<"$list")"
+      return 0 ;;
+    '') ;;
+    *) die "expire: takes no arguments except --dry-run" 2 ;;
+  esac
   acquire_lock
   local moved
   moved=$(do_expire) || exit 1

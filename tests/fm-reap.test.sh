@@ -496,6 +496,203 @@ assert_contains "$out" 'closed fresh-working (gate passed, PR merged, worktree c
 assert_contains "$out" 'kept stale-done-dirty: error: refusing - the worktree holds work that has not landed (1 commit)' 'teardown alone decides a dirty merged lane'
 pass 'reap: the merged fast path closes clean lanes through teardown and keeps the rest'
 
+# --- the weekly record sweep ------------------------------------------------
+# sweep-records calls each record owner's entry point. The backlog-backed owners
+# (captain holds, tasks-axi) are stubs that log what they are asked; the
+# suggestion store and the reply-escalation library are the real owners.
+RS="$TMP_ROOT/rs"
+mkdir -p "$RS/bin" "$RS/fix" "$RS/home/state" "$RS/home/config" "$RS/home/data"
+RS_STATE="$RS/home/state" RS_CONFIG="$RS/home/config" RS_DATA="$RS/home/data"
+printf '#!/bin/sh\nexit 0\n' > "$RS/bin/tasks-axi"
+cat > "$RS/captain-hold" <<'SH'
+#!/usr/bin/env bash
+printf 'hold %s\n' "$*" >> "$RS_LOG"
+case "$1" in
+  defaults-due) cat "$RS_FIX/defaults-due" 2>/dev/null ;;
+  answer)
+    [ ! -e "$RS_FIX/answer-fail" ] || { echo 'error: cannot lapse' >&2; exit 1; }
+    printf 'lapsed: %s\n' "$2" ;;
+  diverged)
+    if [ -f "$FM_CONFIG_OVERRIDE/record-sweep" ] && [ ! -L "$FM_CONFIG_OVERRIDE/record-sweep" ] \
+      && [ "$(cat "$FM_CONFIG_OVERRIDE/record-sweep")" = on ]; then printf 'closed mirror: captain-hold-m-1\n'
+    else printf 'would close mirror: captain-hold-m-1\n'; fi ;;
+  call-budget) cat "$RS_FIX/call-budget" 2>/dev/null ;;
+esac
+exit 0
+SH
+cat > "$RS/tasks" <<'SH'
+#!/usr/bin/env bash
+printf 'tasks %s\n' "$*" >> "$RS_LOG"
+case "$1" in
+  lapse-due) printf 'rowa\t2026-01-01\tr1\nrowb\t2026-01-02\tr1\nlapse mode=shadow due=2 closed=0\n' ;;
+  lapse) printf 'lapsed\trowa\t2026-01-01\tr1\nlapsed\trowb\t2026-01-02\tr1\nlapse mode=on due=2 closed=2\n' ;;
+esac
+cat "$RS_FIX/queued-over" 2>/dev/null
+exit 0
+SH
+chmod +x "$RS/captain-hold" "$RS/tasks"
+RS_LOG="$RS/calls.log"
+# Two reply escalations: one past 24 h at sweep time and one not yet.
+rs_escalated() (
+  local state=$1 old fresh
+  # shellcheck source=bin/fm-pending-reply-lib.sh
+  . "$ROOT/bin/fm-pending-reply-lib.sh"
+  export FM_CONFIG_OVERRIDE="$RS_CONFIG" FM_PENDING_REPLY_NOW=1000
+  old=$(fm_pending_reply_create "$RS/home" "$state" hibit 'missed report') || exit 1
+  fm_pending_reply_mark_delivered "$state" "$old" || exit 1
+  FM_PENDING_REPLY_NOW=5000
+  fm_pending_reply_maybe_escalate "$state" "$old" || exit 1
+  printf '%s\n' "$old"
+)
+rs_reset() {  # rebuild the fixture home and the owners' inputs
+  rm -rf "$RS_STATE" "$RS_CONFIG" "$RS_DATA" "$RS/fix"
+  mkdir -p "$RS_STATE" "$RS_CONFIG" "$RS_DATA" "$RS/fix"
+  : > "$RS_LOG"
+  printf 'callA\t2026-11-01\tnot-needed\tNot needed (no action taken)\tlapse\tstale question\ncallB\t2026-11-01\tship\tShip it\tdone\ta real default\n' > "$RS/fix/defaults-due"
+  printf 'queued-over-limit queued=35 limit=30\n' > "$RS/fix/queued-over"
+  printf 'ASK LESS (shadow): 12 open captain calls (limit 10). Firstmate: decide.\n' > "$RS/fix/call-budget"
+  printf '{"id":"sg-old","title":"old","filed_at":%s,"outcome":"suggested"}\n{"id":"sg-new","title":"new","filed_at":%s,"outcome":"suggested"}\n' \
+    "$(( $(date +%s) - 40 * 86400 ))" "$(( $(date +%s) - 86400 ))" > "$RS_DATA/suggestions.jsonl"
+  RS_CORR=$(rs_escalated "$RS_STATE") || fail 'could not seed an escalated reply'
+}
+rs_sweep() {  # <args...>; the sweep clock is 25 h after the escalation
+  env PATH="$RS/bin:$PATH" FM_HOME="$RS/home" FM_STATE_OVERRIDE="$RS_STATE" FM_CONFIG_OVERRIDE="$RS_CONFIG" \
+    FM_DATA_OVERRIDE="$RS_DATA" FM_PENDING_REPLY_NOW=91401 RS_LOG="$RS_LOG" RS_FIX="$RS/fix" \
+    FM_RECORD_SWEEP_CAPTAIN_HOLD="$RS/captain-hold" FM_RECORD_SWEEP_TASKS_AXI="$RS/tasks" \
+    "$REAP" "$@"
+}
+rs_summary() { cat "$RS_STATE/.record-sweep-summary"; }
+rs_phase() { awk -F= '$1 == "phase" { print $2 }' "$RS_STATE/pending-replies/$RS_CORR"; }
+
+# Absent switch, `shadow`, a symlink and junk all list and close nothing.
+rs_reset
+for variant in absent shadow symlink junk; do
+  rm -f "$RS_CONFIG/record-sweep"
+  case "$variant" in
+    shadow) printf 'shadow\n' > "$RS_CONFIG/record-sweep" ;;
+    symlink) printf 'on\n' > "$RS/real-switch"; ln -s "$RS/real-switch" "$RS_CONFIG/record-sweep" ;;
+    junk) printf 'yes please\n' > "$RS_CONFIG/record-sweep" ;;
+  esac
+  : > "$RS_LOG"
+  out=$(rs_sweep sweep-records) || fail "shadow sweep ($variant) failed: $out"
+  assert_contains "$out" 'sweep-records: mode=shadow' "$variant switch is shadow"
+  assert_contains "$out" 'would lapse captain call: callA' "$variant lists the lapse"
+  assert_not_contains "$out" 'callB' "$variant leaves a recommendation default to the wake drain"
+  assert_contains "$out" 'would close mirror: captain-hold-m-1' "$variant lists the mirror"
+  assert_contains "$out" "pending-reply escalation sweep (shadow): 1 $RS_CORR" "$variant lists the old reply escalation"
+  assert_contains "$out" 'rowa' "$variant lists the rows it would lapse"
+  assert_contains "$out" 'would-expire 1' "$variant counts the suggestion it would expire"
+  assert_equals 'at=' "$(rs_summary | cut -c1-3)" 'the summary line starts with its epoch'
+  assert_contains "$(rs_summary)" 'mode=shadow would-close lapse=1 mirror=1 reply=1 rows=2 suggestions=1 queued-over=35 calls-over=12 woke=no' "$variant summary counts what would close"
+  assert_equals 1 "$(wc -l < "$RS_STATE/.record-sweep-summary")" 'the summary is one line'
+  assert_not_contains "$(cat "$RS_LOG")" 'answer' "$variant applies no lapse"
+  assert_not_contains "$(cat "$RS_LOG")" 'tasks lapse
+' "$variant closes no row"
+  assert_equals escalated "$(rs_phase)" "$variant leaves the reply record open"
+  assert_equals 2 "$(wc -l < "$RS_DATA/suggestions.jsonl")" "$variant leaves the suggestion store alone"
+  assert_absent "$RS_STATE/.record-sweep-wake" "$variant never wakes, even over both caps"
+done
+pass 'sweep-records: an absent, shadow, symlinked or unknown switch only lists and never wakes'
+
+# `on` closes through each owner, and wakes once for the lapse and both caps.
+rm -f "$RS_CONFIG/record-sweep"
+printf 'on\n' > "$RS_CONFIG/record-sweep"
+: > "$RS_LOG"
+out=$(rs_sweep sweep-records) || fail "on sweep failed: $out"
+assert_contains "$out" 'sweep-records: mode=on' 'on is read from the switch'
+assert_contains "$out" 'lapsed captain call: callA' 'the lapse runs'
+assert_contains "$(cat "$RS_LOG")" 'hold answer callA --deadline-default' 'the lapse goes through the captain-hold owner'
+assert_not_contains "$(cat "$RS_LOG")" 'callB' 'a recommendation default is never applied by the sweep'
+assert_contains "$(cat "$RS_LOG")" 'hold diverged --close-mirror' 'the mirror close goes through the owner'
+assert_contains "$(cat "$RS_LOG")" 'tasks lapse' 'the row lapse goes through tasks-axi'
+assert_not_contains "$(cat "$RS_LOG")" 'lapse-due' 'on does not stop at the listing'
+assert_equals resolved "$(rs_phase)" 'the old reply escalation expired'
+assert_equals expired-escalated "$(awk -F= '$1 == "resolved_via" { print $2 }' "$RS_STATE/pending-replies/$RS_CORR")" 'the reply expires through its owner'
+assert_contains "$out" 'expired 1' 'the suggestion expiry ran'
+assert_equals 1 "$(wc -l < "$RS_DATA/suggestions.jsonl")" 'the old suggestion left the list'
+assert_equals 1 "$(wc -l < "$RS_DATA/suggestions-not-picked.jsonl")" 'the old suggestion is archived, not deleted'
+assert_contains "$(rs_summary)" 'mode=on closed lapse=1 mirror=1 reply=1 rows=2 suggestions=1 queued-over=35 calls-over=12 woke=yes' 'the on summary counts the closes'
+wake=$(cat "$RS_STATE/.record-sweep-wake")
+assert_contains "$wake" 'record-sweep: captain call(s) lapsed as not needed, no action taken and not the captain'"'"'s answer: callA' 'the wake names the lapse as not the captain'"'"'s answer'
+assert_contains "$wake" '35 queued rows, over the limit of 30' 'the wake names the row cap'
+assert_contains "$wake" '12 open captain calls, over the limit of 10' 'the wake names the call cap'
+pass 'sweep-records on: closes through the owners and wakes for the lapse and both caps'
+
+# The wake is only for a lapse or a cap that is still exceeded.
+printf '' > "$RS/fix/queued-over" ; printf '' > "$RS/fix/call-budget"; rm -f "$RS/fix/defaults-due"
+out=$(rs_sweep sweep-records) || fail "quiet on sweep failed: $out"
+assert_contains "$(rs_summary)" 'queued-over=0 calls-over=0 woke=no' 'a sweep with nothing lapsed and no cap over is quiet'
+assert_absent "$RS_STATE/.record-sweep-wake" 'a quiet sweep clears the old wake'
+printf 'queued-over-limit queued=31 limit=30\n' > "$RS/fix/queued-over"
+rs_sweep sweep-records >/dev/null || fail 'row-cap sweep failed'
+assert_equals 'at=' "$(cut -c1-3 "$RS_STATE/.record-sweep-wake")" 'the wake is stamped'
+assert_contains "$(cat "$RS_STATE/.record-sweep-wake")" 'record-sweep: 31 queued rows, over the limit of 30' 'a row cap alone wakes'
+assert_not_contains "$(cat "$RS_STATE/.record-sweep-wake")" 'lapsed' 'no lapse is claimed'
+printf '' > "$RS/fix/queued-over"
+printf 'ASK LESS: 11 open captain calls (limit 10). Firstmate: decide.\n' > "$RS/fix/call-budget"
+rs_sweep sweep-records >/dev/null || fail 'call-cap sweep failed'
+assert_contains "$(cat "$RS_STATE/.record-sweep-wake")" 'record-sweep: 11 open captain calls, over the limit of 10' 'a call cap alone wakes'
+printf '' > "$RS/fix/call-budget"
+printf 'callA\t2026-11-01\tnot-needed\tNot needed (no action taken)\tlapse\tstale question\n' > "$RS/fix/defaults-due"
+rs_sweep sweep-records >/dev/null || fail 'lapse sweep failed'
+assert_contains "$(cat "$RS_STATE/.record-sweep-wake")" 'lapsed as not needed' 'a lapse alone wakes'
+touch "$RS/fix/answer-fail"
+out=$(rs_sweep sweep-records) || fail "a refused lapse must not fail the sweep: $out"
+assert_contains "$out" 'kept captain call callA: error: cannot lapse' 'a refused lapse is named and kept'
+assert_contains "$(rs_summary)" 'failed=lapse:callA' 'the refusal is in the summary'
+assert_contains "$(rs_summary)" 'woke=no' 'a lapse that did not happen does not wake'
+pass 'sweep-records: wakes only for a lapse or a cap still exceeded after the closes'
+
+# The watcher check: weekly, quiet, and it reports a wake once.
+rs_reset
+printf 'on\n' > "$RS_CONFIG/record-sweep"
+rs_wait_run() {  # until a run from the last minute has written its summary and released the lock
+  local i at
+  for ((i = 0; i < 150; i++)); do
+    at=$(sed -n 's/^at=\([0-9]*\) .*/\1/p' "$RS_STATE/.record-sweep-summary" 2>/dev/null)
+    if [ -n "$at" ] && [ $(( $(date +%s) - at )) -lt 60 ] && [ ! -d "$RS_STATE/.record-sweep.lock" ]; then return 0; fi
+    sleep 0.1
+  done
+  return 1
+}
+out=$(rs_sweep sweep-records-check) || fail 'check failed'
+assert_equals '' "$out" 'the first check starts the run and prints nothing'
+rs_wait_run || fail 'the check never started a sweep'
+assert_contains "$(cat "$RS_LOG")" 'tasks lapse' 'the check ran the sweep'
+assert_present "$RS_STATE/record-sweep.log" 'the run log is kept'
+: > "$RS_LOG"
+out=$(rs_sweep sweep-records-check)
+assert_contains "$out" 'record-sweep: captain call(s) lapsed as not needed' 'the next check reports the wake'
+out=$(rs_sweep sweep-records-check)
+assert_equals '' "$out" 'a reported wake is not repeated'
+sleep 0.5
+assert_equals '' "$(cat "$RS_LOG")" 'a sweep younger than a week does not run again'
+sed -i "s/^at=[0-9]*/at=$(( $(date +%s) - 604801 ))/" "$RS_STATE/.record-sweep-summary"
+rs_sweep sweep-records-check >/dev/null
+rs_wait_run || fail 'the weekly check never re-ran the sweep'
+assert_contains "$(cat "$RS_LOG")" 'tasks lapse' 'a week-old summary starts the next sweep'
+err=$(FM_RECORD_SWEEP_INTERVAL_SECS=abc rs_sweep sweep-records-check 2>&1) && fail 'a bad sweep interval must refuse'
+assert_contains "$err" 'FM_RECORD_SWEEP_INTERVAL_SECS must be whole seconds' 'the bad interval names itself'
+pass 'sweep-records-check: runs weekly, reports a wake once, stays quiet otherwise'
+
+# A held lock means a sweep is running; a lock a dead run left is stale after 6 h.
+rs_reset
+mkdir "$RS_STATE/.record-sweep.lock"
+out=$(rs_sweep sweep-records) || fail 'locked sweep must not fail'
+assert_contains "$out" 'a sweep is already in progress' 'a held lock skips the run'
+assert_equals '' "$(cat "$RS_LOG")" 'a held lock calls no owner'
+touch -d '7 hours ago' "$RS_STATE/.record-sweep.lock"
+out=$(rs_sweep sweep-records) || fail 'stale-lock sweep failed'
+assert_contains "$out" 'sweep-records: mode=shadow' 'a stale lock is replaced'
+assert_absent "$RS_STATE/.record-sweep.lock" 'the sweep releases its lock'
+pass 'sweep-records: a live lock skips the run, a stale one is replaced'
+
+rs_sweep sweep-records-arm >/dev/null 2>&1 || true
+assert_present "$RS_STATE/record-sweep.check.sh" 'sweep-records-arm writes the watcher check'
+assert_contains "$(<"$RS_STATE/record-sweep.check.sh")" 'fm-reap.sh sweep-records-check' 'the check runs the sweep check'
+assert_present "$RS_STATE/record-sweep.check-trust" 'sweep-records-arm binds the check'
+pass 'sweep-records-arm writes and registers state/record-sweep.check.sh'
+
 kill "$LIVE_PID" 2>/dev/null
 wait "$LIVE_PID" 2>/dev/null
 echo '# all fm-reap tests passed'
