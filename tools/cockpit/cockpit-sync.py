@@ -64,6 +64,17 @@ truth JSON (schema fm-cockpit-truth.v1; no timestamps, so an unchanged world wri
     steps       {record key: [authored steps, in order]}
     group       optional other_projects (work of no cockpit), rendered inside section 1
   out_of_scope number of holds and decisions left out by --scope or goal selection
+  budget_lines[] one lean-memory line per home this cockpit shows, placed by the same --scope rule as captain
+               entries (the goal home only when the scope names main; a secondmate when the scope names it or
+               a project registered for it). Each measure is the owning script's answer for that home, or null
+               when that script could not answer, never a zero:
+               {home, queued {count, limit}, calls {count, limit, oldest_days}, memory {tokens, budget},
+                data_bytes, sweep: null | {at, mode, counts {lapse, mirror, reply, rows, suggestions, archive, boards}, failed[]}}
+               queued: bin/fm-tasks-axi.sh queued-count; calls: bin/fm-captain-hold.sh call-budget --count
+               (oldest_days counts from its oldest created date); memory: bin/fm-startup-memory-budget.sh report;
+               data_bytes: du -sk of the home's data/; sweep: bin/fm-reap.sh sweep-records-summary, null before
+               the first sweep (the page says "no sweep yet") and a count the sweep could not measure is null
+               (shown as ?). A truth without budget_lines predates the strip and asks nothing of its page.
 
 Page contract checked by --verify-page:
   - every captain entry appears in section 1 as data-lavish-question="<key or alias>" or
@@ -77,6 +88,8 @@ Page contract checked by --verify-page:
     Each card has a closed "Alle stappen (N)" disclosure with its compact per-goal ring and every
     item, using goal_item_title if set or the text before the first " - " in title.
     The closed contents count as rendered.
+  - the budget strip #fm-budget-lines (after the goal KPI lines) matches budget_lines exactly, so a page
+    never shows another cockpit's home; the oldest-call age is the one clock value, fixed in the truth
   - every item, including dropped, has a status in its goal list, WBS box and Kanban card
   - span or SVG text slots with class fm-goal-item-status and data-fm-goal-item="GOAL/ITEM"
     show the verified status and label. WBS slots belong in a g[data-id] or .fm-goal-box
@@ -901,6 +914,71 @@ def goal_pace(goal, row):
     return {'running': sum(running), 'idle': len(idle) + len(ready), 'idle_minutes': minutes, 'waiting': sum(waits)}
 
 
+# ---------- budget lines ----------
+def owner_answer(args, home, timeout=60):
+    """An owner script's stdout for one home, or None when it fails: one unreadable measure stops no refresh."""
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, env=home_env(home), timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def answer_pairs(text):
+    """The key=value words of an owner's answer; a bare word has no entry."""
+    return dict(word.split('=', 1) for word in (text or '').split() if '=' in word)
+
+
+def whole(value):
+    """A whole number, or None for a missing or `unknown` measure (never zero)."""
+    return int(value) if value is not None and re.fullmatch(r'[0-9]+', value) else None
+
+
+def data_bytes(home):
+    try:
+        result = subprocess.run(['du', '-sk', str(home / 'data')], capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    kib = whole(result.stdout.split()[0]) if result.stdout.split() else None
+    return None if kib is None else kib * 1024
+
+
+def budget_line(name, home, today):
+    """One home's lean-memory measures, each read from the script that owns it (None when unreadable)."""
+    bin_dir = ROOT / 'bin'
+    queued = answer_pairs(owner_answer(['bash', str(bin_dir / 'fm-tasks-axi.sh'), 'queued-count'], home))
+    calls = answer_pairs(owner_answer(['bash', str(bin_dir / 'fm-captain-hold.sh'), 'call-budget', '--count'], home))
+    memory = answer_pairs(owner_answer(['bash', str(bin_dir / 'fm-startup-memory-budget.sh'), 'report'], home))
+    sweep_text = owner_answer(['bash', str(bin_dir / 'fm-reap.sh'), 'sweep-records-summary'], home)
+    sweep = answer_pairs(sweep_text)
+    line = {'home': name, 'queued': None, 'calls': None, 'memory': None, 'data_bytes': data_bytes(home), 'sweep': None}
+    if whole(queued.get('queued')) is not None and whole(queued.get('limit')) is not None:
+        line['queued'] = {'count': whole(queued['queued']), 'limit': whole(queued['limit'])}
+    if whole(calls.get('open')) is not None and whole(calls.get('limit')) is not None:
+        oldest = None
+        if re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', calls.get('oldest', '')):
+            try:
+                oldest = max(0, (today - datetime.date.fromisoformat(calls['oldest'])).days)
+            except ValueError:
+                oldest = None
+        line['calls'] = {'count': whole(calls['open']), 'limit': whole(calls['limit']), 'oldest_days': oldest}
+    if whole(memory.get('total_estimated_tokens')) is not None and whole(memory.get('effective_budget_tokens')) is not None:
+        line['memory'] = {'tokens': whole(memory['total_estimated_tokens']), 'budget': whole(memory['effective_budget_tokens'])}
+    if whole(sweep.get('at')) is not None and whole(sweep['at']) < 10 ** 11:
+        words = sweep_text.split()
+        line['sweep'] = {'at': whole(sweep['at']), 'mode': 'on' if 'closed' in words else 'shadow',
+                         'counts': {key: whole(sweep.get(key)) for key in ('lapse', 'mirror', 'reply', 'rows', 'suggestions', 'archive', 'boards')
+                                   if key in sweep or key not in ('archive', 'boards')},
+                         'failed': sorted(f for f in sweep.get('failed', '').split(',') if f)}
+    return line
+
+
+def budget_lines(homes, scope):
+    """A line for each home this cockpit shows: the Scope rule that places captain entries places a home."""
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    return [budget_line(name, home, today) for name, home in homes if scope.shows(scope.kind([name]))]
+
+
 def build_truth(args):
     goal_home = Path(args.goal_home).resolve()
     if not (goal_home / 'state').is_dir():
@@ -930,7 +1008,7 @@ def build_truth(args):
     section, more, skipped = captain_list(verified, dropped, unique, scope,
                                          {sm: projects for sm, _, projects in mates}, decisions, extra_waits)
     return {'schema': SCHEMA, 'goals': verified, 'mismatches': mismatches + more, 'section1': section,
-            'out_of_scope': skipped}
+            'out_of_scope': skipped, 'budget_lines': budget_lines(unique, scope)}
 
 
 # ---------- pages ----------
@@ -971,7 +1049,7 @@ def verify_page(page, truth, sections, ignore):
     if not any(n.visible and n.id in sections for n in parsed.nodes):
         problems.append(f'no decisions section with id {" or ".join(sections)}')
     problems += verify_captain_section(truth['section1'], parsed, sections, ignore)
-    problems.extend(verify_goal_views(page, truth['goals']))
+    problems.extend(verify_goal_views(page, truth['goals'], truth.get('budget_lines')))
     return list(dict.fromkeys(problems))
 
 

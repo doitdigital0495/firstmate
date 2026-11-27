@@ -947,6 +947,77 @@ assert door.index('</h2>') < door.index('data-cockpit-step') < door.index('<form
 assert 'overige-projecten' not in door and 'read-token' not in door and 'pool-cleanup' not in door, door
 PY
 pass 'cockpit scope: a scoped page opens section 1 with only its own steps, before its questions'
+
+# ---- budget line per home: each number from its owning script, each cockpit its own homes ----
+mkdir -p "$GERIS_HOME/config" "$MAIN_HOME/config"
+printf '7500\n' > "$GERIS_HOME/config/startup-memory-budget"
+head -c 300 /dev/zero | tr '\0' 'x' > "$GERIS_HOME/data/captain.md"
+printf 'at=1795800000 mode=shadow would-close lapse=2 mirror=1 reply=0 rows=3 suggestions=4 archive=5 boards=1 queued-over=0 calls-over=0 woke=no\n' \
+  > "$GERIS_HOME/state/.record-sweep-summary"
+printf 'at=1795800060 mode=shadow would-close lapse=0 mirror=0 reply=0 rows=0 suggestions=0 queued-over=0 calls-over=0 woke=no skipped=jq\n' \
+  > "$MAIN_HOME/state/.record-sweep-summary"
+scope_sync "$GERIS_HOME/state/cockpit-truth.geris.json" --scope geris --scope fabric_monorepo > "$TMP_ROOT/scope.out" 2>&1 \
+  || fail "Geris budget sync failed: $(cat "$TMP_ROOT/scope.out")"
+scope_sync "$MIKO_HOME/state/cockpit-truth.miko.json" --scope miko --scope terp --scope main > "$TMP_ROOT/scope.out" 2>&1 \
+  || fail "Miko budget sync failed: $(cat "$TMP_ROOT/scope.out")"
+jq -e '[.budget_lines[].home] == ["geris"]' "$GERIS_HOME/state/cockpit-truth.geris.json" >/dev/null \
+  || fail 'the Geris cockpit did not carry exactly its own home budget line'
+jq -e '[.budget_lines[].home] == ["main","terp"]' "$MIKO_HOME/state/cockpit-truth.miko.json" >/dev/null \
+  || fail 'the Miko cockpit did not carry exactly the main and terp budget lines'
+jq -e '.budget_lines[0] | .queued == {count:1, limit:30} and .calls.count == 1 and .calls.limit == 10
+       and (.calls.oldest_days | . >= 0 and . <= 1) and .memory == {tokens:100, budget:7500} and (.data_bytes > 0)
+       and .sweep == {at:1795800000, mode:"shadow", counts:{lapse:2, mirror:1, reply:0, rows:3, suggestions:4, archive:5, boards:1}, failed:[]}' \
+  "$GERIS_HOME/state/cockpit-truth.geris.json" >/dev/null || fail "Geris budget line: $(jq -c '.budget_lines' "$GERIS_HOME/state/cockpit-truth.geris.json")"
+main_queued=$(in_home "$MAIN_HOME" bash "$ROOT/bin/fm-tasks-axi.sh" list --state queued | grep -c ',queued,')
+jq -e --argjson queued "$main_queued" '.budget_lines[0] | .home == "main" and .queued.count == $queued and .calls.count == 4
+       and .memory == null and .sweep.counts == {lapse:0, mirror:0, reply:0, rows:0, suggestions:null}' \
+  "$MIKO_HOME/state/cockpit-truth.miko.json" >/dev/null || fail "main budget line: $(jq -c '.budget_lines[0]' "$MIKO_HOME/state/cockpit-truth.miko.json")"
+jq -e '.budget_lines[1] | .home == "terp" and .sweep == null' "$MIKO_HOME/state/cockpit-truth.miko.json" >/dev/null \
+  || fail 'a home with no sweep summary did not stay null'
+pass 'cockpit budget lines: counts come from the owner scripts, per scoped home; unmeasured and missing stay null'
+
+page_for() { # page_for <truth> <out>
+  printf '%s\n' '<!doctype html><html><head><meta name="color-scheme" content="dark"></head><body><section id="captain-door"></section><h2 id="doelen">Doelen</h2></body></html>' > "$2"
+  python3 -I "$TOOLS/goal_drive.py" --truth "$1" --page "$2" || fail "budget render failed for $1"
+}
+page_for "$MIKO_HOME/state/cockpit-truth.miko.json" "$TMP_ROOT/budget-miko.html"
+grep -Fq 'data-fm-budget-home="main"' "$TMP_ROOT/budget-miko.html" || fail 'the Miko page has no main budget line'
+grep -Fq 'data-fm-budget-home="geris"' "$TMP_ROOT/budget-miko.html" && fail 'Geris budget line reached the Miko page'
+grep -Fq '<span data-fm-budget="sweep">no sweep yet</span>' "$TMP_ROOT/budget-miko.html" || fail 'a missing sweep did not read no sweep yet'
+grep -Fq 'would close: lapse 0 · mirror 0 · reply 0 · rows 0 · suggestions ?' "$TMP_ROOT/budget-miko.html" \
+  || fail 'a skipped step was shown as a count'
+grep -Fq 'startup memory ?' "$TMP_ROOT/budget-miko.html" || fail 'an unreadable memory budget did not show a question mark'
+page_for "$GERIS_HOME/state/cockpit-truth.geris.json" "$TMP_ROOT/budget-geris.html"
+grep -Fq 'data-fm-budget-home="main"' "$TMP_ROOT/budget-geris.html" && fail 'main budget line reached the Geris page'
+for text in 'queued rows 1/30' 'open captain calls 1/10 · oldest ' 'startup memory 100/7,500' 'last sweep 2026-11-27 17:20 UTC' \
+  'would close: lapse 2 · mirror 1 · reply 0 · rows 3 · suggestions 4 · archive 5 · boards 1'; do
+  grep -Fq "$text" "$TMP_ROOT/budget-geris.html" || fail "Geris budget line lacks: $text"
+done
+cp "$TMP_ROOT/budget-geris.html" "$TMP_ROOT/budget-geris.again"
+python3 -I "$TOOLS/goal_drive.py" --truth "$GERIS_HOME/state/cockpit-truth.geris.json" --page "$TMP_ROOT/budget-geris.again" \
+  || fail 'second budget render failed'
+cmp -s "$TMP_ROOT/budget-geris.html" "$TMP_ROOT/budget-geris.again" || fail 'a second budget render changed the page'
+printf '%s\n' '<section id="captain-door"><form data-lavish-question="budget-roll"></form></section>' > "$TMP_ROOT/budget-door"
+python3 -I - "$TMP_ROOT/budget-geris.html" "$TMP_ROOT/budget-door" <<'PY' || fail 'could not prepare the budget verify page'
+from pathlib import Path
+import sys
+page = Path(sys.argv[1])
+text = page.read_text().replace('<section id="captain-door"></section>', Path(sys.argv[2]).read_text().strip())
+page.write_text(text)
+PY
+python3 -I "$TOOLS/goal_drive.py" --truth "$GERIS_HOME/state/cockpit-truth.geris.json" --page "$TMP_ROOT/budget-geris.html" \
+  || fail 'budget render with steps failed'
+scope_sync "$GERIS_HOME/state/cockpit-truth.geris.json" --verify-page "$TMP_ROOT/budget-geris.html" > "$TMP_ROOT/scope.out" \
+  || fail "a rendered budget line failed verification: $(cat "$TMP_ROOT/scope.out")"
+sed 's/queued rows 1\/30/queued rows 9\/30/' "$TMP_ROOT/budget-geris.html" > "$TMP_ROOT/budget-stale.html"
+scope_sync "$GERIS_HOME/state/cockpit-truth.geris.json" --verify-page "$TMP_ROOT/budget-stale.html" > "$TMP_ROOT/scope.out" \
+  && fail 'a stale budget count passed verification'
+grep -Fq 'missing or stale goal rendering: fm-budget-lines' "$TMP_ROOT/scope.out" || fail "wrong stale finding: $(cat "$TMP_ROOT/scope.out")"
+sed 's/<\/ul><div class="fm-goal-items"/<li data-fm-budget-home="main"><\/li><\/ul><div class="fm-goal-items"/;s/\(id="fm-budget-lines"[^>]*>\)/\1<li data-fm-budget-home="main"><span class="fm-budget-home">main<\/span><\/li>/' \
+  "$TMP_ROOT/budget-geris.html" > "$TMP_ROOT/budget-leak.html"
+scope_sync "$GERIS_HOME/state/cockpit-truth.geris.json" --verify-page "$TMP_ROOT/budget-leak.html" > "$TMP_ROOT/scope.out" \
+  && fail 'another home budget line passed on the Geris page'
+pass 'cockpit budget lines: rendered per scoped page, repeatable, no sweep yet / ? never zero, stale and foreign lines rejected'
 in_home "$MAIN_HOME" env PATH="$SYNC_BIN:$PATH" bash "$TOOLS/cockpit-sync.sh" --goal-home "$MAIN_HOME" --captain-waiting \
   > "$TMP_ROOT/waiting.out" || fail 'cross-home audit failed'
 if grep -q '^MISSING' "$TMP_ROOT/waiting.out"; then fail "audit missed a secondmate cockpit: $(cat "$TMP_ROOT/waiting.out")"; fi

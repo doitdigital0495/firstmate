@@ -89,6 +89,10 @@
 #               `data/<id>/report.md` path counts). The Done archive is replayed
 #               through tasks-axi in a scratch directory, so tasks-axi stays the
 #               one parser of its rows. Read-only; exits 1 when a read fails.
+#
+# `queued-count` is the cockpit budget line's read: it prints one
+# `queued=<n> limit=30` line, the number of Queued rows this home holds against
+# the same cap the lapse line uses, and exits 1 when the backlog cannot be read.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -383,7 +387,20 @@ archive_due_command() {
     }
   ' <(printf '%s\n' "$open") <(printf '%s\n' "$closed")
 }
+queued_count_command() {
+  local rows line total=0
+  rows=$(tasks-axi list --state queued 2>/dev/null) || { printf 'fm-tasks-axi: cannot read the backlog\n' >&2; return 1; }
+  while IFS= read -r line; do
+    case "$line" in "  "[!\ ]*,queued,*) total=$((total + 1)) ;; esac
+  done <<< "$rows"
+  printf 'queued=%s limit=%s\n' "$total" "$LAPSE_QUEUED_LIMIT"
+}
 case "${1:-}" in
+  queued-count)
+    [ "$#" -eq 1 ] || fail "queued-count takes no arguments"
+    queued_count_command
+    exit $?
+    ;;
   lapse-due|lapse)
     [ "$#" -eq 1 ] || fail "${1} takes no arguments"
     lapse_command "$1"

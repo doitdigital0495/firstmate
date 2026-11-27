@@ -6182,9 +6182,37 @@ test_no_effect_lapses() {
   pass 'fresh calls lapse after seven days with no captain answer or effect; work stays parked and deferrals keep notice time'
 }
 
+test_captain_call_budget_count() {
+  local home out
+  home=$(make_home call-budget-count)
+  out=$(run_captain "$home" call-budget --count) || fail 'could not count an empty backlog'
+  assert_equals 'open=0 limit=10 oldest=none' "$out" 'no open calls must read zero with no oldest date'
+  tasks_in "$home" add call-a 'Call a' --kind captain --repo sample >/dev/null || fail 'could not create call a'
+  tasks_in "$home" add call-b 'Call, b' --kind captain --repo sample >/dev/null || fail 'could not create call b'
+  tasks_in "$home" add plain-work 'Not a call' --kind ship --repo sample >/dev/null || fail 'could not create work'
+  tasks_in "$home" hold call-a --kind captain --reason 'A question' >/dev/null || fail 'could not hold call a'
+  tasks_in "$home" hold call-b --kind captain --reason 'Another question' >/dev/null || fail 'could not hold call b'
+  sed -i.bak 's/^\(- \[ \] call-a .*(since \)[0-9-]*)/\12020-02-03)/' "$home/data/backlog.md" && rm -f "$home/data/backlog.md.bak"
+  out=$(run_captain "$home" call-budget --count) || fail 'could not count two open calls'
+  case "$out" in
+    'open=2 limit=10 oldest='*) ;;
+    *) fail "two held calls read wrong: $out" ;;
+  esac
+  assert_not_contains "$out" 'ASK LESS' 'the count must not print the warning'
+  tasks_in "$home" 'done' call-b >/dev/null || fail 'could not close call b'
+  out=$(run_captain "$home" call-budget --count) || fail 'could not count after a close'
+  case "$out" in
+    'open=1 limit=10 oldest='*) ;;
+    *) fail "a closed call was still counted: $out" ;;
+  esac
+  if run_captain "$home" call-budget --count extra >/dev/null 2>&1; then fail 'call-budget --count accepted an argument'; fi
+  pass 'call-budget --count reports open captain calls against the cap with the oldest created date'
+}
+
 test_no_effect_lapses
 test_record_sweep_mirrors_and_release
 test_captain_call_budget_on_wake
+test_captain_call_budget_count
 test_historical_self_inventory_has_workable_repair
 test_inventory_compares_backend_identities
 test_origin_is_never_its_own_inventory_entry

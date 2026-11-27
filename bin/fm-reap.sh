@@ -13,7 +13,9 @@
 #                      run the weekly record sweep once now (see "Record sweep"
 #                      below); sweep-records-check is its watcher check
 #                      (state/record-sweep.check.sh) and sweep-records-arm
-#                      writes and binds that check
+#                      writes and binds that check; sweep-records-summary
+#                      prints the last summary line, a count the sweep could not
+#                      measure as `unknown`, or nothing before the first sweep
 #   fm-reap.sh sweep-state [--apply] [--verbose]
 #                      remove provably stale runtime leftovers from this home's
 #                      top-level state folder. Without --apply it is a read-only
@@ -1053,6 +1055,38 @@ cmd_sweep_check() {
   ( setsid "$0" sweep-records > "$STATE/record-sweep.log" 2>&1 < /dev/null & ) 2>/dev/null
 }
 
+# The cockpit budget line's read: the stored summary line, with every count the
+# sweep could not measure (its step was skipped or failed) shown as `unknown`
+# so no caller reads a missing measurement as zero. Prints nothing when no
+# valid summary exists, which means no sweep has run here yet.
+cmd_sweep_summary() {
+  local sum="$STATE/.record-sweep-summary" line tok key out='' unknown=' ' skipped='' failed=''
+  local -a toks
+  [ "$#" -eq 0 ] || fail 'sweep-records-summary takes no arguments'
+  { [ -f "$sum" ] && [ ! -L "$sum" ] && IFS= read -r line < "$sum"; } || return 0
+  case "$line" in at=[0-9]*' mode='*) ;; *) return 0 ;; esac
+  read -r -a toks <<< "$line"
+  for tok in "${toks[@]}"; do
+    case "$tok" in skipped=*) skipped=${tok#skipped=} ;; failed=*) failed=${tok#failed=} ;; esac
+  done
+  case ",$skipped," in *,tasks-axi,*) unknown="$unknown""lapse mirror rows " ;; esac
+  case ",$skipped," in *,jq,*) unknown="$unknown""suggestions " ;; esac
+  case ",$failed," in *,lapse:* | *,lapse-list,*) unknown="$unknown""lapse " ;; esac
+  case ",$failed," in *,archive,*) unknown="$unknown""archive boards " ;; esac
+  for key in mirror reply rows suggestions; do
+    case ",$failed," in *,"$key",*) unknown="$unknown$key " ;; esac
+  done
+  for tok in "${toks[@]}"; do
+    key=${tok%%=*}
+    case "$key" in
+      lapse | mirror | reply | rows | suggestions | archive | boards)
+        case "$unknown" in *" $key "*) tok="$key=unknown" ;; esac ;;
+    esac
+    out="${out:+$out }$tok"
+  done
+  printf '%s\n' "$out"
+}
+
 cmd_sweep_arm() { arm_check record-sweep sweep-records-check; }
 
 case "${1:-}" in
@@ -1064,6 +1098,7 @@ case "${1:-}" in
   sweep-records) shift; cmd_sweep_records "$@" ;;
   sweep-records-check) cmd_sweep_check ;;
   sweep-records-arm) cmd_sweep_arm ;;
+  sweep-records-summary) shift; cmd_sweep_summary "$@" ;;
   -h | --help) usage ;;
   *) usage >&2; exit 2 ;;
 esac
