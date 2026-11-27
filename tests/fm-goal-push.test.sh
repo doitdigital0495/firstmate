@@ -353,6 +353,9 @@ pass 'watcher reports each missing cockpit episode once, even in shadow mode'
 
 # Both homes can use the same key without sharing a brief, ready row or task
 # record. Hold the first local pass inside its broker to prove real overlap.
+printf 'enforce\n' > "$H/config/goal-push"
+"$G" pause draft >/dev/null
+"$G" pause separate >/dev/null
 brief mate-task
 printf '%s\n' 'item [id=local] [owner=main]: independent work' > "$T/local-task.items"
 start local-task
