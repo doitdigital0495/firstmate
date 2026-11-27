@@ -239,6 +239,183 @@ test_wrapper_single_home() {
   pass "fm-tasks-axi.sh keeps the single-home layout addressing its own code-root backlog"
 }
 
+# The unstarted-row lapse. One home carries every kind of row the lapse must
+# keep or close, proving by the wrapper's own output and the backlog file which
+# rows move, that nothing moves without config/record-sweep=on, and that a
+# close touches no other Done row.
+lapse_home() {  # <name>; prints the home directory
+  local dir="$TMP_ROOT/$1"
+  mkdir -p "$dir/data" "$dir/state" "$dir/config" "$dir/projects/r1"
+  fm_test_tasks_toml "$dir/.tasks.toml"
+  empty_backlog "$dir/data/backlog.md"
+  git -C "$dir/projects/r1" init -q
+  git -C "$dir/projects/r1" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false \
+    commit -q --allow-empty -m init
+  printf '%s\n' "$dir"
+}
+
+lapse_wrapper() {  # <home> <args...>
+  local dir=$1
+  shift
+  (cd "$dir" && FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir" "$WRAPPER" "$@")
+}
+
+lapse_since() {  # <home> <id> <YYYY-MM-DD>
+  sed -i.bak "s/^\(- \[ \] $2 .*(since \)[0-9-]*)/\1$3)/" "$1/data/backlog.md" && rm -f "$1/data/backlog.md.bak"
+}
+
+lapse_days_ago() {  # <days>
+  date -u -d "$1 days ago" +%F 2>/dev/null || date -u -v-"$1"d +%F
+}
+
+done_section() {  # <home>
+  sed -n '/^## Done/,$p' "$1/data/backlog.md"
+}
+
+test_lapse_due_and_close() {
+  local dir out old goal_items before after id
+  dir=$(lapse_home lapse)
+  old=2020-01-01
+  for id in due-1 edge-1 young-1 held-1 blk-1 meta-1 stat-1 data-1 br-1 wt-1 remote-1 goal-on-1 goal-off-1 dep-1; do
+    lapse_wrapper "$dir" add "$id" "row $id, with a comma" --repo r1 >/dev/null || fail "add $id"
+    lapse_since "$dir" "$id" "$old"
+  done
+  lapse_wrapper "$dir" add norepo-1 "no repo" >/dev/null
+  lapse_wrapper "$dir" add noclone-1 "no clone" --repo missing >/dev/null
+  lapse_wrapper "$dir" add mate-1 "standing" --repo r1 --kind secondmate >/dev/null
+  lapse_wrapper "$dir" add cap-1 "captain question" --repo r1 --kind captain >/dev/null
+  for id in norepo-1 noclone-1 mate-1 cap-1; do lapse_since "$dir" "$id" "$old"; done
+  lapse_since "$dir" young-1 "$(lapse_days_ago 13)"
+  lapse_since "$dir" edge-1 "$(lapse_days_ago 14)"
+  lapse_wrapper "$dir" hold held-1 --reason "waiting, for someone" --kind captain >/dev/null || fail "hold"
+  lapse_wrapper "$dir" block blk-1 --by dep-1 >/dev/null || fail "block"
+  : > "$dir/state/meta-1.meta"
+  : > "$dir/state/stat-1.status"
+  mkdir "$dir/data/data-1"
+  git -C "$dir/projects/r1" branch "fm/br-1"
+  git -C "$dir/projects/r1" worktree add -q --detach "$dir/pool/wt-1"
+  git -C "$dir/projects/r1" update-ref refs/remotes/origin/fm/remote-1 HEAD
+  goal_items="$dir/items"
+  printf '%s\n' 'item [id=a] [owner=main] [task=goal-on-1]: linked step' > "$goal_items"
+  FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir" "$ROOT/bin/fm-goal.sh" start G1 --title t --done-when d --named-by n \
+    --plan plan.md --items-file "$goal_items" >/dev/null 2>&1 || fail "goal start G1"
+  printf '%s\n' 'item [id=a] [owner=main] [task=goal-off-1]: linked to a paused goal' > "$goal_items"
+  FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir" "$ROOT/bin/fm-goal.sh" start G2 --title t --done-when d --named-by n \
+    --plan plan.md --items-file "$goal_items" >/dev/null 2>&1 || fail "goal start G2"
+  FM_HOME="$dir" FM_ROOT_OVERRIDE="$dir" "$ROOT/bin/fm-goal.sh" pause G2 >/dev/null || fail "goal pause G2"
+  for id in dn-1 dn-2 dn-3; do
+    lapse_wrapper "$dir" add "$id" "finished $id" >/dev/null || fail "add $id"
+    lapse_wrapper "$dir" 'done' "$id" >/dev/null || fail "done $id"
+  done
+
+  out=$(lapse_wrapper "$dir" lapse-due) || fail "lapse-due failed"
+  assert_equals "$(printf 'due-1\t%s\tr1\nedge-1\t%s\tr1\ngoal-off-1\t%s\tr1\ndep-1\t%s\tr1\nlapse mode=shadow due=4 closed=0' \
+    "$old" "$(lapse_days_ago 14)" "$old" "$old")" "$out" \
+    "lapse-due must list exactly the unheld, unblocked, old, never-started, unlinked rows"
+
+  before=$(cat "$dir/data/backlog.md")
+  out=$(lapse_wrapper "$dir" lapse) || fail "shadow lapse failed"
+  assert_contains "$out" "would-lapse	due-1	$old	r1" "shadow lapse did not list the due row"
+  assert_contains "$out" "lapse mode=shadow due=4 closed=0" "shadow lapse closed something or miscounted"
+  assert_equals "$before" "$(cat "$dir/data/backlog.md")" "an absent record-sweep switch must leave the backlog untouched"
+  printf 'on\n' > "$dir/real-switch"
+  ln -s "$dir/real-switch" "$dir/config/record-sweep"
+  out=$(lapse_wrapper "$dir" lapse) || fail "symlinked switch lapse failed"
+  assert_contains "$out" "lapse mode=shadow" "a symlinked record-sweep switch must stay shadow"
+  assert_equals "$before" "$(cat "$dir/data/backlog.md")" "a symlinked switch must leave the backlog untouched"
+  rm "$dir/config/record-sweep"
+  printf 'shadow\n' > "$dir/config/record-sweep"
+  lapse_wrapper "$dir" lapse >/dev/null
+  assert_equals "$before" "$(cat "$dir/data/backlog.md")" "record-sweep=shadow must leave the backlog untouched"
+
+  printf 'on\n' > "$dir/config/record-sweep"
+  before=$(done_section "$dir")
+  out=$(lapse_wrapper "$dir" lapse) || fail "lapse with record-sweep=on failed"
+  assert_contains "$out" "lapse mode=on due=4 closed=4" "an on lapse did not close the four due rows"
+  after=$(done_section "$dir")
+  assert_contains "$after" "due-1" "the lapsed row did not reach Done"
+  assert_contains "$after" "lapsed unstarted" "the lapse note is missing from Done"
+  for id in dn-1 dn-2 dn-3; do
+    assert_contains "$after" "$id" "the earlier Done row $id was lost"
+  done
+  assert_equals "$(printf '%s\n' "$before" | grep -c '^- \[x\]')" 3 "fixture should start with three Done rows"
+  assert_equals "$(printf '%s\n' "$after" | grep -c '^- \[x\]')" 7 "exactly the four due rows should join Done"
+  assert_equals "$(printf '%s\n' "$before" | grep '^- \[x\]')" \
+    "$(printf '%s\n' "$after" | grep '^- \[x\]' | grep -F -e dn-1 -e dn-2 -e dn-3)" "an earlier Done row changed"
+  out=$(lapse_wrapper "$dir" list --state queued)
+  for id in young-1 held-1 blk-1 meta-1 stat-1 data-1 br-1 wt-1 remote-1 goal-on-1 norepo-1 noclone-1 mate-1 cap-1; do
+    assert_contains "$out" "$id" "$id must stay Queued"
+  done
+  for id in due-1 edge-1 dep-1 goal-off-1; do
+    assert_not_contains "$out" "$id," "$id should have left Queued"
+  done
+  out=$(lapse_wrapper "$dir" lapse-due) || fail "second lapse-due failed"
+  assert_equals "$(printf 'blk-1\t%s\tr1\nlapse mode=on due=1 closed=0' "$old")" "$out" \
+    "only the row whose blocker just closed should become due on the next run"
+  pass "lapse closes only the due rows, gated by record-sweep=on, and leaves other Done rows alone"
+}
+
+test_lapse_single_row_leaves_done_untouched() {
+  local dir out before after
+  dir=$(lapse_home lapse-one)
+  printf 'on\n' > "$dir/config/record-sweep"
+  lapse_wrapper "$dir" add keep-1 "earlier close" >/dev/null || fail "add keep-1"
+  lapse_wrapper "$dir" 'done' keep-1 --note "kept note" >/dev/null || fail "done keep-1"
+  lapse_wrapper "$dir" add only-1 "the one" --repo r1 >/dev/null
+  lapse_since "$dir" only-1 2020-01-01
+  before=$(done_section "$dir")
+  out=$(lapse_wrapper "$dir" lapse) || fail "lapse failed"
+  assert_contains "$out" "lapsed	only-1" "the due row was not closed"
+  after=$(done_section "$dir")
+  assert_equals "$(printf '> - [x] only-1 - the one (repo: r1) (done %s)\n>   lapsed unstarted' "$(date -u +%F)")" \
+    "$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep '^>')" "the lapse must add exactly one Done row with its note"
+  assert_equals 0 "$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep -c '^<')" "an existing Done line changed or vanished"
+  assert_contains "$after" "kept note" "the earlier Done note was lost"
+  assert_equals "" "$([ -s "$dir/data/done-archive.md" ] && cat "$dir/data/done-archive.md")" "a lapse below the keep value must archive nothing"
+  pass "lapse moves exactly one row and leaves the rest of Done untouched"
+}
+
+test_lapse_queue_limit_line() {
+  local dir out i
+  dir=$(lapse_home lapse-limit)
+  for i in $(seq 1 31); do
+    lapse_wrapper "$dir" add "hold-$i" "held $i" --repo r1 >/dev/null
+    lapse_wrapper "$dir" hold "hold-$i" --reason "waiting" --kind captain >/dev/null
+  done
+  out=$(lapse_wrapper "$dir" lapse-due) || fail "lapse-due failed"
+  assert_contains "$out" "queued-over-limit queued=31 limit=30" "31 queued rows must report the over-limit line"
+  lapse_wrapper "$dir" add due-1 "old" --repo r1 >/dev/null
+  lapse_since "$dir" due-1 2020-01-01
+  out=$(lapse_wrapper "$dir" lapse-due)
+  assert_contains "$out" "queued-over-limit queued=31 limit=30" "the shadow count must exclude the row it would close"
+  lapse_wrapper "$dir" unhold hold-1 >/dev/null
+  lapse_wrapper "$dir" 'done' hold-1 >/dev/null
+  out=$(lapse_wrapper "$dir" lapse-due)
+  assert_not_contains "$out" "queued-over-limit" "30 queued rows after the lapse must not report"
+  pass "lapse reports one over-limit line only while the home would still exceed 30 queued rows"
+}
+
+test_lapse_unreadable_history_closes_nothing() {
+  local dir out rc=0
+  dir=$(lapse_home lapse-fail)
+  printf 'on\n' > "$dir/config/record-sweep"
+  lapse_wrapper "$dir" add old-1 "old" --repo r1 >/dev/null
+  lapse_since "$dir" old-1 2020-01-01
+  # bin/fm-goal.sh refuses a symlinked goal directory, so the link view is unreadable.
+  mkdir -p "$dir/elsewhere" "$dir/state"
+  ln -s "$dir/elsewhere" "$dir/state/goals"
+  out=$(lapse_wrapper "$dir" lapse 2>&1) || rc=$?
+  expect_code 1 "$rc" "lapse with an unreadable goal view"
+  assert_contains "$out" "nothing lapses" "an unreadable goal view must say nothing lapses"
+  assert_not_contains "$out" "lapsed" "an unreadable goal view must close nothing"
+  assert_equals 1 "$(grep -c '^- \[ \] old-1 ' "$dir/data/backlog.md")" "a failed read changed the backlog"
+  rc=0
+  out=$(lapse_wrapper "$dir" lapse-due extra 2>&1) || rc=$?
+  expect_code 2 "$rc" "lapse-due with an argument"
+  assert_contains "$out" "takes no arguments" "lapse-due must refuse arguments"
+  pass "lapse refuses arguments and closes nothing when it cannot read the goal links"
+}
+
 test_guard_reports_regular_code_root_backlog
 test_guard_reports_foreign_link_and_archive
 test_guard_silent_for_single_home
@@ -249,6 +426,10 @@ if [ "$HAVE_TASKS_AXI" = 1 ]; then
   test_wrapper_refusals
   test_wrapper_refuses_add_start
   test_wrapper_single_home
+  test_lapse_due_and_close
+  test_lapse_single_row_leaves_done_untouched
+  test_lapse_queue_limit_line
+  test_lapse_unreadable_history_closes_nothing
 else
   echo "skip: tasks-axi not found; home-addressing cases not run"
 fi
