@@ -76,7 +76,7 @@
 #                           lifecycle note below); empty until then
 #   resolved_epoch=
 #   resolved_via=           status | document | helper | operator-resolve-key |
-#                           expired-unanswered | empty
+#                           expired-unanswered | expired-escalated | empty
 #   wrong_home_hits=        count of corr sightings under the secondmate home
 #   wrong_home_first_sighting= encoded path:line identity of the first sighting
 #   wrong_home_sightings=   comma-separated encoded path:line identities
@@ -144,8 +144,8 @@
 #                                 settled record - resolved, inbox acknowledged,
 #                                 escalation closed - is kept after resolved_epoch
 #                                 before the tick's cleanup sweep removes it
-#                                 (fm_pending_reply_sweep_settled). Open records
-#                                 are never removed, whatever their age.
+#                                 (fm_pending_reply_sweep_settled), except open
+#                                 records and expired escalations.
 #                                 0 turns the sweep off
 #   FM_PENDING_REPLY_REPOST_CAP   default 3; most recovery reposts one task may
 #                                 start inside one window, so a backlog cannot
@@ -693,9 +693,8 @@ fm_pending_reply_discard_undelivered() {  # <state-dir> <corr_id>
 # ... via=operator-resolve-key, written by fm-send --resolve-key when the
 # operator answers the escalation, and the matching close this library writes
 # itself (fm_pending_reply_close_escalation). Without it, a delivered request
-# the operator settled would stay escalated forever: expired-unanswered never
-# applies to an escalated record, so the operator close is the only terminal
-# for it once the mate never correlates. That form settles only a DELIVERED
+# the operator settled would otherwise stay escalated until expiry (if
+# enabled). That form settles only a DELIVERED
 # record (the default): a caller holding an undelivered, still-resendable
 # record passes <mode>=undelivered, because the owner may still resend the
 # same correlation after the operator closed the decision (the retryable
@@ -856,7 +855,7 @@ _fm_pending_reply_try_resolve_locked() {  # <state-dir> <corr_id> [status-file-o
 
 # Read only the asked task's durable inbox, matching the exact correlation.
 # A move to handled/ is receipt, not a reply. Only parent-channel resolution
-# authorizes automatic cleanup; expired-unanswered must never acknowledge work.
+# authorizes automatic cleanup; expiry must never acknowledge work.
 fm_pending_reply_inbox() {  # <state-dir> <corr_id> <observe|close>
   local state=$1 corr=$2 action=$3 rec task dir msg body handled=0
   rec=$(fm_pending_reply_path "$state" "$corr")
@@ -869,7 +868,7 @@ fm_pending_reply_inbox() {  # <state-dir> <corr_id> <observe|close>
   fi
   if [ "$action" = close ]; then
     case "$(fm_pending_reply_get "$rec" resolved_via)" in
-      expired-unanswered)
+      expired-unanswered|expired-escalated)
         fm_pending_reply_set "$rec" inbox_closed 1
         return $? ;;
       status|document|helper) ;;
@@ -1613,7 +1612,7 @@ fm_pending_reply_resolve_superseded() {  # <state-dir> <corr_id> <superseded-by-
 }
 
 # Escalate once after a missed recovery report or failed delivery outcome.
-# Retains the durable unresolved record. Never loops.
+# Retains the durable record. Never loops.
 fm_pending_reply_maybe_escalate() {  # <state-dir> <corr_id>
   # Serialized per correlation so a resolution and an escalation cannot interleave.
   # bin/fm-wake-lib.sh owns the lock primitives but assigns its own globals when
@@ -1814,6 +1813,83 @@ fm_pending_reply_restatement_copy_same_basename() {  # <state-dir> <corr_id> <se
   # traversal.
   . "$_FM_PENDING_REPLY_LIB_DIR/fm-parent-channel-lib.sh"
   fm_parent_channel_append_once "$parent_status" "$line"
+}
+
+# Sweep only delivered reply escalations older than 24 h, measured from the
+# escalation, not the original request. Delivery-unknown records must stay
+# retryable by the sender. Only literal `on` in config/record-sweep enables
+# expiry; shadow (including an absent or unrecognized switch) only reports the
+# count and correlation IDs. Neither mode sends anything. An expiry preserves
+# the record and never acknowledges inbox work.
+fm_pending_reply_sweep_escalated() {  # <state-dir>
+  local state=$1 config dir rec corr now cutoff mode='' status_file count=0 rc=0
+  local -a candidates=()
+  config="${FM_CONFIG_OVERRIDE:-${FM_HOME:-${state%/*}}/config}/record-sweep"
+  if [ -f "$config" ] && [ ! -L "$config" ]; then
+    read -r mode < "$config" || true
+  fi
+  [ "$mode" = on ] || mode=shadow
+  dir=$(fm_pending_reply_dir "$state")
+  now=$(fm_pending_reply_now)
+  cutoff=$((now - 86400))
+  for rec in "$dir"/*; do
+    _fm_pending_reply_escalation_due "$rec" "$cutoff" || continue
+    corr=${rec##*/}
+    case "$corr" in ''|*[!A-Za-z0-9_]*) continue ;; esac
+    if [ "$mode" = on ]; then
+      _fm_pending_reply_expire_escalated "$state" "$corr" "$now" "$cutoff" || {
+        [ "$?" -eq 1 ] || rc=1
+        continue
+      }
+    else
+      status_file=$(fm_pending_reply_get "$rec" parent_status)
+      [ -z "$(fm_pending_reply_find_resolve_line "$status_file" "$corr")" ] || continue
+    fi
+    candidates+=("$corr")
+    count=$((count + 1))
+  done
+  printf 'pending-reply escalation sweep (%s): %s' "$mode" "$count"
+  [ "$count" -eq 0 ] || printf ' %s' "${candidates[@]}"
+  printf '\n'
+  return "$rc"
+}
+
+_fm_pending_reply_escalation_due() {  # <record-path> <cutoff-epoch>
+  local rec=$1 escalated
+  [ -f "$rec" ] && [ ! -L "$rec" ] || return 1
+  [ "$(fm_pending_reply_get "$rec" phase)" = escalated ] || return 1
+  [ -n "$(fm_pending_reply_get "$rec" delivered_epoch)" ] || return 1
+  escalated=$(fm_pending_reply_get "$rec" escalated_epoch)
+  case "$escalated" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$escalated" -lt "$2" ]
+}
+
+# 0 expired, 1 no longer due (including an answer that won), 2 write/lock error.
+_fm_pending_reply_expire_escalated() {  # <state-dir> <corr_id> <now> <cutoff-epoch>
+  local state=$1 corr=$2 now=$3 cutoff=$4 rec lock status_file rc=1
+  local STATE FM_WAKE_QUEUE FM_WAKE_QUEUE_LOCK
+  STATE=$state
+  lock="$state/.pending-reply-$corr.lock"
+  . "$_FM_PENDING_REPLY_LIB_DIR/fm-wake-lib.sh"
+  fm_lock_acquire_wait "$lock" || return 2
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  if _fm_pending_reply_escalation_due "$rec" "$cutoff"; then
+    status_file=$(fm_pending_reply_get "$rec" parent_status)
+    # A fresh report or operator close always wins over the mechanical expiry.
+    if ! _fm_pending_reply_try_resolve_locked "$state" "$corr" "$status_file" \
+      && [ "$(fm_pending_reply_get "$rec" phase)" = escalated ]; then
+      rc=2
+      if fm_pending_reply_set "$rec" resolved_epoch "$now" \
+        && fm_pending_reply_set "$rec" resolved_via expired-escalated \
+        && fm_pending_reply_set "$rec" inbox_closed 1 \
+        && fm_pending_reply_set "$rec" phase resolved \
+        && _fm_pending_reply_close_escalation_locked "$state" "$corr"; then
+        rc=0
+      fi
+    fi
+  fi
+  fm_lock_release "$lock"
+  return "$rc"
 }
 
 # One reconciliation tick for a single record: resolve, observe, recover, escalate.
@@ -2078,17 +2154,18 @@ _fm_pending_reply_select_sweepable() {  # <cutoff-epoch> <record-path>...
   printf '%s\n' "$@" | LC_ALL=C awk -v cutoff="$cutoff" '
     {
       path = $0
-      phase = ""; escalated = ""; closed = ""; inbox_closed = ""; resolved = ""
+      phase = ""; escalated = ""; closed = ""; inbox_closed = ""; resolved = ""; via = ""
       while ((rc = (getline line < path)) > 0) {
         if (index(line, "phase=") == 1) phase = substr(line, 7)
         else if (index(line, "escalated_epoch=") == 1) escalated = substr(line, 17)
         else if (index(line, "escalation_closed_epoch=") == 1) closed = substr(line, 25)
         else if (index(line, "inbox_closed=") == 1) inbox_closed = substr(line, 14)
         else if (index(line, "resolved_epoch=") == 1) resolved = substr(line, 16)
+        else if (index(line, "resolved_via=") == 1) via = substr(line, 14)
       }
       close(path)
       if (rc < 0) next
-      if (phase != "resolved") next
+      if (phase != "resolved" || via == "expired-escalated") next
       if (inbox_closed != "1") next
       if (escalated != "" && closed == "") next
       if (resolved !~ /^[0-9]+$/) next
@@ -2111,11 +2188,8 @@ fm_pending_reply_record_resolved_before() {  # <record-path> <cutoff-epoch>
 # Remove fully settled records older than FM_PENDING_REPLY_RESOLVED_RETAIN_SECS
 # (default 14 days; 0 disables the sweep). A record is removable only when it
 # is resolved, its inbox is acknowledged, and an escalation it opened is
-# closed - the exact shape the tick has no remaining work for. Every open
-# record (awaiting_report, delivery_unknown, recovery_*, escalated) is
-# retained forever, whatever its age: the never-silently-expire property is
-# unchanged, and closing stale unanswered requests stays
-# fm_pending_reply_expire_stale. The durable story stays readable in the task
+# closed. Open records and expired escalations are never removed.
+# The durable story for pruned records stays readable in the task
 # status lines this library published (the blocked escalation and its reserved
 # close, or the mate's correlated report), so removing the record loses no
 # history the home still needs. Each removal re-verifies the settled shape
@@ -2140,6 +2214,7 @@ fm_pending_reply_sweep_settled() {  # <state-dir>
     lock="$state/.pending-reply-$corr.lock"
     fm_lock_acquire_wait "$lock" || { rc=1; continue; }
     if [ "$(fm_pending_reply_get "$rec" phase)" = resolved ] \
+      && [ "$(fm_pending_reply_get "$rec" resolved_via)" != expired-escalated ] \
       && [ "$(fm_pending_reply_get "$rec" inbox_closed)" = 1 ] \
       && { [ -z "$(fm_pending_reply_get "$rec" escalated_epoch)" ] \
            || [ -n "$(fm_pending_reply_get "$rec" escalation_closed_epoch)" ]; } \
