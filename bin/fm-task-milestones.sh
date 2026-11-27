@@ -18,6 +18,9 @@
 # directory beside FILE's state directory). Once the status file is gone, every subcommand given FILE
 # reads and appends that archive instead, so phases stamped after teardown
 # still measure against the brief and never recreate an orphan status log.
+# Once the weekly record sweep has moved the task folder to
+# `<data>/archive/<YYYY-MM>/<id>/` (bin/fm-reap.sh), the archive is read and
+# appended there.
 #
 # stamp defaults to the real current epoch; at= is only for an authoritative
 # event timestamp (for example the forge's actual merge time), never a guess.
@@ -60,9 +63,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 fail() { printf 'fm-task-milestones: %s\n' "$*" >&2; exit 1; }
 
+# The teardown archive in data/<id>/, or, once the weekly record sweep has moved
+# that folder to data/archive/<YYYY-MM>/<id>/, the newest such month's copy.
 archive_for() {  # <status-file>
-  printf '%s/%s/milestones.status' \
-    "${FM_DATA_OVERRIDE:-$(dirname "$1")/../data}" "$(basename "$1" .status)"
+  local data id file moved
+  data=${FM_DATA_OVERRIDE:-$(dirname "$1")/../data}
+  id=$(basename "$1" .status)
+  file="$data/$id/milestones.status"
+  if [ ! -e "$file" ] && [ ! -L "$file" ] && [ -d "$data/archive" ] && [ ! -L "$data/archive" ]; then
+    for moved in "$data"/archive/*/"$id"/milestones.status; do
+      [ -e "$moved" ] || [ -L "$moved" ] || continue
+      [ ! -L "${moved%/"$id"/milestones.status}" ] || continue
+      file=$moved
+    done
+  fi
+  printf '%s' "$file"
 }
 
 # The live status file while it exists, else the teardown archive if present.

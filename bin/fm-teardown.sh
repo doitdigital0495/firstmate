@@ -342,7 +342,8 @@
 # no-op. Symlinked/non-regular sources and symlinked archive directories refuse
 # cleanup rather than following them; the configured data root may be a symlink.
 # Existing archive filenames are never overwritten. Each archival prunes owned
-# logs and orphaned staging files older than 30 completed days by mtime.
+# logs and orphaned staging files older than 30 completed days by mtime, in
+# data/<id>/ and in task folders the record sweep moved to data/archive/<YYYY-MM>/.
 # Pruning failures warn, never abort teardown, and leave other task data and
 # symlinks alone.
 # Opt-in config/record-export-root delegates the record archive transaction to
@@ -510,6 +511,13 @@ teardown_retire_status() {  # <state> <task-id> [<archive-relative-directory>]
   for entry in "$DATA"/*; do
     teardown_prune_status_archives "$entry"
   done
+  # Folders the record sweep moved to data/archive/<YYYY-MM>/ keep this retention.
+  if [ -d "$DATA/archive" ] && [ ! -L "$DATA/archive" ]; then
+    for entry in "$DATA"/archive/*/*; do
+      [ ! -L "${entry%/*}" ] || continue
+      teardown_prune_status_archives "$entry"
+    done
+  fi
 }
 
 teardown_export_records() {  # <state> <task-id>

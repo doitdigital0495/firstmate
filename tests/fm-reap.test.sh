@@ -524,13 +524,47 @@ cat > "$RS/tasks" <<'SH'
 #!/usr/bin/env bash
 printf 'tasks %s\n' "$*" >> "$RS_LOG"
 case "$1" in
+  archive-due)
+    [ ! -e "$RS_FIX/archive-fail" ] || { echo 'fm-tasks-axi: cannot read the closed rows; nothing is due' >&2; exit 1; }
+    cat "$RS_FIX/archive-due" 2>/dev/null
+    exit 0 ;;
   lapse-due) printf 'rowa\t2026-01-01\tr1\nrowb\t2026-01-02\tr1\nlapse mode=shadow due=2 closed=0\n' ;;
   lapse) printf 'lapsed\trowa\t2026-01-01\tr1\nlapsed\trowb\t2026-01-02\tr1\nlapse mode=on due=2 closed=2\n' ;;
 esac
 cat "$RS_FIX/queued-over" 2>/dev/null
 exit 0
 SH
-chmod +x "$RS/captain-hold" "$RS/tasks"
+# The goal links, board retirement and Lavish are stubs too; the Lavish stub on
+# PATH keeps every sweep in this file away from a real Lavish server.
+cat > "$RS/goal" <<'SH'
+#!/usr/bin/env bash
+printf 'goal %s\n' "$*" >> "$RS_LOG"
+[ "$1" = launch-links ] && cat "$RS_FIX/links" 2>/dev/null
+exit 0
+SH
+cat > "$RS/procevent" <<'SH'
+#!/usr/bin/env bash
+printf 'procevent %s\n' "$*" >> "$RS_LOG"
+if [ -e "$RS_FIX/refuse-$2" ]; then
+  echo "fm-procevent: cannot retire task-owned source $2 while a captured round is unacknowledged" >&2
+  exit 1
+fi
+rm -f "$FM_STATE_OVERRIDE/procevent/$2.source"
+printf 'retired: %s\n' "$2"
+SH
+cat > "$RS/bin/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+printf 'lavish %s\n' "$*" >> "$RS_LOG"
+case "${1:-}" in
+  '')
+    [ ! -e "$RS_FIX/sessions-fail" ] || exit 1
+    printf 'sessions[%s]{file,status,url,pending_prompts,listener}:\n' "$(cat "$RS_FIX/sessions" 2>/dev/null | wc -l)"
+    cat "$RS_FIX/sessions" 2>/dev/null ;;
+  end) printf 'status: ended\n' ;;
+esac
+exit 0
+SH
+chmod +x "$RS/captain-hold" "$RS/tasks" "$RS/goal" "$RS/procevent" "$RS/bin/lavish-axi"
 RS_LOG="$RS/calls.log"
 # Two reply escalations: one past 24 h at sweep time and one not yet.
 rs_escalated() (
@@ -559,6 +593,7 @@ rs_sweep() {  # <args...>; the sweep clock is 25 h after the escalation
   env PATH="$RS/bin:$PATH" FM_HOME="$RS/home" FM_STATE_OVERRIDE="$RS_STATE" FM_CONFIG_OVERRIDE="$RS_CONFIG" \
     FM_DATA_OVERRIDE="$RS_DATA" FM_PENDING_REPLY_NOW=91401 RS_LOG="$RS_LOG" RS_FIX="$RS/fix" \
     FM_RECORD_SWEEP_CAPTAIN_HOLD="$RS/captain-hold" FM_RECORD_SWEEP_TASKS_AXI="$RS/tasks" \
+    FM_RECORD_SWEEP_GOAL="$RS/goal" FM_RECORD_SWEEP_PROCEVENT="$RS/procevent" \
     "$REAP" "$@"
 }
 rs_summary() { cat "$RS_STATE/.record-sweep-summary"; }
@@ -583,7 +618,7 @@ for variant in absent shadow symlink junk; do
   assert_contains "$out" 'rowa' "$variant lists the rows it would lapse"
   assert_contains "$out" 'would-expire 1' "$variant counts the suggestion it would expire"
   assert_equals 'at=' "$(rs_summary | cut -c1-3)" 'the summary line starts with its epoch'
-  assert_contains "$(rs_summary)" 'mode=shadow would-close lapse=1 mirror=1 reply=1 rows=2 suggestions=1 queued-over=35 calls-over=12 woke=no' "$variant summary counts what would close"
+  assert_contains "$(rs_summary)" 'mode=shadow would-close lapse=1 mirror=1 reply=1 rows=2 suggestions=1 archive=0 boards=0 queued-over=35 calls-over=12 woke=no' "$variant summary counts what would close"
   assert_equals 1 "$(wc -l < "$RS_STATE/.record-sweep-summary")" 'the summary is one line'
   assert_not_contains "$(cat "$RS_LOG")" 'answer' "$variant applies no lapse"
   assert_not_contains "$(cat "$RS_LOG")" 'tasks lapse
@@ -611,7 +646,7 @@ assert_equals expired-escalated "$(awk -F= '$1 == "resolved_via" { print $2 }' "
 assert_contains "$out" 'expired 1' 'the suggestion expiry ran'
 assert_equals 1 "$(wc -l < "$RS_DATA/suggestions.jsonl")" 'the old suggestion left the list'
 assert_equals 1 "$(wc -l < "$RS_DATA/suggestions-not-picked.jsonl")" 'the old suggestion is archived, not deleted'
-assert_contains "$(rs_summary)" 'mode=on closed lapse=1 mirror=1 reply=1 rows=2 suggestions=1 queued-over=35 calls-over=12 woke=yes' 'the on summary counts the closes'
+assert_contains "$(rs_summary)" 'mode=on closed lapse=1 mirror=1 reply=1 rows=2 suggestions=1 archive=0 boards=0 queued-over=35 calls-over=12 woke=yes' 'the on summary counts the closes'
 wake=$(cat "$RS_STATE/.record-sweep-wake")
 assert_contains "$wake" 'record-sweep: captain call(s) lapsed as not needed, no action taken and not the captain'"'"'s answer: callA' 'the wake names the lapse as not the captain'"'"'s answer'
 assert_contains "$wake" '35 queued rows, over the limit of 30' 'the wake names the row cap'
@@ -642,6 +677,117 @@ assert_contains "$out" 'kept captain call callA: error: cannot lapse' 'a refused
 assert_contains "$(rs_summary)" 'failed=lapse:callA' 'the refusal is in the summary'
 assert_contains "$(rs_summary)" 'woke=no' 'a lapse that did not happen does not wake'
 pass 'sweep-records: wakes only for a lapse or a cap still exceeded after the closes'
+
+# Step 6, the task output archive: folders of long-closed tasks move under
+# data/archive/<YYYY-MM>/ and the quiet boards of those tasks end; shadow only
+# lists, and every keep rule leaves its folder in place with its reason.
+ARCH_CLOSED=2026-09-14
+rs_archive_fixture() {
+  local id
+  printf 'goal-1\tblocked\n' > "$RS/fix/links"
+  for id in move-1 meta-1 goal-1 board-1 live-1 host-1 pend-1 page-1 fresh-1 cockpit-1 exists-1 refused-1 nofolder-1; do
+    printf '%s\t%s\n' "$id" "$ARCH_CLOSED"
+  done > "$RS/fix/archive-due"
+  printf 'archive-due closed=40 due=13\n' >> "$RS/fix/archive-due"
+  for id in move-1 meta-1 goal-1 board-1 live-1 host-1 pend-1 page-1 fresh-1 cockpit-1 exists-1 refused-1; do
+    mkdir -p "$RS_DATA/$id"
+    printf '# report of %s\n' "$id" > "$RS_DATA/$id/report.md"
+  done
+  : > "$RS_STATE/meta-1.meta"
+  : > "$RS_STATE/active-x.meta"
+  mkdir -p "$RS_DATA/archive/2026-09/exists-1" "$RS_STATE/procevent" "$RS_STATE/procevent-inbox"
+  rs_board lavish-b1 board-1 "$RS_DATA/board-1/plan.html"
+  rs_board lavish-l1 live-1 "$RS_DATA/live-1/plan.html"
+  rs_board lavish-h1 active-x "$RS_DATA/host-1/page.html"
+  rs_board lavish-r1 refused-1 "$RS/elsewhere/r.html"
+  : > "$RS_STATE/procevent-inbox/lavish-l1.3.result"
+  : > "$RS/fix/refuse-lavish-r1"
+  printf '  %s,open,"https://lavish.invalid/s/1",0,agent-listener\n  %s,open,"https://lavish.invalid/s/2",2,none\n  %s,open,"https://lavish.invalid/s/3",0,none\n' \
+    "$RS_DATA/board-1/plan.html" "$RS_DATA/pend-1/page.html" "$RS_DATA/page-1/page.html" > "$RS/fix/sessions"
+  for id in move-1 meta-1 goal-1 board-1 live-1 host-1 pend-1 page-1 cockpit-1 exists-1 refused-1; do
+    touch -d '20 days ago' "$RS_DATA/$id"
+  done
+}
+rs_board() {  # <source-id> <owner-task> <artifact>
+  printf 'adapter=lavish\nkind=task-owned\nowner_task=%s\nargc=5\nargv:\n%s\npoll\n%s\n--for\n%s\n' \
+    "$2" "$ROOT/bin/fm-procevent-lavish.sh" "$3" "$2" > "$RS_STATE/procevent/$1.source"
+  touch -d '3 days ago' "$RS_STATE/procevent/$1.source"
+}
+rs_archive() { COCKPIT_DATA_DIR="$RS_DATA/cockpit-1" rs_sweep sweep-records; }
+
+rs_reset
+rs_archive_fixture
+out=$(rs_archive) || fail "shadow archive sweep failed: $out"
+for id in move-1 board-1 page-1 refused-1; do
+  assert_contains "$out" "would move data/$id to data/archive/2026-09/$id (closed $ARCH_CLOSED)" "shadow lists the move of $id"
+done
+assert_contains "$out" 'would end board lavish-b1 of task board-1' 'shadow lists the board that ends with its task'
+assert_contains "$out" 'kept data/meta-1: its task record is still present' 'a task record keeps its folder'
+assert_contains "$out" 'kept data/goal-1: an active goal item links it' 'a goal item keeps its folder'
+assert_contains "$out" 'kept data/live-1: Lavish board lavish-l1 of task live-1 is live' 'a board with a recent round keeps its folder'
+assert_contains "$out" 'kept data/host-1: Lavish board lavish-h1 of task active-x is live' 'a live board of another task keeps the folder its page is in'
+assert_contains "$out" "kept data/pend-1: a Lavish answer is waiting on $RS_DATA/pend-1/page.html" 'a waiting answer keeps its folder'
+assert_contains "$out" 'kept data/fresh-1: it changed in the last 14 days' 'a recently written folder stays'
+assert_contains "$out" 'kept data/cockpit-1: it holds the current cockpit' 'the current cockpit stays in place'
+assert_contains "$out" 'kept data/exists-1: data/archive/2026-09/exists-1 already exists' 'an existing target is never overwritten'
+assert_not_contains "$out" 'nofolder-1' 'a closed task without a folder has nothing to move'
+assert_contains "$out" 'archive (shadow): 4 folder(s) would move, 2 board(s) would end, 8 kept' 'shadow counts the moves, ends and keeps'
+assert_contains "$(rs_summary)" 'mode=shadow would-close lapse=1 mirror=1 reply=1 rows=2 suggestions=1 archive=4 boards=2 ' 'the summary counts what would move and end'
+assert_not_contains "$(rs_summary)" 'failed=' 'a shadow archive fails nothing'
+for id in move-1 board-1 page-1 refused-1; do assert_present "$RS_DATA/$id/report.md" "shadow leaves $id in place"; done
+assert_absent "$RS_DATA/archive/2026-09/move-1" 'shadow moves nothing'
+assert_not_contains "$(cat "$RS_LOG")" 'procevent retire' 'shadow retires no board'
+assert_not_contains "$(cat "$RS_LOG")" 'lavish end' 'shadow ends no Lavish session'
+assert_present "$RS_STATE/procevent/lavish-b1.source" 'shadow keeps the board registered'
+pass 'archive (shadow): lists the moves and board ends, names every kept folder, changes nothing'
+
+printf 'on\n' > "$RS_CONFIG/record-sweep"
+: > "$RS_LOG"
+out=$(rs_archive) || fail "on archive sweep failed: $out"
+for id in move-1 board-1 page-1; do
+  assert_contains "$out" "moved data/$id to data/archive/2026-09/$id (closed $ARCH_CLOSED)" "on moves $id"
+  assert_absent "$RS_DATA/$id" "$id left data/"
+  assert_equals "# report of $id" "$(cat "$RS_DATA/archive/2026-09/$id/report.md")" "the report of $id stays a plain readable file"
+done
+assert_contains "$out" 'ended board lavish-b1 of task board-1' 'the board of an archived task ends'
+assert_absent "$RS_STATE/procevent/lavish-b1.source" 'the board registration is retired through its owner'
+retire_at=$(grep -n '^procevent retire lavish-b1$' "$RS_LOG" | cut -d: -f1)
+end_at=$(grep -n "^lavish end $RS_DATA/board-1/plan.html\$" "$RS_LOG" | cut -d: -f1)
+assert_equals 1 "$(grep -c "^lavish end $RS_DATA/board-1/plan.html\$" "$RS_LOG")" 'a board session is ended exactly once'
+[ -n "$retire_at" ] && [ -n "$end_at" ] && [ "$retire_at" -lt "$end_at" ] || fail "the board must be retired before its session ends: $(cat "$RS_LOG")"
+assert_contains "$(cat "$RS_LOG")" "lavish end $RS_DATA/page-1/page.html" 'an open page in a moving folder is ended first'
+assert_contains "$out" 'kept board lavish-r1 of task refused-1: fm-procevent: cannot retire task-owned source lavish-r1 while a captured round is unacknowledged' 'a refused retire keeps the board'
+assert_contains "$out" 'kept data/refused-1: Lavish board lavish-r1 could not be retired' 'a board that could not end keeps its folder'
+assert_not_contains "$(cat "$RS_LOG")" 'lavish end '"$RS/elsewhere" 'a board that was not retired keeps its session'
+for id in meta-1 goal-1 live-1 host-1 pend-1 fresh-1 cockpit-1 refused-1; do assert_present "$RS_DATA/$id/report.md" "on keeps $id in place"; done
+assert_present "$RS_STATE/procevent/lavish-l1.source" 'a live board stays registered'
+assert_contains "$out" 'archive (on): 3 folder(s) moved, 1 board(s) ended, 9 kept' 'on counts the moves, ends and keeps'
+assert_contains "$(rs_summary)" 'mode=on closed lapse=1 mirror=1 reply=1 rows=2 suggestions=1 archive=3 boards=1 ' 'the summary counts the moves and ends'
+assert_not_contains "$(rs_summary)" 'failed=' 'a refused board retire is a keep, not a failure'
+mv "$RS_DATA/archive/2026-09/move-1" "$RS_DATA/move-1"
+assert_equals '# report of move-1' "$(cat "$RS_DATA/move-1/report.md")" 'one mv moves a folder back'
+pass 'archive (on): moves through mv, ends the board after retiring it, keeps the rest, and moves back with one mv'
+
+# A read the archive cannot trust moves nothing and names the step as failed.
+for broken in archive-fail sessions-fail archive-link; do
+  rs_reset
+  rs_archive_fixture
+  printf 'on\n' > "$RS_CONFIG/record-sweep"
+  : > "$RS/fix/$broken"
+  if [ "$broken" = archive-link ]; then
+    rm -rf "$RS_DATA/archive" "$RS/outside"
+    mkdir -p "$RS/outside"
+    ln -s "$RS/outside" "$RS_DATA/archive"
+  fi
+  out=$(rs_archive) || fail "a failed archive read must not fail the sweep ($broken): $out"
+  assert_contains "$out" 'nothing moved' "$broken says nothing moved"
+  assert_contains "$(rs_summary)" 'archive=0 boards=0' "$broken moves and ends nothing"
+  assert_contains "$(rs_summary)" 'failed=archive' "$broken names the failed step"
+  assert_present "$RS_DATA/move-1/report.md" "$broken leaves the folders in place"
+  assert_present "$RS_STATE/procevent/lavish-b1.source" "$broken leaves the boards alone"
+done
+assert_equals '' "$(ls -A "$RS/outside")" 'a symlinked data/archive is never followed'
+pass 'archive: an unreadable backlog or session listing, or a symlinked data/archive, moves nothing and fails the step'
 
 # The watcher check: weekly, quiet, and it reports a wake once.
 rs_reset
