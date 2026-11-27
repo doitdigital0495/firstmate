@@ -17,9 +17,12 @@ Paths come from the environment (see tools/cockpit/README.md):
 
 Every run starts with cockpit-sync.py (goal home COCKPIT_GOAL_HOME, else FM_HOME; its --help owns the
 other COCKPIT_* scope variables). The truth JSON lands in $COCKPIT_TRUTH or the shared scoped default
-(COCKPIT_OUT.truth.json for a preview). A failed run puts a banner on the installed page and
-exits non-zero."""
+(COCKPIT_OUT.truth.json for a preview). The shared drive pass builds the fixed captain section
+first, and --verify-page must pass before the output is installed. A failed run puts a banner
+on the installed page and exits non-zero."""
 import os,re,sys,json,html,subprocess,time,fcntl,tempfile,collections
+if __name__ == '__main__' and sys.argv[1:] in (['--help'], ['-h']):
+    sys.exit(print(__doc__))
 # Isolated mode omits the script directory, including the shared goal-view renderer.
 sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 from goal_drive import base_page, render_captain_steps, render_truth, truth_path
@@ -442,7 +445,7 @@ def refresh(truth_path):
     ids=re.findall(r'\sid="([^"]+)"',s)
     assert len(ids)==len(set(ids)),'duplicate ids'
     assert 'id="kanban"' in s and 'id="wbs-blok"' in s and 'id="captain-door"' in s
-    s=render_captain_steps(render_truth(s,truth['goals']),truth)
+    s=render_captain_steps(render_truth(s,truth['goals'],truth.get('budget_lines')),truth)
     staged=os.path.join(TMP,'verify.html')
     with open(staged,'w',encoding='utf-8') as f: f.write(s)
     if sync(['--verify-page',staged,'--out',truth_path]):
@@ -484,13 +487,6 @@ def refresh(truth_path):
         for pn in re.findall(r'PR (\d{3,4})',st_[0]):
             if int(pn) in MERGED and re.search(r'PR '+pn+r'[^;.·]*?(in de wachtrij|in de controle|wacht op samenvoegen)',st_[0]):
                 extra_probs.append('WBS %s: PR %s staat al op main'%(bm.group(1),pn))
-    # captain cards whose question is no longer held
-    for fk in re.findall(r'data-lavish-question="([^"]+)"',s[s.find('id="captain-door"'):s.find('id="kanban"')]):
-        if fk.startswith('goal.drive.'): continue  # board action, not a task hold
-        try:
-            out=subprocess.run(['tasks-axi','show',fk],cwd=FM,env=dict(os.environ,FM_HOME=FM),capture_output=True,text=True,timeout=20).stdout
-        except Exception: continue
-        if re.search(r'^\s*id: ',out,re.M) and re.search(r'^\s*held: no',out,re.M): extra_probs.append('kaart bovenaan %s: de vraag staat niet meer open'%fk)
     # architecture drawing older than its source on main
     try:
         src=run(['git','-C',W,'log','-1','--format=%cs','origin/main','--','docs/project/architecture.md']).strip()

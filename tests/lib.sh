@@ -430,6 +430,20 @@ fm_test_tmproot() {
   printf '%s\n' "$root"
 }
 
+# Generic authored context for tests concerned with lifecycle or goal logic, not card content.
+fm_test_captain_context() {
+  printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done","about":"The sample needs a choice.","purpose":"The crew can continue after your choice.","options":[{"value":"go","label":"Continue","detail":"Keep working on the sample."},{"value":"wait","label":"Wait","detail":"Keep the sample as it is."}],"recommendation":"go"}'
+}
+
+fm_test_add_goal_cards() {  # <fixture items file>
+  local cards
+  cards=$(awk '/^captain-card / { seen[$2]=1 }
+    /^item / && /\[class=captain\]/ && match($0, /\[id=[^]]+\]/) { ids[++n]=substr($0, RSTART+4, RLENGTH-5) }
+    END { for (i=1;i<=n;i++) if (!seen[ids[i]]) print "captain-card " ids[i] " {\"about\":\"The sample is ready for your check.\",\"purpose\":\"The crew can finish once you confirm it.\",\"action\":true,\"steps\":[\"Demo > Preview: open the sample.\"],\"expected\":\"The sample is visible.\"}" }
+  ' "$1") || return 1
+  [ -z "$cards" ] || printf '%s\n' "$cards" >> "$1"
+}
+
 # fm_test_copy_repo <destination> stages this repository's working tree into an
 # existing <destination> directory, the way the remote-fixture suites fake a
 # remote host's tracked code root. A streaming `tar -cf - .` piped into a

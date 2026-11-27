@@ -24,9 +24,9 @@ The order is fixed:
    Tell the captain the refresh failed and why.
 3. Build the page to a scratch file from the truth JSON of step 1.
    Item statuses come from `goals[]`, never from the raw goal marks.
-   Render all captain actions from `section1`, including ordered manual steps and tests, never from memory or an older page.
-4. Run the shared drive pass with that same truth file, not a second goal export; it fills the keyed steps in section 1 automatically.
-5. Verify the scratch page with `cockpit-sync.sh --verify-page`, which rejects missing or stale goal views.
+   Leave the captain cards to the shared renderer, never to host markup or memory.
+4. Run the shared drive pass with that same truth file, not a second goal export; it builds the fixed first section and the goal views.
+5. Verify the scratch page with `cockpit-sync.sh --verify-page`, which rejects stale goal views and violations of the fixed first-section contract.
 6. Publish only when step 5 reports no problem.
    Otherwise keep the old page and mark it with `--banner-only`.
 7. Route the findings: report every `MISMATCH` line to the owner of the record.
@@ -42,11 +42,10 @@ A page host may add its own sources and layout between steps 3 and 4, but may no
 - "Live for customers" means deployed: the version production actually serves, not only merged on main.
 - Every active worker is on the board.
 - A coloured status never carries text saying it is not happening now, and nothing shows as running while something before it is still open.
-- Everything the captain must or can do has a question or steps in the decisions section, in plain words.
-- A question appears once, and an answered or resolved one does not appear.
-- Entries under `must` come first; `can` and `later` may be collapsed but not left out silently.
-- Each page shows only its own project's goal cards and captain entries, with its captain steps first in section 1.
-- Captain steps for work that belongs to no cockpit appear once, under "Overige projecten" inside section 1 of the page whose scope also names `main`.
+- Section 1 comes before all other page content and contains only the captain's open Vraag and Taak cards, in `must`, `can`, `later` order.
+- Do not copy a card elsewhere, omit a later item, or keep one after it is answered.
+- Work that belongs to no cockpit appears only on the page whose scope also names `main`, labelled "Overige projecten" inside the applicable priority bucket.
+- Supply all fields at record creation; `bin/fm-captain-hold.sh --help` and `bin/fm-goal.sh --help` own the input formats.
 - Two refreshes in a row make zero differences when the world did not change.
 
 ## Miko page working rules
@@ -61,7 +60,7 @@ An `unrouted-decision-key` line is an open worker or secondmate question that is
 The page shows the verified status; the goal record stays the record owner's to mark through `bin/fm-goal.sh` (see `drive-goal`).
 A `stale-decision-key` line means a status log still holds a key whose question is already answered: its writer appends the `resolved` line.
 Use `cockpit-sync.sh --captain-waiting` to follow up on missing cockpit entries; route a real question not covered by a goal step through `captain-hold-lifecycle`, never by typing it into the page.
-Give an entry its plain-language question, options, and recommendation in the hold's question context, so every later refresh carries them.
+An `incomplete-captain-card` finding leaves the existing card visible with an explicit `ONTBREEKT` marker; the record owner adds the missing information rather than making it up in the page.
 
 ## Improving the package
 

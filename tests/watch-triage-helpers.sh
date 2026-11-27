@@ -253,6 +253,10 @@ wedge_stale_wakes() {  # <state> <window>
 run_hold() {  # <dir> <args...>
   local dir=$1
   shift
+  if [ "$1" = hold ]; then
+    fm_test_captain_context > "$dir/watch-captain-context.json"
+    set -- "$@" --context-file "$dir/watch-captain-context.json"
+  fi
   FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_DATA_OVERRIDE="$dir/data" \
     FM_CONFIG_OVERRIDE="$dir/config" "$ROOT/bin/fm-captain-hold.sh" "$@" >/dev/null 2>&1
 }

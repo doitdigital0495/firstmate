@@ -1,6 +1,6 @@
-# Miko cockpit tooling
+# Shared cockpit tooling
 
-Tracked copy of the scripts that refresh the Miko cockpit page.
+The Miko, Geris and Other Projects cockpits use the same refresh package.
 They moved here from an untracked secondmate data directory so the tooling lives in one repository.
 The [cockpit-refresh skill](../../.agents/skills/cockpit-refresh/SKILL.md) owns what every refresh updates and checks and the step order; [VERVERS-REGELS.md](VERVERS-REGELS.md) is its short Dutch pointer.
 
@@ -10,7 +10,7 @@ The [cockpit-refresh skill](../../.agents/skills/cockpit-refresh/SKILL.md) owns 
 | `refresh-cockpit.sh` | One real-status pass; runs `refresh-cockpit.py` beside it. Read-only on GitHub, safe on a short timer. |
 | `refresh-cockpit.py` | The refresh itself: lane status files, PR state and production state into the page and `card-data.json`. |
 | `kanban-from-wbs.py` | Regenerates the kanban grid from the WBS boxes; `refresh-cockpit.py` calls it. |
-| `goal_drive.py` | Renders the shared goal views, captain steps and drive controls from scoped cockpit truth. |
+| `goal_drive.py` | Builds the fixed first section and the shared goal views and drive controls from scoped cockpit truth. |
 
 ## Paths
 
@@ -40,7 +40,9 @@ A second run in the same minute changes nothing; `tests/cockpit-tools.test.sh` p
 ## Doelen: Miko and Geris page hosts
 
 Run the shared drive pass after the page generator has rendered `<h2 id="doelen">` and any project-specific content from the same scoped truth.
-The page keeps its existing `mikoSend(event, key)` handler from the Jouw beslissingen forms.
+The shared pass puts Vraag and Taak cards first; do not hand-author these cards in a host template.
+It keeps existing keyed answer forms and their `mikoSend(event, key)` handler for still-open entries.
+Create complete new records using `bin/fm-captain-hold.sh --help` or `bin/fm-goal.sh --help`, and run the verifier before publishing.
 Use `cockpit-sync.py --help` for live truth paths, project selection, captain-waiting audit and required renderings.
 
 ```bash

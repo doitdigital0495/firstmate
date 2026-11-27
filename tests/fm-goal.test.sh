@@ -15,6 +15,7 @@ fixture() {
     'item [id=a] [owner=terp] [task=child]: first step' \
     'item [id=b] [owner=main] [after=a]: verify' \
     'item [id=c] [owner=captain] [class=captain]: captain step' > "$ITEMS"
+  fm_test_add_goal_cards "$ITEMS"
 }
 goal() {
   FM_ROOT_OVERRIDE="$H" FM_HOME="$H" FM_STATE_OVERRIDE="$H/state" FM_DATA_OVERRIDE="$H/data" \
@@ -56,7 +57,9 @@ test_start() {
   start >/dev/null
   expect_rc 0 goal exists I1
   assert_equals I1 "$(goal active)" 'active id'
-  assert_grep 'version: 1' "$H/state/goals/I1.goal" 'versioned record'
+  assert_grep 'version: 5' "$H/state/goals/I1.goal" 'captain card selects the new record version'
+  goal export I1 | jq -e 'any(.goals[0].items[]; .id == "c" and .captain_card.expected == "The sample is visible.")' >/dev/null \
+    || fail 'captain card did not round-trip through goal export'
   assert_grep 'named_by: finish I1' "$H/state/goals/I1.goal" 'captain words'
   assert_contains "$(project)" 'item a owner=terp class=drive state=open' 'valid projection'
   assert_equals '' "$(find "$H/state/goals" -name '.goal.*')" 'no staged record left'
@@ -74,6 +77,7 @@ test_drive_readiness() {
     'item [id=mate] [owner=terp] [task=child]: secondmate work' \
     'item [id=pay] [owner=main] [class=captain] [captain-reason=money]: approve payment' \
     'item [id=sign] [owner=main] [class=captain] [captain-reason=captain-test]: captain runs his own test' > "$ITEMS"
+  fm_test_add_goal_cards "$ITEMS"
   mkdir -p "$H/data/builder" "$H/data/qa" "$M/data/child"
   printf 'Build brief\n' > "$H/data/builder/brief.md"
   printf 'QA brief\n' > "$H/data/qa/brief.md"
@@ -84,6 +88,7 @@ test_drive_readiness() {
 
   printf '%s\n' 'item [id=verify] [owner=main] [brief-source=qa] [merge-after=sign]: verify' \
     'item [id=sign] [owner=main] [class=captain]: routine signoff' >> "$H/items.gaps"
+  fm_test_add_goal_cards "$H/items.gaps"
   before=$(cksum "$H/state/goals/I1.goal")
   expect_rc 1 goal edit I1 --items-file "$H/items.gaps" --require-briefs
   assert_contains "$(<"$TMP_ROOT/out")" 'WARN I1/sign: gates verify: change to [class=drive]' 'flags an unjustified captain dependency even with all briefs present'
@@ -257,7 +262,7 @@ test_specs() {
   local spec='{"section":"Demo §4","scope":"Check \"Demo\" only\nNo production changes","evidence":"One result per tab","kind":"check"}'
   local updated marks out archive archived_items
   updated=$(jq -c '.scope = "Check all four tabs"' <<< "$spec")
-  { printf 'spec b %s\n' "$spec"; printf '%s\n' "$(<"$ITEMS")"; } > "$H/with-spec"
+  { printf 'spec b %s\n' "$spec"; grep -vE '^captain-card |\[class=captain\]' "$ITEMS"; } > "$H/with-spec"
   ITEMS=$H/with-spec
   start >/dev/null
   assert_grep 'version: 4' "$H/state/goals/I1.goal" 'inline specs select the new record version'
@@ -345,6 +350,7 @@ test_large_brief() {
   local i
   : > "$ITEMS"
   for i in $(seq 1 40); do printf 'item [id=i%s] [owner=terp] [class=captain]: %s\n' "$i" "$(printf '%0300d' 0)" >> "$ITEMS"; done
+  fm_test_add_goal_cards "$ITEMS"
   for i in I1 I2 I3; do start "$i" >/dev/null; done
   local out; out=$(goal brief)
   [ "$(printf '%s\n' "$out" | wc -c)" -le 3072 ] || fail 'large brief byte cap'
@@ -727,6 +733,7 @@ test_report_only_check() {
     'item [id=ship] [owner=main] [task=builder] [merge-after=verify]: cannot merge after a report' \
     'spec verify {"section":"Acceptance","scope":"Verify small e2e at target","evidence":"Result and transcript","kind":"check"}' \
     'spec ship {"section":"Implementation","scope":"Ship the change","evidence":"Landing","kind":"ship"}' > "$ITEMS"
+  fm_test_add_goal_cards "$ITEMS"
   ladder miko 'stage merged: true' 'stage deployed: true'
   start >/dev/null
   mkdir -p "$H/data/qa"
@@ -744,8 +751,9 @@ test_report_only_check() {
   if [ -n "$classified" ]; then
     printf '## In flight\n\n## Queued\n\n## Done\n' > "$H/data/backlog.md"
     local hold="$ROOT/bin/fm-captain-hold.sh"
+    printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done","action":true,"about":"The demo is ready for a personal test.","purpose":"The crew can use the result to continue.","steps":["Demo > Check: open the demo."],"expected":"The demo opens."}' > "$H/personal-context"
     FM_HOME="$H" FM_ROOT_OVERRIDE="$H" FM_STATE_OVERRIDE="$H/state" FM_DATA_OVERRIDE="$H/data" \
-      bash "$hold" hold personal-test --title 'Run personal test' --category captain-only-fact --reason 'Captain runs own test' >/dev/null
+      bash "$hold" hold personal-test --title 'Run personal test' --category captain-only-fact --reason 'Captain runs own test' --context-file "$H/personal-context" >/dev/null
     printf 'My personal test passed.\n' > "$H/personal-result"
     FM_HOME="$H" FM_ROOT_OVERRIDE="$H" FM_STATE_OVERRIDE="$H/state" FM_DATA_OVERRIDE="$H/data" \
       bash "$hold" answer personal-test --decision-file "$H/personal-result" >/dev/null
@@ -914,6 +922,7 @@ test_done_identity() {
   # A captain item lands no PR: its done mark needs none.
   fixture
   printf '%s\n' 'item [id=cap] [owner=main] [class=captain]: rotate the secret' > "$ITEMS"
+  fm_test_add_goal_cards "$ITEMS"
   start >/dev/null
   goal mark I1 cap 'done' -- rotated-by-hand >/dev/null
   assert_grep '[item=cap] [state=done]' "$H/state/goals/I1.marks" 'captain completions carry no PR requirement'

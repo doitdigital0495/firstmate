@@ -59,10 +59,11 @@ truth JSON (schema fm-cockpit-truth.v1; no timestamps, so an unchanged world wri
                a needs-decision status key reaches section1 only through a captain hold or an open captain
                goal item; any other open key is listed here for firstmate to hold or resolve
   section1     {must[], can[], later[]}
-    entry      {key, aliases[], title, about, question, options[{value,label,detail}], recommendation,
-                blocks[], sources[]}
-    steps       {record key: [authored steps, in order]}
-    group       optional other_projects (work of no cockpit), rendered inside section 1
+    entry      {key, aliases[], title, type: vraag|taak, about, question, goal_links:{id:title},
+                options[{value,label,detail}], recommendation, blocks[], sources[], missing[]}
+    Taak adds  steps:{record key:[authored steps in order]}, expected
+    group      optional other_projects label, within its normal priority bucket
+    missing    legacy field labels: rendered explicitly as ONTBREEKT and reported as MISMATCH
   out_of_scope number of holds and decisions left out by --scope or goal selection
   budget_lines[] one lean-memory line per home this cockpit shows, placed by the same --scope rule as captain
                entries (the goal home only when the scope names main; a secondmate when the scope names it or
@@ -77,10 +78,14 @@ truth JSON (schema fm-cockpit-truth.v1; no timestamps, so an unchanged world wri
                (shown as ?). A truth without budget_lines predates the strip and asks nothing of its page.
 
 Page contract checked by --verify-page:
-  - every captain entry appears in section 1 as data-lavish-question="<key or alias>" or
-    data-cockpit-captain="<key or alias> ..."; the page's own ordered steps open the section and
-    other projects' ordered steps appear in the nested #overige-projecten block
-  - every such value in the section belongs to an entry that is still open, and no entry appears twice
+  - section 1 is first and contains only the open captain cards, ordered must, can, later;
+    each stable key appears once and a host answer form belongs inside its matching card
+  - Vraag/Taak cards use the fixed type, title, Waarvoor, Doel and ID fields, then choices
+    with consequences and a marked recommendation, or numbered steps and expected result
+  - a goal link resolves exactly once to a visible same-page goal card; unscoped goal
+    references for Other Projects do not change the scoped goal views or counts
+  - missing, out-of-order or stale fields, keyed content outside section 1 and answered or
+    duplicate cards block publish; only truth-declared legacy ONTBREEKT markers are accepted
   - the goal cards, drive KPI, per-goal KPI lines and all ring counts match the scoped truth.
     The lines show drive readiness separately from done/total, startable, running, waiting and waits on you.
     A pace marker is checked for presence only: its numbers are a clock sample that every sync renews.
@@ -119,8 +124,8 @@ import time
 
 # The shell entry point uses Python isolated mode, which omits the script directory.
 sys.path.append(str(Path(__file__).resolve().parent))
-from goal_drive import (DECISION_SECTIONS, OTHER_PROJECTS, TRUTH_SCHEMA, GoalPage, truth_path,
-                        verify_goal_views)
+from goal_drive import (CAPTAIN_BUCKETS, DECISION_SECTIONS, TRUTH_SCHEMA, GoalPage, Node,
+                        captain_entries, captain_goal_refs, captain_section, truth_path, verify_goal_views)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -395,9 +400,6 @@ def waiting_goal_items(goals):
                 yield f'{goal["id"]}/{item["id"]}', goal, item, wait[8:] if explicit else None
 
 
-CAPTAIN_BUCKETS = ('must', 'can', 'later')
-
-
 def coverage_paths(home, state):
     """Truth files of the audited home, its goal view and its registered local secondmates."""
     states = [state, home / 'state', *(mate / 'state' for _, mate, _ in secondmates(home))]
@@ -417,6 +419,9 @@ def audit_captain_waiting(args):
             raise SyncError(f'{path} is not a {SCHEMA} file')
         for bucket in CAPTAIN_BUCKETS:
             for e in truth['section1'][bucket]:
+                if e.get('type') in ('vraag', 'taak'):
+                    sources.update(e['sources'])
+                    continue
                 steps = e.get('steps') or {}
                 for source in e['sources']:
                     if ((source.startswith('goal item ') and steps.get(source.removeprefix('goal item ')))
@@ -544,6 +549,8 @@ def build_goals(goals, homes, deciding_tasks, samples, fresh):
                           'status': status, 'task_state': task_state, 'state': item['state'],
                           'project': item.get('project'), 'wait_on': item.get('wait_on'),
                           'last_line': plain(lines[-1]) if lines else '', 'pr': pr, 'flags': [f[0] for f in flags]})
+            if item.get('captain_card'):
+                items[-1]['captain_card'] = item['captain_card']
             override = item.get('goal_item_title') or (meta or {}).get('goal_item_title')
             if override:
                 items[-1]['goal_item_title'] = override
@@ -619,15 +626,20 @@ def backlog_records(home):
 
 
 def question_context(body):
-    for line in body.splitlines():
-        line = line.strip()
-        if line.startswith('Captain question context: '):
-            try:
-                value = json.loads(line.split(': ', 1)[1])
-                return value if isinstance(value, dict) else {}
-            except ValueError:
-                return {}
-    return {}
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    if (len(lines) < 2 or not lines[0].startswith('Captain hold set: ')
+            or not lines[1].startswith('Captain question context: ')):
+        return {}
+    try:
+        value = json.loads(lines[1].split(': ', 1)[1])
+        if not isinstance(value, dict):
+            return {}
+        resolutions = sum(line in ('Resolution recorded by fm-captain-hold.', 'Resolution recorded by fm-decision-hold.')
+                          for line in lines)
+        stamp = lines[0].removeprefix('Captain hold set: ')
+        return value if value.get('lifecycle') in (None, f'{stamp}#{resolutions}') else {}
+    except ValueError:
+        return {}
 
 
 def open_decisions(home, state=None):
@@ -647,11 +659,49 @@ def open_decisions(home, state=None):
 
 
 def entry(key, title, about='', question='', options=(), recommendation=None, source=''):
-    return {'key': key, 'aliases': [], 'title': plain(title, 200), 'about': plain(about, 900),
-            'question': plain(question, 400),
-            'options': [{'value': str(o.get('value', '')), 'label': str(o.get('label', o.get('value', ''))),
-                         'detail': plain(str(o.get('detail', '')), 400)} for o in options if isinstance(o, dict)],
+    return {'key': key, 'aliases': [], 'title': plain(title, 200), 'about': plain(about, 1220),
+            'question': plain(question, 600),
+            'options': [{'value': str(o.get('value') or ''), 'label': str(o.get('label') or o.get('value') or ''),
+                         'detail': plain(str(o.get('detail') or ''), 400)} for o in options if isinstance(o, dict)],
             'recommendation': recommendation, 'blocks': [], 'sources': [source]}
+
+
+def captain_fields(row, context, *, task=False, fallback=''):
+    row['type'] = 'taak' if task else 'vraag'
+    row['has_context'] = bool(context.get('about') and context.get('purpose'))
+    about = context.get('about') or fallback
+    row['about'] = plain(' '.join(filter(None, (about, context.get('purpose')))), 1220)
+    if task:
+        steps = context.get('steps') or []
+        if not steps and context.get('question'):
+            steps = [m[1] for line in context['question'].splitlines() if (m := re.match(r'^\s*\d+[.)]\s+(.+)', line))]
+        row['steps'] = {row['key']: [plain(s, 400) for s in steps]}
+        row['expected'] = plain(context.get('expected') or '', 600)
+    return row
+
+
+def missing_captain_fields(row):
+    missing = []
+    if not row['title']:
+        missing.append('Titel')
+    if not row.get('has_context'):
+        missing.append('Waarvoor')
+    if row['type'] == 'taak':
+        steps = [s for texts in row['steps'].values() for s in texts]
+        if not steps:
+            missing.append('Stappen')
+        elif not all(re.search(r'https?://\S+|\S\s+>\s+\S', step) for step in steps):
+            missing.append('URL of klikpad')
+        if not row.get('expected'):
+            missing.append('Verwacht resultaat')
+    else:
+        if len(row['options']) < 2 or any(not option['label'] or not option['value'] for option in row['options']):
+            missing.append('Opties')
+        if any(not option['detail'] for option in row['options']):
+            missing.append('Gevolg per optie')
+        if row['recommendation'] not in {option['value'] for option in row['options']}:
+            missing.append('Aanbeveling')
+    return missing
 
 
 def captain_hold_rows(home):
@@ -666,8 +716,12 @@ def captain_list(goals, dropped, homes, scope, sm_projects, decisions, extra_wai
         for item in goal['items']:
             for name in {item['id'], item['task']} - {None}:
                 links.setdefault(name, []).append((goal, item))
-    foreign = {name for goal in dropped for item in goal['items'] for name in (item['id'], item.get('task')) if name}
-    foreign -= set(links)
+    dropped_links = {}
+    for goal in dropped:
+        for item in goal['items']:
+            for name in {item['id'], item.get('task')} - {None}:
+                dropped_links.setdefault(name, []).append(goal)
+    foreign = dropped_links.keys() - links.keys()
 
     def waiting_on_item(goal, item):
         return [i for i in goal['items'] if item['id'] in i['after'] and i.get('status', i['state']) not in CLOSED]
@@ -694,8 +748,14 @@ def captain_list(goals, dropped, homes, scope, sm_projects, decisions, extra_wai
                 have[field] = have[field] or new[field]
             have['blocks'] += [b for b in new['blocks'] if b not in have['blocks']]
             have['sources'] += [s for s in new['sources'] if s not in have['sources']]
-            if 'steps' in new and not have.get('personal_action'):
-                have.setdefault('steps', {}).update(new['steps'])
+            if new.get('type') == have.get('type'):
+                if not have.get('has_context') and new.get('has_context'):
+                    have['about'], have['has_context'] = new['about'], True
+                if have['type'] == 'taak':
+                    if not any(have['steps'].values()) and any(new['steps'].values()):
+                        have['steps'] = new['steps']
+                    have['expected'] = have['expected'] or new['expected']
+            have.setdefault('goal_links', {}).update(new.get('goal_links', {}))
             if new.get('other_project'):
                 have['other_project'] = True
         for key in keys:
@@ -728,13 +788,13 @@ def captain_list(goals, dropped, homes, scope, sm_projects, decisions, extra_wai
             explicit = re.search(r'^cockpit=(\S+)$', body, re.M)
             origin = re.search(r'^Captain hold origin: (\S+)', body, re.M)
             origin = origin.group(1) if origin else ''
-            linked = [i for _, _, i, ref in waits if task in (ref, i['task'], i['id'])]
+            linked = [(g, i) for _, g, i, ref in waits if task in (ref, i['task'], i['id'])]
             if explicit:
                 kind = scope.kind([explicit.group(1)])
             elif task in links:
                 kind = 'native'
             elif linked:
-                kind = 'other' if all(i.get('other_project') for i in linked) else 'native'
+                kind = 'other' if all(i.get('other_project') for _, i in linked) else 'native'
             elif task in foreign:
                 kind = 'foreign'
             else:
@@ -746,21 +806,17 @@ def captain_list(goals, dropped, homes, scope, sm_projects, decisions, extra_wai
             other = kind == 'other'
             context = question_context(body)
             action = context.get('action') is True
-            title = record.get('title', task) if action else context.get('question') or record.get('title', task)
-            new = entry(task, title, context.get('about') or record.get('hold_reason', ''),
-                        context.get('question', ''), context.get('options') or [], context.get('recommendation'),
-                        f'captain hold {task} ({name})')
-            if action:
-                new['personal_action'] = True
-                new['question'] = plain(context.get('question', ''), 600)
-            if context.get('purpose'):
-                new['about'] = plain(new['about'] + ' Waarom het telt: ' + context['purpose'], 1220 if action else 900)
-            authored = context.get('question') or record.get('hold_reason') or record.get('title') or task
-            new['steps'] = {task: [line for line in authored.splitlines() if line.strip()] or [task]}
+            new = entry(task, record.get('title', task), question=context.get('question') or '',
+                        options=context.get('options') or [], recommendation=context.get('recommendation'),
+                        source=f'captain hold {task} ({name})')
+            captain_fields(new, context, task=action, fallback=record.get('hold_reason') or '')
+            linked_goals = [g for g, _ in linked] or (dropped_links.get(task, []) if other else [])
+            new['goal_links'] = {g['id']: g['title'] for g in linked_goals}
             new['other_project'] = other
             aliases, blocked = [], False
             for goal, item in links.get(task, []):
                 blocked = True
+                new['goal_links'][goal['id']] = goal['title']
                 aliases += [f'{goal["id"]}/{item["id"]}', f'{goal["id"]}.{item["id"]}'] if item['class'] == 'captain' else []
                 new['blocks'].append(plain(f'{goal["title"]}: {item["title"]}', 200))
             new['blocks'] += [f'backlog: {other}' for other in blockers.get(task, [])]
@@ -790,8 +846,12 @@ def captain_list(goals, dropped, homes, scope, sm_projects, decisions, extra_wai
             mismatches.append({'key': key, 'kind': 'answered-not-marked',
                                'text': f'the captain already answered {task}, the item is not marked done'})
             continue
-        new = entry(key, item['title'], f'Doel: {goal["title"]}', source=f'goal item {key}')
-        new['steps'] = {key: [item['title']]}
+        context = item.get('captain_card') or {}
+        new = entry(key, item['title'], question=context.get('question') or '',
+                    options=context.get('options') or [], recommendation=context.get('recommendation'),
+                    source=f'goal item {key}')
+        captain_fields(new, context, task=context.get('action', not context and not wait))
+        new['goal_links'] = {goal['id']: goal['title']}
         new['other_project'] = bool(item.get('other_project')
                                     or (item.get('project') and scope.kind([item['project']]) != 'native'))
         new['blocks'] = [plain(f'{goal["title"]}: {i["title"]}', 200) for i in waiting_on_item(goal, item)]
@@ -840,6 +900,9 @@ def captain_list(goals, dropped, homes, scope, sm_projects, decisions, extra_wai
         e = row['entry']
         if e.pop('other_project', False):
             e['group'] = 'other_projects'
+        e['missing'] = missing_captain_fields(e)
+        mismatches.extend({'key': e['key'], 'kind': 'incomplete-captain-card', 'text': f'ONTBREEKT: {field}'}
+                          for field in e['missing'])
         section[row['bucket']].append(e)
     return section, mismatches, skipped
 
@@ -1046,46 +1109,96 @@ def verify_page(page, truth, sections, ignore):
     problems = []
     if parsed.by_id['cockpit-sync-banner']:
         problems.append('the failure banner is still on the page')
-    if not any(n.visible and n.id in sections for n in parsed.nodes):
-        problems.append(f'no decisions section with id {" or ".join(sections)}')
-    problems += verify_captain_section(truth['section1'], parsed, sections, ignore)
+    problems += verify_captain_section(truth, parsed, sections, ignore)
     problems.extend(verify_goal_views(page, truth['goals'], truth.get('budget_lines')))
     return list(dict.fromkeys(problems))
 
 
-def verify_captain_section(section, parsed, sections, ignore):
+def verify_captain_section(truth, parsed, sections, ignore):
+    candidates = [n for n in parsed.nodes if n.id in sections]
+    if len(candidates) != 1 or not candidates[0].visible:
+        return [f'expected one visible decisions section with id {" or ".join(sections)}']
+    door = candidates[0]
     problems = []
-    entries = [(bucket, e) for bucket in CAPTAIN_BUCKETS for e in section.get(bucket, [])]
-    owner = {key: n for n, (_, e) in enumerate(entries) for key in [e['key'], *e['aliases']]}
-    steps, shown = {}, {}
+    body = next((n for n in parsed.nodes if n.tag == 'body'), None)
+    root = body or next((n for n in parsed.nodes if n.tag == 'html'), None)
+    parts = root.parts if root else parsed.root_parts
+    first = next((p for p in parts if (p.visible and p.tag != 'head' if isinstance(p, Node) else p.strip())), None)
+    if first is not door:
+        problems.append('section 1 must be first on the page')
+    entries = captain_entries(truth)
+    owner = {}
+    for _, row in entries:
+        for alias in [row['key'], *row['aliases']]:
+            if owner.setdefault(alias, row['key']) != row['key']:
+                problems.append(f'captain card alias belongs to more than one entry: {alias}')
+    expected = {row['key']: (bucket, row) for bucket, row in entries}
+    if len(expected) != len(entries):
+        problems.append('duplicate captain card key in truth')
+    cards, form_counts, form_wrappers = {}, {}, set()
+    links = set()
     for n in parsed.nodes:
-        if not n.visible or not (decisions := n.ancestor(lambda a: a.id in sections)):
-            continue
-        key = n.attrs.get('data-cockpit-step')
-        if key:
-            other = n.ancestor(lambda a: a.id == OTHER_PROJECTS)
-            inside_other = bool(other and other.ancestor(lambda a: a is decisions))
-            ordered = n.tag == 'li' and n.parent.tag == 'ol'
-            steps.setdefault(key, []).append((n.text(), inside_other, ordered))
-        keys = (n.attrs.get('data-cockpit-captain') or '').split()
+        parent = n.parent
+        if (n.tag == 'a' and n.visible and parent and parent.parent
+                and parent.attrs.get('data-captain-field') == 'goal'):
+            links.add((parent.parent, n.attrs.get('href')))
+        key = n.attrs.get('data-cockpit-captain')
         question = n.attrs.get('data-lavish-question')
-        if question and not any(re.search(p, question, re.I) for p in ignore):
-            keys.append(question)
-        hits = {owner[k] for k in keys if k in owner}
-        if keys and not hits:
-            problems.append(f'answered or unknown question still listed: {" ".join(keys)}')
-        for match in hits:
-            shown[match] = shown.get(match, 0) + 1
-    for n, (bucket, e) in enumerate(entries):
-        if n not in shown:
-            problems.append(f'missing captain item ({bucket}): {e["key"]} - {e["title"]}')
-        if shown.get(n, 0) > 1:
-            problems.append(f'question listed more than once: {e["key"]}')
-        for key, texts in e.get('steps', {}).items():
-            expected = [(text, e.get('group') == 'other_projects', True) for text in texts]
-            if steps.pop(key, []) != expected:
-                problems.append(f'missing or stale captain steps: {key}')
-    problems.extend(f'unknown captain steps: {key}' for key in steps)
+        if question not in owner and question and any(re.search(p, question, re.I) for p in ignore):
+            question = None
+        if not (key is not None or question or 'data-cockpit-step' in n.attrs):
+            continue
+        if not n.ancestor(lambda a: a is door):
+            problems.append(f'captain content outside section 1: {key or question or n.attrs.get("data-cockpit-step")}')
+            continue
+        if key is not None:
+            if key not in expected:
+                problems.append(f'answered or unknown question still listed: {key}')
+            elif key in cards:
+                problems.append(f'captain card listed more than once: {key}')
+            else:
+                cards[key] = n
+        if question:
+            actual = owner.get(question)
+            if not actual:
+                problems.append(f'answered or unknown question still listed: {question}')
+                continue
+            wrapper = n.parent
+            card = wrapper.parent if wrapper else None
+            form_counts[actual] = form_counts.get(actual, 0) + 1
+            if (n.tag == 'form' and n.visible and card and card.attrs.get('data-cockpit-captain') == actual
+                    and 'data-captain-controls' in wrapper.attrs and wrapper.parts == [n]):
+                form_wrappers.add(wrapper)
+            else:
+                problems.append(f'answer form must be inside its own captain card: {question}')
+    problems.extend(f'answer form listed more than once: {key}' for key, count in form_counts.items() if count > 1)
+    for key, (bucket, row) in expected.items():
+        if key not in cards:
+            problems.append(f'missing captain item ({bucket}): {key} - {row["title"]}')
+        for gid in row['goal_links']:
+            ident = 'doel-' + gid
+            targets = parsed.by_id[ident]
+            found_link = (cards.get(key), '#' + ident) in links
+            if (not found_link or len(targets) != 1 or not targets[0].visible
+                    or targets[0].tag not in ('article', 'div', 'section') or targets[0].ancestor(lambda a: a is door)):
+                problems.append(f'broken Doel link for {key}: #{ident}')
+    for gid, title in captain_goal_refs(truth).items():
+        targets = parsed.by_id['doel-' + gid]
+        if (len(targets) != 1 or targets[0].text() != title or not targets[0].parent
+                or targets[0].parent.id != 'fm-captain-goal-refs'):
+            problems.append(f'missing or stale captain goal reference: {gid}')
+
+    def signature(node):
+        return node.tag, node.attrs, [signature(p) if isinstance(p, Node) else p.strip() for p in node.parts
+                                     if (p not in form_wrappers if isinstance(p, Node) else p.strip())]
+
+    model = GoalPage(captain_section(truth, door.id, {}))
+    if signature(door) != signature(model.nodes[0]):
+        problems.append('section 1 has missing, stale or out-of-order captain card fields or content')
+        for node in model.nodes:
+            key = node.attrs.get('data-cockpit-captain')
+            if key in cards and signature(cards[key]) != signature(node):
+                problems.append(f'missing or stale captain card fields: {key}')
     return problems
 
 

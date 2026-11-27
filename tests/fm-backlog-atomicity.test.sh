@@ -780,9 +780,11 @@ test_captain_hold_preserves_relocated_backlog_on_backend_error() {
       readable) printf '%s\n' 'backend = "markdown"' > "$home/.tasks.toml" ;;
     esac
     rc=0
+    fm_test_captain_context > "$case_dir/hold-context.json"
     out=$(env -u TASKS_AXI_BACKEND HOME="$case_dir/user-home" FM_HOME="$home" \
       FM_DATA_OVERRIDE="$data" "$ROOT/bin/fm-captain-hold.sh" hold "$id" \
-      --title "Hold regression" --category captain-only-fact --reason "Captain must choose" 2>&1) || rc=$?
+      --title "Hold regression" --category captain-only-fact --reason "Captain must choose" \
+      --context-file "$case_dir/hold-context.json" 2>&1) || rc=$?
     if [ "$config_state" = dangling ]; then
       [ "$rc" -ne 0 ] || fail "captain hold accepted an unresolved backend and changed the wrong backlog"
       assert_contains "$out" "tasks-axi backend configuration cannot be read at $home/.tasks.toml" \

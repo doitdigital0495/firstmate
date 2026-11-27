@@ -181,7 +181,7 @@ test_hold_answer_path() {
 JSON
   in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --category captain-only-fact --reason "Pick a carrier." --context-file "$home/ctx.json" >/dev/null \
     || fail "could not hold the carrier question"
-  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-legacy --category captain-only-fact --reason "Which logo, old or new?" >/dev/null \
+  tasks_in "$home" hold ws-legacy --kind captain --reason 'Which logo, old or new?' >/dev/null \
     || fail "could not hold the legacy question"
   in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
   now=$(date +%s)
@@ -449,8 +449,9 @@ test_alerts_fire_once_per_step() {
   t0=$(( $(date +%s) - 120 ))
   set=$(date -u -d "@$t0" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$t0" +%Y-%m-%dT%H:%M:%SZ)
   tasks_in "$home" add ws-colour "Pick the banner colour" --repo web-shop --kind captain
+  fm_test_captain_context > "$home/colour-context.json"
   in_home "$home" env FM_CAPTAIN_HOLD_NOW="$set" "$ROOT/bin/fm-captain-hold.sh" hold ws-colour \
-    --category captain-only-fact --reason "Secret plan: blue or green banner?" >/dev/null || fail "could not hold the question"
+    --category captain-only-fact --reason "Secret plan: blue or green banner?" --context-file "$home/colour-context.json" >/dev/null || fail "could not hold the question"
 
   # No config: nothing fires and the page says it is the only signal.
   build_at "$home" "$((t0 + 60))"
@@ -485,7 +486,9 @@ test_alerts_fire_once_per_step() {
 
   # A question first seen past a step fires once, not once per step it skipped.
   tasks_in "$home" add ws-font "Pick the heading font" --repo web-shop --kind captain
-  in_home "$home" env FM_CAPTAIN_HOLD_NOW="$set" "$ROOT/bin/fm-captain-hold.sh" hold ws-font --category captain-only-fact --reason "Serif or sans?" >/dev/null \
+  fm_test_captain_context > "$home/font-context.json"
+  in_home "$home" env FM_CAPTAIN_HOLD_NOW="$set" "$ROOT/bin/fm-captain-hold.sh" hold ws-font --category captain-only-fact \
+    --reason 'Serif or sans?' --context-file "$home/font-context.json" >/dev/null \
     || fail "could not hold the second question"
   build_at "$home" "$((t0 + 48 * 3600 + 60))"
   [ "$(alert_count "$home")" = 4 ] || fail "a late-seen question did not fire exactly one alert"
@@ -575,7 +578,7 @@ test_nudge_and_parked_work() {
   printf 'needs-decision [key=tone] [at=%s]: Formal or casual tone?\n' "$((now - 300))" > "$home/state/w2.status"
   tasks_in "$home" add ws-carrier "Which carrier?" --repo web-shop --kind captain
   tasks_in "$home" add ws-ship "Ship the spring orders" --repo web-shop --kind ship --blocked-by ws-carrier
-  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --category captain-only-fact --reason "Pick a carrier." >/dev/null || fail "could not hold"
+  tasks_in "$home" hold ws-carrier --kind captain --reason 'Pick a carrier.' >/dev/null || fail 'could not seed legacy hold'
   in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
   old=$(ask_for "$home" '.route.key == "db"')
   young=$(ask_for "$home" '.route.key == "tone"')
@@ -618,7 +621,7 @@ test_projects_group_and_filter() {
   tasks_in "$home" add ws-carrier "Which carrier?" --repo web-shop --kind captain
   tasks_in "$home" add a-docs "Write the alpha docs" --repo alpha
   tasks_in "$home" add loose "A task with no project"
-  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold ws-carrier --category captain-only-fact --reason "Pick a carrier." >/dev/null || fail "could not hold"
+  tasks_in "$home" hold ws-carrier --kind captain --reason 'Pick a carrier.' >/dev/null || fail 'could not seed legacy hold'
   in_home "$home" "$BRIDGE" build >/dev/null || fail "build failed"
   out=$(feed "$home" '.')
   # shellcheck disable=SC2016 # jq variables, not shell ones

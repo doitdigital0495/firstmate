@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Render shared goal views from cockpit truth, or preview drive controls from goal export."""
+"""Render the fixed first section (captain cards) and shared goal views from cockpit truth,
+or preview drive controls from goal export. Existing keyed host forms keep their routing."""
 
 import argparse
 from collections import Counter, defaultdict
@@ -320,7 +321,7 @@ class GoalPage(HTMLParser):
     def __init__(self, page):
         super().__init__()
         self.offsets = [0] + [m.end() for m in re.finditer('\n', page)]
-        self.stack, self.nodes, self.by_id = [], [], defaultdict(list)
+        self.stack, self.nodes, self.by_id, self.root_parts = [], [], defaultdict(list), []
         self.feed(page)
         self.close()
 
@@ -335,8 +336,7 @@ class GoalPage(HTMLParser):
         self.nodes.append(node)
         if node.id:
             self.by_id[node.id].append(node)
-        if parent:
-            parent.parts.append(node)
+        (parent.parts if parent else self.root_parts).append(node)
         if push:
             self.stack.append(node)
 
@@ -354,8 +354,7 @@ class GoalPage(HTMLParser):
                 break
 
     def handle_data(self, data):
-        if self.stack:
-            self.stack[-1].parts.append(data)
+        (self.stack[-1].parts if self.stack else self.root_parts).append(data)
 
 
 def truth_path(home, scope):
@@ -368,60 +367,145 @@ def truth_path(home, scope):
 
 DECISION_SECTIONS = ('captain-door', 'beslissingen')
 OTHER_PROJECTS = 'overige-projecten'
-CAPTAIN_STEPS = re.compile(r'<!-- fm-captain-steps -->.*?<!-- /fm-captain-steps -->', re.S)
+CAPTAIN_BUCKETS = ('must', 'can', 'later')
+PAGE_CONTROL = re.compile(r'^(?:goal\.drive\.|ververs|refresh)', re.I)
+CAPTAIN_STYLE = '''<style>
+.fm-captain { box-sizing:border-box; width:100%; max-width:48rem; margin:0 auto 1rem; padding:clamp(.75rem,3vw,1.5rem);
+  background:#0f131a; color:#f1f4fa; color-scheme:dark; font:1rem/1.5 system-ui,sans-serif; overflow-wrap:anywhere; }
+.fm-captain :is(h1,h2,h3,p,ol,ul) { margin:0; }
+.fm-captain > h2 { font-size:clamp(1.4rem,5vw,2rem); margin-bottom:.75rem; }
+.fm-captain > [data-captain-priority] { margin-top:.9rem; }
+.fm-captain :is(summary,h3) { font-weight:700; cursor:inherit; }
+.fm-captain summary { cursor:pointer; padding:.45rem 0; }
+.fm-captain article { --badge:#b5a1ff; display:grid; gap:.65rem; min-width:0; margin:.55rem 0;
+  padding:clamp(.85rem,3vw,1.15rem); border:1px solid #3a4658; border-inline-start:4px solid var(--badge);
+  border-radius:.75rem; background:#1a2330; color:#f1f4fa; text-align:start; }
+.fm-captain article[data-captain-type=taak] { --badge:#77dfbe; }
+.fm-captain article h3 { font-size:1.15rem; color:#f1f4fa; }
+.fm-captain [data-captain-field=type] { width:fit-content; padding:.1rem .55rem; border-radius:1rem;
+  border:1px solid var(--badge); color:var(--badge); font-size:.82rem; font-weight:700; }
+.fm-captain [data-captain-field=id] { color:#bcc8d8; font-size:.82rem; }
+.fm-captain .fm-captain-group { color:#bcc8d8; font-size:.85rem; }
+.fm-captain a { color:#9dd5ff; text-decoration:underline; }
+.fm-captain :is(ul,ol) { padding-inline-start:1.35rem; }
+.fm-captain li + li { margin-top:.45rem; }
+.fm-captain .fm-captain-missing { color:#ffc391; }
+.fm-captain button,.fm-captain textarea { max-width:100%; }
+</style>'''
 
 
-def decision_keys(node):
-    return set((node.attrs.get('data-cockpit-captain') or '').split()) | {
-        node.attrs.get('data-lavish-question')}
+def captain_entries(truth):
+    return [(bucket, row) for bucket in CAPTAIN_BUCKETS for row in truth.get('section1', {}).get(bucket, [])]
+
+
+def missing_marker(name):
+    return f'<span class="fm-captain-missing">ONTBREEKT: {html.escape(name)}</span>'
+
+
+def captain_step(text):
+    chunks = re.split(r'(https?://[^\s<>]+)', text)
+    for i in range(1, len(chunks), 2):
+        url = chunks[i].rstrip('.,;!?)')
+        link = html.escape(url)
+        chunks[i] = f'<a href="{link}">{link}</a>' + html.escape(chunks[i][len(url):])
+    return ''.join(part if i % 2 else html.escape(part) for i, part in enumerate(chunks))
+
+
+def captain_card(row, forms=''):
+    key = html.escape(row['key'], quote=True)
+    kind = row['type']
+    missing = set(row['missing'])
+    context = ' '.join(filter(None, (html.escape(row['about']), missing_marker('Waarvoor') if 'Waarvoor' in missing else '')))
+    goal = ', '.join(f'<a href="#doel-{html.escape(gid, quote=True)}">{html.escape(title)}</a>'
+                     for gid, title in row['goal_links'].items()) or 'Geen doel'
+    body = (f'<p data-captain-field="type">{"Taak" if kind == "taak" else "Vraag"}</p>'
+            f'<h3 data-captain-field="title">{html.escape(row["title"]) or missing_marker("Titel")}</h3>'
+            f'<p data-captain-field="context"><b>Waarvoor</b> {context}</p>'
+            f'<p data-captain-field="goal"><b>Doel</b> {goal}</p>'
+            f'<p data-captain-field="id"><b>ID</b> <code>{key}</code></p>')
+    if kind == 'taak':
+        items = ''.join(f'<li>{captain_step(text)}</li>' for texts in row['steps'].values() for text in texts)
+        notices = ' '.join(missing_marker(f) for f in ('Stappen', 'URL of klikpad') if f in missing)
+        body += f'<div data-captain-field="steps"><b>Stappen</b>{"<ol>" + items + "</ol>" if items else ""}{notices}</div>'
+        body += ('<p data-captain-field="result"><b>Verwacht resultaat</b> '
+                 + (html.escape(row['expected']) or missing_marker('Verwacht resultaat')) + '</p>')
+    else:
+        if row['question'] and row['question'] != row['title']:
+            body += f'<p data-captain-field="question">{html.escape(row["question"])}</p>'
+        items = ''
+        for option in row['options']:
+            rec = '<strong data-captain-field="recommendation">Aanbevolen</strong> ' if option['value'] == row['recommendation'] else ''
+            items += (f'<li><b>{html.escape(option["label"])}</b> {rec}'
+                      f'{html.escape(option["detail"]) or missing_marker("Gevolg per optie")}</li>')
+        notices = (missing_marker('Opties') if 'Opties' in missing else '')
+        if 'Aanbeveling' in missing:
+            notices += f'<p data-captain-field="recommendation">{missing_marker("Aanbeveling")}</p>'
+        body += f'<div data-captain-field="options"><b>Opties</b>{"<ul>" + items + "</ul>" if items else ""}{notices}</div>'
+    if row.get('group') == 'other_projects':
+        body += '<p class="fm-captain-group">Overige projecten</p>'
+    if forms:
+        body += f'<div data-captain-controls>{forms}</div>'
+    return f'<article data-cockpit-captain="{key}" data-captain-type="{kind}">{body}</article>'
+
+
+def captain_section(truth, section_id, forms):
+    cards = defaultdict(list)
+    for bucket, row in captain_entries(truth):
+        cards[bucket].append(captain_card(row, forms.get(row['key'], '')))
+    body = '<h2>1. Vragen en taken voor jou</h2>'
+    for bucket, label in zip(CAPTAIN_BUCKETS, ('Moet', 'Kan', 'Later')):
+        rows = ''.join(cards[bucket])
+        if bucket == 'must':
+            body += f'<div data-captain-priority="must"><h3>{label} ({len(cards[bucket])})</h3>{rows}</div>'
+        else:
+            opened = ' open' if bucket == 'can' else ''
+            body += f'<details data-captain-priority="{bucket}"{opened}><summary>{label} ({len(cards[bucket])})</summary>{rows}</details>'
+    if not any(cards.values()):
+        body += '<p>Geen open vragen of taken.</p>'
+    return f'<section id="{html.escape(section_id)}" class="fm-captain">{CAPTAIN_STYLE}{body}</section>'
+
+
+def captain_goal_refs(truth):
+    full = {goal['id'] for goal in truth['goals']}
+    return {gid: title for _, row in captain_entries(truth) for gid, title in row['goal_links'].items() if gid not in full}
 
 
 def render_captain_steps(page, truth):
-    page = CAPTAIN_STEPS.sub('', page)
     parsed = GoalPage(page)
-    decisions = next((n for n in parsed.nodes if n.id in DECISION_SECTIONS and n.visible and n.close is not None), None)
-    if not decisions:
-        return page  # verification reports a missing host slot
-    other = next((n for n in parsed.by_id[OTHER_PROJECTS] if n.visible and n.close is not None), None)
-    if other and not other.ancestor(lambda a: a is decisions):
-        # Move the host's existing Other Projects block, preserving any forms in it.
-        end = page.index('>', other.close) + 1
-        at = decisions.close
-        if end <= at or at < other.start:
-            block = page[other.start:end]
-            rest = page[:other.start] + page[end:]
-            at -= end - other.start if end <= at else 0
-            return render_captain_steps(rest[:at] + block + rest[at:], truth)
-    cards = {False: [], True: []}
-    for entries in truth.get('section1', {}).values():
-        for entry in entries:
-            steps = entry.get('steps')
-            if not steps:
-                continue
-            aliases = {entry['key'], *entry['aliases']}
-            existing = any(n.visible and n.ancestor(lambda a: a is decisions) and decision_keys(n) & aliases
-                           for n in parsed.nodes)
-            # Do not replace or duplicate the host's keyed answer form.
-            attr = '' if existing else f' data-cockpit-captain="{html.escape(entry["key"], quote=True)}"'
-            lis = ''.join(f'<li data-cockpit-step="{html.escape(key, quote=True)}">{html.escape(text)}</li>'
-                          for key, texts in steps.items() for text in texts)
-            context = f'<p>{html.escape(entry["about"])}</p>' if entry.get('personal_action') else ''
-            cards[entry.get('group') == 'other_projects'].append(
-                f'<li{attr}><b>{html.escape(entry["title"])}</b>{context}<ol>{lis}</ol></li>')
-    patches = []
-    for foreign, rows in cards.items():
-        if not rows:
+    sections = [n for n in parsed.nodes if n.id in (*DECISION_SECTIONS, OTHER_PROJECTS)
+                and n.close is not None]
+    section_set = set(sections)
+    sections = [n for n in sections if not n.ancestor(section_set.__contains__)]
+    section_id = next((n.id for n in sections if n.id in DECISION_SECTIONS), DECISION_SECTIONS[0])
+    owners = {key: row['key'] for _, row in captain_entries(truth) for key in [row['key'], *row['aliases']]}
+    forms, controls = defaultdict(list), []
+    for node in parsed.nodes:
+        if node.tag != 'form' or not node.visible or node.close is None or not node.ancestor(section_set.__contains__):
             continue
-        block = '<ul>' + ''.join(rows) + '</ul>'
-        if foreign and not other:
-            block = f'<section id="{OTHER_PROJECTS}"><h3>Overige projecten</h3>{block}</section>'
-        # The cockpit's own steps open section 1, before its questions; other projects close it.
-        first = next((n for n in parsed.nodes if n.parent is decisions), None)
-        heading = first is not None and re.fullmatch(r'h[1-6]', first.tag) and first.close is not None
-        top = page.index('>', first.close) + 1 if heading else decisions.end
-        at = other.close if foreign and other else decisions.close if foreign else top
-        patches.append((at, '<!-- fm-captain-steps -->' + block + '<!-- /fm-captain-steps -->'))
-    return apply_patches(page, patches)
+        key = node.attrs.get('data-lavish-question') or ''
+        fragment = page[node.start:page.index('>', node.close) + 1]
+        if key in owners:
+            forms[owners[key]].append(fragment)
+        elif PAGE_CONTROL.search(key):
+            controls.append(fragment)
+    old_refs = [n for n in parsed.by_id['fm-captain-goal-refs'] if n.close is not None]
+    for node in sorted(sections + old_refs, key=lambda n: n.start, reverse=True):
+        page = page[:node.start] + page[page.index('>', node.close) + 1:]
+    parsed = GoalPage(page)
+    body = next((n for n in parsed.nodes if n.tag == 'body'), None)
+    root = next((n for n in parsed.nodes if n.tag == 'html'), None)
+    at = body.end if body else next((page.index('>', n.close) + 1 for n in parsed.nodes
+                                    if n.tag == 'head' and n.close is not None), root.end if root else 0)
+    refs = captain_goal_refs(truth)
+    if refs:
+        cards = ''.join(f'<article id="doel-{html.escape(gid)}"><h3>{html.escape(title)}</h3></article>'
+                        for gid, title in refs.items())
+        container = body or root
+        ref_at = container.close if container and container.close is not None else len(page)
+        page = page[:ref_at] + generated('<section id="fm-captain-goal-refs"><h2>Doelen van overige projecten</h2>'
+                                         + cards + '</section>') + page[ref_at:]
+    inline_forms = {key: ''.join(values) for key, values in forms.items()}
+    return page[:at] + captain_section(truth, section_id, inline_forms) + ''.join(controls) + page[at:]
 
 
 def heading_end(page, parsed):
@@ -679,7 +763,7 @@ def main():
                         help='limit preview to this ID; with --truth only asserts its goals are allowed (repeatable)')
     parser.add_argument('--page', type=Path, required=True, help='already generated cockpit HTML; updated atomically')
     parser.add_argument('--output', type=Path, help='write a preview instead of changing --page')
-    parser.add_argument('--truth', type=Path, help='scoped cockpit-sync.py truth JSON; the sole source of goal views')
+    parser.add_argument('--truth', type=Path, help='scoped cockpit-sync.py truth JSON; generates section 1 and the goal views')
     args = parser.parse_args()
     if not (args.truth or args.goal_home):
         parser.error('--truth or --goal-home is required')
