@@ -497,7 +497,7 @@ The tracked `.tasks.toml` pins the default `tasks-axi` markdown backend to `data
 A home may instead select another tasks-axi adapter such as Beads through its own `.tasks.toml` or `TASKS_AXI_BACKEND`; firstmate still uses only tasks-axi verbs for routine backlog reads and mutations, and the adapter maps `start` and evidence-bearing `done` transitions to its native statuses and evidence fields.
 
 Queued rows that were never started lapse on their own: `bin/fm-tasks-axi.sh lapse-due` lists them and `lapse` closes them with the note `lapsed unstarted`.
-`config/record-sweep` holds `shadow` or `on`; an absent switch is shadow, where `lapse` only lists, and only `on` closes rows.
+`config/record-sweep` holds `shadow` or `on`; an absent switch is shadow, where `lapse` only lists, and only `on` closes rows; "Weekly record sweep" below owns the weekly run that calls it.
 The wrapper header owns which rows are due and the output lines, including the one `queued-over-limit` line a home still over 30 Queued rows gets.
 A lapsed row that matters is re-filed, because the note in the done-archive is the only record of the lapse.
 
@@ -2783,6 +2783,26 @@ An unchanged kept cleanup reports once, then repeats after an exponentially incr
 
 `bin/fm-reap.sh sweep-state` is a separate manual cleanup of stale lock folders and old markers in `state/`, independent of `config/reaper`.
 It is a dry run that prints counts by kind unless given `--apply`, and its header owns what counts as stale.
+
+## Weekly record sweep (config/record-sweep)
+
+Records stop piling up because one quiet weekly sweep closes what is stale, through each record's own owner, and deletes nothing.
+While `config/record-sweep` exists, session start arms `bin/fm-reap.sh sweep-records-arm` as the watcher check `state/record-sweep.check.sh`.
+That check starts one detached `bin/fm-reap.sh sweep-records` run when its last summary is a week old (`FM_RECORD_SWEEP_INTERVAL_SECS`, default 604800) or absent.
+The same switch gates every record owner, so a home that has not written `on` closes nothing anywhere.
+
+| `config/record-sweep` | Behavior |
+| --- | --- |
+| absent, `shadow`, a symlink or any other value | Shadow: the sweep lists what each owner would close and closes nothing, never wakes, and writes one summary line to `state/.record-sweep-summary`. |
+| `on` | The sweep closes through the owners; it wakes firstmate once only when a captain call lapsed or a cap is still exceeded after the closes. |
+
+The sweep calls each owner and re-implements none of them: the no-effect lapse of a stale captain call (`bin/fm-captain-hold.sh defaults-due` rows closing as `lapse`, applied with `answer --deadline-default`), the status-key close (`diverged --close-mirror`), the 24-hour reply-escalation expiry (`bin/fm-pending-reply-lib.sh`), the unstarted-row lapse (`bin/fm-tasks-axi.sh lapse`) and `bin/fm-suggestions.sh expire`.
+A due recommendation default is not a lapse and stays with the wake drain, which tells the captain before firstmate proceeds on it.
+The caps are more than 30 Queued rows and more than 10 open captain calls.
+A lapse is reported to the captain in the next report as not needed, never as his answer.
+`bin/fm-reap.sh`'s header owns the step order, the summary fields, the wake rules and the lock; the task output archive plugs into the named `record_sweep_task_output_archive` hook.
+`tests/fm-reap.test.sh` covers shadow, `on`, the wake rules and the weekly check.
+Roll out with a shadow week, then write `on`; writing `shadow` or removing the file stops every close at once, and each close is undoable through its owner.
 
 ## Auto-dispatch (config/auto-dispatch)
 

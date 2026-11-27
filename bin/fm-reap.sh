@@ -9,6 +9,11 @@
 #   fm-reap.sh arm     write state/reaper.check.sh and bind it with
 #                      bin/fm-check-register.sh (bootstrap arms it every start
 #                      while config/reaper exists)
+#   fm-reap.sh sweep-records
+#                      run the weekly record sweep once now (see "Record sweep"
+#                      below); sweep-records-check is its watcher check
+#                      (state/record-sweep.check.sh) and sweep-records-arm
+#                      writes and binds that check
 #   fm-reap.sh sweep-state [--apply] [--verbose]
 #                      remove provably stale runtime leftovers from this home's
 #                      top-level state folder. Without --apply it is a read-only
@@ -64,6 +69,41 @@
 #   known kept line, pruned to the lines the latest run log still names; any
 #   ledger problem fails open (the line prints).
 #
+# Record sweep: config/record-sweep holds `shadow` or `on`; an absent switch, a
+#   symlink or any other value is shadow, the same rule the record owners read
+#   (bin/fm-auto-dispatch.sh and bin/fm-tasks-axi.sh). `sweep-records` calls each
+#   owner's own entry point and re-implements none of them, in this order:
+#     lapse       bin/fm-captain-hold.sh `defaults-due` rows whose close is
+#                 `lapse`, each closed with `answer <id> --deadline-default`; a
+#                 due recommendation default (a close other than lapse) is left to
+#                 the wake drain, which tells the captain before it proceeds
+#     mirror      bin/fm-captain-hold.sh `diverged --close-mirror`
+#     reply       fm_pending_reply_sweep_escalated (bin/fm-pending-reply-lib.sh)
+#     rows        bin/fm-tasks-axi.sh `lapse` (shadow: `lapse-due`)
+#     suggestions bin/fm-suggestions.sh `expire` (shadow: `expire --dry-run`)
+#     archive     record_sweep_task_output_archive, the hook where the task
+#                 output archive plugs in; it does nothing yet
+#   shadow only lists what each owner would close and closes nothing; on closes
+#   through the owners, which never delete a record and never merge, push,
+#   publish, send, spend or grant access (the lapse keeps bin/fm-captain-hold.sh's
+#   own effect check). A step whose tool is missing (tasks-axi, jq) is named
+#   `skipped=` in the summary rather than read as zero.
+#   The run writes one summary line to state/.record-sweep-summary, starting
+#   `at=<epoch>`, and its full lines to stdout. It is silent: it wakes
+#   firstmate, once, only in `on` mode and only when a captain call lapsed, or
+#   a cap is still exceeded after the closes (more than 30 Queued rows, from
+#   the `queued-over-limit` line; more than 10 open captain calls, from
+#   `call-budget`). The wake line is state/.record-sweep-wake, reported once by
+#   `sweep-records-check`; a lapse is not the captain's answer and is reported to
+#   him as not needed. Shadow never wakes: the summary is the check state.
+#   The check starts one detached `sweep-records` run when the summary is
+#   FM_RECORD_SWEEP_INTERVAL_SECS old (default 604800, weekly) or absent, takes
+#   the lock state/.record-sweep.lock (a lock older than six hours is stale),
+#   and sends the run's output to state/record-sweep.log. Bootstrap arms it
+#   while config/record-sweep exists. FM_RECORD_SWEEP_CAPTAIN_HOLD,
+#   FM_RECORD_SWEEP_TASKS_AXI and FM_RECORD_SWEEP_SUGGESTIONS replace the owner
+#   commands for tests only.
+#
 # sweep-state considers only the three families below; anything else in state/,
 #   including task records, wake queues, .seen-* dedup records, inboxes and
 #   handled records, teardown and landing protection records, and lock links, is
@@ -101,6 +141,10 @@ BOARD_SECS=${FM_REAP_BOARD_SECS:-86400}
 TEARDOWN=${FM_REAP_TEARDOWN:-$SCRIPT_DIR/fm-teardown.sh}
 SWEEP_LOCK_AGE=${FM_REAP_LOCK_AGE_SECS:-86400}
 SWEEP_MARKER_AGE=${FM_REAP_MARKER_AGE_SECS:-604800}
+RECORD_SWEEP_INTERVAL=${FM_RECORD_SWEEP_INTERVAL_SECS:-604800}
+RECORD_SWEEP_CAPTAIN_HOLD=${FM_RECORD_SWEEP_CAPTAIN_HOLD:-$SCRIPT_DIR/fm-captain-hold.sh}
+RECORD_SWEEP_TASKS_AXI=${FM_RECORD_SWEEP_TASKS_AXI:-$SCRIPT_DIR/fm-tasks-axi.sh}
+RECORD_SWEEP_SUGGESTIONS=${FM_RECORD_SWEEP_SUGGESTIONS:-$SCRIPT_DIR/fm-suggestions.sh}
 REPEAT_BASE=${FM_REAP_REPEAT_BASE_SECS:-3600}
 REPEAT_CAP=${FM_REAP_REPEAT_CAP_SECS:-86400}
 
@@ -109,6 +153,7 @@ fail() { printf 'fm-reap: %s\n' "$1" >&2; exit 2; }
 case "$DONE_SECS$BOARD_SECS$IDLE_SECS" in *[!0-9]*) fail 'FM_REAP_DONE_SECS, FM_REAP_BOARD_SECS and FM_REAP_IDLE_SECS must be whole seconds' ;; esac
 case "$SWEEP_LOCK_AGE" in '' | *[!0-9]*) fail 'FM_REAP_LOCK_AGE_SECS must be whole seconds' ;; esac
 case "$SWEEP_MARKER_AGE" in '' | *[!0-9]*) fail 'FM_REAP_MARKER_AGE_SECS must be whole seconds' ;; esac
+case "$RECORD_SWEEP_INTERVAL" in '' | *[!0-9]*) fail 'FM_RECORD_SWEEP_INTERVAL_SECS must be whole seconds' ;; esac
 case "$REPEAT_BASE" in '' | *[!0-9]*) fail 'FM_REAP_REPEAT_BASE_SECS must be whole seconds' ;; esac
 case "$REPEAT_CAP" in '' | *[!0-9]*) fail 'FM_REAP_REPEAT_CAP_SECS must be whole seconds' ;; esac
 [ "$REPEAT_BASE" -ge 1 ] || fail 'FM_REAP_REPEAT_BASE_SECS must be at least 1'
@@ -347,20 +392,24 @@ cmd_check() {
   fi
 }
 
-cmd_arm() {
+# Write state/<id>.check.sh to run `fm-reap.sh <verb>` with this home's paths,
+# then bind it with bin/fm-check-register.sh.
+arm_check() {  # <check-id> <verb>
   local staged
   [ -d "$STATE" ] && [ ! -L "$STATE" ] || fail 'state directory unavailable'
-  staged=$(umask 077; mktemp "$STATE/.reaper-check.XXXXXX") || fail 'could not stage the check'
+  staged=$(umask 077; mktemp "$STATE/.$1-check.XXXXXX") || fail 'could not stage the check'
   printf '%s\n' '#!/usr/bin/env bash' \
     "export FM_HOME=$(printf '%q' "$FM_HOME")" \
     "export FM_STATE_OVERRIDE=$(printf '%q' "$STATE")" \
     "export FM_DATA_OVERRIDE=$(printf '%q' "$DATA")" \
     "export FM_CONFIG_OVERRIDE=$(printf '%q' "$CONFIG")" \
-    "exec $(printf '%q' "$SCRIPT_DIR/fm-reap.sh") check" > "$staged"
+    "exec $(printf '%q' "$SCRIPT_DIR/fm-reap.sh") $2" > "$staged"
   chmod 700 "$staged"
-  mv -f -- "$staged" "$STATE/reaper.check.sh" || fail 'could not write state/reaper.check.sh'
-  "$SCRIPT_DIR/fm-check-register.sh" reaper
+  mv -f -- "$staged" "$STATE/$1.check.sh" || fail "could not write state/$1.check.sh"
+  "$SCRIPT_DIR/fm-check-register.sh" "$1"
 }
+
+cmd_arm() { arm_check reaper check; }
 
 # True when <path> is provably at least <min-age> seconds old. fm_path_age reads
 # an unreadable path as very old, so this reads the mtime itself and fails closed.
@@ -552,12 +601,206 @@ cmd_sweep_state() {
     }'
 }
 
+# --- weekly record sweep ---------------------------------------------------
+
+# on only for a regular, non-symlink config/record-sweep reading `on`.
+record_sweep_mode() {
+  local m=''
+  if [ -f "$CONFIG/record-sweep" ] && [ ! -L "$CONFIG/record-sweep" ]; then
+    read -r m < "$CONFIG/record-sweep" || true
+  fi
+  [ "$m" = on ] && printf on || printf shadow
+}
+
+# Item 8 plugs in here: the task output archive (folders of long-closed tasks
+# moved under data/archive/<YYYY-MM>/). It follows the contract of every step:
+# shadow lists what it would move and moves nothing, on moves through its owner
+# and never deletes. Until it is built this does nothing.
+record_sweep_task_output_archive() {  # <shadow|on>
+  return 0
+}
+
+# <key> <line> -> the number in `key=<n>` on the line, or 0.
+record_sweep_kv() {
+  local n
+  n=$(printf '%s\n' "$2" | tr ' ' '\n' | sed -n "s/^$1=\\([0-9][0-9]*\\)\$/\\1/p" | head -n 1)
+  printf '%s' "${n:-0}"
+}
+
+# <line> -> the first whole number after the line's first `: ` or space, or 0.
+record_sweep_first_number() {
+  local n
+  n=$(printf '%s\n' "$1" | sed -n 's/^[^0-9]*\([0-9][0-9]*\).*$/\1/p' | head -n 1)
+  printf '%s' "${n:-0}"
+}
+
+# Take the sweep lock; a lock a killed run left behind goes stale after six hours.
+record_sweep_lock() {
+  local lock="$STATE/.record-sweep.lock" mtime now
+  mkdir "$lock" 2>/dev/null && return 0
+  mtime=$(stat -c %Y "$lock" 2>/dev/null || stat -f %m "$lock" 2>/dev/null) || return 1
+  case "$mtime" in '' | *[!0-9]*) return 1 ;; esac
+  now=$(date +%s)
+  [ $(( now - mtime )) -ge 21600 ] || return 1
+  rmdir -- "$lock" 2>/dev/null && mkdir "$lock" 2>/dev/null
+}
+
+# Write <file> atomically from <content>; a failure leaves the old file.
+record_sweep_write() {  # <file> <content>
+  local staged
+  staged=$(umask 077; mktemp "$1.XXXXXX") || return 1
+  if printf '%s\n' "$2" > "$staged" && mv -f -- "$staged" "$1"; then return 0; fi
+  rm -f -- "$staged"
+  return 1
+}
+
+# One step's last output line, capped.
+record_sweep_last() {  # <output>
+  printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-200
+}
+
+cmd_sweep_records() {
+  local mode out id lapse_ids lapsed='' wake='' sum now line rc=0 verb
+  local lapse_n=0 mirror_n=0 reply_n=0 rows_n=0 sugg_n=0 queued_over=0 calls_over=0 failed='' skipped=''
+  [ "$#" -eq 0 ] || fail 'sweep-records takes no arguments'
+  [ -d "$STATE" ] && [ ! -L "$STATE" ] || fail 'state directory unavailable'
+  record_sweep_lock || { printf 'sweep-records: a sweep is already in progress\n'; return 0; }
+  # shellcheck disable=SC2064 # expand the lock path now
+  trap "rmdir -- $(printf '%q' "$STATE/.record-sweep.lock") 2>/dev/null" EXIT
+  # Every owner reads the home this sweep was started for, never a default.
+  export FM_HOME FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG"
+  mode=$(record_sweep_mode)
+  printf 'sweep-records: mode=%s\n' "$mode"
+
+  if command -v tasks-axi >/dev/null 2>&1; then
+    # 1. Stale captain calls: only the no-effect lapse. A due recommendation
+    #    default needs Firstmate to steer the worker, so the wake drain keeps it.
+    if out=$("$RECORD_SWEEP_CAPTAIN_HOLD" defaults-due 2>/dev/null); then
+      lapse_ids=$(printf '%s\n' "$out" | awk -F'\t' '$5 == "lapse" && $1 != "" { print $1 }')
+    else
+      lapse_ids=''
+      failed="${failed:+$failed,}lapse-list"
+    fi
+    while IFS= read -r id; do
+      [ -n "$id" ] || continue
+      if [ "$mode" != on ]; then
+        printf 'would lapse captain call: %s\n' "$id"
+        lapse_n=$((lapse_n + 1))
+      elif out=$("$RECORD_SWEEP_CAPTAIN_HOLD" answer "$id" --deadline-default 2>&1); then
+        case "$out" in
+          *"lapsed: $id"*)
+            printf 'lapsed captain call: %s\n' "$id"
+            lapse_n=$((lapse_n + 1))
+            lapsed="${lapsed:+$lapsed }$id"
+            ;;
+          *) printf 'kept captain call %s: %s\n' "$id" "$(record_sweep_last "$out")" ;;
+        esac
+      else
+        printf 'kept captain call %s: %s\n' "$id" "$(record_sweep_last "$out")"
+        failed="${failed:+$failed,}lapse:$id"
+      fi
+    done <<EOF
+${lapse_ids:-}
+EOF
+    # 2. Status keys whose call row is closed or no longer held.
+    out=$("$RECORD_SWEEP_CAPTAIN_HOLD" diverged --close-mirror 2>&1) || failed="${failed:+$failed,}mirror"
+    out=$(printf '%s\n' "$out" | grep '^\(would close\|closed\) mirror: ' || true)
+    [ -z "$out" ] || printf '%s\n' "$out"
+    mirror_n=$(printf '%s' "$out" | grep -c . || true)
+  else
+    skipped="${skipped:+$skipped,}tasks-axi"
+  fi
+
+  # 3. Missed-reply escalations older than 24 h; the owner reads the switch.
+  out=$(bash -c '. "$1/fm-pending-reply-lib.sh" && fm_pending_reply_sweep_escalated "$2"' _ "$SCRIPT_DIR" "$STATE" 2>&1) \
+    || failed="${failed:+$failed,}reply"
+  line=$(record_sweep_last "$out")
+  printf '%s\n' "$line"
+  reply_n=$(record_sweep_first_number "${line#*): }")
+
+  if command -v tasks-axi >/dev/null 2>&1; then
+    # 4. Queued rows never started, and the 30-row cap line.
+    if [ "$mode" = on ]; then verb=lapse; else verb=lapse-due; fi
+    out=$("$RECORD_SWEEP_TASKS_AXI" "$verb" 2>&1) || failed="${failed:+$failed,}rows"
+    printf '%s\n' "$out" | grep -v '^lapse mode=' || true
+    line=$(printf '%s\n' "$out" | grep '^lapse mode=' | tail -n 1 || true)
+    if [ "$mode" = on ]; then rows_n=$(record_sweep_kv closed "$line"); else rows_n=$(record_sweep_kv due "$line"); fi
+    queued_over=$(record_sweep_kv queued "$(printf '%s\n' "$out" | grep '^queued-over-limit ' | tail -n 1 || true)")
+  fi
+
+  # 5. Suggestions unpicked for 30 days.
+  if command -v jq >/dev/null 2>&1; then
+    if [ "$mode" = on ]; then verb=expire; else verb='expire --dry-run'; fi
+    # shellcheck disable=SC2086 # the one optional flag is deliberately split
+    out=$("$RECORD_SWEEP_SUGGESTIONS" $verb 2>&1) || failed="${failed:+$failed,}suggestions"
+    line=$(record_sweep_last "$out")
+    printf '%s\n' "$line"
+    sugg_n=$(record_sweep_first_number "$line")
+  else
+    skipped="${skipped:+$skipped,}jq"
+  fi
+
+  # 6. The task output archive (item 8) plugs in here.
+  record_sweep_task_output_archive "$mode" || failed="${failed:+$failed,}archive"
+
+  # Caps are read after the closes, so a cap the sweep just cleared does not wake.
+  if command -v tasks-axi >/dev/null 2>&1; then
+    out=$("$RECORD_SWEEP_CAPTAIN_HOLD" call-budget 2>/dev/null) || true
+    [ -z "$out" ] || calls_over=$(record_sweep_first_number "${out#*: }")
+  fi
+
+  # Only an applied sweep wakes: a lapse the captain must hear of, or a cap the
+  # closes did not clear. Shadow keeps its answer in the summary alone.
+  if [ "$mode" = on ]; then
+    [ -z "$lapsed" ] || wake="captain call(s) lapsed as not needed, no action taken and not the captain's answer: $lapsed - tell the captain in the next report"
+    [ "$queued_over" -eq 0 ] || wake="${wake:+$wake; }$queued_over queued rows, over the limit of 30 - start, lapse or file fewer"
+    [ "$calls_over" -eq 0 ] || wake="${wake:+$wake; }$calls_over open captain calls, over the limit of 10 - decide within standing authority or merge calls"
+  fi
+  now=$(date +%s)
+  sum="at=$now mode=$mode $([ "$mode" = on ] && printf closed || printf would-close) lapse=$lapse_n mirror=$mirror_n reply=$reply_n rows=$rows_n suggestions=$sugg_n queued-over=$queued_over calls-over=$calls_over woke=$([ -n "$wake" ] && printf yes || printf no)"
+  [ -z "$skipped" ] || sum="$sum skipped=$skipped"
+  [ -z "$failed" ] || sum="$sum failed=$failed"
+  if [ -n "$wake" ]; then
+    record_sweep_write "$STATE/.record-sweep-wake" "at=$now record-sweep: $wake" || rc=1
+  else
+    rm -f -- "$STATE/.record-sweep-wake"
+  fi
+  record_sweep_write "$STATE/.record-sweep-summary" "$sum" || rc=1
+  printf '%s\n' "$sum"
+  return "$rc"
+}
+
+# The watcher check: report a settled wake once, then start the weekly run.
+cmd_sweep_check() {
+  local sum="$STATE/.record-sweep-summary" wake="$STATE/.record-sweep-wake" reported="$STATE/.record-sweep-reported"
+  local at last=0 line seen='' now
+  [ -d "$STATE" ] && [ ! -L "$STATE" ] || return 0
+  if [ -f "$wake" ] && [ ! -L "$wake" ] && IFS= read -r line < "$wake" && [ -n "$line" ]; then
+    at=${line%% *}
+    if [ -f "$reported" ] && [ ! -L "$reported" ]; then read -r seen < "$reported" || true; fi
+    if [ "$at" != "$seen" ] && record_sweep_write "$reported" "$at"; then printf '%s\n' "${line#* }"; fi
+  fi
+  [ ! -d "$STATE/.record-sweep.lock" ] || return 0
+  if [ -f "$sum" ] && [ ! -L "$sum" ] && IFS= read -r line < "$sum"; then
+    case "$line" in at=*) last=${line%% *}; last=${last#at=} ;; esac
+    case "$last" in '' | *[!0-9]*) last=0 ;; esac
+  fi
+  now=$(date +%s)
+  if [ "$last" -le "$now" ] && [ $(( now - last )) -lt "$RECORD_SWEEP_INTERVAL" ]; then return 0; fi
+  ( setsid "$0" sweep-records > "$STATE/record-sweep.log" 2>&1 < /dev/null & ) 2>/dev/null
+}
+
+cmd_sweep_arm() { arm_check record-sweep sweep-records-check; }
+
 case "${1:-}" in
   list) verdicts ;;
   check) cmd_check ;;
   run) cmd_run ;;
   arm) cmd_arm ;;
   sweep-state) shift; cmd_sweep_state "$@" ;;
+  sweep-records) shift; cmd_sweep_records "$@" ;;
+  sweep-records-check) cmd_sweep_check ;;
+  sweep-records-arm) cmd_sweep_arm ;;
   -h | --help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

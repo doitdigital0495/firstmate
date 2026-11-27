@@ -117,6 +117,13 @@ test_unpicked_suggestions_expire_into_the_archive() {
   assert_equals "10" "$(at "$home" 30 summary --json | jq '.oldest_age_days')" "a past-due suggestion still set the age"
   assert_equals "2" "$(wc -l < "$home/data/suggestions.jsonl" | tr -d ' ')" "summary rewrote the list"
 
+  # --dry-run counts what would expire and moves nothing, without taking the lock.
+  assert_equals "would-expire 0" "$(at "$home" 29 expire --dry-run)" "the dry run counted an early record"
+  assert_equals "would-expire 1" "$(at "$home" 30 expire --dry-run)" "the dry run missed the past-due record"
+  assert_equals "2" "$(wc -l < "$home/data/suggestions.jsonl" | tr -d ' ')" "the dry run rewrote the list"
+  assert_absent "$home/data/suggestions-not-picked.jsonl" "the dry run wrote the archive"
+  at "$home" 30 expire --nope >/dev/null 2>&1 && fail "expire accepted an unknown argument"
+
   assert_equals "expired 1" "$(at "$home" 30 expire)" "expiry did not move the record"
   assert_equals "expired 0" "$(at "$home" 31 expire)" "expiry was not idempotent"
   out=$(at "$home" 31 archive --json)

@@ -1810,6 +1810,11 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
     "$SCRIPT_DIR/fm-reap.sh" arm >/dev/null 2>&1 \
       || echo "MISSING: the reaper could not be armed; finished workers are not closed or reported"
   fi
+  # The record sweep check runs the weekly record sweep once config/record-sweep opts in.
+  if local_phase && [ -f "$CONFIG/record-sweep" ] && command -v jq >/dev/null 2>&1 && [ -x "$SCRIPT_DIR/fm-reap.sh" ]; then
+    "$SCRIPT_DIR/fm-reap.sh" sweep-records-arm >/dev/null 2>&1 \
+      || echo "MISSING: the record sweep could not be armed; stale records are not swept"
+  fi
   # The auto-dispatch check starts queued briefs once config/auto-dispatch opts in.
   if local_phase && [ -f "$CONFIG/auto-dispatch" ] && command -v jq >/dev/null 2>&1 && [ -x "$SCRIPT_DIR/fm-auto-dispatch.sh" ]; then
     "$SCRIPT_DIR/fm-auto-dispatch.sh" arm >/dev/null 2>&1 \

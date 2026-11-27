@@ -48,6 +48,7 @@ A deadline default lets a small, reversible product or copy call proceed on the 
 Set it only when the call is honestly that small and reversible, and declare any outward-facing, irreversible, money or security scope so the owner refuses the default and the call keeps waiting for the captain.
 `bin/fm-captain-hold.sh --help` owns the fields and refusals.
 When the wake drain prints `DEFAULTS DUE`, run `bin/fm-captain-hold.sh answer <id> --deadline-default`, which records owner-generated words that say they are not the captain's; steer any worker with that answer as a deadline default and tell the captain in the next report.
+When a `record-sweep:` wake names lapsed calls, the weekly sweep closed them as not needed with no action taken; tell the captain in the next report, as with a default, and never as his answer.
 Never write a default into `--decision-file`, and never present one as his decision.
 When a captured Bridge result asks to stop the clock, run the `stop-clock` command `bin/fm-bridge.sh route <ask-id>` prints before applying any due default, and record the press as its `--source`.
 When the captain says "later", that is an answer too: re-hold with `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --until <date>` so the item leaves the live Captain's Call and resurfaces on its date, instead of leaving a live-looking card or fabricating a closure.
