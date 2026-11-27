@@ -972,8 +972,9 @@ The flag is a home-local preference and is not inherited by secondmate homes; [`
 The optional local, gitignored `config/status-archive` presence flag opts this home into retaining task status history during teardown.
 Create it with `touch "$FM_HOME/config/status-archive"`; remove it to disable future archival and pruning.
 It is off by default: without the flag, teardown deletes status logs as before and leaves existing archives untouched.
+Setting up the [weekly record sweep](#weekly-record-sweep-configrecord-sweep) includes turning it on.
 The flag applies to teardown run by this home, including forced retirement of its secondmate children; it is not inherited by other homes.
-Each opted-in archival prunes owned logs older than 30 completed days by mtime; housekeeping failures warn and never abort teardown.
+Each opted-in archival prunes owned logs older than 30 completed days by mtime, including those in task folders the weekly record sweep moved under `data/archive/`; housekeeping failures warn and never abort teardown.
 Age-based retention works independently of the selected backlog backend and keeps histories available for a predictable audit period.
 [`architecture.md`](architecture.md#task-status-archives) describes archive locations and isolation from live state; [`bin/fm-teardown.sh`](../bin/fm-teardown.sh) owns the mechanics.
 
@@ -2796,13 +2797,22 @@ The same switch gates every record owner, so a home that has not written `on` cl
 | absent, `shadow`, a symlink or any other value | Shadow: the sweep lists what each owner would close and closes nothing, never wakes, and writes one summary line to `state/.record-sweep-summary`. |
 | `on` | The sweep closes through the owners; it wakes firstmate once only when a captain call lapsed or a cap is still exceeded after the closes. |
 
-The sweep calls each owner and re-implements none of them: the no-effect lapse of a stale captain call (`bin/fm-captain-hold.sh defaults-due` rows closing as `lapse`, applied with `answer --deadline-default`), the status-key close (`diverged --close-mirror`), the 24-hour reply-escalation expiry (`bin/fm-pending-reply-lib.sh`), the unstarted-row lapse (`bin/fm-tasks-axi.sh lapse`) and `bin/fm-suggestions.sh expire`.
+The sweep calls each owner and re-implements none of them: the no-effect lapse of a stale captain call (`bin/fm-captain-hold.sh defaults-due` rows closing as `lapse`, applied with `answer --deadline-default`), the status-key close (`diverged --close-mirror`), the 24-hour reply-escalation expiry (`bin/fm-pending-reply-lib.sh`), the unstarted-row lapse (`bin/fm-tasks-axi.sh lapse`), `bin/fm-suggestions.sh expire`, and last the task output archive.
 A due recommendation default is not a lapse and stays with the wake drain, which tells the captain before firstmate proceeds on it.
 The caps are more than 30 Queued rows and more than 10 open captain calls.
 A lapse is reported to the captain in the next report as not needed, never as his answer.
-`bin/fm-reap.sh`'s header owns the step order, the summary fields, the wake rules and the lock; the task output archive plugs into the named `record_sweep_task_output_archive` hook.
+`bin/fm-reap.sh`'s header owns the step order, the summary fields, the wake rules and the lock.
 `tests/fm-reap.test.sh` covers shadow, `on`, the wake rules and the weekly check.
 Roll out with a shadow week, then write `on`; writing `shadow` or removing the file stops every close at once, and each close is undoable through its owner.
+
+The task output archive keeps old task folders from piling up in `data/`: the folder of a task closed 14 or more days ago moves to `data/archive/<YYYY-MM>/<task>/`, the month of its close, and nothing in it is deleted, so its `report.md` stays a plain readable file.
+A folder stays in place while its task still has a record in `state/`, an open backlog row or captain hold names the task, an item of an active goal links it, a live Lavish board or a waiting board answer points into it, it holds the current cockpit, or it changed in the last 14 days.
+A Lavish board owned by such a task ends once it has been quiet for a day, and the session can be reopened later with a plain `lavish-axi <file>`.
+Shadow lists each `would move` and `would end board`, and only `on` moves folders and ends boards.
+Move a folder back with `mv "$FM_HOME/data/archive/<YYYY-MM>/<task>" "$FM_HOME/data/<task>"`.
+`bin/fm-reap.sh`'s header owns the exact rules, and `bin/fm-tasks-axi.sh`'s header owns the `archive-due` backlog read.
+
+Setting up the sweep in a home also means turning on the [task status archive](#task-status-archive-configstatus-archive) with `touch "$FM_HOME/config/status-archive"`, so a closed task's status log is kept for 30 days and then pruned instead of being deleted at teardown.
 
 ## Auto-dispatch (config/auto-dispatch)
 

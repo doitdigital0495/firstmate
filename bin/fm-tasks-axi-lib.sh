@@ -260,3 +260,45 @@ fm_tasks_axi_backend_available() {
   fm_backlog_backend_manual "$config_dir" && return 1
   fm_tasks_axi_compatible
 }
+
+# Print `<key> <value>` for each key matching <key-alternation> inside
+# [<section>] of <toml-file>, comments and surrounding quotes stripped.
+fm_tasks_axi_toml_entries() {  # <toml-file> <section> <key-alternation>
+  [ -f "$1" ] || return 0
+  LC_ALL=C awk -v section="[$2]" -v keys="^($3)[[:space:]]*=" '
+    function trim(v) { sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v); return v }
+    BEGIN { insection = 0 }
+    {
+      line = $0
+      sub(/[[:space:]]*#.*/, "", line)
+      line = trim(line)
+      if (line ~ /^\[[^]]+\]$/) { insection = (line == section); next }
+      if (!insection) next
+      if (line ~ keys) {
+        key = line
+        sub(/[[:space:]]*=.*/, "", key)
+        sub(/^[^=]*=[[:space:]]*/, "", line)
+        gsub(/^"|"$/, "", line); gsub(/^'\''|'\''$/, "", line)
+        printf "%s %s\n", key, line
+      }
+    }
+  ' "$1"
+}
+
+# The Done archive a markdown backlog appends to, as tasks-axi resolves it: the
+# [markdown] archive key of <backlog-root>/.tasks.toml, else of
+# $HOME/.tasks-axi/config.toml, relative to <backlog-root>; without one,
+# done-archive.md beside <backlog-file>.
+fm_tasks_axi_markdown_archive() {  # <backlog-root> <backlog-file>
+  local root=$1 archive
+  archive=$(fm_tasks_axi_toml_entries "$root/.tasks.toml" markdown archive | sed -n 's/^archive //p' | head -1)
+  if [ -z "$archive" ] && [ -n "${HOME:-}" ]; then
+    archive=$(fm_tasks_axi_toml_entries "$HOME/.tasks-axi/config.toml" markdown archive | sed -n 's/^archive //p' | head -1)
+  fi
+  case "$archive" in
+    '') archive="${2%/*}/done-archive.md" ;;
+    /*) ;;
+    *) archive="$root/$archive" ;;
+  esac
+  printf '%s\n' "$archive"
+}

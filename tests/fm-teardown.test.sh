@@ -5732,6 +5732,13 @@ test_status_archive_opt_in() {
     mkdir -p "$case_dir/data/old"
     printf 'old archive\n' > "$case_dir/data/old/status.log"
     touch -t 200001010000 "$case_dir/data/old/status.log"
+    mkdir -p "$case_dir/data/archive/2026-09/moved" "$case_dir/elsewhere/linked"
+    printf 'moved archive\n' > "$case_dir/data/archive/2026-09/moved/status.log"
+    printf 'report\n' > "$case_dir/data/archive/2026-09/moved/report.md"
+    printf 'outside\n' > "$case_dir/elsewhere/linked/status.log"
+    touch -t 200001010000 "$case_dir/data/archive/2026-09/moved/status.log" "$case_dir/data/archive/2026-09/moved/report.md" \
+      "$case_dir/elsewhere/linked/status.log"
+    ln -s "$case_dir/elsewhere" "$case_dir/data/archive/2026-08"
     [ "$mode" = off ] || touch "$case_dir/config/status-archive"
     rc=0
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
@@ -5739,12 +5746,17 @@ test_status_archive_opt_in() {
     assert_absent "$case_dir/state/task-x1.status" "live status survived teardown"
     if [ "$mode" = on ]; then
       cmp -s "$case_dir/expected" "$case_dir/data/task-x1/status.log" || fail "opt-in archive lost history"
+      assert_absent "$case_dir/data/old/status.log" "an archive older than 30 days survived"
+      assert_absent "$case_dir/data/archive/2026-09/moved/status.log" "an old archive in a swept folder escaped the prune"
+      assert_present "$case_dir/data/archive/2026-09/moved/report.md" "the prune touched a swept folder's report"
+      assert_present "$case_dir/elsewhere/linked/status.log" "the prune followed a symlinked archive month"
     else
       assert_absent "$case_dir/data/task-x1/status.log" "default-off teardown created an archive"
       assert_present "$case_dir/data/old/status.log" "default-off teardown pruned an archive"
+      assert_present "$case_dir/data/archive/2026-09/moved/status.log" "default-off teardown pruned a swept folder"
     fi
   done
-  pass "status archival is opt-in and preserves the complete log"
+  pass "status archival is opt-in, preserves the complete log, and prunes old logs in data/ and data/archive/"
 }
 
 test_record_export_config_absent_never_reads_the_exporter() {

@@ -416,6 +416,51 @@ test_lapse_unreadable_history_closes_nothing() {
   pass "lapse refuses arguments and closes nothing when it cannot read the goal links"
 }
 
+# The task output archive's backlog read. Closed rows come from Done and from
+# the Done archive (a reused id counts by its newest close); a row is due 14 or
+# more days after its close unless an open row's full text names it.
+test_archive_due() {
+  local dir out old recent edge long rc=0
+  dir=$(lapse_home archive-due)
+  old=2020-01-05 recent=$(lapse_days_ago 13) edge=$(lapse_days_ago 14)
+  {
+    printf '## Archived 2020-01-06\n'
+    printf -- '- [x] arch-old - archived long ago (repo: r1) (kind: ship) (merged %s)\n' "$old"
+    printf -- '  notes that mention (reported 2026-11-01) in prose stay prose\n\n'
+    printf -- '- [x] arch-reused - first close (kind: scout) (reported 2020-01-01)\n'
+    printf -- '- [x] arch-ref - a later task builds on this (done %s)\n' "$old"
+    printf -- '- [x] arch-held - a captain call names this (done %s)\n' "$old"
+    printf -- '- [x] arch-long - named deep in a long body (done %s)\n' "$old"
+    printf -- '- [x] arch-dot - named at the end of a sentence (done %s)\n' "$old"
+    printf -- '- [x] arch-edge - closed exactly 14 days ago (done %s)\n' "$edge"
+    printf -- '- [x] arch-young - closed 13 days ago (done %s)\n\n' "$recent"
+    printf '## Archived %s\n' "$recent"
+    printf -- '- [x] arch-reused - reused id, closed again lately (done %s)\n' "$recent"
+  } > "$dir/data/done-archive.md"
+  lapse_wrapper "$dir" add live-old "closed long ago, still in Done" >/dev/null || fail "add live-old"
+  lapse_wrapper "$dir" 'done' live-old >/dev/null || fail "done live-old"
+  sed -i.bak "s/^\(- \[x\] live-old .*(done \)[0-9-]*)/\1$old)/" "$dir/data/backlog.md" && rm -f "$dir/data/backlog.md.bak"
+  lapse_wrapper "$dir" add live-new "closed today" >/dev/null || fail "add live-new"
+  lapse_wrapper "$dir" 'done' live-new >/dev/null || fail "done live-new"
+  lapse_wrapper "$dir" add follow-1 "builds on the old work" --body "see data/arch-ref/report.md" >/dev/null || fail "add follow-1"
+  lapse_wrapper "$dir" add call-1 "captain call" --kind captain >/dev/null || fail "add call-1"
+  lapse_wrapper "$dir" hold call-1 --reason "waiting on arch-held, for the captain" --kind captain >/dev/null || fail "hold call-1"
+  long=$(printf 'padding %.0s' $(seq 1 80))
+  lapse_wrapper "$dir" add long-1 "long notes" --body "$long then arch-long at the very end" >/dev/null || fail "add long-1"
+  lapse_wrapper "$dir" add dot-1 "short notes" --body "This continues arch-dot." >/dev/null || fail "add dot-1"
+  out=$(lapse_wrapper "$dir" list --fields body)
+  assert_contains "$out" "truncated" "the long body must be cut in the list view for this case to prove the full read"
+  before=$(cat "$dir/data/backlog.md" "$dir/data/done-archive.md")
+  out=$(lapse_wrapper "$dir" archive-due) || fail "archive-due failed: $out"
+  assert_equals "$(printf 'arch-edge\t%s\narch-old\t%s\nlive-old\t%s\narchive-due closed=10 due=3' "$edge" "$old" "$old")" "$out" \
+    "archive-due must list exactly the old closed rows no open row names, by their newest close"
+  assert_equals "$before" "$(cat "$dir/data/backlog.md" "$dir/data/done-archive.md")" "archive-due must change no backlog file"
+  out=$(lapse_wrapper "$dir" archive-due extra 2>&1) || rc=$?
+  expect_code 2 "$rc" "archive-due with an argument"
+  assert_contains "$out" "takes no arguments" "archive-due must refuse arguments"
+  pass "archive-due lists closed rows 14+ days old that no open row names, from Done and the Done archive"
+}
+
 test_guard_reports_regular_code_root_backlog
 test_guard_reports_foreign_link_and_archive
 test_guard_silent_for_single_home
@@ -430,6 +475,7 @@ if [ "$HAVE_TASKS_AXI" = 1 ]; then
   test_lapse_single_row_leaves_done_untouched
   test_lapse_queue_limit_line
   test_lapse_unreadable_history_closes_nothing
+  test_archive_due
 else
   echo "skip: tasks-axi not found; home-addressing cases not run"
 fi

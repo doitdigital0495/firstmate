@@ -77,6 +77,18 @@
 # config/record-sweep holds `on` (a regular file, not a symlink); an absent or
 # any other value is shadow and `lapse` then only lists, like `lapse-due`.
 # `lapse` exits 1 when a goal-link or backlog read fails or a close fails.
+#
+# A third read is this wrapper's own too, for the record sweep's task output
+# archive (bin/fm-reap.sh owns the archive rules):
+#   archive-due list closed rows whose output may be archived, one
+#               `<id> TAB <closed>` line each (the newest close of the id), then
+#               `archive-due closed=<n> due=<n>`. A row is due when it closed 14
+#               or more days ago, in Done or in the markdown Done archive, and
+#               no open row - any state but done, captain holds included - names
+#               its id anywhere in its full text (a word match, so a
+#               `data/<id>/report.md` path counts). The Done archive is replayed
+#               through tasks-axi in a scratch directory, so tasks-axi stays the
+#               one parser of its rows. Read-only; exits 1 when a read fails.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -88,6 +100,7 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 LAPSE_QUEUED_LIMIT=30
 LAPSE_AGE_DAYS=14
+ARCHIVE_AGE_DAYS=14
 # shellcheck source=bin/fm-tasks-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh disable=SC1091
@@ -267,10 +280,118 @@ lapse_command() {  # lapse-due | lapse
   [ "$total" -le "$LAPSE_QUEUED_LIMIT" ] || printf 'queued-over-limit queued=%s limit=%s\n' "$total" "$LAPSE_QUEUED_LIMIT"
   return "$rc"
 }
+# Every closed row as a tasks-axi `list --fields closed` line: the live Done
+# rows, then for a markdown backlog its Done archive, replayed under a scratch
+# Done section so tasks-axi stays the only parser of its own row format. A reused
+# id can be archived more than once and retention appends, so only the last
+# block of each id is replayed.
+archive_closed_rows() {
+  local rows archive dir status=0
+  rows=$(tasks-axi list --state 'done' --fields closed 2>/dev/null) || return 1
+  printf '%s\n' "$rows"
+  [ -n "${FM_BACKLOG_AXI_FILE:-}" ] || return 0
+  archive=$(fm_tasks_axi_markdown_archive "$FM_BACKLOG_AXI_ROOT" "$FM_BACKLOG_AXI_FILE") || return 1
+  [ -e "$archive" ] || [ -L "$archive" ] || return 0
+  [ -f "$archive" ] && [ -r "$archive" ] || return 1
+  dir=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/fm-tasks-axi-closed.XXXXXX") || return 1
+  printf 'backend = "markdown"\n' > "$dir/.tasks.toml" || status=1
+  {
+    printf '## Done\n'
+    LC_ALL=C awk '
+      /^- \[.\] / {
+        id = substr($0, 7); sub(/ .*/, "", id); cur = id
+        if (!(id in block)) order[++n] = id
+        block[id] = $0 "\n"
+        next
+      }
+      cur != "" && ($0 == "" || $0 ~ /^[[:space:]]/) { block[cur] = block[cur] $0 "\n"; next }
+      { cur = "" }
+      END { for (i = 1; i <= n; i++) printf "%s", block[order[i]] }
+    ' "$archive"
+  } > "$dir/backlog.md" || status=1
+  if [ "$status" -eq 0 ]; then
+    rows=$(cd "$dir" && TASKS_AXI_BACKEND=markdown TASKS_AXI_FILE="$dir/backlog.md" \
+      tasks-axi list --state 'done' --fields closed 2>/dev/null) || status=1
+  fi
+  rm -f -- "$dir/backlog.md" "$dir/.tasks.toml"
+  rmdir -- "$dir" 2>/dev/null || true
+  [ "$status" -eq 0 ] || return 1
+  printf '%s\n' "$rows"
+}
+
+# The full text of every open row (any state but done): its listed fields plus,
+# for a row whose list view cut its title or body, the whole `show --full` text.
+# A decoded hold reason may span lines, so a line that starts no row belongs to
+# the row above it.
+archive_open_text() {
+  local rows line rest id state='' full
+  rows=$(set -o pipefail; tasks-axi list --fields body,deps,blocked_by,links,hold_reason 2>/dev/null \
+    | fm_hold_reason_decode_stream) || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      'help['*) break ;;
+      "  "[!\ ]*,queued,* | "  "[!\ ]*,in_flight,* | "  "[!\ ]*,held,* | "  "[!\ ]*,done,*)
+        rest=${line#  }
+        id=${rest%%,*}
+        state=${rest#*,}; state=${state%%,*}
+        [ "$state" != 'done' ] || continue
+        case "$line" in
+          *'(truncated, '*)
+            full=$(set -o pipefail; tasks-axi show "$id" --full 2>/dev/null | fm_hold_reason_decode_stream) || return 1
+            printf '%s\n' "$full"
+            ;;
+        esac
+        ;;
+    esac
+    [ -z "$state" ] || [ "$state" = 'done' ] || printf '%s\n' "$line"
+  done <<< "$rows"
+}
+
+archive_due_command() {
+  local closed open cutoff
+  closed=$(archive_closed_rows) || { printf 'fm-tasks-axi: cannot read the closed rows; nothing is due\n' >&2; return 1; }
+  open=$(archive_open_text) || { printf 'fm-tasks-axi: cannot read the open rows; nothing is due\n' >&2; return 1; }
+  cutoff=$(date -u -d "@$(( $(date +%s) - ARCHIVE_AGE_DAYS * 86400 ))" +%F 2>/dev/null \
+    || date -u -r "$(( $(date +%s) - ARCHIVE_AGE_DAYS * 86400 ))" +%F 2>/dev/null) || return 1
+  case "$cutoff" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;; *) return 1 ;; esac
+  # Pass 1 collects every word of the open text (an id ends at any character a
+  # task id cannot hold; a trailing full stop is dropped). Pass 2 keeps the
+  # newest close of each closed row and prints the rows no open text names.
+  LC_ALL=C awk -v cutoff="$cutoff" '
+    FNR == NR {
+      n = split($0, word, /[^A-Za-z0-9._-]+/)
+      for (i = 1; i <= n; i++) { w = word[i]; named[w] = 1; sub(/[.]+$/, "", w); named[w] = 1 }
+      next
+    }
+    /^  [^ ]/ {
+      line = substr($0, 3)
+      id = line; sub(/,.*/, "", id)
+      state = line; sub(/^[^,]*,/, "", state); sub(/,.*/, "", state)
+      closed = line; sub(/.*,/, "", closed)
+      if (state != "done" || closed !~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) next
+      if (!(id in best) || closed > best[id]) best[id] = closed
+    }
+    END {
+      for (id in best) {
+        total++
+        if ((id in named) || best[id] > cutoff) continue
+        due++
+        print id "\t" best[id] | "LC_ALL=C sort"
+      }
+      close("LC_ALL=C sort")
+      printf "archive-due closed=%d due=%d\n", total, due
+    }
+  ' <(printf '%s\n' "$open") <(printf '%s\n' "$closed")
+}
 case "${1:-}" in
   lapse-due|lapse)
     [ "$#" -eq 1 ] || fail "${1} takes no arguments"
     lapse_command "$1"
+    exit $?
+    ;;
+  archive-due)
+    [ "$#" -eq 1 ] || fail "archive-due takes no arguments"
+    archive_due_command
     exit $?
     ;;
 esac

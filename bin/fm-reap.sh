@@ -81,8 +81,7 @@
 #     reply       fm_pending_reply_sweep_escalated (bin/fm-pending-reply-lib.sh)
 #     rows        bin/fm-tasks-axi.sh `lapse` (shadow: `lapse-due`)
 #     suggestions bin/fm-suggestions.sh `expire` (shadow: `expire --dry-run`)
-#     archive     record_sweep_task_output_archive, the hook where the task
-#                 output archive plugs in; it does nothing yet
+#     archive     the task output archive (see "Task output archive" below)
 #   shadow only lists what each owner would close and closes nothing; on closes
 #   through the owners, which never delete a record and never merge, push,
 #   publish, send, spend or grant access (the lapse keeps bin/fm-captain-hold.sh's
@@ -101,8 +100,39 @@
 #   the lock state/.record-sweep.lock (a lock older than six hours is stale),
 #   and sends the run's output to state/record-sweep.log. Bootstrap arms it
 #   while config/record-sweep exists. FM_RECORD_SWEEP_CAPTAIN_HOLD,
-#   FM_RECORD_SWEEP_TASKS_AXI and FM_RECORD_SWEEP_SUGGESTIONS replace the owner
-#   commands for tests only.
+#   FM_RECORD_SWEEP_TASKS_AXI, FM_RECORD_SWEEP_SUGGESTIONS, FM_RECORD_SWEEP_GOAL
+#   and FM_RECORD_SWEEP_PROCEVENT replace the owner commands for tests only.
+#
+# Task output archive: the sweep's last step moves data/<task>/ to
+#   data/archive/<YYYY-MM>/<task>/, the month of the task's close, and never
+#   deletes; report.md and every other file move unchanged. A folder moves only
+#   when all of these hold:
+#     - bin/fm-tasks-axi.sh `archive-due` lists the task: its row closed 14 or
+#       more days ago and no open row (a captain hold is one) names its id;
+#     - no state/<task>.meta, and no item of an active goal links the task
+#       (bin/fm-goal.sh launch-links, any verdict);
+#     - no Lavish board keeps it: a registered board (state/procevent/*.source)
+#       naming the task as owner or pointing into the folder, an open session on
+#       a file in it with an answer waiting or a listener attached, unless that
+#       board ends in this same step (below);
+#     - it is not, and does not hold, the current cockpit directory
+#       (COCKPIT_DATA_DIR, default data/miko-all-in-one-lavish);
+#     - nothing in the folder itself changed in the last 14 days, and the target
+#       does not exist yet; a symlinked data/archive or month directory is never
+#       followed.
+#   A Lavish board owned by a task the step may archive ends with it once the
+#   board has been quiet for FM_REAP_BOARD_SECS and no answer waits on it:
+#   bin/fm-procevent.sh retire drops the registration (it refuses while a
+#   captured round is unacknowledged, which keeps the board), then
+#   `lavish-axi end` ends the session, which a plain `lavish-axi <file>` can
+#   reopen. A session still open on a file inside a moving folder is ended first.
+#   Shadow lists `would move` and `would end board` lines and changes nothing;
+#   on moves and ends; both name each kept folder with its first reason and
+#   count `archive=` and `boards=` in the summary. A step failure (an unreadable
+#   backlog, goal links or session listing) moves nothing. Move a folder back
+#   with: mv data/archive/<YYYY-MM>/<task> data/<task>
+#   bin/fm-task-milestones.sh and teardown's status-archive prune follow a
+#   moved folder there.
 #
 # sweep-state considers only the three families below; anything else in state/,
 #   including task records, wake queues, .seen-* dedup records, inboxes and
@@ -145,6 +175,9 @@ RECORD_SWEEP_INTERVAL=${FM_RECORD_SWEEP_INTERVAL_SECS:-604800}
 RECORD_SWEEP_CAPTAIN_HOLD=${FM_RECORD_SWEEP_CAPTAIN_HOLD:-$SCRIPT_DIR/fm-captain-hold.sh}
 RECORD_SWEEP_TASKS_AXI=${FM_RECORD_SWEEP_TASKS_AXI:-$SCRIPT_DIR/fm-tasks-axi.sh}
 RECORD_SWEEP_SUGGESTIONS=${FM_RECORD_SWEEP_SUGGESTIONS:-$SCRIPT_DIR/fm-suggestions.sh}
+RECORD_SWEEP_GOAL=${FM_RECORD_SWEEP_GOAL:-$SCRIPT_DIR/fm-goal.sh}
+RECORD_SWEEP_PROCEVENT=${FM_RECORD_SWEEP_PROCEVENT:-$SCRIPT_DIR/fm-procevent.sh}
+ARCHIVE_QUIET_SECS=1209600
 REPEAT_BASE=${FM_REAP_REPEAT_BASE_SECS:-3600}
 REPEAT_CAP=${FM_REAP_REPEAT_CAP_SECS:-86400}
 
@@ -612,12 +645,241 @@ record_sweep_mode() {
   [ "$m" = on ] && printf on || printf shadow
 }
 
-# Item 8 plugs in here: the task output archive (folders of long-closed tasks
-# moved under data/archive/<YYYY-MM>/). It follows the contract of every step:
-# shadow lists what it would move and moves nothing, on moves through its owner
-# and never deletes. Until it is built this does nothing.
+# --- task output archive (step 6 of the record sweep) ------------------------
+
+# <source-file> -> the value of a header <field>, read only above its argv.
+archive_source_field() {  # <source-file> <field>
+  awk -F= -v k="$2" '/^argv:$/ { exit } $1 == k { v = substr($0, length(k) + 2) } END { print v }' "$1" 2>/dev/null
+}
+
+# <source-file> -> the data folder names its argv points into, one per line.
+archive_source_folders() {  # <source-file>
+  awk -v a="$DATA/" -v b="$ARCHIVE_DATA_REAL/" '
+    /^argv:$/ { argv = 1; next }
+    argv {
+      p = index($0, a) == 1 ? a : (index($0, b) == 1 ? b : "")
+      if (p == "") next
+      rest = substr($0, length(p) + 1); sub(/\/.*/, "", rest)
+      if (rest != "") print rest
+    }' "$1" 2>/dev/null | LC_ALL=C sort -u
+}
+
+# <source-file> -> the Lavish artifact its listener polls: the argv after `poll`.
+archive_source_artifact() {  # <source-file>
+  awk '/^argv:$/ { argv = 1; next } argv && prev == "poll" { print; exit } argv { prev = $0 }' "$1" 2>/dev/null
+}
+
+# Lavish's own session listing as `<file> TAB <status> TAB <pending> TAB <listener>`.
+archive_sessions() {
+  awk '
+    {
+      line = $0; sub(/^[[:space:]]+/, "", line)
+      if (substr(line, 1, 1) != "/") next
+      i = index(line, ","); file = substr(line, 1, i - 1); rest = substr(line, i + 1)
+      i = index(rest, ","); status = substr(rest, 1, i - 1); rest = substr(rest, i + 1)
+      if (substr(rest, 1, 1) == "\"") { rest = substr(rest, 2); i = index(rest, "\""); rest = substr(rest, i + 2) }
+      else { i = index(rest, ","); rest = substr(rest, i + 1) }
+      i = index(rest, ","); pending = substr(rest, 1, i - 1); listener = substr(rest, i + 1)
+      print file "\t" status "\t" pending "\t" listener
+    }'
+}
+
+# The data folder name a path lies in, or nothing.
+archive_folder_of() {  # <path>
+  local rest
+  case "$1" in
+    "$ARCHIVE_DATA_REAL"/?*) rest=${1#"$ARCHIVE_DATA_REAL"/} ;;
+    "$DATA"/?*) rest=${1#"$DATA"/} ;;
+    *) return 0 ;;
+  esac
+  printf '%s' "${rest%%/*}"
+}
+
+# Record why <folder> stays: the first reason wins.
+archive_block() {  # <folder> <reason>
+  case "$ARCHIVE_BLOCKED" in *" $1 "*) return 0 ;; esac
+  ARCHIVE_BLOCKED="$ARCHIVE_BLOCKED$1 "
+  ARCHIVE_REASONS="$ARCHIVE_REASONS$1"$'\t'"$2"$'\n'
+}
+
+archive_reason() {  # <folder>
+  printf '%s\n' "$ARCHIVE_REASONS" | awk -F'\t' -v f="$1" '$1 == f { print $2; exit }'
+}
+
+archive_kept() {  # <folder> <reason>
+  [ -d "$DATA/$1" ] && [ ! -L "$DATA/$1" ] || return 0
+  printf 'kept data/%s: %s\n' "$1" "$2"
+  ARCHIVE_KEPT=$((ARCHIVE_KEPT + 1))
+}
+
+# The task output archive. The header's "Task output archive" owns the rules;
+# this sets ARCHIVE_MOVED and ARCHIVE_BOARDS for the summary.
 record_sweep_task_output_archive() {  # <shadow|on>
-  return 0
+  local mode=$1 out due id closed links linked eligible=' ' sessions='' src base owner adapter art
+  local folders f newest t quiet file status pending listener ending='' ended=$'\n' cockpit dir month dest now rc=0
+  ARCHIVE_MOVED=0 ARCHIVE_BOARDS=0 ARCHIVE_KEPT=0 ARCHIVE_BLOCKED=' ' ARCHIVE_REASONS=''
+  command -v tasks-axi >/dev/null 2>&1 || return 0
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  if ! command -v fm_run_timed >/dev/null 2>&1; then
+    # shellcheck source=bin/fm-timeout-lib.sh
+    . "$SCRIPT_DIR/fm-timeout-lib.sh"
+  fi
+  ARCHIVE_DATA_REAL=$(cd "$DATA" 2>/dev/null && pwd -P) || { printf 'archive: data directory unavailable; nothing moved\n'; return 1; }
+  if [ -L "$DATA/archive" ] || { [ -e "$DATA/archive" ] && [ ! -d "$DATA/archive" ]; }; then
+    printf 'archive: data/archive is not a real directory; nothing moved\n'
+    return 1
+  fi
+  out=$("$RECORD_SWEEP_TASKS_AXI" archive-due 2>&1) || { printf 'archive: %s; nothing moved\n' "$(record_sweep_last "$out")"; return 1; }
+  due=$(printf '%s\n' "$out" | awk -F'\t' 'NF == 2 && $2 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/')
+  if [ -z "$due" ]; then
+    printf 'archive (%s): nothing due\n' "$mode"
+    return 0
+  fi
+  links=$("$RECORD_SWEEP_GOAL" launch-links 2>/dev/null) || { printf 'archive: cannot read the goal links; nothing moved\n'; return 1; }
+  linked=" $(printf '%s\n' "$links" | awk -F'\t' 'NF >= 2 { printf "%s ", $1 }')"
+  if command -v lavish-axi >/dev/null 2>&1; then
+    out=$(fm_run_timed 60 lavish-axi 2>/dev/null) || { printf 'archive: cannot list the Lavish sessions; nothing moved\n'; return 1; }
+    sessions=$(printf '%s\n' "$out" | archive_sessions)
+  fi
+  now=$(date +%s)
+
+  # A closed row whose task left no record and that no goal item links.
+  while IFS=$'\t' read -r id closed; do
+    case "$id" in '' | . | .. | archive | */* | -*) continue ;; esac
+    if [ -e "$STATE/$id.meta" ] || [ -L "$STATE/$id.meta" ]; then archive_kept "$id" 'its task record is still present'; continue; fi
+    case "$linked" in *" $id "*) archive_kept "$id" 'an active goal item links it'; continue ;; esac
+    eligible="$eligible$id "
+  done <<EOF2
+$due
+EOF2
+
+  # Lavish sessions: a waiting answer or another listener keeps the folder.
+  while IFS=$'\t' read -r file status pending listener; do
+    [ "$status" = open ] || continue
+    f=$(archive_folder_of "$file")
+    [ -n "$f" ] || continue
+    [ "$pending" = 0 ] || archive_block "$f" "a Lavish answer is waiting on $file"
+  done <<EOF2
+$sessions
+EOF2
+
+  # Registered boards: a board of an eligible task that has been quiet for
+  # FM_REAP_BOARD_SECS ends with its task; any other board keeps every folder it
+  # names (its owner task's and the one its page lives in).
+  for src in "$STATE"/procevent/*.source; do
+    [ -f "$src" ] && [ ! -L "$src" ] || continue
+    base=$(basename -- "$src" .source)
+    owner=$(archive_source_field "$src" owner_task)
+    adapter=$(archive_source_field "$src" adapter)
+    folders=$(archive_source_folders "$src")
+    art=$(archive_source_artifact "$src")
+    quiet=0
+    if [ "$adapter" = lavish ] && [ -n "$owner" ]; then
+      case "$eligible" in *" $owner "*) quiet=1 ;; esac
+    fi
+    if [ "$quiet" -eq 1 ]; then
+      newest=$(fm_path_mtime "$src") || newest=$now
+      for t in "$STATE/procevent-inbox/$base".*.result; do
+        [ -f "$t" ] || continue
+        t=$(fm_path_mtime "$t") || t=$now
+        [ "$t" -le "$newest" ] || newest=$t
+      done
+      [ $(( now - newest )) -ge "$BOARD_SECS" ] || quiet=0
+      if [ -n "$art" ] && printf '%s\n' "$sessions" | awk -F'\t' -v a="$art" '$1 == a && $2 == "open" && $3 != "0" { found = 1 } END { exit !found }'; then
+        quiet=0
+      fi
+    fi
+    if [ "$quiet" -eq 1 ]; then
+      ending="$ending$base"$'\t'"$owner"$'\t'"$art"$'\n'
+      continue
+    fi
+    for f in $owner $folders; do archive_block "$f" "Lavish board $base${owner:+ of task $owner} is live"; done
+  done
+
+  # Open sessions with a listener no ending board owns keep their folder too.
+  while IFS=$'\t' read -r file status pending listener; do
+    [ "$status" = open ] && [ -n "$listener" ] && [ "$listener" != none ] || continue
+    f=$(archive_folder_of "$file")
+    [ -n "$f" ] || continue
+    printf '%s' "$ending" | awk -F'\t' -v a="$file" '$3 == a { found = 1 } END { exit !found }' && continue
+    archive_block "$f" "a Lavish listener is attached to $file"
+  done <<EOF2
+$sessions
+EOF2
+
+  # End the boards of tasks being archived: retire the registration first, so
+  # the ended session is never captured as a new round, then end the session.
+  while IFS=$'\t' read -r base owner art; do
+    [ -n "$base" ] || continue
+    if [ "$mode" != on ]; then
+      printf 'would end board %s of task %s\n' "$base" "$owner"
+      ARCHIVE_BOARDS=$((ARCHIVE_BOARDS + 1))
+      continue
+    fi
+    if ! out=$("$RECORD_SWEEP_PROCEVENT" retire "$base" 2>&1 < /dev/null); then
+      printf 'kept board %s of task %s: %s\n' "$base" "$owner" "$(record_sweep_last "$out")"
+      for f in $owner $(archive_folder_of "$art"); do archive_block "$f" "Lavish board $base could not be retired"; done
+      continue
+    fi
+    if [ -n "$art" ] && printf '%s\n' "$sessions" | awk -F'\t' -v a="$art" '$1 == a && $2 == "open" { found = 1 } END { exit !found }'; then
+      if ! out=$(fm_run_timed 60 lavish-axi end "$art" 2>&1 < /dev/null); then
+        printf 'kept board %s of task %s: retired, but its Lavish session did not end: %s\n' "$base" "$owner" "$(record_sweep_last "$out")"
+        for f in $owner $(archive_folder_of "$art"); do archive_block "$f" "the Lavish session on $art did not end"; done
+        rc=1
+        continue
+      fi
+    fi
+    ended="$ended$art"$'\n'
+    printf 'ended board %s of task %s\n' "$base" "$owner"
+    ARCHIVE_BOARDS=$((ARCHIVE_BOARDS + 1))
+  done <<EOF2
+$ending
+EOF2
+
+  cockpit=$(cd "${COCKPIT_DATA_DIR:-$FM_HOME/data/miko-all-in-one-lavish}" 2>/dev/null && pwd -P) || cockpit=''
+  while IFS=$'\t' read -r id closed; do
+    case "$eligible" in *" $id "*) ;; *) continue ;; esac
+    dir="$DATA/$id"
+    [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+    month=${closed%-*}
+    dest="$DATA/archive/$month/$id"
+    case "$ARCHIVE_BLOCKED" in *" $id "*) archive_kept "$id" "$(archive_reason "$id")"; continue ;; esac
+    case "$cockpit" in "$ARCHIVE_DATA_REAL/$id" | "$ARCHIVE_DATA_REAL/$id"/*) archive_kept "$id" 'it holds the current cockpit'; continue ;; esac
+    t=$(fm_path_mtime "$dir") || t=$now
+    if [ $(( now - t )) -lt "$ARCHIVE_QUIET_SECS" ]; then archive_kept "$id" 'it changed in the last 14 days'; continue; fi
+    if [ -L "$DATA/archive/$month" ]; then archive_kept "$id" "data/archive/$month is a symlink"; continue; fi
+    if [ -e "$dest" ] || [ -L "$dest" ]; then archive_kept "$id" "data/archive/$month/$id already exists"; continue; fi
+    if [ "$mode" != on ]; then
+      printf 'would move data/%s to data/archive/%s/%s (closed %s)\n' "$id" "$month" "$id" "$closed"
+      ARCHIVE_MOVED=$((ARCHIVE_MOVED + 1))
+      continue
+    fi
+    # A page left open on a file inside the folder would lose it; end it first.
+    while IFS=$'\t' read -r file status pending listener; do
+      [ "$status" = open ] && [ "$(archive_folder_of "$file")" = "$id" ] || continue
+      case "$ended" in *$'\n'"$file"$'\n'*) continue ;; esac
+      fm_run_timed 60 lavish-axi end "$file" >/dev/null 2>&1 < /dev/null || { dest=''; break; }
+    done <<EOF2
+$sessions
+EOF2
+    if [ -z "$dest" ]; then archive_kept "$id" 'a Lavish session on it did not end'; rc=1; continue; fi
+    if mkdir -p -- "$DATA/archive/$month" && mv -- "$dir" "$dest"; then
+      printf 'moved data/%s to data/archive/%s/%s (closed %s)\n' "$id" "$month" "$id" "$closed"
+      ARCHIVE_MOVED=$((ARCHIVE_MOVED + 1))
+    else
+      archive_kept "$id" 'the move failed'
+      rc=1
+    fi
+  done <<EOF2
+$due
+EOF2
+  if [ "$mode" = on ]; then
+    printf 'archive (on): %s folder(s) moved, %s board(s) ended, %s kept\n' "$ARCHIVE_MOVED" "$ARCHIVE_BOARDS" "$ARCHIVE_KEPT"
+  else
+    printf 'archive (shadow): %s folder(s) would move, %s board(s) would end, %s kept\n' "$ARCHIVE_MOVED" "$ARCHIVE_BOARDS" "$ARCHIVE_KEPT"
+  fi
+  return "$rc"
 }
 
 # <key> <line> -> the number in `key=<n>` on the line, or 0.
@@ -740,7 +1002,8 @@ EOF
     skipped="${skipped:+$skipped,}jq"
   fi
 
-  # 6. The task output archive (item 8) plugs in here.
+  # 6. Folders of long-closed tasks move under data/archive/, their boards end.
+  ARCHIVE_MOVED=0 ARCHIVE_BOARDS=0
   record_sweep_task_output_archive "$mode" || failed="${failed:+$failed,}archive"
 
   # Caps are read after the closes, so a cap the sweep just cleared does not wake.
@@ -757,7 +1020,7 @@ EOF
     [ "$calls_over" -eq 0 ] || wake="${wake:+$wake; }$calls_over open captain calls, over the limit of 10 - decide within standing authority or merge calls"
   fi
   now=$(date +%s)
-  sum="at=$now mode=$mode $([ "$mode" = on ] && printf closed || printf would-close) lapse=$lapse_n mirror=$mirror_n reply=$reply_n rows=$rows_n suggestions=$sugg_n queued-over=$queued_over calls-over=$calls_over woke=$([ -n "$wake" ] && printf yes || printf no)"
+  sum="at=$now mode=$mode $([ "$mode" = on ] && printf closed || printf would-close) lapse=$lapse_n mirror=$mirror_n reply=$reply_n rows=$rows_n suggestions=$sugg_n archive=$ARCHIVE_MOVED boards=$ARCHIVE_BOARDS queued-over=$queued_over calls-over=$calls_over woke=$([ -n "$wake" ] && printf yes || printf no)"
   [ -z "$skipped" ] || sum="$sum skipped=$skipped"
   [ -z "$failed" ] || sum="$sum failed=$failed"
   if [ -n "$wake" ]; then

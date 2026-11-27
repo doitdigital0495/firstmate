@@ -175,6 +175,18 @@ assert_contains "$("$TOOL" durations "$FILE")" $'torn\t130\t100\t1\t1\t0\t0' 'po
 grep -q '^working' "$TMP_ROOT/torn-home/data/torn/milestones.status" && fail 'archive copied worker state lines'
 pass 'teardown archive keeps milestones durable and late stamps append there without an orphan status log'
 
+# The weekly record sweep moves a long-closed task's folder under
+# data/archive/<YYYY-MM>/; reads and late stamps follow it there.
+mkdir -p "$TMP_ROOT/torn-home/data/archive/2026-09"
+mv "$TMP_ROOT/torn-home/data/torn" "$TMP_ROOT/torn-home/data/archive/2026-09/torn"
+FILE="$TMP_ROOT/torn-home/state/torn.status"
+assert_contains "$("$TOOL" durations "$FILE")" $'torn\t130\t100\t1\t1\t0\t0' 'a moved folder lost its milestone history'
+"$TOOL" stamp "$FILE" merge at=400 sha="$SHA" -- 'https://example.invalid/pr/1' || fail 'a late stamp into a moved folder was refused'
+[ ! -e "$TMP_ROOT/torn-home/data/torn" ] || fail 'a late stamp recreated the moved task folder'
+[ "$(grep -c '^milestone' "$TMP_ROOT/torn-home/data/archive/2026-09/torn/milestones.status")" = 12 ] \
+  || fail 'a late stamp did not append to the moved milestone archive'
+pass 'milestone reads and late stamps follow a task folder the record sweep moved to data/archive/'
+
 FILE="$TMP_ROOT/deadlines.status"
 stamp brief at=50
 stamp local-proof at=100 sha="$SHA"
