@@ -1040,7 +1040,7 @@ tests/fm-warm-compact.test.sh 1500
 tests/fm-watch-arm.test.sh 113076
 tests/fm-watch-checkpoint.test.sh 11234
 tests/fm-watch-inbox-meta.test.sh 283
-tests/fm-watch-long-cycle-beat.test.sh 45000
+tests/fm-watch-long-cycle-beat.test.sh 30000
 tests/fm-watch-imposed-holds.test.sh 3352
 tests/fm-watch-open-decisions.test.sh 11821
 tests/fm-watch-recovery-loop.test.sh 59092
