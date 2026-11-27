@@ -461,6 +461,25 @@ test_archive_due() {
   pass "archive-due lists closed rows 14+ days old that no open row names, from Done and the Done archive"
 }
 
+test_queued_count_for_budget_line() {
+  local dir out rc=0
+  dir=$(lapse_home queued-count)
+  out=$(lapse_wrapper "$dir" queued-count) || fail "queued-count failed on an empty backlog"
+  assert_equals "queued=0 limit=30" "$out" "an empty backlog must read zero queued rows, with the cap"
+  lapse_wrapper "$dir" add q-1 "one" --repo r1 >/dev/null
+  lapse_wrapper "$dir" add q-2 "two, with a comma" --repo r1 >/dev/null
+  lapse_wrapper "$dir" add q-3 "three" --repo r1 >/dev/null
+  lapse_wrapper "$dir" hold q-3 --reason "waiting" --kind captain >/dev/null
+  lapse_wrapper "$dir" add q-4 "four" --repo r1 >/dev/null
+  lapse_wrapper "$dir" 'done' q-4 >/dev/null
+  out=$(lapse_wrapper "$dir" queued-count) || fail "queued-count failed"
+  assert_equals "queued=3 limit=30" "$out" "queued-count must count every Queued row, held or not, and no Done row"
+  out=$(lapse_wrapper "$dir" queued-count extra 2>&1) || rc=$?
+  expect_code 2 "$rc" "queued-count with an argument"
+  assert_contains "$out" "takes no arguments" "queued-count must refuse arguments"
+  pass "queued-count prints the Queued row total and the 30-row cap for the cockpit budget line"
+}
+
 test_guard_reports_regular_code_root_backlog
 test_guard_reports_foreign_link_and_archive
 test_guard_silent_for_single_home
@@ -476,6 +495,7 @@ if [ "$HAVE_TASKS_AXI" = 1 ]; then
   test_lapse_queue_limit_line
   test_lapse_unreadable_history_closes_nothing
   test_archive_due
+  test_queued_count_for_budget_line
 else
   echo "skip: tasks-axi not found; home-addressing cases not run"
 fi

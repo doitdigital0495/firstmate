@@ -40,7 +40,7 @@
 #   fm-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
 #   fm-captain-hold.sh answered <task-id>  (read-only; a completed call with the captain's own answer)
 #   fm-captain-hold.sh diverged [--close-mirror]
-#   fm-captain-hold.sh call-budget
+#   fm-captain-hold.sh call-budget [--count]
 #   fm-captain-hold.sh reconcile list
 #   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   fm-captain-hold.sh reconcile note <task-id> --note-file <path>
@@ -2805,8 +2805,28 @@ close_mirror_keys() {
   return "$rc"
 }
 
+# `call-budget --count`: the cockpit budget line's read. One `open=<n> limit=10
+# oldest=<YYYY-MM-DD|none>` line over the same open captain calls the warning
+# counts; the oldest is the earliest created date among them. A backlog that
+# cannot be read prints nothing and exits 1, so the caller shows no count.
+command_call_budget_count() {
+  local data out
+  command -v tasks-axi >/dev/null 2>&1 || return 1
+  data=$(fm_backlog_data_absolute "$DATA") || return 1
+  out=$(fm_backlog_row_list "$data" --fields created,hold_kind 2>/dev/null) || return 1
+  printf '%s\n' "$out" | awk -F, '
+    /^  [A-Za-z0-9._-]+,/ && $2 != "done" && $NF == "captain" {
+      n++
+      d = $(NF - 1)
+      if (d ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ && (oldest == "" || d < oldest)) oldest = d
+    }
+    END { printf "open=%d limit=10 oldest=%s\n", n, (oldest == "" ? "none" : oldest) }
+  '
+}
+
 command_call_budget() {
   local ids count mode=' (shadow)'
+  if [ "${1:-}" = --count ] && [ "$#" -eq 1 ]; then command_call_budget_count; return; fi
   [ "$#" -eq 0 ] || { usage >&2; exit 2; }
   command -v tasks-axi >/dev/null 2>&1 || return 0
   ids=$(open_captain_task_ids) || return 0

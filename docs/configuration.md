@@ -2803,6 +2803,8 @@ The caps are more than 30 Queued rows and more than 10 open captain calls.
 A lapse is reported to the captain in the next report as not needed, never as his answer.
 `bin/fm-reap.sh`'s header owns the step order, the summary fields, the wake rules and the lock.
 `tests/fm-reap.test.sh` covers shadow, `on`, the wake rules and the weekly check.
+Each home's cockpit page shows one budget line with the queued rows against 30, the open captain calls against 10 with the oldest age, the startup memory tokens, the `data/` size, the last sweep and its would-close counts.
+Every number comes from its owner (`bin/fm-tasks-axi.sh queued-count`, `bin/fm-captain-hold.sh call-budget --count`, `bin/fm-startup-memory-budget.sh report`, `bin/fm-reap.sh sweep-records-summary`), a home with no summary reads "no sweep yet", and `tools/cockpit/cockpit-sync.py --help` owns the page contract.
 Roll out with a shadow week, then write `on`; writing `shadow` or removing the file stops every close at once, and each close is undoable through its owner.
 
 The task output archive keeps old task folders from piling up in `data/`: the folder of a task closed 14 or more days ago moves to `data/archive/<YYYY-MM>/<task>/`, the month of its close, and nothing in it is deleted, so its `report.md` stays a plain readable file.

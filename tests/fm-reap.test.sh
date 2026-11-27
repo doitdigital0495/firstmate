@@ -833,6 +833,24 @@ assert_contains "$out" 'sweep-records: mode=shadow' 'a stale lock is replaced'
 assert_absent "$RS_STATE/.record-sweep.lock" 'the sweep releases its lock'
 pass 'sweep-records: a live lock skips the run, a stale one is replaced'
 
+# The cockpit budget line reads the summary through the owner, never the file.
+rs_reset
+rm -f "$RS_STATE/.record-sweep-summary"
+assert_equals '' "$(rs_sweep sweep-records-summary)" 'no summary before the first sweep prints nothing'
+printf 'at=1795800000 mode=shadow would-close lapse=2 mirror=1 reply=0 rows=3 suggestions=4 queued-over=0 calls-over=0 woke=no\n' \
+  > "$RS_STATE/.record-sweep-summary"
+assert_equals "$(cat "$RS_STATE/.record-sweep-summary")" "$(rs_sweep sweep-records-summary)" 'a clean summary prints as written'
+printf 'at=1795800000 mode=on closed lapse=2 mirror=1 reply=0 rows=3 suggestions=4 archive=5 boards=1 queued-over=0 calls-over=0 woke=no skipped=tasks-axi,jq failed=reply,archive,lapse-list\n' \
+  > "$RS_STATE/.record-sweep-summary"
+assert_equals 'at=1795800000 mode=on closed lapse=unknown mirror=unknown reply=unknown rows=unknown suggestions=unknown archive=unknown boards=unknown queued-over=0 calls-over=0 woke=no skipped=tasks-axi,jq failed=reply,archive,lapse-list' \
+  "$(rs_sweep sweep-records-summary)" 'a skipped or failed step must read unknown, never its stored number'
+printf 'not a summary\n' > "$RS_STATE/.record-sweep-summary"
+assert_equals '' "$(rs_sweep sweep-records-summary)" 'an unreadable summary prints nothing'
+rm -f "$RS_STATE/.record-sweep-summary"; ln -s "$RS/fix" "$RS_STATE/.record-sweep-summary"
+assert_equals '' "$(rs_sweep sweep-records-summary)" 'a symlinked summary prints nothing'
+rm -f "$RS_STATE/.record-sweep-summary"
+pass 'sweep-records-summary: nothing before a sweep, unknown for steps the sweep could not measure'
+
 rs_sweep sweep-records-arm >/dev/null 2>&1 || true
 assert_present "$RS_STATE/record-sweep.check.sh" 'sweep-records-arm writes the watcher check'
 assert_contains "$(<"$RS_STATE/record-sweep.check.sh")" 'fm-reap.sh sweep-records-check' 'the check runs the sweep check'

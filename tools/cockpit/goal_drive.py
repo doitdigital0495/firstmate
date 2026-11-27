@@ -3,6 +3,7 @@
 
 import argparse
 from collections import Counter, defaultdict
+import datetime
 import hashlib
 import html
 from html.parser import HTMLParser
@@ -30,8 +31,8 @@ ATTRIBUTE = re.compile(r' data-fm-goal-drive="(?:on|off)"(?=>)|'
                        r' data-fm-goal-status="(?:' + '|'.join(STATUSES) + r')"(?=>)')
 STYLE = '''<style>
 [data-fm-goal-drive="off"], .fm-goal-kpi-off { filter: grayscale(1); }
-#fm-goal-kpis { list-style:none; margin:4px 0 8px; padding:0; }
-#fm-goal-kpis > li { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 8px; margin:0 0 4px;
+#fm-goal-kpis, #fm-budget-lines { list-style:none; margin:4px 0 8px; padding:0; }
+#fm-goal-kpis > li, #fm-budget-lines > li { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 8px; margin:0 0 4px;
     border:1px solid #465369; border-radius:6px; padding:3px 6px; background:#141821;
     color:#f2f4f8; font-size:.875rem; }
 .fm-goal-kpi-title { flex:1 1 8rem; min-inline-size:0; color:inherit;
@@ -39,12 +40,18 @@ STYLE = '''<style>
 .fm-goal-kpi-metrics { flex:none; max-inline-size:75%; display:flex; flex-wrap:wrap;
     gap:2px 4px; font-size:.75rem; }
 .fm-goal-kpi-metrics > span { white-space:nowrap; color:var(--fm-goal-color); }
+.fm-budget-home { flex:0 1 auto; font-weight:700; }
+.fm-budget-metrics { flex:1 1 auto; min-inline-size:0; display:flex; flex-wrap:wrap; gap:2px 8px; font-size:.75rem; color:#d4dbe7; }
+.fm-budget-metrics > span { white-space:nowrap; }
+.fm-budget-metrics > [data-fm-budget="closes"] { white-space:normal; overflow-wrap:anywhere; }
+.fm-budget-over { color:#ffc35c; font-weight:700; }
 .fm-goal-readiness, .fm-goal-pace { color:#d4dbe7; font-size:.75rem; }
 .fm-goal-readiness { flex:none; max-inline-size:100%; }
 .fm-goal-pace > span { white-space:nowrap; }
 .fm-goal-pace-warning { color:#ffc35c; font-weight:bold; }
 p.fm-goal-pace { display:table; background:#141821; border-radius:4px; margin:4px 0; padding:2px 4px; }
 @media (max-width:640px) {
+    #fm-budget-lines .fm-budget-home { flex:0 1 100%; }
     #fm-goal-kpis .fm-goal-kpi-title { flex:0 1 100%; }
     #fm-goal-kpis .fm-goal-kpi-metrics { max-inline-size:100%; }
     #fm-goal-kpis .fm-goal-readiness, #fm-goal-kpis .fm-goal-pace { flex:0 1 100%; }
@@ -184,6 +191,57 @@ def goal_kpis(goals):
                     f'<span class="fm-goal-kpi-metrics">{"".join(metrics)}</span>'
                     f'{readiness_marker(goal)}{pace_marker(goal)}</li>')
     return f'<ul id="fm-goal-kpis" role="list" aria-label="Status per doel">{"".join(rows)}</ul>'
+
+
+def data_size(size):
+    if size is None:
+        return '?'
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if size < 1024 or unit == 'GB':
+            return f'{size} B' if unit == 'B' else f'{size:.1f} {unit}'
+        size /= 1024
+
+
+def calls_text(calls):
+    text = f'{calls["count"]}/{calls["limit"]}'
+    if calls['count']:
+        text += f' · oldest {"?" if calls["oldest_days"] is None else calls["oldest_days"]}d'
+    return text
+
+
+def budget_metric(kind, label, text, over=False):
+    cls = ' class="fm-budget-over"' if over else ''
+    return f'<span data-fm-budget="{kind}"{cls}>{label} {text}{" over" if over else ""}</span>'
+
+
+def budget_strip(lines):
+    """One compact line per home from the truth's budget_lines; every number is the owning script's."""
+    if not lines:
+        return ''
+    rows = []
+    for line in lines:
+        queued, calls, memory, sweep = line['queued'], line['calls'], line['memory'], line['sweep']
+        metrics = [
+            budget_metric('queued', 'queued rows', '?' if queued is None else f'{queued["count"]}/{queued["limit"]}',
+                          queued is not None and queued['count'] > queued['limit']),
+            budget_metric('calls', 'open captain calls', '?' if calls is None else calls_text(calls),
+                          calls is not None and calls['count'] > calls['limit']),
+            budget_metric('memory', 'startup memory', '?' if memory is None else f'{memory["tokens"]:,}/{memory["budget"]:,}',
+                          memory is not None and memory['tokens'] > memory['budget']),
+            budget_metric('data', 'data', data_size(line['data_bytes'])),
+        ]
+        if sweep is None:
+            metrics.append('<span data-fm-budget="sweep">no sweep yet</span>')
+        else:
+            when = datetime.datetime.fromtimestamp(sweep['at'], datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+            metrics.append(f'<span data-fm-budget="sweep">last sweep {when}</span>')
+            counts = ' · '.join(f'{key} {"?" if value is None else value}' for key, value in sweep['counts'].items())
+            failed = f' · failed {html.escape(", ".join(sweep["failed"]))}' if sweep['failed'] else ''
+            metrics.append(f'<span data-fm-budget="closes">{"closed" if sweep["mode"] == "on" else "would close"}: {counts}{failed}</span>')
+        rows.append(f'<li data-fm-budget-home="{html.escape(line["home"], quote=True)}">'
+                    f'<span class="fm-budget-home">{html.escape(line["home"])}</span>'
+                    f'<span class="fm-budget-metrics">{"".join(metrics)}</span></li>')
+    return f'<ul id="fm-budget-lines" role="list" aria-label="Budget per home">{"".join(rows)}</ul>'
 
 
 def drive_switch(goal):
@@ -444,7 +502,7 @@ def goal_steps(goal, ring):
             f'{ring}<ul>{rows}</ul></details>')
 
 
-def render_truth(page, goals):
+def render_truth(page, goals, budget_lines=None):
     base = base_page(page)
     parsed = GoalPage(base)
     if not parsed.by_id['doelen'] and not goals:
@@ -471,7 +529,7 @@ def render_truth(page, goals):
             patches.append((card.end, generated(label_slot(key, items[key]['status']))))
             covered['Kanban card'].add(key)
 
-    overview = STYLE + goal_kpis(goals) + drive_kpi(goals) + items_kpi([i['status'] for i in items.values()])
+    overview = STYLE + goal_kpis(goals) + budget_strip(budget_lines) + drive_kpi(goals) + items_kpi([i['status'] for i in items.values()])
     for goal in goals:
         gid = goal['id']
         controls = drive_switch(goal) + pace_marker(goal, card=True)
@@ -514,7 +572,7 @@ def render_truth(page, goals):
     return apply_patches(base, patches)
 
 
-def verify_goal_views(page, goals):
+def verify_goal_views(page, goals, budget_lines=None):
     parsed = GoalPage(page)
     items = item_keys(goals)
     problems, covered = [], Counter()
@@ -546,6 +604,12 @@ def verify_goal_views(page, goals):
                 or (parent and not found[0].ancestor(lambda n: n is parent))):
             problems.append(f'missing or stale goal rendering: {model.id}')
 
+    # A truth without budget_lines predates the strip: nothing is asked of its page.
+    if budget_lines:
+        if goals or parsed.by_id['doelen']:
+            check_markup(budget_strip(budget_lines))
+    elif budget_lines is not None and parsed.by_id['fm-budget-lines']:
+        problems.append('out-of-scope budget lines')
     if goals:
         check_markup(goal_kpis(goals))
     elif parsed.by_id['fm-goal-kpis']:
@@ -628,7 +692,7 @@ def main():
                 raise ValueError('unsupported cockpit truth schema')
             if args.goal_id and {g['id'] for g in truth['goals']} - set(args.goal_id):
                 raise ValueError('truth contains goals outside --goal-id; select goals in cockpit-sync.py')
-            updated = render_captain_steps(render_truth(page, truth['goals']), truth)
+            updated = render_captain_steps(render_truth(page, truth['goals'], truth.get('budget_lines')), truth)
         else:
             updated = render_preview(page, goals_from(args.goal_home), args.goal_id)
         if target == args.page and updated == page:
