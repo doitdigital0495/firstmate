@@ -2936,6 +2936,7 @@ _fm_goal_owner_read_view() {
   local home
   _fm_goal_read_view || return 1
   [ -n "$FM_GOAL_VIEW_OWNER" ] || return 0
+  [ "$FM_GOAL_VIEW_OWNER" != main ] || return 1
   home=$(_fm_goal_registered_owner_home "$FM_GOAL_VIEW_OWNER" "$FM_GOAL_VIEW_DATA") || return 1
   [ "$home" -ef "$FM_GOAL_HOME" ]
 }

@@ -212,6 +212,8 @@ item() {
   item draft-mate mate1 ' [project=draftrepo]' 'Exercise mate rendering'
   printf 'spec draft-mate %s\n' "$(jq -cn --arg scope "$scope" --arg evidence "$proof" \
     '{section:"Plan §3",scope:$scope,evidence:$evidence,kind:"ship"}')"
+  item thin-mate mate1 ' [project=draftrepo]' 'Thin spec'
+  printf '%s\n' 'spec thin-mate {"section":"Plan §3","scope":"Make better","evidence":"Check"}'
   item draft-bare main ' [project=bare]' "$scope Evidence: $proof"
   item wrong-project main ' [project=draftrepo]' "$scope Evidence: $proof"
   item captain-hold main ' [project=draftrepo]' "$scope Evidence: $proof"
@@ -275,8 +277,9 @@ printf '%s\n' '- draftrepo [local-only +yolo branch=mate-] - mate project' >> "$
 printf '%s\n' 'draft-mate,queued,ship,draftrepo,Parent namesake' >> "$H/data/ready.csv"
 mate_run run
 assert_absent "$M/data/draft-mate/brief.md" 'an owner cannot bind a parent ready row'
-printf '%s\n' 'draft-mate,queued,ship,draftrepo,Ready only in mate home' >> "$M/data/ready.csv"
-ready_out=$($G ready draft) && fail 'other deliberately invalid draft fixtures must still be held'
+printf '%s\n' 'draft-mate,queued,ship,draftrepo,Ready only in mate home' \
+  'thin-mate,queued,ship,draftrepo,Ready row but thin source' >> "$M/data/ready.csv"
+ready_out=$("$G" ready draft) && fail 'other deliberately invalid draft fixtures must still be held'
 assert_not_contains "$ready_out" 'draft-mate:' 'parent readiness validates the mate draft against the owner-local row'
 assert_absent "$M/data/draft-mate/brief.md" 'parent readiness never materializes the owner brief'
 mate_run run
@@ -287,6 +290,8 @@ assert_grep "Evidence: $proof" "$M/data/draft-mate/brief.md" 'owner draft carrie
 assert_grep "new draft-mate $M/projects/draftrepo --wait --mode local-only --yolo on --branch-prefix mate-" \
   "$T/dispatch.log" 'only the owner home launches its local draft'
 assert_absent "$H/data/draft-mate/brief.md" 'mate never materializes its task in the parent data'
+assert_absent "$M/data/thin-mate/brief.md" 'even with a ready owner row, thin structured instructions are refused'
+assert_absent "$M/state/thin-mate.meta" 'the thin owner spec did not launch'
 "$P" run
 assert_grep 'Drafted by goal pusher' "$H/data/over-cap/brief.md" 'next pass can draft a deferred item'
 pass 'goal fallback drafts viable items and routes them through the broker without widening scope or ownership'
