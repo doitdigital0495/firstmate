@@ -753,6 +753,18 @@ def captain_list(goals, dropped, homes, scope, sm_projects, decisions, extra_wai
             new['blocks'] += [f'backlog: {other}' for other in blockers.get(task, [])]
             working = any((h / 'state' / f'{t}.meta').is_file() for _, h in homes for t in (task, origin) if t)
             until = row.get('hold_until', '-')
+            lapse = re.match(r'^Captain hold set: [^\n]+\n(?:\n|Captain (?:question context|hold category|hold origin): [^\n]+\n)*'
+                             r'Captain lapse at: (\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)(?:\n|$)', body)
+            if lapse and not context.get('default_eligible'):
+                try:
+                    due = datetime.datetime.strptime(lapse.group(1), '%Y-%m-%dT%H:%M:%SZ')
+                    if until not in ('', '-'):
+                        due = max(due, datetime.datetime.strptime(until, '%Y-%m-%d') + datetime.timedelta(days=3))
+                    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+                    if datetime.timedelta(0) < due - now <= datetime.timedelta(hours=72):
+                        new['about'] = (new['about'] + f' This call closes as not needed on {due:%Y-%m-%d}.').strip()
+                except ValueError:
+                    pass  # A malformed clock never appears on the card.
             deferred = (until not in ('', '-') and until[:10] > today) or row.get('blocked_by') not in ('', '-', 'none', None)
             add('later' if deferred else 'must' if blocked or new['blocks'] or working else 'can', new, *aliases)
 

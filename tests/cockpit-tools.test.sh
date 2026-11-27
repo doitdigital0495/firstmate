@@ -627,8 +627,10 @@ printf 'unknown\n' > "$SYNC_HOME/state/demo-resolved.fake"
 printf '%s\n' 'needs-decision [key=demo-closed] [at=1]: question' \
   'resolved [key=demo-closed] [at=2]: answered' > "$SYNC_HOME/state/demo-resolved.status"
 printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done","about":"The demo needs one colour.","purpose":"The page can then be finished.","question":"Which colour?\nCheck the result on the demo.","options":[{"value":"blue","label":"Blue","detail":"The page turns blue."},{"value":"green","label":"Green","detail":"The page turns green."}],"recommendation":"blue"}' > "$TMP_ROOT/ctx.json"
-in_sync_home bash "$ROOT/bin/fm-captain-hold.sh" hold demo-colour --title 'Pick a colour' --category captain-only-fact \
-  --reason 'Pick a colour.' --context-file "$TMP_ROOT/ctx.json" >/dev/null || fail 'could not hold demo-colour'
+hold_clock=$(python3 -I -c 'import datetime as d; print((d.datetime.now(d.timezone.utc) - d.timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+in_sync_home env FM_CAPTAIN_HOLD_NOW="$hold_clock" bash "$ROOT/bin/fm-captain-hold.sh" hold demo-colour \
+  --title 'Pick a colour' --category captain-only-fact --reason 'Pick a colour.' \
+  --context-file "$TMP_ROOT/ctx.json" >/dev/null || fail 'could not hold demo-colour'
 in_sync_home bash "$ROOT/bin/fm-captain-hold.sh" hold demo-answered --title 'Answered call' --category captain-only-fact \
   --reason 'Already decided.' >/dev/null || fail 'could not hold demo-answered'
 printf 'yes\n' > "$TMP_ROOT/decision.txt"
@@ -677,6 +679,7 @@ assert set(must) == {'gamma/sign'}, must
 assert set(can) == {'demo-colour'}, can
 assert can['demo-colour']['recommendation'] == 'blue' and len(can['demo-colour']['options']) == 2
 assert can['demo-colour']['question'] == 'Which colour? Check the result on the demo.'
+assert 'closes as not needed on ' in can['demo-colour']['about'], can['demo-colour']
 assert t['section1']['later'] == []
 assert ('gamma/asked', 'answered-not-marked') in kinds, kinds
 assert ('plan-review-ready', 'unrouted-decision-key') in kinds, kinds

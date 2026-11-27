@@ -39,7 +39,8 @@
 #   fm-captain-hold.sh verify <origin-id>
 #   fm-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
 #   fm-captain-hold.sh answered <task-id>  (read-only; a completed call with the captain's own answer)
-#   fm-captain-hold.sh diverged
+#   fm-captain-hold.sh diverged [--close-mirror]
+#   fm-captain-hold.sh call-budget
 #   fm-captain-hold.sh reconcile list
 #   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   fm-captain-hold.sh reconcile note <task-id> --note-file <path>
@@ -160,6 +161,14 @@
 # never comes due and only an answer settles it. It is idempotent, needs an
 # open captain call whose active context carries a default, and a later hold
 # of the same task starts a new lifecycle the stop does not cover.
+# Fresh holds also have a seven-day no-effect lapse, independent of category.
+# An explicit --until defers lapse until at least 72 hours after the call
+# resurfaces. An authored recommendation clock takes precedence and retains
+# its effect and stop-clock checks. A lapse closes a question row or parks a
+# work row for Firstmate; it never records a captain answer or frees work.
+# Without config/record-sweep=on, the new lapse and the new captain-kind row
+# close on --release are previewed; an explicit release otherwise still works
+# as before and resolves its mirror.
 # `defaults-due` lists due calls as
 # `<task-id>\t<deadline>\t<value>\t<label>\t<close>\t<title>` and changes nothing.
 # It keeps what the backlog says about each pending default in state/.defaults-due-cache
@@ -320,8 +329,12 @@
 # the task's last status line - and on a 0 bounds repeated alarms from new pane
 # hashes for the decision.
 #
-# `diverged` is the read-only guard over the seam between the two records of
-# one captain call. See "record divergence" beside command_diverged below.
+# `diverged` reports status resolutions whose calls are still held. Its
+# `--close-mirror` mode repairs the reverse direction using only a closed or
+# no-longer-captain-held backlog row from the mirror's owning home as evidence.
+# A missing row is not proof. `config/record-sweep` defaults to `shadow`;
+# only `on` lets the sweep resolve the open mirror. `call-budget` reports when
+# there are more than ten open calls, marking the warning as shadow when off.
 #
 # Resolution records: the block written into the body names this script, the
 # decision digest, and a `Resolution mode:` of answered, released, repaired, or
@@ -338,9 +351,9 @@
 # a released and re-held task opens and closes a distinct parent decision with
 # no new persisted state, and an exact retry republishes the same line, which
 # the channel deduplicates. A main home has no channel and publishes nothing.
-# The hold or answer is already durable in the backlog, so a channel that
-# cannot be written is reported as `actionable:` on stderr rather than undoing
-# the record; bin/fm-inactive-reconcile.sh's diagnostics name a broken binding.
+# A failed parent write is reported as `actionable:` without undoing the
+# durable backlog record. A resolution returns failure in that case: retry
+# the same resolution to finish publishing it.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -348,6 +361,14 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+
+record_sweep_on() {
+  local mode=''
+  [ -f "$CONFIG/record-sweep" ] && [ ! -L "$CONFIG/record-sweep" ] || return 1
+  IFS= read -r mode < "$CONFIG/record-sweep" || true
+  [ "$mode" = on ]
+}
 
 # shellcheck source=bin/fm-classify-lib.sh
 # shellcheck disable=SC1091
@@ -446,7 +467,7 @@ valid_hold_category() {  # <category>
 
 acquire_task_control_lock() {  # <task-id>
   CAPTAIN_CONTROL_LOCK="$STATE/.control-$1.lock"
-  fm_lock_acquire_wait "$CAPTAIN_CONTROL_LOCK"
+  fm_lock_acquire_wait "$CAPTAIN_CONTROL_LOCK" || fail "could not lock captain call $1"
   CAPTAIN_CONTROL_LOCK_HELD=1
 }
 
@@ -1049,6 +1070,7 @@ write_hold_set_stamp() {  # <id> <shown-body> <stamp> <preserve> [<normalized-co
   # Expired deferrals retain captain annotations/body but report held=no.
   # A fresh lifecycle must not leave their old header active beside the new one.
   if [ "$preserve" != 1 ]; then
+    body=$(printf '%s' "$body" | sed 's/^Captain lapse at: /Previous captain lapse at: /')
     case "$body" in
       'Captain question context: '*)
         context_line=${body%%$'\n'*}
@@ -1060,6 +1082,12 @@ write_hold_set_stamp() {  # <id> <shown-body> <stamp> <preserve> [<normalized-co
   fi
   new_body=$(printf 'Captain hold set: %s' "$hold_set")
   [ -z "$context" ] || new_body=$(printf '%s\nCaptain question context: %s' "$new_body" "$context")
+  if [ "$preserve" != 1 ]; then
+    local lapse
+    lapse=$(jq -nr --arg stamp "$hold_set" '$stamp | fromdateiso8601 + 7*86400 | todateiso8601') \
+      || fail 'cannot calculate the captain hold lapse date'
+    new_body=$(printf '%s\nCaptain lapse at: %s' "$new_body" "$lapse")
+  fi
   [ -z "$body" ] || new_body=$(printf '%s\n\n%s' "$new_body" "$body")
   tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-captain-hold-stamp.XXXXXX") || fail "cannot stage the hold-set stamp"
   # shellcheck disable=SC2086  # archive_flag is empty or the literal --archive-body.
@@ -1727,6 +1755,104 @@ deadline_default_due() {  # <task-show-output> <now-YYYY-MM-DDTHH:MM:SSZ>
      | select(. != null and .due_at <= $now) | . + {close:$close,lifecycle:$lifecycle}'
 }
 
+# The writer places the lapse marker just below the active stamp and optional
+# question context. Never consume a marker in a previous resolution or old body.
+body_lapse_at() {
+  local stamp line
+  {
+    IFS= read -r stamp || return 1
+    case "$stamp" in 'Captain hold set: '*) ;; *) return 1 ;; esac
+    while IFS= read -r line; do
+      case "$line" in
+        ''|'Captain question context: '*|'Captain hold category: '*|'Captain hold origin: '*) ;;
+        'Captain lapse at: '*) printf '%s\n' "${line#Captain lapse at: }"; return 0 ;;
+        *) break ;;
+      esac
+    done
+  } <<< "$1"
+  return 1
+}
+
+interrupted_lapse() {  # <shown body> <current lifecycle>
+  local body=$1 count=${2##*#} stamp=${2%#*}
+  [ -n "$stamp" ] && [ "$count" -gt 0 ] \
+    && [ "$(recorded_resolution_mode "$body")" = lapsed ] \
+    && [ "$(recorded_answer_lifecycle "$(decode_shown_value "$body")")" = "$stamp#$((count - 1))" ]
+}
+
+lapse_candidate() {  # <task-show-output>; same candidate for listing and mutation
+  local show=$1 body shown lapse hold_until lifecycle=''
+  [ "$(show_field "$show" state)" != "done" ] && [ "$(show_field_value "$show" hold_kind)" = captain ] || return 1
+  shown=$(show_field "$show" body)
+  body=$(decode_shown_value "$shown") || return 1
+  lapse=$(body_lapse_at "$body") || {
+    [ "$(recorded_resolution_mode "$shown")" = lapsed ] || return 1
+    lifecycle="$(body_hold_set_timestamp "$body")#$(resolution_record_count "$shown")"
+    interrupted_lapse "$shown" "$lifecycle" || return 1
+    lapse=$(jq -nr --arg stamp "${lifecycle%#*}" '$stamp | fromdateiso8601 + 7*86400 | todateiso8601') || return 1
+  }
+  hold_until=$(show_field_value "$show" hold_until)
+  context_for_body "$body" | jq -ce -L "$SCRIPT_DIR" --arg lapse "$lapse" --arg until "$hold_until" --arg retry "$lifecycle" \
+    'include "fm-captain-question-context";
+     select($retry != "" or ((.status == "ready" or .status == "legacy") and .context.default_eligible == null and .lifecycle != null))
+     | .lifecycle as $lifecycle
+     | select($lapse | fm_question_timestamp)
+     | [$lapse, (if ($until | fm_question_date) then ($until + "T00:00:00Z" | fromdateiso8601 + 3*86400 | todateiso8601) else "" end)] | max
+     | {due_at:.,date:.,value:"not-needed",label:"Not needed (no action taken)",close:"lapse",lifecycle:$lifecycle}'
+}
+
+apply_lapse_if_due() {  # <task-id> <check-only>; returns 1 only if not applicable
+  local id=$1 check_only=$2 now body pending state hold_kind kind occurrence note="lapsed as not needed; this was not the captain's answer"
+  require_context_codec
+  require_tasks_axi
+  acquire_task_control_lock "$id"
+  task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
+  body=$(show_field "$TASK_SHOW_OUTPUT" body)
+  state=$(show_field "$TASK_SHOW_OUTPUT" state)
+  hold_kind=$(show_field_value "$TASK_SHOW_OUTPUT" hold_kind)
+  kind=$(show_field_value "$TASK_SHOW_OUTPUT" kind)
+  occurrence=$(resolution_record_count "$body") || fail "cannot read $id's resolution count"
+  if [ "$(recorded_resolution_mode "$body")" = lapsed ] && { [ "$state" = "done" ] || [ "$hold_kind" = parked ]; }; then
+    [ "$check_only" = 0 ] || return 0
+    if ! record_sweep_on; then printf 'would finish lapse publication: %s\n' "$id"; return 0; fi
+    remove_interrupted_answer_stamp "$id"
+    publish_parent_resolution_then_retire "$id" "$occurrence" "$note"
+    printf 'lapsed: %s\n' "$id"
+    return 0
+  fi
+  ANSWER_LIFECYCLE="$(body_hold_set_timestamp "$(decode_shown_value "$body")")#$occurrence"
+  if [ "$hold_kind" = captain ] && [ "$state" != "done" ] \
+    && ! body_lapse_at "$(decode_shown_value "$body")" >/dev/null \
+    && interrupted_lapse "$body" "$ANSWER_LIFECYCLE"; then
+    : # Finish an interrupted lapse of this same hold, not a newer lifecycle.
+  else
+    now=${FM_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+    if ! pending=$(lapse_candidate "$TASK_SHOW_OUTPUT") \
+      || [[ "$(jq -r .due_at <<< "$pending")" > "$now" ]]; then
+      release_task_control_lock
+      return 1
+    fi
+    [ "$check_only" = 0 ] || return 0
+    if ! record_sweep_on; then printf 'would lapse captain call: %s\n' "$id"; return 0; fi
+    DECISION_TEXT="The captain did not answer by $(jq -r .date <<< "$pending"). This call closed as not needed. No action was taken. This was not the captain's answer."
+    DECISION_DIGEST=$(sha256_text "$DECISION_TEXT") || fail "could not digest the lapse for $id"
+    occurrence=$((occurrence + 1))
+    DEADLINE_DEFAULT=1
+    write_resolution_record "$id" lapsed "$body" || fail "could not record the lapse for $id"
+    DEADLINE_DEFAULT=0
+  fi
+  [ "$check_only" = 0 ] || return 0
+  if ! record_sweep_on; then printf 'would lapse captain call: %s\n' "$id"; return 0; fi
+  case "$kind" in
+    captain) tasks_axi "done" "$id" >/dev/null || fail "could not close lapsed question $id" ;;
+    *) tasks_axi hold "$id" --kind parked --reason 'Captain call lapsed; work stays paused for Firstmate' >/dev/null \
+      || fail "could not park work $id after the lapse" ;;
+  esac
+  remove_interrupted_answer_stamp "$id"
+  publish_parent_resolution_then_retire "$id" "$occurrence" "$note"
+  printf 'lapsed: %s\n' "$id"
+}
+
 # Build the arguments `answer --deadline-default` runs with. An interrupted close
 # of this same default reads as stale context; regenerating its identical words
 # under its recorded lifecycle lets the answer guard finish it, while any other
@@ -1759,6 +1885,7 @@ prepare_deadline_default() {  # <task-id>
 
 command_answer() {
   local id=${1:-} decision_file='' release=0 deadline_default=0 show state hold_kind body outcome recorded_mode occurrence expected='' requested_mode='done' check_only=0
+  local shadow_close=0
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1777,6 +1904,7 @@ command_answer() {
     # The owner chooses the words, close and guard so no caller can supply them.
     [ -z "$decision_file" ] && [ "$release" = 0 ] && [ -z "$expected" ] \
       || fail "--deadline-default takes no decision file, --release or --expected-lifecycle"
+    if apply_lapse_if_due "$id" "$check_only"; then return 0; fi
     prepare_deadline_default "$id"
     DEADLINE_DEFAULT=1
     decision_file=$DEADLINE_DECISION_FILE
@@ -1800,10 +1928,18 @@ command_answer() {
   state=$(show_field "$show" state)
   hold_kind=$(show_field_value "$show" hold_kind)
   body=$(show_field "$show" body)
-  if [ "$release" = 1 ]; then outcome=released; requested_mode=release; else outcome=answered; fi
+  if [ "$release" = 1 ]; then requested_mode=release; fi
   ANSWER_LIFECYCLE="$(body_hold_set_timestamp "$(decode_shown_value "$body")")#$(resolution_record_count "$body")"
   case "$ANSWER_LIFECYCLE" in '#'* ) ANSWER_LIFECYCLE='' ;; esac
   [ -z "$expected" ] || guard_answer_lifecycle "$expected" "$requested_mode" "$body" "$state" "$hold_kind"
+  if [ "$release" = 1 ] && [ "$(show_field_value "$show" kind)" = captain ]; then
+    if record_sweep_on; then
+      release=0
+    elif [ "$state" != "done" ] && [ "$hold_kind" = captain ]; then
+      shadow_close=1
+    fi
+  fi
+  if [ "$release" = 1 ]; then outcome=released; else outcome=answered; fi
   # The occurrence the parent line names: the record about to be written is
   # one past those already in the body, and a retry names the newest one.
   occurrence=$(( $(resolution_record_count "$body") + 1 ))
@@ -1864,6 +2000,7 @@ command_answer() {
         *) fail "task $id records this resolution with mode ${recorded_mode:-unknown}; it is not a captain-answer replay" ;;
       esac
       [ "$check_only" = 0 ] || return 0
+      if [ "$shadow_close" = 1 ]; then printf 'would close captain question: %s\n' "$id"; fi
       if ! close_answered "$id" "$release"; then
         fail "could not close answered captain-held task $id"
       fi
@@ -1873,6 +2010,7 @@ command_answer() {
       return 0
     fi
     [ "$check_only" = 0 ] || return 0
+    if [ "$shadow_close" = 1 ]; then printf 'would close captain question: %s\n' "$id"; fi
     write_resolution_record "$id" "$outcome" "$body"
     if ! close_answered "$id" "$release"; then
       fail "could not close answered captain-held task $id"
@@ -2111,7 +2249,9 @@ command_answers() {
       if { [ -z "$release_flag" ] && [ "$state" = "done" ] \
           && closed_answer_replay_mode_compatible "$recorded_mode" "$body"; } \
         || { [ "$release_flag" = --release ] && [ "$state" != "done" ] \
-          && [ "$hold_kind" != captain ] && [ "$recorded_mode" = released ]; }; then
+          && [ "$hold_kind" != captain ] && [ "$recorded_mode" = released ]; } \
+        || { [ "$release_flag" = --release ] && [ "$state" = "done" ] \
+          && [ "$(show_field_value "$show" kind)" = captain ] && [ "$recorded_mode" = answered ]; }; then
         if [ "$prepare" = 1 ]; then
           printf '%s\n' "$row"
           closed=$((closed + 1))
@@ -2146,8 +2286,7 @@ command_answers() {
         closed=$((closed + 1))
         continue
       fi
-      # A parent-channel delivery problem is reported on stderr by the answer
-      # path even when the close succeeded; keep it visible.
+      # Keep any owner diagnostics from the successful answer visible.
       [ ! -s "$err" ] || cat "$err" >&2
       printf 'closed: %s\n' "$id"
       closed=$((closed + 1))
@@ -2216,12 +2355,21 @@ reconcile_request_retire() {  # <task-id>
 }
 
 publish_parent_resolution_then_retire() {  # <task-id> <occurrence> <note>
-  local id=$1 occurrence=$2 note=$3 request
+  local id=$1 occurrence=$2 note=$3 route=0 f key line
   [ "$DEADLINE_DEFAULT" != 1 ] || note="$note by deadline default, not by the captain"
-  request=$(reconcile_request_path "$id")
   publish_parent_hold "$id" "$occurrence" resolved "$note"
-  if [ -e "$request" ] && [ "$PARENT_HOLD_PUBLISHED" != 1 ]; then
-    fail "could not publish the answered captain-held task $id to its parent"
+  [ "$PARENT_HOLD_PUBLISHED" = 1 ] \
+    || fail "could not publish the resolved captain-held task $id to its parent; retry the same resolution"
+  fm_parent_channel_home_id "$FM_HOME" >/dev/null || route=$?
+  if [ "$route" = 1 ] && [ "$STATE" = "$FM_HOME/state" ]; then
+    key="captain-hold-$id-$occurrence"
+    line=$(status_stamp_line "resolved [key=$key]: captain hold $id: $(fm_parent_channel_clean_note "$note")")
+    while IFS= read -r f; do
+      [ -f "$f" ] && [ ! -L "$f" ] || continue
+      grep -Fq "[key=$key]" "$f" || continue
+      [ "$(status_key_closing_verb "$f" "$key")" = needs-decision ] || continue
+      fm_parent_channel_append_once "$f" "$line" || fail "could not resolve $key in $f"
+    done < <(mirror_logs)
   fi
   reconcile_request_retire "$id"
 }
@@ -2349,10 +2497,7 @@ reconcile_close() {
       || fail "task $id was not closed by reconciliation"
     occurrence=$(resolution_record_count "$body")
     remove_interrupted_answer_stamp "$id"
-    publish_parent_hold "$id" "$occurrence" resolved reconciled
-    [ "$PARENT_HOLD_PUBLISHED" = 1 ] \
-      || fail "could not publish the reconciled captain-held task $id to its parent"
-    reconcile_request_retire "$id"
+    publish_parent_resolution_then_retire "$id" "$occurrence" reconciled
     printf 'reconciled: %s\n' "$id"
     return 0
   fi
@@ -2372,10 +2517,7 @@ reconcile_close() {
   task_show_or_fail "$id" "task $id disappeared after closing"
   body_has_resolution_record "$(show_field "$show" body)" \
     || fail "captain-held task $id did not retain its durable resolution record"
-  publish_parent_hold "$id" "$occurrence" resolved reconciled
-  [ "$PARENT_HOLD_PUBLISHED" = 1 ] \
-    || fail "could not publish the reconciled captain-held task $id to its parent"
-  reconcile_request_retire "$id"
+  publish_parent_resolution_then_retire "$id" "$occurrence" reconciled
   printf 'reconciled: %s\n' "$id"
 }
 
@@ -2653,9 +2795,85 @@ list_has_line() {  # <newline-separated-list> <value>
   esac
 }
 
+mirror_logs() {
+  local parent rc=0 f
+  parent=$(fm_parent_channel_destination "$FM_HOME" "$STATE") || rc=$?
+  case "$rc" in
+    0) printf '%s\n' "$parent" ;;
+    1)
+      for f in "$STATE"/*.status; do
+        [ -f "$f" ] && [ ! -L "$f" ] && [ "$(_fm_status_kind "$f")" != secondmate ] || continue
+        printf '%s\n' "$f"
+      done ;;
+    *) return 1 ;;
+  esac
+}
+
+mirror_row_ended() {  # <task-id>; missing rows are not evidence
+  local state hold_kind
+  task_show "$1" || task_show_archived "$1" || return 1
+  state=$(show_field "$TASK_SHOW_OUTPUT" state)
+  hold_kind=$(show_field_value "$TASK_SHOW_OUTPUT" hold_kind)
+  case "$state" in
+    done) return 0 ;;
+    queued|in_flight) [ "$hold_kind" != captain ] ;;
+    *) return 1 ;;
+  esac
+}
+
+close_mirror_keys() {
+  local log files key verb id rc=0 mode=shadow
+  local key_re='^captain-hold-([A-Za-z0-9._-]+)-[1-9][0-9]*$'
+  files=$(mirror_logs) || fail 'cannot resolve the parent channel for mirror closure'
+  if record_sweep_on; then mode=on; fi
+  while IFS= read -r log; do
+    [ -f "$log" ] && [ ! -L "$log" ] || continue
+    grep -Fq '[key=captain-hold-' "$log" || continue
+    while IFS=$'\t' read -r key verb _; do
+      [ "$verb" = needs-decision ] && [[ "$key" =~ $key_re ]] || continue
+      id=${BASH_REMATCH[1]}
+      if [ "$mode" = shadow ]; then
+        if mirror_row_ended "$id"; then printf 'would close mirror: %s\n' "$key"; fi
+        continue
+      fi
+      acquire_task_control_lock "$id"
+      if mirror_row_ended "$id" && [ "$(status_key_closing_verb "$log" "$key")" = needs-decision ]; then
+        if fm_parent_channel_append_once "$log" "$(status_stamp_line \
+          "resolved [key=$key]: captain hold $id: backlog row is closed or no longer captain-held")"; then
+          printf 'closed mirror: %s\n' "$key"
+        else
+          printf 'fm-captain-hold: could not resolve mirror %s\n' "$key" >&2
+          rc=1
+        fi
+      fi
+      release_task_control_lock
+    done < <(status_open_decisions "$log")
+  done <<< "$files"
+  return "$rc"
+}
+
+command_call_budget() {
+  local ids count mode=' (shadow)'
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  command -v tasks-axi >/dev/null 2>&1 || return 0
+  ids=$(open_captain_task_ids) || return 0
+  count=$(printf '%s\n' "$ids" | awk 'NF {n++} END {print n+0}')
+  [ "$count" -gt 10 ] || return 0
+  if record_sweep_on; then mode=''; fi
+  printf 'ASK LESS%s: %s open captain calls (limit 10). Firstmate: decide within standing authority or merge related calls.\n' "$mode" "$count"
+}
+
 command_diverged() {
   local ids resolve f origin tokens id keys key show title
-  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  case "$#:${1:-}" in
+    0:) ;;
+    1:--close-mirror)
+      [ "$STATE" = "$FM_HOME/state" ] || return 0
+      command -v tasks-axi >/dev/null 2>&1 || return 0
+      close_mirror_keys
+      return ;;
+    *) usage >&2; exit 2 ;;
+  esac
   # Both records must belong to the SAME home or the comparison is meaningless:
   # tasks-axi reads $FM_HOME's backlog, so a state dir pointed somewhere else
   # would report one home's status logs against another home's tasks. Every
@@ -2743,7 +2961,8 @@ defaults_due_candidates() {
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     task_show "$id" || { complete=1; continue; }
-    pending=$(deadline_default_due "$TASK_SHOW_OUTPUT" "$DEFAULTS_DUE_ANY_TIME") || continue
+    pending=$(deadline_default_due "$TASK_SHOW_OUTPUT" "$DEFAULTS_DUE_ANY_TIME") \
+      || pending=$(lapse_candidate "$TASK_SHOW_OUTPUT") || continue
     hold_until=$(show_field_value "$TASK_SHOW_OUTPUT" hold_until)
     due_at=$(printf '%s' "$pending" | jq -r .due_at)
     date=$(printf '%s' "$pending" | jq -r .date)
@@ -2976,6 +3195,7 @@ case "${1:-}" in
   answered) shift; command_answered "$@" ;;
   diverged) shift; command_diverged "$@" ;;
   defaults-due) shift; command_defaults_due "$@" ;;
+  call-budget) shift; command_call_budget "$@" ;;
   stop-clock) shift; command_stop_clock "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   -h|--help) usage ;;

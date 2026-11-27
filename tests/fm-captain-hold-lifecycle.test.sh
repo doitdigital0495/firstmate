@@ -1741,9 +1741,11 @@ EOF
     || fail "batch hold failed"
   mv "$channel" "$channel.saved"
   mkdir "$channel"
-  out=$(printf 'batch-call\tship now\t\n' \
-    | run_captain "$mate" answers --source "batch retry fixture" 2>&1) \
-    || fail "batch answer did not preserve its durable close: $out"
+  if out=$(printf 'batch-call\tship now\t\n' \
+    | run_captain "$mate" answers --source "batch retry fixture" 2>&1); then
+    fail "batch answer signalled completion without its parent resolution: $out"
+  fi
+  assert_contains "$(tasks_in "$mate" show batch-call --full)" 'state: done' "parent failure undid the durable close"
   printf '%s\n' "$out" | grep -Fq 'actionable:' \
     || fail "failed batch parent delivery was not actionable: $out"
   rmdir "$channel"
@@ -5773,13 +5775,13 @@ test_deadline_default_refuses_ineligible_calls() {
 . + {scope:["legal"],default_eligible:"small-reversible",default_date:"2026-08-01"}|may name only product or copy
 . + {scope:["copy"],default_eligible:"small-reversible",default_date:"2026-07-20"}|later than today
 CASES
-    # A declared scope alone is a call that simply keeps waiting.
+    # A declared scope alone does not authorize a recommendation default.
     default_context "$home" '. + {scope:["money"]}'
     hold_default "$home" sample-money || fail "a scoped call without a default was refused"
-    [ -z "$(FM_CAPTAIN_HOLD_NOW=2030-01-01T00:00:00Z run_captain "$home" defaults-due)" ] \
-      || fail "a call with no default came due"
-    if FM_CAPTAIN_HOLD_NOW=2030-01-01T00:00:00Z run_captain "$home" answer sample-money --deadline-default >/dev/null 2>&1; then
-      fail "a default was applied to a call without one"
+    [ -z "$(FM_CAPTAIN_HOLD_NOW=2026-07-27T11:59:59Z run_captain "$home" defaults-due)" ] \
+      || fail "a call without an authored default came due before its lapse"
+    if FM_CAPTAIN_HOLD_NOW=2026-07-27T11:59:59Z run_captain "$home" answer sample-money --deadline-default >/dev/null 2>&1; then
+      fail "a default was applied before the lapse was due"
     fi
     pass "deadline default refuses every ineligible or incomplete call before mutation"
   ) || exit 1
@@ -6088,6 +6090,101 @@ test_guarded_answer_retries_interrupted_close_and_normalization
 test_hold_reason_round_trips_awkward_characters
 test_hold_origins_follow_backend_holds
 test_interrupted_origin_move_does_not_inherit_the_previous_answer
+test_record_sweep_mirrors_and_release() {
+  local parent mate channel before out id
+  parent=$(make_home sweep-parent)
+  mate=$(make_home sweep-mate)
+  channel="$parent/state/sweep-mate.status"
+  printf 'sweep-mate\n' > "$mate/.fm-secondmate-home"
+  printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$parent" > "$mate/.fm-secondmate-parent"
+  for id in stale-done stale-unheld live deferred question; do
+    FM_CAPTAIN_HOLD_NOW=2026-07-14T00:00:00Z run_captain "$mate" hold "$id" --title "$id" \
+      --category captain-only-fact --reason "A question for the captain" >/dev/null || fail "could not hold $id"
+  done
+  run_captain "$mate" hold deferred --reason 'Defer this question' --until 2090-01-01 >/dev/null || fail 'could not defer'
+  tasks_in "$mate" "done" stale-done >/dev/null || fail 'could not close fixture'
+  tasks_in "$mate" unhold stale-unheld >/dev/null || fail 'could not unhold fixture'
+  printf '%s\n' 'needs-decision [key=captain-hold-missing-1]: a missing row is not evidence' >> "$channel"
+  before=$(cksum "$channel")
+  out=$(run_captain "$mate" diverged --close-mirror) || fail 'shadow sweep failed'
+  assert_contains "$out" 'would close mirror: captain-hold-stale-done-1' 'closed row not previewed'
+  assert_contains "$out" 'would close mirror: captain-hold-stale-unheld-1' 'unheld row not previewed'
+  [ "$(cksum "$channel")" = "$before" ] || fail 'shadow sweep mutated the parent log'
+  printf 'on\n' > "$mate/config/record-sweep"
+  run_captain "$mate" diverged --close-mirror >/dev/null || fail 'mirror sweep failed'
+  [ "$(grep -c '^resolved \[key=captain-hold-' "$channel")" = 2 ] || fail 'mirror sweep resolved the wrong set'
+  [ -z "$(run_captain "$mate" diverged --close-mirror)" ] || fail 'mirror sweep was not idempotent'
+  printf 'No work is needed.\n' > "$mate/decision"
+  run_captain "$mate" answer question --release --decision-file "$mate/decision" >/dev/null || fail 'captain question release failed'
+  assert_contains "$(tasks_in "$mate" show question --full)" 'state: done' 'captain question release orphaned the row'
+  assert_grep 'resolved [key=captain-hold-question-1]' "$channel" 'captain question release did not resolve the mirror'
+  pass 'mirror sweep previews and then closes only keys backed by ended rows; captain question release closes the row'
+}
+
+test_captain_call_budget_on_wake() {
+  local home i out
+  home=$(make_home call-budget)
+  for i in $(seq 1 11); do
+    tasks_in "$home" add "call-$i" "Call $i" --kind captain --repo sample >/dev/null || fail 'could not create fixture'
+    if [ "$i" = 11 ]; then
+      out=$(run_drain "$home") || fail 'drain failed at ten calls'
+      assert_not_contains "$out" 'ASK LESS' 'budget warned at exactly ten'
+    fi
+    tasks_in "$home" hold "call-$i" --kind captain --reason 'A question' >/dev/null || fail 'could not hold fixture'
+  done
+  out=$(run_drain "$home") || fail 'drain failed at eleven calls'
+  assert_contains "$out" 'ASK LESS (shadow): 11 open captain calls' 'shadow budget warning missing'
+  printf 'on\n' > "$home/config/record-sweep"
+  out=$(run_drain "$home") || fail 'enabled drain failed'
+  assert_contains "$out" 'ASK LESS: 11 open captain calls' 'enabled budget warning missing'
+  assert_contains "$out" 'decide within standing authority or merge related calls' 'budget warning has no instruction'
+  pass 'wake drain warns only above ten open captain calls without needing a due default'
+}
+
+test_no_effect_lapses() {
+  local home id out show args=()
+  home=$(make_home no-effect-lapses)
+  tasks_in "$home" add needed-work 'Existing work' --kind ship --repo sample >/dev/null || fail 'could not create work'
+  for id in money-call needed-work deferred-call; do
+    args=()
+    case "$id" in
+      money-call) args=(--title 'Spend money?') ;;
+      deferred-call) args=(--title 'Defer until August' --until 2026-08-01) ;;
+    esac
+    FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold "$id" --category money \
+      --reason 'Approve the spend?' ${args[@]+"${args[@]}"} >/dev/null || fail "could not hold $id"
+  done
+  [ -z "$(FM_CAPTAIN_HOLD_NOW=2026-07-21T11:59:59Z run_captain "$home" defaults-due)" ] || fail 'lapse listed early'
+  out=$(FM_CAPTAIN_HOLD_NOW=2026-07-21T12:00:00Z run_captain "$home" defaults-due) || fail 'could not list due lapses'
+  assert_contains "$out" $'money-call\t2026-07-21T12:00:00Z\tnot-needed\t' 'money call did not lapse at seven days'
+  assert_contains "$out" $'needed-work\t2026-07-21T12:00:00Z\tnot-needed\t' 'work call did not lapse at seven days'
+  assert_not_contains "$out" deferred-call 'deferred call was due early'
+  out=$(FM_CAPTAIN_HOLD_NOW=2026-07-21T12:00:00Z run_drain "$home") || fail 'could not present a lapse'
+  assert_contains "$out" 'money-call due to lapse as not needed without taking action' 'wake called a lapse a recommendation'
+  out=$(FM_CAPTAIN_HOLD_NOW=2026-07-21T12:00:00Z run_captain "$home" answer money-call --deadline-default) || fail 'shadow preview failed'
+  assert_contains "$out" 'would lapse captain call: money-call' 'shadow did not preview a due lapse'
+  run_captain "$home" open money-call >/dev/null || fail 'shadow lapse changed the hold'
+  printf 'on\n' > "$home/config/record-sweep"
+  for id in money-call needed-work; do
+    FM_CAPTAIN_HOLD_NOW=2026-07-21T12:00:00Z run_captain "$home" answer "$id" --deadline-default >/dev/null || fail "could not lapse $id"
+    show=$(tasks_in "$home" show "$id" --full)
+    assert_contains "$show" "No action was taken. This was not the captain's answer." 'lapse fabricated an answer'
+    if run_captain "$home" answered "$id"; then fail 'lapse counted as an answer from the captain'; fi
+  done
+  assert_contains "$(tasks_in "$home" show money-call --full)" 'state: done' 'lapse did not close the question row'
+  show=$(tasks_in "$home" show needed-work --full)
+  assert_contains "$show" 'state: queued' 'lapse marked work as finished'
+  assert_contains "$show" 'hold_kind: parked' 'work did not stay paused for Firstmate'
+  assert_contains "$show" 'held: yes' 'lapse unblocked work'
+  [ -z "$(FM_CAPTAIN_HOLD_NOW=2026-08-03T23:59:59Z run_captain "$home" defaults-due)" ] || fail 'deferred lapse did not get 72 hours'
+  out=$(FM_CAPTAIN_HOLD_NOW=2026-08-04T00:00:00Z run_captain "$home" defaults-due) || fail 'could not list deferred lapse'
+  assert_contains "$out" 'deferred-call' 'deferred call never lapsed'
+  pass 'fresh calls lapse after seven days with no captain answer or effect; work stays parked and deferrals keep notice time'
+}
+
+test_no_effect_lapses
+test_record_sweep_mirrors_and_release
+test_captain_call_budget_on_wake
 test_historical_self_inventory_has_workable_repair
 test_inventory_compares_backend_identities
 test_origin_is_never_its_own_inventory_entry

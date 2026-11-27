@@ -886,17 +886,26 @@ EOF
 # count and `answer --deadline-default` owns the record. Bounded and silent like
 # RECORD DIVERGENCE, and a guard failure never changes the drain's exit status.
 print_defaults_due_section() {
-  local due task date value label close title line shown=0 omitted=0 bound
-  local output='' used=0 bytes item_bytes=220 global_bytes=2000
+  local due budget task date value label close title line shown=0 omitted=0 bound
+  local output='' used=0 bytes item_bytes=220 global_bytes=2000 lapses=0 defaults=0
 
   bound=${FM_DEFAULTS_DUE_TIMEOUT:-20}
   case "$bound" in ''|*[!0-9]*|0) bound=20 ;; esac
+  if budget=$(fm_run_timed "$bound" "$SCRIPT_DIR/fm-captain-hold.sh" call-budget 2>/dev/null) && [ -n "$budget" ]; then
+    printf '%s\n' "$budget" || return 1
+  fi
   due=$(fm_run_timed "$bound" "$SCRIPT_DIR/fm-captain-hold.sh" defaults-due 2>/dev/null) || return 0
   [ -n "$due" ] || return 0
 
   while IFS=$(printf '\t') read -r task date value label close title; do
     [ -n "$task" ] || continue
-    line="$task due to proceed on default \"$label\" ($value, close $close): no captain answer by $date"
+    if [ "$close" = lapse ]; then
+      line="$task due to lapse as not needed without taking action: no captain answer by $date"
+      lapses=1
+    else
+      line="$task due to proceed on default \"$label\" ($value, close $close): no captain answer by $date"
+      defaults=1
+    fi
     [ -z "$title" ] || line="$line: $title"
     fm_cap_line_var "$line" $((item_bytes - 1))
     line=$FM_LINE_CAP_LINE
@@ -919,7 +928,12 @@ EOF
   if [ "$omitted" -gt 0 ]; then
     printf 'DEFAULTS DUE: %d more omitted (byte cap)\n' "$omitted" || return 1
   fi
-  printf 'DEFAULTS DUE: apply each with bin/fm-captain-hold.sh answer <task> --deadline-default, steer the worker with that answer as a deadline default, and tell the captain; a close release default is refused while he is away and stays listed.\n' || return 1
+  if [ "$defaults" = 1 ]; then
+    printf 'DEFAULTS DUE: apply each recommendation with bin/fm-captain-hold.sh answer <task> --deadline-default, steer the worker with that deadline default, and tell the captain; a release default is refused while he is away.\n' || return 1
+  fi
+  if [ "$lapses" = 1 ]; then
+    printf 'DEFAULTS DUE: use bin/fm-captain-hold.sh answer <task> --deadline-default for a lapse. In shadow it only lists; otherwise report the lapse as not needed, not as an answer or approval.\n' || return 1
+  fi
 }
 
 # Print BRANCH OUTCOMES: what the supervision host's session recorded since
