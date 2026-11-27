@@ -17,7 +17,7 @@
 # written by exactly one script: this one.
 #
 # THE RECORD (state/goals/<id>.goal; written only by this script):
-#   version: 1 (or 2 with the fields below, 3 with drive marks, or 4 with specs)
+#   version: 1 (or 2 with the fields below, 3 with drive marks, 4 with specs, or 5 with captain cards)
 #   id: I1
 #   title: <one line>
 #   state: active
@@ -256,6 +256,13 @@
 # (condition or null), and the booleans startable, target_reached, landing_hint,
 # wait_stale, wait_cleared and orphaned_running (a running mark without a live task).
 # Items with an inline spec also carry it as the `spec` object.
+# `start` and `edit` require `captain-card <item-id> <one-line JSON>` for each
+# new class=captain item. Use the display fields from fm-captain-hold.sh --help
+# (about, purpose, optional question, options and recommendation for Vraag,
+# or action:true with steps and expected for Taak). The item title is the
+# title, and its enclosing goal and item IDs supply the link and stable ID.
+# Retained captain items keep their existing card when omitted, including
+# legacy items without one. Export includes the authored `captain_card`.
 # drive_revision counts drive marks; --driven exports only active ON goals.
 # --with-drive-ready adds drive_ready {ready, total, unknown, item_revision}.
 # total counts only drive items; unknown is the subset that could not be checked.
@@ -635,7 +642,7 @@ FM_GOAL_REC_CLOSED_EPOCH='' FM_GOAL_REC_CLOSED_REASON='' FM_GOAL_REC_CLOSED_WORD
 FM_GOAL_ITEM_COUNT=0
 FM_GOAL_ITEMS_IDS=() FM_GOAL_ITEMS_OWNERS=() FM_GOAL_ITEMS_AFTERS=() FM_GOAL_ITEMS_MERGE_AFTERS=()
 FM_GOAL_ITEMS_CLASSES=() FM_GOAL_ITEMS_TASKS=() FM_GOAL_ITEMS_TITLES=()
-FM_GOAL_ITEMS_PRS=() FM_GOAL_ITEMS_SPECS=()
+FM_GOAL_ITEMS_PRS=() FM_GOAL_ITEMS_SPECS=() FM_GOAL_ITEMS_CARDS=()
 FM_GOAL_ITEMS_PROJECTS=() FM_GOAL_ITEMS_TARGETS=() FM_GOAL_ITEMS_UNTILS=()
 FM_GOAL_ITEMS_STOPONS=() FM_GOAL_ITEMS_BRIEF_SOURCES=() FM_GOAL_ITEMS_CAPTAIN_REASONS=()
 _FM_GOAL_READ_ERROR=''
@@ -646,7 +653,7 @@ _fm_goal_items_reset() {
   FM_GOAL_ITEM_COUNT=0
   FM_GOAL_ITEMS_IDS=() FM_GOAL_ITEMS_OWNERS=() FM_GOAL_ITEMS_AFTERS=() FM_GOAL_ITEMS_MERGE_AFTERS=()
   FM_GOAL_ITEMS_CLASSES=() FM_GOAL_ITEMS_TASKS=() FM_GOAL_ITEMS_TITLES=()
-  FM_GOAL_ITEMS_PRS=() FM_GOAL_ITEMS_SPECS=()
+  FM_GOAL_ITEMS_PRS=() FM_GOAL_ITEMS_SPECS=() FM_GOAL_ITEMS_CARDS=()
   FM_GOAL_ITEMS_PROJECTS=() FM_GOAL_ITEMS_TARGETS=() FM_GOAL_ITEMS_UNTILS=()
   FM_GOAL_ITEMS_STOPONS=() FM_GOAL_ITEMS_BRIEF_SOURCES=() FM_GOAL_ITEMS_CAPTAIN_REASONS=()
 }
@@ -675,6 +682,32 @@ _fm_goal_read_error() {  # <reason> - records why and fails the load
   return 1
 }
 
+# Resolve display metadata after the item identities and classes are known.
+_fm_goal_load_captain_cards() {
+  local idx id json rows
+  [ "$#" -gt 0 ] || return 0
+  rows=$(printf '%s\n' "$@" | jq -rR -L "$FM_GOAL_DIR" '
+    include "fm-captain-question-context";
+    (capture("^captain-card (?<id>[A-Za-z0-9._-]+) (?<card>.+)$") // error("malformed captain-card row"))
+    | .id as $id
+    | if (.card | utf8bytelength) > 8192 then error("oversized captain-card: \($id)") else .card end
+    | fm_question_json_decode
+    | if type == "object" and (keys - ["about","purpose","question","options","recommendation","action","steps","expected"] | length == 0)
+      then . else error("unexpected captain-card fields for \($id)") end
+    | . + {schema:"fm-captain-question.v1",close:"done"}
+    | (fm_captain_card_problem // fm_question_explanation_problem) as $problem
+    | if $problem != null then error("captain-card \($id): missing or invalid field: \($problem)")
+      elif fm_question_valid(false) then $id + " " + (del(.schema,.close) | tojson)
+      else error("invalid captain-card field values for \($id)") end' 2>&1) \
+    || { _fm_goal_read_error "${rows##*$'\n'}"; return 1; }
+  while IFS=' ' read -r id json; do
+    idx=$(_fm_goal_index_of "$id") || { _fm_goal_read_error "captain-card for unknown item: $id"; return 1; }
+    [ "${FM_GOAL_ITEMS_CLASSES[$idx]}" = captain ] && [ -z "${FM_GOAL_ITEMS_CARDS[$idx]-}" ] \
+      || { _fm_goal_read_error "duplicate or non-captain captain-card: $id"; return 1; }
+    FM_GOAL_ITEMS_CARDS[idx]=$json
+  done <<< "$rows"
+}
+
 # Resolve specs after all item IDs have been parsed, for both input formats.
 _fm_goal_load_specs() {  # [spec lines...]
   [ "$#" -gt 0 ] || return 0
@@ -701,7 +734,7 @@ _fm_goal_load_specs() {  # [spec lines...]
 }
 
 _fm_goal_load_record() {  # <path>
-  local path=$1 line field value spec_lines=()
+  local path=$1 line field value spec_lines=() card_lines=()
   local seen_items=0 seen_closed=0 seen_projection=0 have_closed_epoch=0 have_closed_reason=0 have_closed_words=0
   local version='' id='' state='' started='' started_epoch='' title=''
   local named_by='' plan='' done_when='' closed='' closed_epoch='' closed_reason='' closed_words=''
@@ -794,6 +827,7 @@ _fm_goal_load_record() {  # <path>
         '  spec '*)
           spec_lines+=("${line#  }")
           ;;
+        '  captain-card '*) card_lines+=("${line#  }") ;;
         '  '*)
           _fm_goal_read_error "indented non-item line in the items section: $line"; return 1
           ;;
@@ -830,13 +864,18 @@ _fm_goal_load_record() {  # <path>
     3)
       [ -n "$drive_marks" ] || { _fm_goal_read_error 'version 3 requires a drive mark'; return 1; }
       ;;
-    4) ;;
+    4|5) ;;
     *) _FM_GOAL_READ_ERROR="unsupported version: $version"; return 1 ;;
   esac
   if [ "$version" = 4 ]; then
     [ "${#spec_lines[@]}" -gt 0 ] || { _fm_goal_read_error 'version 4 requires an item spec'; return 1; }
+  elif [ "$version" != 5 ]; then
+    [ "${#spec_lines[@]}" -eq 0 ] || { _fm_goal_read_error 'item specs require version 4 or later'; return 1; }
+  fi
+  if [ "$version" = 5 ]; then
+    [ "${#card_lines[@]}" -gt 0 ] || { _fm_goal_read_error 'version 5 requires a captain-card'; return 1; }
   else
-    [ "${#spec_lines[@]}" -eq 0 ] || { _fm_goal_read_error 'item specs require version 4'; return 1; }
+    [ "${#card_lines[@]}" -eq 0 ] || { _fm_goal_read_error 'captain cards require version 5'; return 1; }
   fi
   [ "$have_id" -eq 1 ] || { _FM_GOAL_READ_ERROR='no id'; return 1; }
   fm_goal_id_valid "$id" || { _FM_GOAL_READ_ERROR="unsafe id: $id"; return 1; }
@@ -856,6 +895,7 @@ _fm_goal_load_record() {  # <path>
   [ "$FM_GOAL_ITEM_COUNT" -ge 1 ] || { _FM_GOAL_READ_ERROR='no items'; return 1; }
   _fm_goal_items_graph_ok || return 1
   _fm_goal_load_specs "${spec_lines[@]}" || return 1
+  _fm_goal_load_captain_cards "${card_lines[@]}" || return 1
   if [ "$state" = closed ]; then
     [ "$seen_closed" -eq 1 ] || { _FM_GOAL_READ_ERROR='closed record without closed:'; return 1; }
     case "$closed_epoch" in ''|*[!0-9]*|0[0-9]*) _FM_GOAL_READ_ERROR='closed record without a valid closed_epoch'; return 1 ;; esac
@@ -927,6 +967,9 @@ _fm_goal_items_text() {  # <indent>
     printf '%s%s\n' "$1" "$(_fm_goal_item_line "$i")"
     if [ -n "${FM_GOAL_ITEMS_SPECS[$i]-}" ]; then
       printf '%sspec %s %s\n' "$1" "${FM_GOAL_ITEMS_IDS[$i]}" "${FM_GOAL_ITEMS_SPECS[$i]}"
+    fi
+    if [ -n "${FM_GOAL_ITEMS_CARDS[$i]-}" ]; then
+      printf '%scaptain-card %s %s\n' "$1" "${FM_GOAL_ITEMS_IDS[$i]}" "${FM_GOAL_ITEMS_CARDS[$i]}"
     fi
   done
 }
@@ -2283,7 +2326,7 @@ _fm_goal_check_targets() {  # <path-for-messages>
 
 # Load an items file; malformed items, specs, dependencies or targets are rc 2.
 _fm_goal_load_items_file() {  # <path>
-  local path=$1 line spec_lines=()
+  local path=$1 line spec_lines=() card_lines=()
   _fm_goal_items_reset
   if ! { [ -f "$path" ] && [ ! -L "$path" ] && [ -r "$path" ]; }; then
     fm_goal_log "items file is missing, unreadable, or a symlink: $path"
@@ -2293,6 +2336,7 @@ _fm_goal_load_items_file() {  # <path>
     case "$line" in
       ''|'#'*) continue ;;
       'spec '*) spec_lines+=("$line"); continue ;;
+      'captain-card '*) card_lines+=("$line"); continue ;;
     esac
     if ! fm_goal_item_parse "$line"; then
       fm_goal_log "malformed item line in $path: $line"
@@ -2304,7 +2348,8 @@ _fm_goal_load_items_file() {  # <path>
     fm_goal_log "no items in $path"
     return 2
   }
-  if ! _fm_goal_items_graph_ok || ! _fm_goal_load_specs "${spec_lines[@]}"; then
+  if ! _fm_goal_items_graph_ok || ! _fm_goal_load_specs "${spec_lines[@]}" ||
+    ! _fm_goal_load_captain_cards "${card_lines[@]}"; then
     fm_goal_log "invalid items in $path: $_FM_GOAL_READ_ERROR"
     return 2
   fi
@@ -2312,9 +2357,20 @@ _fm_goal_load_items_file() {  # <path>
   return 0
 }
 
+_fm_goal_require_captain_cards() {  # [existing captain item IDs]
+  local i id old found
+  for ((i=0; i<FM_GOAL_ITEM_COUNT; i++)); do
+    [ "${FM_GOAL_ITEMS_CLASSES[$i]}" = captain ] && [ -z "${FM_GOAL_ITEMS_CARDS[$i]-}" ] || continue
+    id=${FM_GOAL_ITEMS_IDS[$i]}; found=0
+    for old in "$@"; do [ "$old" != "$id" ] || found=1; done
+    [ "$found" -eq 1 ] || { fm_goal_log "item $id: missing captain-card (about and purpose for Waarvoor)"; return 2; }
+  done
+}
+
 # Write the oldest record version supporting the fields in use.
 _fm_goal_record_version() {
   local i=0
+  if [ "${#FM_GOAL_ITEMS_CARDS[@]}" -gt 0 ]; then printf 5; return 0; fi
   if [ "${#FM_GOAL_ITEMS_SPECS[@]}" -gt 0 ]; then printf 4; return 0; fi
   if [ -n "$FM_GOAL_REC_DRIVE_MARKS" ]; then printf 3; return 0; fi
   while [ "$i" -lt "$FM_GOAL_ITEM_COUNT" ]; do
@@ -2401,6 +2457,7 @@ cmd_start() {
   _fm_goal_parent_home || exit 1
   _fm_goal_require_actor main || exit 1
   _fm_goal_load_items_file "$items_file" || exit 2
+  _fm_goal_require_captain_cards || exit 2
   path=$(fm_goal_path "$id")
   _fm_goal_regular_file "$path"
   if [ "$?" -ne 2 ]; then
@@ -2445,7 +2502,7 @@ cmd_edit() {
   local id='' items_file='' title='' done_when='' require_briefs=0
   local flag value path staged i idx
   local r_id r_title r_started r_started_epoch r_named_by r_plan r_done_when old_count
-  local old_ids=() old_specs=()
+  local old_ids=() old_specs=() old_captains=() old_cards=()
   [ "$#" -ge 1 ] || _fm_goal_usage_error 'edit needs a goal id'
   id=$1
   shift
@@ -2483,11 +2540,21 @@ cmd_edit() {
   old_count=$FM_GOAL_ITEM_COUNT
   old_ids=("${FM_GOAL_ITEMS_IDS[@]}")
   for i in "${!FM_GOAL_ITEMS_SPECS[@]}"; do old_specs[i]=${FM_GOAL_ITEMS_SPECS[$i]}; done
+  for i in "${!FM_GOAL_ITEMS_CLASSES[@]}"; do
+    [ "${FM_GOAL_ITEMS_CLASSES[$i]}" = captain ] || continue
+    old_captains+=("${old_ids[$i]}")
+    [ -z "${FM_GOAL_ITEMS_CARDS[$i]-}" ] || old_cards[i]=${FM_GOAL_ITEMS_CARDS[$i]}
+  done
   _fm_goal_load_items_file "$items_file" || { fm_goal_lock_release; exit 2; }
   for i in "${!old_specs[@]}"; do
     idx=$(_fm_goal_index_of "${old_ids[$i]}") || continue
     [ -n "${FM_GOAL_ITEMS_SPECS[$idx]-}" ] || FM_GOAL_ITEMS_SPECS[idx]=${old_specs[$i]}
   done
+  for i in "${!old_cards[@]}"; do
+    idx=$(_fm_goal_index_of "${old_ids[$i]}") || continue
+    [ "${FM_GOAL_ITEMS_CLASSES[$idx]}" != captain ] || [ -n "${FM_GOAL_ITEMS_CARDS[$idx]-}" ] || FM_GOAL_ITEMS_CARDS[idx]=${old_cards[$i]}
+  done
+  _fm_goal_require_captain_cards "${old_captains[@]}" || { fm_goal_lock_release; exit 2; }
   FM_GOAL_REC_ID=$r_id
   FM_GOAL_REC_TITLE=$(_fm_goal_clean_field "${title:-$r_title}")
   FM_GOAL_REC_STATE=active
@@ -3254,7 +3321,7 @@ _fm_goal_export_one() {  # <id> <selector> <with-drive-ready 0|1>
       --arg wait_on "${FM_GOAL_M_ON[$i]-}" --arg stale "${FM_GOAL_WAIT_STALE[$i]-}" \
       --arg cleared "${FM_GOAL_WAIT_CLEARED[$i]-}" \
       --arg until "${FM_GOAL_ITEMS_UNTILS[$i]}" --arg stopon "$stopon" \
-      --arg title "${FM_GOAL_ITEMS_TITLES[$i]}" \
+      --arg title "${FM_GOAL_ITEMS_TITLES[$i]}" --argjson card "${FM_GOAL_ITEMS_CARDS[$i]:-null}" \
       --argjson orphan "$orphan" --argjson startable "$startable" --argjson reached "$reached" --argjson landing "$landing" '
       def csv: if . == "" then [] else split(",") end;
       def epoch: if . == "" then null else tonumber end;
@@ -3271,6 +3338,7 @@ _fm_goal_export_one() {  # <id> <selector> <with-drive-ready 0|1>
        wait_stale: ($stale == "1"), wait_cleared: ($cleared == "1"),
        until: ($until | epoch), stop_on: ($stopon | csv),
        startable: $startable, orphaned_running: $orphan, target_reached: $reached, landing_hint: $landing}
+       + (if $card == null then {} else {captain_card: $card} end)
        + (if . == null then {} else {spec: .} end)' <<< "${FM_GOAL_ITEMS_SPECS[$i]:-null}")"$'\n'
   done
   [ -z "$FM_GOAL_VIEW_OWNER" ] || [ -n "$items" ] || return 1

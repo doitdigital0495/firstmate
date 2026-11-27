@@ -70,6 +70,7 @@ capacity() {
   printf '%s\n' "$1" > "$T/budget"
 }
 start() {
+  fm_test_add_goal_cards "$T/$1.items"
   "$G" start "$1" --title "$1" --named-by lab --plan "${2:-plan.md}" --done-when 'done' --items-file "$T/$1.items" >/dev/null
 }
 brief() {

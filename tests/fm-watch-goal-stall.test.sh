@@ -66,6 +66,7 @@ PARKED='state: parked · source: run-step · parked at rebase · run: r2'
 start_goal() {  # <id> <items...>
   local id=$1; shift
   printf '%s\n' "$@" > "$TMP_ROOT/items.$id"
+  fm_test_add_goal_cards "$TMP_ROOT/items.$id"
   "$GOAL" start "$id" --title "Goal $id" --done-when "$id is live" --named-by "finish $id" \
     --plan plan.md --items-file "$TMP_ROOT/items.$id" >/dev/null || fail "could not start goal $id"
 }

@@ -38,6 +38,7 @@ start_goal() {  # <dir> <id>
     'item [id=build] [owner=main]: build the thing' \
     'item [id=verify] [owner=main] [after=build]: verify the thing' \
     'item [id=sign] [owner=captain] [class=captain]: captain signs off' > "$dir/items.$id"
+  fm_test_add_goal_cards "$dir/items.$id"
   lab_env "$dir" bash "$GOAL" start "$id" --title "Goal $id" --done-when "$id is live" \
     --named-by "finish $id" --plan plan.md --items-file "$dir/items.$id" >/dev/null \
     || fail "could not start goal $id"

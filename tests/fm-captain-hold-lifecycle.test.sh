@@ -20,6 +20,7 @@ PLAIN='"about":"The synthetic widget is ready and waits for a decision to go out
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
+fm_test_captain_context > "$TMP_ROOT/test-captain-context.json"
 
 make_home() {  # <name>
   local home="$TMP_ROOT/$1" fakebin
@@ -83,8 +84,18 @@ tasks_in() {  # <home> <tasks-axi args...>
 }
 
 run_captain() {  # <home> <command args...>
-  local home=$1
+  local home=$1 arg has_context=0 has_category=0
   shift
+  # Scenarios that don't author their own context still exercise the production gate.
+  if [ "$1" = hold ]; then
+    for arg in "$@"; do
+      [ "$arg" != --context-file ] || has_context=1
+      [ "$arg" != --category ] || has_category=1
+    done
+    if [ "$has_context" = 0 ] && [ "$has_category" = 1 ]; then
+      set -- "$@" --context-file "$TMP_ROOT/test-captain-context.json"
+    fi
+  fi
   PATH="$home/fakebin:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" \
     FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/fm-captain-hold.sh" "$@"
@@ -201,6 +212,7 @@ SH
 run_shim() {  # <home> <command args...>
   local home=$1
   shift
+  if [ "$1" = hold ]; then set -- "$@" --context-file "$TMP_ROOT/test-captain-context.json"; fi
   PATH="$home/fakebin:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" \
     FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/fm-decision-hold.sh" "$@"
@@ -620,7 +632,7 @@ SH
   rm -f "$fb/tasks-axi.bak"
   chmod +x "$fb/tasks-axi"
 
-  printf '{"schema":"fm-captain-question.v1","close":"done",%s}\n' "$PLAIN" > "$home/context.json"
+  cp "$TMP_ROOT/test-captain-context.json" "$home/context.json"
   PATH="$fb:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" \
     FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
     FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
@@ -3613,12 +3625,14 @@ EOF
   PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
     FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$home/config" \
     "$ROOT/bin/fm-captain-hold.sh" hold "$id" \
-    --category captain-only-fact --reason "captain must choose after relocated interrupted cleanup" >/dev/null \
+    --category captain-only-fact --reason "captain must choose after relocated interrupted cleanup" \
+    --context-file "$TMP_ROOT/test-captain-context.json" >/dev/null \
     || fail "could not hold the relocated answer-before-replay fixture"
   PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
     FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$home/config" \
     "$ROOT/bin/fm-captain-hold.sh" hold "$id-call" --title "Sibling captain call" \
-    --category captain-only-fact --reason "captain must decide the sibling call" --repo sample --origin "$id" >/dev/null \
+    --category captain-only-fact --reason "captain must decide the sibling call" --repo sample --origin "$id" \
+    --context-file "$TMP_ROOT/test-captain-context.json" >/dev/null \
     || fail "could not hold the sibling captain call"
   PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
     FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$home/config" \
@@ -3695,12 +3709,14 @@ EOF
   PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
     FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$home/config" \
     "$ROOT/bin/fm-captain-hold.sh" hold "$id" \
-    --category captain-only-fact --reason "captain must choose the relocated sample outcome" >/dev/null \
+    --category captain-only-fact --reason "captain must choose the relocated sample outcome" \
+    --context-file "$TMP_ROOT/test-captain-context.json" >/dev/null \
     || fail "could not hold the relocated work item"
   PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
     FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$home/config" \
     "$ROOT/bin/fm-captain-hold.sh" hold "$id-call" --title "Sibling captain call" \
-    --category captain-only-fact --reason "captain must decide the sibling call" --repo sample --origin "$id" >/dev/null \
+    --category captain-only-fact --reason "captain must decide the sibling call" --repo sample --origin "$id" \
+    --context-file "$TMP_ROOT/test-captain-context.json" >/dev/null \
     || fail "could not hold the sibling captain call"
   PATH="$home/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
     FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$home/config" \
@@ -4902,7 +4918,7 @@ SH
           FM_CONFIG_OVERRIDE="$home/config" bash -c \
           'printf "%s\n" "$$" > "$FM_HOME/hold-pid"; exec "$@"' _ \
           "$ROOT/bin/fm-captain-hold.sh" hold "$id" --category captain-only-fact --reason "Choose for B" --origin origin-b \
-          > "$home/hold.out" 2> "$home/hold.err" || rc=$?
+          --context-file "$TMP_ROOT/test-captain-context.json" > "$home/hold.out" 2> "$home/hold.err" || rc=$?
         [ "$rc" -eq 143 ] || fail "the hold was not interrupted by TERM: $rc"
         assert_absent "$home/restore-refused" "an interrupted hold attempted restoration"
       else
@@ -5426,7 +5442,7 @@ test_structured_context_and_guarded_answers() {
   home=$(make_home structured-context)
   for mode in "done" release; do
     id=sample-context-$mode
-    printf '{"schema":"fm-captain-question.v1","close":"%s",%s,"question":"Ship the widget\\nthis week?","options":[{"value":"go","label":"Go café","detail":"Ships today."}],"recommendation":"go","subject":{"artifact":"widget","version":"1.2.3"}}\n' "$mode" "$PLAIN" > "$home/context.json"
+    printf '{"schema":"fm-captain-question.v1","close":"%s",%s,"question":"Ship the widget\\nthis week?","options":[{"value":"go","label":"Go café","detail":"Ships today."},{"value":"wait","label":"Wait","detail":"Keep the widget unchanged."}],"recommendation":"go","subject":{"artifact":"widget","version":"1.2.3"}}\n' "$mode" "$PLAIN" > "$home/context.json"
     FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold "$id" \
       --title "Choose the widget option" --category captain-only-fact --reason "Choose go or revise" --repo sample \
       --context-file "$home/context.json" >/dev/null || fail "structured hold failed"
@@ -5486,8 +5502,10 @@ test_structured_context_and_guarded_answers() {
         | run_captain "$home" answers --source "context fixture" >/dev/null || fail "fresh identical answer failed"
       show=$(tasks_in "$home" show "$id" --full)
       assert_contains "$show" "Captain answer lifecycle: $new_identity" "fresh answer reused an old record"
-      FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold "$id" \
-        --category captain-only-fact --reason "Owner must describe this new gate" >/dev/null || fail "legacy re-hold failed"
+      if FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
+        FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z "$ROOT/bin/fm-captain-hold.sh" hold "$id" --category captain-only-fact \
+        --reason 'Owner must describe this new gate' >/dev/null 2>&1; then fail 'fresh lifecycle accepted missing context'; fi
+      tasks_in "$home" hold "$id" --kind captain --reason 'Historical unannotated hold' >/dev/null || fail 'could not seed legacy re-hold'
       cp "$home/data/backlog.md" "$home/legacy-held"
       if printf '%s\tgo\tGo café\trelease\t%s\n' "$id" "$new_identity" \
         | run_captain "$home" answers --source "context fixture" >/dev/null; then
@@ -5516,7 +5534,7 @@ test_context_input_refuses_before_mutation() {
     '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"reconcile","label":"Close","detail":"Closes it."}]}' \
     '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go","detail":"Ships."},{"value":"go","label":"Again","detail":"Ships."}]}' \
     '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go","label":"Again","detail":"Ships."}]}' \
-    '{"schema":"fm-captain-question.v1","close":"done","recommendation":"invented"}' \
+    '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"Go","detail":"Ships today."},{"value":"wait","label":"Wait","detail":"Keeps it as it is."}],"recommendation":"invented"}' \
     '{"schema":"fm-captain-question.v1","close":"done","options":[{"value":"go","label":"bad\tlabel","detail":"Ships."}]}' \
     '{"schema":"fm-captain-question.v1","close":"done","lifecycle":"caller-forged"}' \
     '{"schema":"fm-captain-question.v1","close":"done","question":"   "}' \
@@ -5564,7 +5582,8 @@ option without consequence	{"schema":"fm-captain-question.v1","close":"done",$PL
 CASES
   assert_grep 'what happens when he picks it' "$home/bare.err" "an option without a consequence was refused for another reason"
 
-  printf '%s\n' '{"schema":"fm-captain-question.v1","close":"done","about":"Monthly/quarterly/yearly reporting.","purpose":"The team can report monthly/quarterly/yearly from now on."}' > "$home/slashes.json"
+  jq '.about = "Monthly/quarterly/yearly reporting." | .purpose = "The team can report monthly/quarterly/yearly from now on."' \
+    "$TMP_ROOT/test-captain-context.json" > "$home/slashes.json"
   run_captain "$home" hold sample-slashes --title "Choose the reporting rhythm" --category captain-only-fact --reason "choose" --repo sample \
     --context-file "$home/slashes.json" >/dev/null || fail "plain words with slashes were refused as internal names"
 
@@ -5610,7 +5629,7 @@ CASES
 test_guarded_answer_retries_interrupted_close_and_normalization() {
   local home identity show
   home=$(make_home guarded-interruption)
-  printf '{"schema":"fm-captain-question.v1","close":"done",%s}\n' "$PLAIN" > "$home/context.json"
+  cp "$TMP_ROOT/test-captain-context.json" "$home/context.json"
   FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-pending \
     --title "Choose once" --category captain-only-fact --reason "choose" --repo sample --context-file "$home/context.json" >/dev/null
   identity=$(run_captain "$home" open sample-pending --identity)
@@ -5650,7 +5669,7 @@ SH
 test_reholding_expired_context_preserves_history_not_authority() {
   local home board show id kind
   home=$(make_home expired-context)
-  printf '{"schema":"fm-captain-question.v1","close":"release",%s,"options":[{"value":"go","label":"Go café","detail":"Ships today."}]}\n' "$PLAIN" > "$home/context.json"
+  jq '.close = "release" | .options[0].label = "Go café"' "$TMP_ROOT/test-captain-context.json" > "$home/context.json"
   for kind in annotated legacy; do
     id=sample-expired-$kind
     FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold "$id" \
@@ -5660,15 +5679,17 @@ test_reholding_expired_context_preserves_history_not_authority() {
       FM_CAPTAIN_HOLD_NOW=2026-07-24T12:00:00Z run_captain "$home" hold "$id" \
         --category captain-only-fact --reason choose --context-file "$home/context.json" >/dev/null || fail "expired contextual re-hold failed"
     else
-      FM_CAPTAIN_HOLD_NOW=2026-07-24T12:00:00Z run_captain "$home" hold "$id" --category captain-only-fact --reason choose >/dev/null \
-        || fail "expired legacy re-hold failed"
+      if FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
+        FM_CAPTAIN_HOLD_NOW=2026-07-24T12:00:00Z "$ROOT/bin/fm-captain-hold.sh" hold "$id" --category captain-only-fact --reason choose >/dev/null 2>&1; then
+        fail 'expired re-hold accepted missing context'
+      fi
+      continue
     fi
     board=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-live-board-snapshot.sh")
-    printf '%s' "$board" | jq -e --arg id "$id" --arg kind "$kind" 'any(.projects[].questions[];
+    printf '%s' "$board" | jq -e --arg id "$id" 'any(.projects[].questions[];
       .id == $id and .hold.set == "2026-07-24T12:00:00Z"
-        and (if $kind == "annotated" then .answerable and .context_status == "ready"
-          and .context.lifecycle == "2026-07-24T12:00:00Z#0"
-          else .answerable == false and .context_status == "legacy" end))' >/dev/null \
+        and .answerable and .context_status == "ready"
+        and .context.lifecycle == "2026-07-24T12:00:00Z#0")' >/dev/null \
       || fail "expired re-hold duplicated or borrowed old context"
     show=$(tasks_in "$home" show "$id" --full)
     assert_contains "$show" 'Previous captain question context:' "expired re-hold lost context history"
@@ -6028,9 +6049,15 @@ test_active_call_may_gain_but_not_change_a_deadline_default() {
   (
     local home identity
     home=$(make_home default-backfill)
-    default_context "$home" 'del(.recommendation)'
+    default_context "$home" '.'
     hold_default "$home" sample-backfill || fail "plain hold refused"
     identity=$(run_captain "$home" open sample-backfill --identity)
+    # Backfill a historical hold that predated required recommendations.
+    {
+      printf 'Captain hold set: %s\nCaptain question context: ' "${identity%%#*}"
+      jq -c --arg lifecycle "$identity" '. + {$lifecycle,subject:null,recommendation:null}' "$home/context.json"
+    } > "$home/legacy-backfill.body"
+    tasks_in "$home" update sample-backfill --body-file "$home/legacy-backfill.body" >/dev/null
     default_context "$home" "$DEFAULT_OK"
     FM_CAPTAIN_HOLD_NOW=2026-07-21T12:00:00Z run_captain "$home" hold sample-backfill --category captain-only-fact --reason "Choose go or wait" \
       --context-file "$home/context.json" >/dev/null || fail "an active call could not gain a default"
@@ -6055,7 +6082,7 @@ test_structured_context_keeps_origin_and_encoded_reason() {
   local home identity board reason=$'Choose (go)\nfor café'
   home=$(make_home context-origin-union)
   write_origin_meta "$home" sample-origin
-  printf '{"schema":"fm-captain-question.v1","close":"release",%s}\n' "$PLAIN" > "$home/context.json"
+  jq '.close = "release"' "$TMP_ROOT/test-captain-context.json" > "$home/context.json"
   FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-context-origin \
     --title 'Structured separate call' --category captain-only-fact --reason "$reason" --origin sample-origin \
     --context-file "$home/context.json" >/dev/null || fail "context/origin hold failed"

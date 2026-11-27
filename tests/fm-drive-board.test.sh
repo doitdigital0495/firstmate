@@ -28,6 +28,7 @@ fixture() {
     'item [id=a] [owner=terp] [project=miko] [target=deployed]: first step' \
     'item [id=b] [owner=main] [after=a]: verify' \
     'item [id=c] [owner=captain] [class=captain]: captain step' > "$H/items"
+  fm_test_add_goal_cards "$H/items"
   printf '%s\n' \
     '[{"id":"c1","title":"Wire the </script> card","owner":"terp","project":"miko"},' \
     ' {"id":"c2","title":"Fix the login","owner":"main"},' \

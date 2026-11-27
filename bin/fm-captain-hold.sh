@@ -22,7 +22,7 @@
 # Usage:
 #   fm-captain-hold.sh hold <task-id> --reason <reason> \
 #     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD] \
-#     --category <category> [--context-file <path>]
+#     --category <category> --context-file <path>  (optional for an already active hold)
 #   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release] [--expected-lifecycle <identity>] [--check-only]
 #   fm-captain-hold.sh answer <task-id> --deadline-default
 #   fm-captain-hold.sh defaults-due
@@ -127,12 +127,12 @@
 # purpose carries a link, backtick or GUID, naming that reader.
 # A context stored before this rule stays valid and answerable, and the live
 # board marks it as needing a plain-language explanation.
-# PERSONAL ACTION: set `action: true` for a step only the captain can take.
-# Give the destination by its familiar name in `about`; use `question` for
-# the ordered steps and exact result to send back (include a link there if
-# needed); use `purpose` for what waits and what the crew can keep doing.
-# An action needs a question and can never carry a recommendation or deadline
-# default. `answered` checks the completed call's latest resolution without
+# Fresh holds require complete context. A Vraag requires at least two options
+# and a recommendation. A Taak (`action: true`) instead requires `steps` (an
+# ordered list, each with an HTTP(S) URL or named click path such as
+# `Demo > Organisation`) and `expected` (the result you should see).
+# An action cannot carry a recommendation or deadline default.
+# `answered` checks the completed call's latest resolution without
 # printing the answer. It does not judge whether the reported result passed.
 # DEADLINE DEFAULT: a context may also carry scope (a nonempty unique list from
 # product, copy, outward-facing, irreversible, money, security),
@@ -979,6 +979,11 @@ load_question_context() {  # <path>; sets QUESTION_CONTEXT
     excluded) fail "a call with outward-facing, irreversible, money or security scope can never carry a deadline default; it waits for the captain" ;;
     scope) fail "a deadline default is only for small reversible product or copy calls: scope may name only product or copy" ;;
   esac
+  local missing_options
+  missing_options=$(jq -Rrs -L "$SCRIPT_DIR" 'include "fm-captain-question-context";
+    fm_question_json_decode | type == "object" and .recommendation != null and ((.options // []) == [])
+      and (.about != null and .purpose != null)' "$1" 2>/dev/null) || missing_options=false
+  [ "$missing_options" != true ] || fail 'missing captain card field: options (Opties)'
   QUESTION_CONTEXT=$(jq -RcS -s -L "$SCRIPT_DIR" 'include "fm-captain-question-context";
     fm_question_json_decode
     | if fm_question_valid(false) then fm_question_normalize
@@ -1417,6 +1422,14 @@ require_future_default_date() {  # <hold-set> <preserve> <shown-body>; reads QUE
     || fail "default_at must be at least 24 hours after the hold is set so the captain can see it first: $at"
 }
 
+require_captain_card() {  # <normalized context>
+  local problem
+  [ -n "$1" ] || fail 'missing --context-file (about and purpose for Waarvoor)'
+  problem=$(jq -r -L "$SCRIPT_DIR" 'include "fm-captain-question-context";
+    fm_captain_card_problem // ""' <<< "$1") || fail 'cannot validate captain card'
+  [ -z "$problem" ] || fail "missing or incomplete captain card field: $problem"
+}
+
 command_hold() {
   local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
   local existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason original_body='' hold_status=0
@@ -1491,11 +1504,13 @@ command_hold() {
       fi
     else
       [ -n "$category" ] || fail "$CAPTAIN_HOLD_CATEGORY_GATE"
+      require_captain_card "$QUESTION_CONTEXT"
     fi
   else
     [ -n "$category" ] || fail "$CAPTAIN_HOLD_CATEGORY_GATE"
     [ -n "$title" ] || fail "--title is required to create task $id"
     validate_one_line title "$title"
+    require_captain_card "$QUESTION_CONTEXT"
     require_future_default_date "$hold_set" 0 ''
     if [ -z "$repo" ] && [ -n "$origin" ] && [ -f "$STATE/$origin.meta" ]; then
       repo=$(meta_value "$STATE/$origin.meta" project)

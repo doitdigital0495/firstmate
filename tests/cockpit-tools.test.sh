@@ -203,6 +203,9 @@ cmp -s "$TMP_ROOT/card-before.json" "$DATA/card-data.json" || fail "COCKPIT_OUT 
 pass "refresh-cockpit: COCKPIT_OUT leaves the installed page alone and is repeatable"
 
 # ---- existing Doelen cards get one keyed switch each, and round-trip through the real answer reader ----
+add_demo_card() { # <items-file> <item-id>
+  printf 'captain-card %s %s\n' "$2" '{"action":true,"about":"The demo form is ready to check.","purpose":"We can finish after you confirm it.","steps":["Demo > Forms: open the preview."],"expected":"The form displays a confirmation."}' >> "$1"
+}
 GOAL_HOME="$TMP_ROOT/goals-home"
 mkdir -p "$GOAL_HOME/state" "$GOAL_HOME/data"
 goal() { env -i PATH="$PATH" HOME="$TMP_ROOT/home" FM_HOME="$GOAL_HOME" bash "$ROOT/bin/fm-goal.sh" "$@"; }
@@ -216,6 +219,7 @@ printf '%s\n' \
   'item [id=landed] [owner=main]: Landed' \
   'item [id=removed] [owner=main]: Dropped' \
   'item [id=decision] [owner=captain] [class=captain]: Decision' > "$TMP_ROOT/items-alpha"
+add_demo_card "$TMP_ROOT/items-alpha" decision
 printf 'item [id=check] [owner=main] [project=miko]: Paused goal step\n' > "$TMP_ROOT/items-beta"
 for id in alpha beta; do
   goal start "$id" --title "Doel $id" --done-when 'demo complete' --named-by 'do this' \
@@ -424,6 +428,8 @@ printf '%s\n' \
   'item [id=sign] [owner=captain] [class=captain]: Approve' > "$TMP_ROOT/ready-mixed"
 printf 'item [id=ghost] [owner=unknown] [task=same]: Unknown owner\n' > "$TMP_ROOT/ready-unknown"
 printf 'item [id=sign] [owner=captain] [class=captain]: Review\n' > "$TMP_ROOT/ready-captain"
+add_demo_card "$TMP_ROOT/ready-mixed" sign
+add_demo_card "$TMP_ROOT/ready-captain" sign
 for fixture in mixed unknown captain; do
   ready_goal start "$fixture" --title "Doel $fixture" --done-when 'demo complete' --named-by 'do this' \
     --plan plan.md --items-file "$TMP_ROOT/ready-$fixture" >/dev/null || fail "could not start readiness goal $fixture"
@@ -608,6 +614,8 @@ printf '%s\n' \
   'item [id=signed] [owner=main] [after=sign]: After signing' \
   'item [id=asked] [owner=captain] [class=captain] [task=demo-answered]: Answered already' \
   'item [id=drop] [owner=main]: Dropped step' > "$TMP_ROOT/items-sync"
+add_demo_card "$TMP_ROOT/items-sync" sign
+add_demo_card "$TMP_ROOT/items-sync" asked
 in_sync_home bash "$ROOT/bin/fm-goal.sh" start gamma --title 'Doel gamma' --done-when 'demo complete' \
   --named-by 'do this' --plan plan.md --items-file "$TMP_ROOT/items-sync" >/dev/null || fail 'could not start gamma'
 in_sync_home bash "$ROOT/bin/fm-goal.sh" mark gamma build running -- 'worker started' >/dev/null || fail 'mark build'
@@ -632,7 +640,7 @@ in_sync_home env FM_CAPTAIN_HOLD_NOW="$hold_clock" bash "$ROOT/bin/fm-captain-ho
   --title 'Pick a colour' --category captain-only-fact --reason 'Pick a colour.' \
   --context-file "$TMP_ROOT/ctx.json" >/dev/null || fail 'could not hold demo-colour'
 in_sync_home bash "$ROOT/bin/fm-captain-hold.sh" hold demo-answered --title 'Answered call' --category captain-only-fact \
-  --reason 'Already decided.' >/dev/null || fail 'could not hold demo-answered'
+  --reason 'Already decided.' --context-file "$TMP_ROOT/ctx.json" >/dev/null || fail 'could not hold demo-answered'
 printf 'yes\n' > "$TMP_ROOT/decision.txt"
 in_sync_home bash "$ROOT/bin/fm-captain-hold.sh" answer demo-answered --decision-file "$TMP_ROOT/decision.txt" >/dev/null \
   || fail 'could not answer demo-answered'
@@ -733,12 +741,12 @@ grep -Fq '<li>Controleer de uitkomst ' "$added" || fail 'record step title missi
 
 SYNC_PAGE="$TMP_ROOT/sync-page.html"
 sync_page() { # sync_page <section-inner>
-  printf '<html><body><section id="captain-door">%s</section><section id="doelen-nu"><h2 id="doelen">Doelen</h2></section></body></html>\n' \
+  printf '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"></head><body><section id="captain-door">%s</section><section id="doelen-nu"><h2 id="doelen">Doelen</h2></section></body></html>\n' \
     "$1" > "$SYNC_PAGE"
   python3 -I "$TOOLS/goal_drive.py" --truth "$TRUTH" --page "$SYNC_PAGE" || fail 'render from truth failed'
 }
 verify() { sync --verify-page "$SYNC_PAGE" > "$TMP_ROOT/verify.out" 2>&1; }
-good='<div data-cockpit-captain="gamma.sign">Sign</div><form data-lavish-question="demo-colour"></form>'
+good='<form data-lavish-question="demo-colour"><textarea name="a"></textarea></form>'
 sync_page "$good"
 python3 -I - "$SYNC_PAGE" <<'PY' || fail 'goal list is not compact and closed by default'
 import html
@@ -765,6 +773,10 @@ PY
 verify || fail "a correct page was rejected: $(cat "$TMP_ROOT/verify.out")"
 pass 'cockpit goal list: closed disclosure, complete counts and short/overridden titles; WBS and Kanban unchanged'
 cp "$SYNC_PAGE" "$TMP_ROOT/complete.html"
+if [ -n "${COCKPIT_TEST_SCREENSHOT_PAGE:-}" ]; then
+  [ ! -L "$COCKPIT_TEST_SCREENSHOT_PAGE" ] || fail 'screenshot destination is a symlink'
+  cp "$SYNC_PAGE" "$COCKPIT_TEST_SCREENSHOT_PAGE"
+fi
 for defect in 'goal item' 'WBS box' 'Kanban card' 'aggregate ring' 'goal ring' 'visible label' 'foreign item' \
   'open steps' 'stale step count' 'raw step title' 'goal KPI'; do
   python3 -I - "$TMP_ROOT/complete.html" "$SYNC_PAGE" "$defect" <<'PY' || fail 'fixture mutation failed'
@@ -813,7 +825,15 @@ PY
   grep -Fq "$expected" "$TMP_ROOT/verify.out" || fail "$(cat "$TMP_ROOT/verify.out")"
 done
 pass 'cockpit verify: requires dropped items in all views, complete rings and closed steps; rejects stale labels, titles, counts and scope'
-sync_page "$good<form data-lavish-question=\"demo-answered\"></form>"
+sync_page "$good"
+insert_before_section_end() { python3 -I - "$SYNC_PAGE" "$1" <<'PY'
+from pathlib import Path
+import sys
+page = Path(sys.argv[1])
+page.write_text(page.read_text().replace('</section>', sys.argv[2] + '</section>', 1))
+PY
+}
+insert_before_section_end '<form data-lavish-question="demo-answered"></form>'
 verify && fail 'an answered question still listed passed'
 grep -q 'still listed: demo-answered' "$TMP_ROOT/verify.out" || fail "$(cat "$TMP_ROOT/verify.out")"
 sync_page '<form data-lavish-question="demo-colour"></form>'
@@ -826,7 +846,8 @@ p.write_text(p.read_text().replace(' data-cockpit-captain="gamma/sign"', ''))
 PY
 verify && fail 'a missing captain item passed'
 grep -q 'missing captain item (must): gamma/sign' "$TMP_ROOT/verify.out" || fail "$(cat "$TMP_ROOT/verify.out")"
-sync_page "$good<form data-lavish-question=\"demo-colour\"></form>"
+sync_page "$good"
+insert_before_section_end '<form data-lavish-question="demo-colour"></form>'
 verify && fail 'a question listed twice passed'
 pass 'cockpit verify: answered question, missing captain item and duplicate are all rejected'
 
@@ -842,6 +863,7 @@ pass 'cockpit sync failure: non-zero exit, visible banner, truth kept, banner re
 
 printf '%s\n' 'item [id=check] [owner=captain] [class=captain] [project=demo]: next: Open the demo & verify the result.' \
   > "$TMP_ROOT/items-overige"
+add_demo_card "$TMP_ROOT/items-overige" check
 in_sync_home bash "$ROOT/bin/fm-goal.sh" start demo --title Demo --done-when 'demo complete' \
   --named-by 'do this' --plan plan.md --items-file "$TMP_ROOT/items-overige" >/dev/null || fail 'could not start other project'
 sync --scope miko --out "$TMP_ROOT/own-only.json" > /dev/null || fail 'own-only sync failed'
@@ -852,10 +874,9 @@ scoped="$TMP_ROOT/overige.html"
 printf '%s\n' '<section id="captain-door"></section><section id="overige-projecten"><h2>Overige projecten</h2></section><h2 id="doelen">Doelen</h2>' > "$scoped"
 python3 -I "$TOOLS/goal_drive.py" --truth "$TMP_ROOT/overige.json" --page "$scoped" || fail 'other project render failed'
 sync --verify-page "$scoped" --out "$TMP_ROOT/overige.json" || fail 'other project card is not in the correct section'
-grep -Fq '<ol><li data-cockpit-step="demo/check">next: Open the demo &amp; verify the result.</li></ol>' "$scoped" \
+grep -Fq '<ol><li>Demo &gt; Forms: open the preview.</li></ol>' "$scoped" \
   || fail 'other project did not use the exact ordered steps'
-grep -Fq '<ol><li data-cockpit-step="demo-colour">Which colour?</li><li data-cockpit-step="demo-colour">Check the result on the demo.</li></ol>' "$scoped" \
-  || fail 'captain hold did not get ordered steps'
+grep -Fq '<a href="#doel-demo">Demo</a>' "$scoped" || fail 'other project goal did not get a same-page link'
 jq '(.section1.can[] | select(.key == "demo/check")) as $entry
     | .section1.can |= map(select(.key != "demo/check")) | .other_projects = {can:[$entry]}' \
   "$TMP_ROOT/overige.json" > "$TMP_ROOT/lower-only.json"
@@ -865,15 +886,15 @@ python3 -I - "$scoped" "$TMP_ROOT/lower-only.html" <<'PY' || fail 'lower-only pa
 from pathlib import Path
 import re, sys
 page = Path(sys.argv[1]).read_text()
-match = re.search(r'<section id="overige-projecten">.*?</section>', page, re.S)
+match = re.search(r'<article data-cockpit-captain="demo/check".*?</article>', page, re.S)
 assert match is not None
 Path(sys.argv[2]).write_text(page[:match.start()] + page[match.end():] + match[0])
 PY
 if sync --verify-page "$TMP_ROOT/lower-only.html" --out "$TMP_ROOT/overige.json" > "$TMP_ROOT/scope.out"; then
   fail 'verified a manual step outside section 1'
 fi
-grep -Fq 'missing or stale captain steps: demo/check' "$TMP_ROOT/scope.out" || fail 'wrong lower-only finding'
-if grep -Fq 'id="doel-demo"' "$scoped"; then fail 'unscoped project got a second goal card'; fi
+grep -Fq 'captain content outside section 1: demo/check' "$TMP_ROOT/scope.out" || fail 'wrong lower-only finding'
+if grep -Fq 'id="doel-ring-demo"' "$scoped"; then fail 'unscoped project got a second goal ring'; fi
 pass 'cockpit routes other projects to Overige projecten with exact record steps'
 
 # ---- every captain entry belongs to exactly one cockpit ----
@@ -894,11 +915,12 @@ in_home() { # in_home <home> <command...>
 hold() { # hold <home> <task> [hold flags...]
   local home=$1 task=$2; shift 2
   in_home "$home" bash "$ROOT/bin/fm-captain-hold.sh" hold "$task" --title "Call $task" --category captain-only-fact \
-    --reason "Decide $task." "$@" >/dev/null 2>&1 || fail "could not hold $task"
+    --reason "Decide $task." --context-file "$TMP_ROOT/ctx.json" "$@" >/dev/null 2>&1 || fail "could not hold $task"
 }
 start_goal() { # start_goal <id> <item line...>
   local id=$1; shift
   printf '%s\n' "$@" > "$TMP_ROOT/items-scope"
+  fm_test_add_goal_cards "$TMP_ROOT/items-scope" || fail 'could not author scoped captain cards'
   in_home "$MAIN_HOME" bash "$ROOT/bin/fm-goal.sh" start "$id" --title "Doel $id" --done-when 'complete' \
     --named-by 'do this' --plan plan.md --items-file "$TMP_ROOT/items-scope" >/dev/null 2>&1 || fail "could not start $id"
 }
@@ -940,13 +962,14 @@ scoped="$TMP_ROOT/scope-geris.html"
 printf '%s\n' '<section id="captain-door"><h2>Wacht op jou</h2><form data-lavish-question="budget-roll"></form></section><h2 id="doelen">Doelen</h2>' > "$scoped"
 python3 -I "$TOOLS/goal_drive.py" --truth "$GERIS_HOME/state/cockpit-truth.geris.json" --page "$scoped" || fail 'Geris render failed'
 scope_sync "$GERIS_HOME/state/cockpit-truth.geris.json" --verify-page "$scoped" > "$TMP_ROOT/scope.out" || fail "$(cat "$TMP_ROOT/scope.out")"
-python3 -I - "$scoped" <<'PY' || fail 'captain steps do not open section 1'
+python3 -I - "$scoped" <<'PY' || fail 'scoped captain cards do not open section 1'
 import re, sys
-door = re.search(r'<section id="captain-door">(.*?)</section>', open(sys.argv[1]).read(), re.S)[1]
-assert door.index('</h2>') < door.index('data-cockpit-step') < door.index('<form'), door
-assert 'overige-projecten' not in door and 'read-token' not in door and 'pool-cleanup' not in door, door
+page = open(sys.argv[1]).read()
+door = re.match(r'<section id="captain-door"[^>]*>(.*?)</section>', page, re.S)[1]
+assert door.index('</h2>') < door.index('<article data-cockpit-captain=') < door.index('<form'), door
+assert 'Overige projecten' not in door and 'read-token' not in door and 'pool-cleanup' not in door, door
 PY
-pass 'cockpit scope: a scoped page opens section 1 with only its own steps, before its questions'
+pass 'cockpit scope: a scoped page opens section 1 with only its own captain cards'
 
 # ---- budget line per home: each number from its owning script, each cockpit its own homes ----
 mkdir -p "$GERIS_HOME/config" "$MAIN_HOME/config"
@@ -997,16 +1020,6 @@ cp "$TMP_ROOT/budget-geris.html" "$TMP_ROOT/budget-geris.again"
 python3 -I "$TOOLS/goal_drive.py" --truth "$GERIS_HOME/state/cockpit-truth.geris.json" --page "$TMP_ROOT/budget-geris.again" \
   || fail 'second budget render failed'
 cmp -s "$TMP_ROOT/budget-geris.html" "$TMP_ROOT/budget-geris.again" || fail 'a second budget render changed the page'
-printf '%s\n' '<section id="captain-door"><form data-lavish-question="budget-roll"></form></section>' > "$TMP_ROOT/budget-door"
-python3 -I - "$TMP_ROOT/budget-geris.html" "$TMP_ROOT/budget-door" <<'PY' || fail 'could not prepare the budget verify page'
-from pathlib import Path
-import sys
-page = Path(sys.argv[1])
-text = page.read_text().replace('<section id="captain-door"></section>', Path(sys.argv[2]).read_text().strip())
-page.write_text(text)
-PY
-python3 -I "$TOOLS/goal_drive.py" --truth "$GERIS_HOME/state/cockpit-truth.geris.json" --page "$TMP_ROOT/budget-geris.html" \
-  || fail 'budget render with steps failed'
 scope_sync "$GERIS_HOME/state/cockpit-truth.geris.json" --verify-page "$TMP_ROOT/budget-geris.html" > "$TMP_ROOT/scope.out" \
   || fail "a rendered budget line failed verification: $(cat "$TMP_ROOT/scope.out")"
 sed 's/queued rows 1\/30/queued rows 9\/30/' "$TMP_ROOT/budget-geris.html" > "$TMP_ROOT/budget-stale.html"
@@ -1034,10 +1047,11 @@ printf '%s\n' \
   'item [id=triage] [owner=main] [after=check]: Triage the reported failure' \
   'item [id=package] [owner=main] [task=demo-package] [merge-after=check]: Package the release' \
   'item [id=notes] [owner=main]: Draft release notes' > "$TMP_ROOT/action-items"
+add_demo_card "$TMP_ROOT/action-items" check
 in_sync_home bash "$ROOT/bin/fm-goal.sh" start demo-action --title 'Demo check' --done-when 'Demo verified' \
   --named-by 'verify Demo' --plan plan.md --items-file "$TMP_ROOT/action-items" >/dev/null
 cat > "$TMP_ROOT/action-context.json" <<'JSON'
-{"schema":"fm-captain-question.v1","close":"done","action":true,"about":"Go to Organisation in the Demo site.","question":"1. Sign in with your own login.\n2. Open Organisation.\n3. Check each of the four tabs.\nReport the failing tab or say all four work.","purpose":"Triage waits for your result and the release cannot land yet. Packaging and release notes continue."}
+{"schema":"fm-captain-question.v1","close":"done","action":true,"about":"Go to Organisation in the Demo site.","question":"1. Sign in with your own login.\n2. Open Organisation.\n3. Check each of the four tabs.\nReport the failing tab or say all four work.","steps":["Demo > Sign in: use your own login.","Demo > Organisation: check all four tabs."],"expected":"All four tabs open; report any tab that fails.","purpose":"Triage waits for your result and the release cannot land yet. Packaging and release notes continue."}
 JSON
 hold_action() {
   in_sync_home bash "$ROOT/bin/fm-captain-hold.sh" hold demo-personal --title 'Check the four Demo tabs' \
@@ -1078,9 +1092,9 @@ printf '%s\n' '<section id="captain-door"><form data-lavish-question="demo-perso
 python3 -I "$TOOLS/goal_drive.py" --truth "$TRUTH" --page "$ACTION_PAGE" || fail 'personal action card did not render'
 grep -Fq 'Triage waits for your result and the release cannot land yet. Packaging and release notes continue.' "$ACTION_PAGE" \
   || fail 'personal action card did not say what waits and what continues'
-grep -Fq 'data-cockpit-step="demo-personal">Report the failing tab or say all four work.</li>' "$ACTION_PAGE" \
+grep -Fq 'All four tabs open; report any tab that fails.' "$ACTION_PAGE" \
   || fail 'personal action card did not show what to report'
-if grep -Fq 'data-cockpit-captain="demo-personal"' "$ACTION_PAGE"; then fail 'personal action duplicated the keyed form'; fi
+[ "$(grep -o 'data-cockpit-captain="demo-personal"' "$ACTION_PAGE" | wc -l)" -eq 1 ] || fail 'personal action duplicated the keyed form'
 printf 'demo-action/check\tall four work\tDemo tab check\n' \
   | in_sync_home bash "$ROOT/bin/fm-captain-hold.sh" answers --any-origin --source 'fixture' >/dev/null
 lifecycle=$(in_sync_home bash "$ROOT/bin/fm-captain-hold.sh" open demo-personal --identity) \
@@ -1093,5 +1107,80 @@ sync > "$TMP_ROOT/action-sync.out" 2>&1 || fail "post-answer sync failed: $(<"$T
 jq -e '([.section1[][]] | length == 0) and any(.goals[].items[]; .id == "triage" and .status == "startable")' \
   "$TRUTH" >/dev/null || fail 'the single answer did not retire the card and unblock triage'
 pass 'personal action: one owner card and answer, no default, independent work starts, explicit result clears only its gates'
+
+# Fixed layout: exercise the public writer, renderer and verifier, not their source.
+layout_red=0
+layout_fail() { printf 'fixed layout regression: %s\n' "$*" >&2; layout_red=1; }
+for defect in first outside type title id context goal broken-goal options recommendation steps result duplicate answered priority noncaptain missing-later; do
+  python3 -I - "$TMP_ROOT/complete.html" "$TMP_ROOT/fixed-$defect.html" "$defect" <<'PY'
+from pathlib import Path
+import re
+import sys
+src, out, defect = sys.argv[1:]
+page = original = Path(src).read_text()
+if defect == 'first':
+    page = page.replace('<body>', '<body><h2>Earlier content</h2>', 1)
+elif defect == 'outside':
+    page += '<p data-cockpit-captain="demo-colour">Outside</p>'
+elif defect in ('duplicate', 'answered'):
+    key = 'demo-colour' if defect == 'duplicate' else 'demo-answered'
+    page = page.replace('</section>', f'<p data-cockpit-captain="{key}">Unexpected</p></section>', 1)
+elif defect == 'broken-goal':
+    page = page.replace('href="#doel-gamma"', 'href="#not-a-goal"', 1)
+elif defect == 'priority':
+    page = page.replace('data-captain-priority="must"', 'data-captain-priority="later"', 1)
+elif defect == 'noncaptain':
+    page = page.replace('</section>', '<p>Unrelated project news</p></section>', 1)
+elif defect == 'missing-later':
+    page = re.sub(r'<details data-captain-priority="later">.*?</details>', '', page, count=1, flags=re.S)
+else:
+    page = re.sub(rf'<(\w+) data-captain-field="{defect}"[^>]*>.*?</\1>', '', page, count=1, flags=re.S)
+assert page != original, defect
+Path(out).write_text(page)
+PY
+  if sync --verify-page "$TMP_ROOT/fixed-$defect.html" --out "$TMP_ROOT/truth.first" > "$TMP_ROOT/fixed-$defect.out"; then
+    layout_fail "verifier accepted $defect"
+  fi
+done
+if in_sync_home bash "$ROOT/bin/fm-captain-hold.sh" hold incomplete-hold --title 'Incomplete hold' \
+  --category captain-only-fact --reason 'No context' > "$TMP_ROOT/incomplete-hold.out" 2>&1; then
+  layout_fail 'hold writer accepted missing context'
+fi
+printf '%s\n' 'item [id=check] [owner=captain] [class=captain]: Incomplete task' > "$TMP_ROOT/incomplete-items"
+if in_sync_home bash "$ROOT/bin/fm-goal.sh" start incomplete-goal --title 'Incomplete goal' --done-when 'checked' \
+  --named-by 'fixture' --plan plan.md --items-file "$TMP_ROOT/incomplete-items" > "$TMP_ROOT/incomplete-goal.out" 2>&1; then
+  layout_fail 'goal writer accepted missing context'
+fi
+[ "$layout_red" = 0 ] || fail 'fixed layout gates failed'
+grep -Fq 'missing --context-file (about and purpose for Waarvoor)' "$TMP_ROOT/incomplete-hold.out" || fail 'hold did not name context'
+grep -Fq 'missing captain-card (about and purpose for Waarvoor)' "$TMP_ROOT/incomplete-goal.out" || fail 'goal did not name context'
+[ ! -e "$SYNC_HOME/state/goals/incomplete-goal.goal" ] || fail 'rejected goal exists'
+for field in about purpose options recommendation steps expected; do
+  if [ "$field" = steps ] || [ "$field" = expected ]; then context="$TMP_ROOT/action-context.json"; else context="$TMP_ROOT/ctx.json"; fi
+  jq "del(.$field)" "$context" > "$TMP_ROOT/invalid-card.json"
+  if in_sync_home bash "$ROOT/bin/fm-captain-hold.sh" hold "missing-$field" --title 'Incomplete hold' \
+    --category captain-only-fact --reason 'Try to write an incomplete card' --context-file "$TMP_ROOT/invalid-card.json" \
+    > "$TMP_ROOT/invalid-card.out" 2>&1; then fail "hold accepted missing $field"; fi
+  grep -Fq "$field" "$TMP_ROOT/invalid-card.out" || fail "hold did not name $field"
+  if in_sync_home bash "$ROOT/bin/fm-tasks-axi.sh" show "missing-$field" >/dev/null 2>&1; then fail 'rejected hold created a row'; fi
+  {
+    printf '%s\n' 'item [id=check] [owner=captain] [class=captain]: Incomplete captain card'
+    printf 'captain-card check %s\n' "$(jq -c 'del(.schema,.close)' "$TMP_ROOT/invalid-card.json")"
+  } > "$TMP_ROOT/incomplete-items"
+  if in_sync_home bash "$ROOT/bin/fm-goal.sh" start incomplete-goal --title 'Incomplete goal' --done-when checked \
+    --named-by fixture --plan plan.md --items-file "$TMP_ROOT/incomplete-items" > "$TMP_ROOT/incomplete-goal.out" 2>&1; then
+    fail "goal writer accepted missing $field"
+  fi
+  grep -Fq "$field" "$TMP_ROOT/incomplete-goal.out" || fail "goal writer did not name $field"
+done
+# Seed a legacy record directly in the synthetic backlog, without a production-write bypass.
+in_sync_home bash "$ROOT/bin/fm-tasks-axi.sh" add pre-layout 'Original title' --repo demo >/dev/null
+in_sync_home bash "$ROOT/bin/fm-tasks-axi.sh" hold pre-layout --kind captain --reason 'Original reason' >/dev/null
+sync > "$TMP_ROOT/legacy-card.out" || fail 'legacy sync failed'
+grep -Fq 'MISMATCH incomplete-captain-card pre-layout: ONTBREEKT: Waarvoor' "$TMP_ROOT/legacy-card.out" || fail 'legacy mismatch went unreported'
+sync_page ''
+verify || fail "legacy markers did not pass verification: $(<"$TMP_ROOT/verify.out")"
+grep -Fq 'Original reason <span class="fm-captain-missing">ONTBREEKT: Waarvoor</span>' "$SYNC_PAGE" || fail 'legacy reason or marker missing'
+pass 'fixed cockpit: valid Vraag and Taak; stale fields, broken links and misplaced/answered/duplicate cards blocked; incomplete writes refused; legacy markers visible'
 
 echo "all cockpit-tools tests passed"

@@ -72,14 +72,18 @@ def fm_question_default_pending:
   end;
 def fm_question_valid($stored):
   type == "object"
-  and ((keys - (["schema","close","about","purpose","question","options","recommendation","subject","scope","action","default_eligible","default_date","default_at"]
+  and ((keys - (["schema","close","about","purpose","question","options","recommendation","subject","scope","action","steps","expected","default_eligible","default_date","default_at"]
     + if $stored then ["lifecycle"] else [] end)) | length == 0)
   and .schema == "fm-captain-question.v1" and (.close | IN("done","release"))
   and (if $stored then (.lifecycle | fm_question_lifecycle_valid) else true end)
   and (.about == null or (.about | fm_question_text(600; false)))
   and (.purpose == null or (.purpose | fm_question_text(600; false)))
   and (.question == null or (.question | fm_question_text(600; true)))
-  and (.action == null or (.action == true and .question != null and .recommendation == null))
+  and (.action == null or (.action == true and .recommendation == null
+    and (if $stored then (.question != null or .steps != null) else ((.options // []) == []) end)))
+  and (.steps == null or (.action == true and (.steps | type == "array" and length <= 20
+    and all(.[]; fm_question_text(400; false)))))
+  and (.expected == null or (.action == true and (.expected | fm_question_text(600; false))))
   and ((.options // []) | type == "array" and length <= 12
     and all(.[]; type == "object" and (keys == ["label","value"] or keys == ["detail","label","value"])
       and (.value | fm_question_slug(64)) and .value != "reconcile"
@@ -102,17 +106,31 @@ def fm_question_explanation_problem:
     then "markup"
   elif any((.options // [])[]; .detail == null) then "option"
   else null end;
+# Authoring only: older contexts remain readable. A click path uses > separators.
+def fm_captain_card_problem:
+  if .about == null then "about (Waarvoor)"
+  elif .purpose == null then "purpose (Waarvoor)"
+  elif .action == true then
+    if ((.steps // []) | length) == 0 then "steps (Stappen)"
+    elif any(.steps[]; test("https?://[^[:space:]]+|[^>[:space:]][^>]*[[:space:]]>[[:space:]][^>]*[^>[:space:]]") | not)
+      then "step destination (URL or click path with > separators)"
+    elif .expected == null then "expected (Verwacht resultaat)"
+    else null end
+  elif ((.options // []) | length) < 2 then "options (Opties; at least two)"
+  elif any(.options[]; .detail == null) then "option detail (Opties)"
+  elif .recommendation == null then "recommendation (Aanbeveling)"
+  else null end;
 # An active call may gain the explanation or the deadline default it lacks; nothing
 # already published changes. A default may name the recommendation it brings with it.
 def fm_question_adds_only($old):
-  def bare: del(.about, .purpose) | .options |= map(del(.detail));
+  def bare: del(.about, .purpose, .steps, .expected) | .options |= map(del(.detail));
+  def supplying_options: if $old.options == [] then del(.options) else . end;
   def undated: del(.default_eligible, .default_date, .default_at, .scope, .recommendation);
   . as $new
-  | ($new | bare | undated) == ($old | bare | undated)
+  | ($new | bare | undated | supplying_options) == ($old | bare | undated | supplying_options)
   and all("default_eligible", "default_date", "default_at", "scope", "recommendation"; . as $field
     | $old[$field] == null or $new[$field] == $old[$field])
-  and ($new.recommendation == $old.recommendation or $new.default_eligible != null)
-  and all("about", "purpose"; . as $field | $old[$field] == null or $new[$field] == $old[$field])
+  and all("about", "purpose", "steps", "expected"; . as $field | $old[$field] == null or $new[$field] == $old[$field])
   and all(range(0; $old.options | length);
     . as $i | $old.options[$i].detail == null or $new.options[$i].detail == $old.options[$i].detail);
 def fm_question_normalize:
@@ -120,6 +138,8 @@ def fm_question_normalize:
   + (if .about == null then {} else {about} end) + (if .purpose == null then {} else {purpose} end)
   + (if .question == null then {} else {question} end)
   + (if .action == true then {action} else {} end)
+  + (if .steps == null then {} else {steps} end)
+  + (if .expected == null then {} else {expected} end)
   + (if .scope == null then {} else {scope} end)
   + if .default_eligible == null then {}
     elif .default_at != null then {default_eligible,default_at} else {default_eligible,default_date} end;
