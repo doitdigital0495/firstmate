@@ -376,7 +376,8 @@ POLL=${FM_POLL:-15}                   # seconds between cycles
 # The liveness beacon is touched once per cycle, immediately before the
 # terminal wait below (event_wait_or_sleep) as well as at the top of the next
 # one, so a healthy cycle's beacon can legitimately age up to POLL seconds
-# between touches. fm_poll_derived_grace (bin/fm-wake-lib.sh, already sourced
+# between touches; beat_checkpoint keeps it fresh through a long maintenance
+# pass in between. fm_poll_derived_grace (bin/fm-wake-lib.sh, already sourced
 # transitively above) is the single owner of the max(300, poll+60)
 # derivation - see docs/turnend-guard.md "Guard grace and the poll cadence".
 # This recomputes the library default above now that the real configured
@@ -4257,6 +4258,39 @@ watcher_stop_signals() {
   trap 'exit 1' INT
 }
 
+# Mid-cycle refresh of the liveness beacon, at a point where the cycle has
+# provably just made progress: between two maintenance steps
+# (signal_preempt_check) and after each bounded check (run_check_capture).
+#
+# The top of the poll loop owns the per-cycle touch. One touch per cycle is
+# not enough on its own, because a legitimate maintenance pass in a busy home
+# - many checks, each inside CHECK_TIMEOUT - can outlast the stale grace, and a
+# re-arm then refuses the healthy holder as "heartbeat is stale" for the rest
+# of the pass. A step that never returns reaches no checkpoint, so its beacon
+# still ages past the grace and then the hard bound exactly as before; only a
+# pass that keeps completing steps stays fresh.
+#
+# A checkpoint refreshes only once the last touch is a fifth of the stale grace
+# old (60 seconds at the default grace). An ordinary cycle is far shorter, so
+# its beacon still moves only at the top of a poll and costs no extra fork,
+# while a long pass can never drift further than that fifth plus one bounded
+# step from its last touch.
+#
+# Silent on failure: the top-of-loop checks own the state-directory teardown
+# report, and a refresh that cannot land only leaves the older beacon.
+BEAT_TOUCHED_AT=$SECONDS
+BEAT_REFRESH_AFTER=60
+case "$WATCHER_STALE_GRACE" in
+  ''|*[!0-9]*) ;;
+  *) [ "${#WATCHER_STALE_GRACE}" -gt 9 ] || BEAT_REFRESH_AFTER=$((10#$WATCHER_STALE_GRACE / 5)) ;;
+esac
+[ "$BEAT_REFRESH_AFTER" -ge 1 ] || BEAT_REFRESH_AFTER=1
+beat_checkpoint() {
+  [ $((SECONDS - BEAT_TOUCHED_AT)) -ge "$BEAT_REFRESH_AFTER" ] || return 0
+  touch "$STATE/.last-watcher-beat" 2>/dev/null || true
+  BEAT_TOUCHED_AT=$SECONDS
+}
+
 run_check_capture() {
   local pgid rc=0
   fm_check_output_cleanup
@@ -4288,6 +4322,7 @@ run_check_capture() {
   fm_check_output_cleanup
   # Keep what the check printed before the cut, then report the cut itself.
   [ "$rc" -ne 124 ] || FM_CHECK_RESULT="${FM_CHECK_RESULT:+$FM_CHECK_RESULT$'\n'}timed out after ${CHECK_TIMEOUT}s"
+  beat_checkpoint
 }
 
 FM_CAPTURE_OUTPUT=
@@ -5124,9 +5159,11 @@ resurface_after_downtime() {
 # (state/.last-maintenance-pass, an mtime so it survives the restart that
 # follows every wake) is younger than FM_MAINTENANCE_DEFER_MAX seconds. Past
 # that, one whole pass runs before any signal can end the cycle. 0 disables
-# pre-emption. No checkpoint sits inside the slow-check sweep: a sweep cut
-# short would run again from its first check on the next cycle and repeat its
-# forge calls.
+# pre-emption. No signal checkpoint sits inside the slow-check sweep: a sweep
+# cut short would run again from its first check on the next cycle and repeat
+# its forge calls. The sweep still reaches a liveness-beacon checkpoint after
+# each check, and so does every signal checkpoint, whether or not pre-emption
+# is live (beat_checkpoint).
 MAINTENANCE_DEFER_MAX=${FM_MAINTENANCE_DEFER_MAX:-120}
 case "$MAINTENANCE_DEFER_MAX" in ''|*[!0-9]*) MAINTENANCE_DEFER_MAX=120 ;; esac
 [ "${#MAINTENANCE_DEFER_MAX}" -le 9 ] || MAINTENANCE_DEFER_MAX=120
@@ -5282,6 +5319,7 @@ EOF
 }
 
 signal_preempt_check() {
+  beat_checkpoint
   [ "$MAINTENANCE_PREEMPTIBLE" -eq 1 ] || return 0
   [ "$(signal_fingerprint)" != "$SIGNAL_QUIET_FINGERPRINT" ] || return 0
   signal_scan_and_surface
@@ -5339,6 +5377,7 @@ while :; do
   # Liveness beacon for fm-guard.sh: a fresh mtime here means a watcher is
   # alive. Supervision scripts warn when this goes stale with tasks in flight.
   touch "$STATE/.last-watcher-beat"
+  BEAT_TOUCHED_AT=$SECONDS
 
   # Whether a pending signal may pre-empt this cycle's maintenance steps
   # (signal_scan_and_surface owns the rule and its starvation bound).

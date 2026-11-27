@@ -332,6 +332,7 @@ family_for_basename() {
     fm-watch-inbox-meta.test.sh|fm-watch-open-decisions.test.sh|fm-watch-away-long-waits.test.sh|fm-watch-ci-fixing-green.test.sh|\
     fm-watch-drive-floor.test.sh|fm-watch-goal-stall.test.sh|\
     fm-watch-signal-preempt.test.sh|\
+    fm-watch-long-cycle-beat.test.sh|\
     fm-watch-triage.test.sh|fm-watch-triage-pause.test.sh|\
     fm-watch-triage-wedge-defer.test.sh|fm-task-inbox.test.sh|\
     fm-watcher-lock.test.sh|fm-inactive-reconcile.test.sh|fm-watch-wedge-cap.test.sh|\
@@ -1039,6 +1040,7 @@ tests/fm-warm-compact.test.sh 1500
 tests/fm-watch-arm.test.sh 113076
 tests/fm-watch-checkpoint.test.sh 11234
 tests/fm-watch-inbox-meta.test.sh 283
+tests/fm-watch-long-cycle-beat.test.sh 30000
 tests/fm-watch-imposed-holds.test.sh 3352
 tests/fm-watch-open-decisions.test.sh 11821
 tests/fm-watch-recovery-loop.test.sh 59092
