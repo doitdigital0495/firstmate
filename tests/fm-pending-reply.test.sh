@@ -2359,6 +2359,66 @@ test_operator_close_settles_the_escalated_record() (
   pass "an operator --resolve-key close settles the escalated record"
 )
 
+test_escalated_reply_expiry() (
+  local home state status corr old answered fresh uncertain rec msg shadow open before
+  home=$(setup_parent expire-escalated)
+  state="$home/state"
+  status="$state/hibit.status"
+  export FM_CONFIG_OVERRIDE="$home/config"
+  mkdir -p "$FM_CONFIG_OVERRIDE"
+  # shellcheck disable=SC2030,SC2031 # These clock settings are scenario-local.
+  export FM_PENDING_REPLY_NOW=1000
+  old=$(fm_pending_reply_create "$home" "$state" hibit 'missed report')
+  answered=$(fm_pending_reply_create "$home" "$state" hibit 'answer already landed')
+  fresh=$(fm_pending_reply_create "$home" "$state" hibit 'escalated one second later')
+  uncertain=$(fm_pending_reply_create "$home" "$state" hibit 'initial delivery unconfirmed')
+  for corr in "$old" "$answered" "$fresh"; do
+    fm_pending_reply_mark_delivered "$state" "$corr" || fail 'could not mark delivery'
+  done
+  fm_pending_reply_mark_delivery_unknown "$state" "$uncertain" || fail 'could not mark delivery unknown'
+  FM_PENDING_REPLY_NOW=5000
+  for corr in "$old" "$answered" "$uncertain"; do
+    fm_pending_reply_maybe_escalate "$state" "$corr" || fail 'could not open old escalation'
+  done
+  FM_PENDING_REPLY_NOW=5001
+  fm_pending_reply_maybe_escalate "$state" "$fresh" || fail 'could not open fresh escalation'
+  for corr in "$old" "$answered" "$uncertain" "$fresh"; do
+    [ "$(phase_of "$state" "$corr")" = escalated ] || fail 'fixture must start escalated'
+  done
+  printf 'done: corr=%s answer already landed\n' "$answered" >> "$status"
+  msg=$(fm_task_inbox_write "$state" hibit "unanswered corr=$old")
+  rec=$(fm_pending_reply_path "$state" "$old")
+  before=$(cksum "$status" "$rec")
+  FM_PENDING_REPLY_NOW=91401
+  shadow=$(fm_pending_reply_sweep_escalated "$state") || fail 'default shadow sweep failed'
+  [ "$shadow" = "pending-reply escalation sweep (shadow): 1 $old" ] || fail "wrong candidates: $shadow"
+  printf 'shadow\n' > "$FM_CONFIG_OVERRIDE/record-sweep"
+  [ "$(fm_pending_reply_sweep_escalated "$state")" = "$shadow" ] || fail 'explicit shadow differs'
+  [ "$(cksum "$status" "$rec")" = "$before" ] || fail 'shadow must not edit records or status'
+  [ "$(phase_of "$state" "$answered")" = escalated ] || fail 'shadow must not resolve even real answers'
+
+  printf 'on\n' > "$FM_CONFIG_OVERRIDE/record-sweep"
+  fm_pending_reply_sweep_escalated "$state" >/dev/null || fail 'enforced sweep failed'
+  [ "$(phase_of "$state" "$old")" = resolved ] || fail 'old escalation did not resolve'
+  [ "$(fm_pending_reply_get "$rec" resolved_via)" = expired-escalated ] || fail 'wrong expiry reason'
+  [ "$(fm_pending_reply_get "$rec" resolved_epoch)" = 91401 ] || fail 'wrong expiry epoch'
+  [ "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$answered")" resolved_via)" = status ] \
+    || fail 'an existing reply must beat expiry'
+  [ "$(phase_of "$state" "$fresh")" = escalated ] || fail 'exactly 24 h is not older than 24 h'
+  [ "$(phase_of "$state" "$uncertain")" = escalated ] || fail 'delivery-unknown escalation must stay retryable'
+  [ -f "$msg" ] || fail 'expiry must not acknowledge the request inbox'
+  open=$(status_open_decisions "$status")
+  [[ "$open" != *"pending-reply-$old"* && "$open" == *"pending-reply-$fresh"* ]] \
+    || fail 'the fold must close only the matching expired key, not the fresh key'
+  grep -qF "pending-reply-resolved: task=hibit pending-reply-id=$old via=expired-escalated" "$status" \
+    || fail 'missing reserved-key expiry note'
+  fm_pending_reply_sweep_escalated "$state" >/dev/null || fail 'repeat sweep failed'
+  [ "$(grep -cF "resolved [key=pending-reply-$old]" "$status")" = 1 ] || fail 'duplicate expiry close'
+  FM_PENDING_REPLY_NOW=2000000 fm_pending_reply_sweep_settled "$state" || fail 'settled sweep failed'
+  [ -f "$rec" ] || fail 'expired escalations must survive ordinary retention pruning'
+  pass 'shadow reports old missed replies; enforcement closes their keys without acknowledging or deleting records'
+)
+
 test_settled_records_sweep_only_what_is_terminal_and_old() (
   local home state dir swept_plain swept_closed kept_open_decision kept_inbox kept_ancient kept_fresh
   home=$(setup_parent sweep-settled)
@@ -2796,6 +2856,7 @@ test_local_parent_replies_is_wrong_home_evidence
 test_escalated_undelivered_correlation_stays_retryable
 test_same_kind_escalation_reopens_after_operator_close
 test_operator_close_settles_the_escalated_record || exit 1
+test_escalated_reply_expiry || exit 1
 test_settled_records_sweep_only_what_is_terminal_and_old || exit 1
 test_tick_drains_the_settled_store || exit 1
 test_summary_keeps_accents_and_caps_by_character
