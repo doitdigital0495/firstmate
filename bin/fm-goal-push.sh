@@ -7,7 +7,12 @@
 # steps in both modes and stores its scheduling cursor in watcher state.
 # eligible is the read-only final guard for goal-originated dispatch and replay.
 # The owner home drafts up to three missing local briefs per driven goal per
-# pass in enforce; shadow only logs proposals. fm-goal-brief-lib.sh owns draft lint.
+# pass in enforce; shadow only logs proposals. fm-goal-brief-lib.sh owns draft lint
+# and the derived binding: an item without task=/project= uses its item id and
+# the home's single registered project, and the task is bound by an open mark
+# before the start. Each mark logs its attempt, then "mark result" (landed or
+# refused with the guard's reason). A done proposal needs a landing newer than
+# the item's latest mark; a running mark names its task.
 # FM_GOAL_PUSH_CAPACITY replaces fm-capacity.sh for lab tests only.
 set -u
 export LC_ALL=C
@@ -32,9 +37,15 @@ mode() {
 }
 
 load_goal() {
+  local i
+  FM_GOAL_DERIVED_TASKS=()
   _fm_goal_open_record "$1" "$FM_GOAL_VIEW_STATE" >/dev/null 2>&1 &&
     [ "$FM_GOAL_REC_DRIVE" = driven ] &&
-    fm_goal_fold "$1" "$FM_GOAL_VIEW_STATE" "$FM_GOAL_VIEW_DATA" "$(date +%s)"
+    fm_goal_fold "$1" "$FM_GOAL_VIEW_STATE" "$FM_GOAL_VIEW_DATA" "$(date +%s)" || return 1
+  for ((i=0; i<FM_GOAL_ITEM_COUNT; i++)); do
+    case "${FM_GOAL_M_STATES[$i]}" in open|running) owned "$i" && _fm_goal_derive_binding "$i" ;; esac
+  done
+  return 0
 }
 
 owned() {
@@ -102,12 +113,36 @@ still_driven() (
   _fm_goal_open_record "$1" "$FM_GOAL_VIEW_STATE" >/dev/null 2>&1 && [ "$FM_GOAL_REC_DRIVE" = driven ]
 )
 
+# <goal> <idx> <state> <note> [task]: the attempt is logged first, then the
+# guarded write's result. A running mark names its task: a later mark without
+# one replaces the binding and the item then reads as orphaned.
 mark() {
-  local goal=$1 i=$2 next=$3 note=$4 item=${FM_GOAL_ITEMS_IDS[$2]}
+  local goal=$1 i=$2 next=$3 note=$4 task=${5-} item=${FM_GOAL_ITEMS_IDS[$2]} out rc=0
+  local -a bind=()
+  [ -z "$task" ] || bind=(--task "$task")
   log "mark $goal/$item $next: $note"
   [ "$run_mode" = enforce ] && [ "$(mode)" = enforce ] || return 1
-  FM_GOAL_PUSH_EXPECT="${FM_GOAL_ITEMS_OWNERS[$i]}:${FM_GOAL_M_STATES[$i]}:${FM_GOAL_M_ATS[$i]}" \
-    "$SCRIPT_DIR/fm-goal.sh" mark "$goal" "$item" "$next" -- "$note" >/dev/null
+  out=$(FM_GOAL_PUSH_EXPECT="${FM_GOAL_ITEMS_OWNERS[$i]}:${FM_GOAL_M_STATES[$i]}:${FM_GOAL_M_ATS[$i]}" \
+    "$SCRIPT_DIR/fm-goal.sh" mark "$goal" "$item" "$next" ${bind[@]+"${bind[@]}"} -- "$note" 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    log "mark result $goal/$item $next: landed"
+  else
+    out=$(printf '%s' "$out" | tr '\n\t' '  ' | cut -c1-160)
+    log "mark result $goal/$item $next: refused rc=$rc${out:+ ($out)}"
+  fi
+  return "$rc"
+}
+
+# A task derived from the item id must be in the record before a start: the
+# launch links and every other reader fold the task from the item or its marks.
+bind_derived_task() {  # <goal> <idx>
+  local goal=$1 i=$2 task=${FM_GOAL_ITEMS_TASKS[$2]}
+  [ -n "${FM_GOAL_DERIVED_TASKS[$i]-}" ] || return 0
+  if [ "$run_mode" = enforce ] && [ "$(mode)" = enforce ]; then
+    mark "$goal" "$i" open "bound task $task (the item id) for the goal pusher" "$task" && load_goal "$goal"
+  else
+    mark "$goal" "$i" open "bound task $task (the item id) for the goal pusher" "$task" || true
+  fi
 }
 
 # Both brief and stale-wait wakes target this home's owner. Repeat a stale
@@ -134,6 +169,8 @@ reconcile() {
         verdict=${_FM_GOAL_CREW_STATE_VERDICTS["$STATE|$task"]:-unknown}
         if [ "$verdict" = 'done' ]; then
           pr=$(landed_pr "$task") || return 1
+          # A mark newer than the landing is the owner's later judgment.
+          _fm_goal_item_landing "$i" "$STATE" || return 1
           mark "$goal" "$i" 'done' "landed $pr"
           return
         fi
@@ -143,7 +180,7 @@ reconcile() {
       ;;
     waiting)
       since=${FM_GOAL_M_ATS[$i]:-$FM_GOAL_REC_STARTED_EPOCH}
-      ref=${FM_GOAL_M_ONS[$i]-}
+      ref=${FM_GOAL_M_ON[$i]-}
       age=$((now - since))
       case "$ref" in
         '') [ "$age" -ge 1800 ] || return 1 ;;
@@ -181,6 +218,7 @@ draft_brief() {
   fi
   if ! body=$(_fm_goal_draft_render "$i"); then
     log "cannot draft $binding: $body"
+    why="${why:+$why; }$binding: $(printf '%s' "$body" | tr '\n\t' '  ' | cut -c1-120)"
     return 1
   fi
   if [ "$run_mode" = shadow ]; then
@@ -228,7 +266,7 @@ captain_notices() {
 
 run_pass() {
   local run_mode=$1 now path goal i changed task binding brief result budget=-1 remaining queued links drafts
-  local briefs='' ready='' held='' off='' listed=0
+  local briefs='' ready='' held='' off='' listed=0 why=''
   now=$(date +%s)
   while IFS= read -r path; do
     goal=${path##*/}; goal=${goal%.goal}
@@ -264,9 +302,14 @@ run_pass() {
       if [ -f "$brief" ] && [ ! -L "$brief" ] && [ ! -L "${brief%/*}" ] && fm_goal_is_draft "$brief"; then
         if ! result=$(_fm_goal_draft_check "$i" "$brief"); then
           log "hold $binding ($task): $result"
+          why="${why:+$why; }$binding: $(printf '%s' "$result" | tr '\n\t' '  ' | cut -c1-120)"
           briefs="$briefs $binding"
           continue
         fi
+      fi
+      if [ -n "${FM_GOAL_DERIVED_TASKS[$i]-}" ]; then
+        bind_derived_task "$goal" "$i" || continue
+        listed=0 # The launch links must see the new binding.
       fi
       if [ "$listed" -eq 0 ]; then
         links=$("$SCRIPT_DIR/fm-goal.sh" launch-links) || return 1
@@ -300,7 +343,7 @@ run_pass() {
       [ -z "$result" ] || log "$result"
       case "$result" in
         "started $task"*|"admission: started $task")
-          mark "$goal" "$i" running "started $task through routed admission" || true ;;
+          mark "$goal" "$i" running "started $task through routed admission" "$task" || true ;;
       esac
     done
   done < <(fm_goal_active_records "$FM_GOAL_VIEW_STATE" --driven 2>/dev/null)
@@ -310,7 +353,8 @@ run_pass() {
   for binding in ${bindings[@]+"${bindings[@]}"}; do
     if still_driven "${binding%%/*}"; then current="$current $binding"; fi
   done
-  [ -z "$current" ] || notice "briefs-$(printf '%s\n' "$current" | cksum | tr ' ' '-')" "goal briefs needed:$current"
+  [ -z "$current" ] || notice "briefs-$(printf '%s\n' "$current" | cksum | tr ' ' '-')" \
+    "goal briefs needed:$current${why:+ - $(printf '%s' "$why" | cut -c1-600)}"
   captain_notices || log 'captain cockpit audit failed'
 }
 

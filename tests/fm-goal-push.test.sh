@@ -36,6 +36,9 @@ if [ -f "$LAB/block-$2" ]; then
   for ((i=0; i<200; i++)); do [ ! -f "$LAB/allow-$2" ] || break; sleep .05; done
   [ -f "$LAB/allow-$2" ] || exit 1
 fi
+if [ -f "$LAB/steal-$2" ]; then
+  "$GOAL_CMD" mark race race-item waiting --on captain:other -- 'owner moved first' >/dev/null
+fi
 if [ -f "$LAB/hold-$2" ]; then
   "$QUEUE_CMD" add "$2" --reason 'lab admission hold' -- "$2" "$3"
   exit 75
@@ -137,11 +140,36 @@ assert_equals 1 "$(grep -c 'captain item NOT on cockpit: on/wait' "$H/state/.wak
 "$G" mark on wait open -- 'no longer waiting on the captain' >/dev/null
 pass 'enforce starts only startable ON drive items, observes headroom and caps starts at three'
 
+# Only a wait with no condition (30 min) or an external one (1 h) goes stale by age.
+now=$(date +%s)
+printf '%s\n' 'item [id=w-none] [owner=main]: no condition' 'item [id=w-captain] [owner=main]: captain wait' \
+  'item [id=w-item] [owner=main]: item wait' 'item [id=w-until] [owner=main]: until wait' \
+  'item [id=w-ext-young] [owner=main]: young external wait' 'item [id=w-ext-old] [owner=main]: old external wait' > "$T/waitkinds.items"
+start waitkinds
+{
+  printf 'goal [goal=waitkinds] [item=w-none] [state=waiting] [at=%s]: wait\n' "$((now - 4000))"
+  printf 'goal [goal=waitkinds] [item=w-captain] [state=waiting] [on=captain%%3Averify] [at=%s]: wait\n' "$((now - 4000))"
+  printf 'goal [goal=waitkinds] [item=w-item] [state=waiting] [on=item%%3Aw-none] [at=%s]: wait\n' "$((now - 4000))"
+  printf 'goal [goal=waitkinds] [item=w-until] [state=waiting] [on=until%%3A%s] [at=%s]: wait\n' "$((now + 90000))" "$((now - 4000))"
+  printf 'goal [goal=waitkinds] [item=w-ext-young] [state=waiting] [on=external%%3Aci] [at=%s]: wait\n' "$((now - 2000))"
+  printf 'goal [goal=waitkinds] [item=w-ext-old] [state=waiting] [on=external%%3Aci] [at=%s]: wait\n' "$((now - 4000))"
+} >> "$H/state/goals/waitkinds.marks"
+"$P" run
+for id in w-none w-ext-old; do
+  assert_equals 1 "$(grep -c "goal wait is stale: waitkinds/$id" "$H/state/.wake-queue")" "$id is a stale wait and wakes once"
+done
+for id in w-captain w-item w-until w-ext-young; do
+  assert_no_grep "goal wait is stale: waitkinds/$id" "$H/state/goal-push.log" "$id has a live condition and is never stale"
+done
+pass 'a wait with an on= condition is not stale by age alone'
+
 # Publish the same canonical landing event as the PR watcher in the lab.
 pr='https://github.com/example/demo/pull/1'
 printf 'kind=ship\npr=%s\n' "$pr" >> "$H/state/one.meta"
 bash -c '. "$1"; fm_pr_url_parse "$2" && fm_pr_poll_merge_mark_notified "$FM_STATE_OVERRIDE" one "$FM_PR_PROVIDER" "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER"' \
   _ "$ROOT/bin/fm-pr-lib.sh" "$pr"
+# The landing must be newer than the item's latest mark (whole-second clock).
+touch -d "@$(( $(date +%s) + 5 ))" "$H/state/one.pr-poll-merge-notified"
 capacity 0
 "$P" tick
 assert_equals running "$("$G" export on | jq -r '.goals[0].items[] | select(.id == "one").state')" 'landing does not close a live worker'
@@ -150,6 +178,23 @@ printf 'done [at=%s]: full local task proof\n' "$(date +%s)" > "$H/state/one.sta
 "$P" tick
 assert_equals "$pr" "$("$G" export on | jq -r '.goals[0].items[] | select(.id == "one" and .state == "done").pr')" 'done plus canonical landing closes the item'
 pass 'landing and terminal status events reconcile a running item using its bound PR'
+
+# A merged PR and a done worker are not enough when the owner marked the item after the landing.
+pr2='https://github.com/example/demo/pull/2'
+printf 'kind=ship\npr=%s\n' "$pr2" >> "$H/state/two.meta"
+bash -c '. "$1"; fm_pr_url_parse "$2" && fm_pr_poll_merge_mark_notified "$FM_STATE_OVERRIDE" two "$FM_PR_PROVIDER" "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER"' \
+  _ "$ROOT/bin/fm-pr-lib.sh" "$pr2"
+touch -d "@$(( $(date +%s) - 3600 ))" "$H/state/two.pr-poll-merge-notified"
+: > "$T/done-two"
+printf 'done [at=%s]: full local task proof\n' "$(date +%s)" > "$H/state/two.status"
+"$P" tick
+assert_equals running "$("$G" export on | jq -r '.goals[0].items[] | select(.id == "two").state')" 'a mark newer than the landing keeps the item running'
+assert_no_grep 'mark on/two done' "$H/state/goal-push.log" 'no done is even proposed over a newer owner mark'
+touch -d "@$(( $(date +%s) + 5 ))" "$H/state/two.pr-poll-merge-notified"
+"$P" tick
+assert_equals "$pr2" "$("$G" export on | jq -r '.goals[0].items[] | select(.id == "two" and .state == "done").pr')" 'a landing newer than the mark closes the item'
+assert_grep 'mark result on/two done: landed' "$H/state/goal-push.log" 'the log records that the done mark landed'
+pass 'done proposals need a landing newer than the latest mark'
 
 capacity 3
 "$G" pause on >/dev/null
@@ -166,6 +211,18 @@ assert_absent "$T/spawn.log" 'pausing stops scoped replay; generic retry cannot 
 assert_equals "held $H/projects/demo" "$(<"$T/spawn.log")" 'resuming replays held task through admission'
 assert_equals 4 "$(wc -l < "$T/dispatch.log" | tr -d ' ')" 'OFF stops additional starts, with no second dispatch for the hold'
 pass 'switch events and held queue replay preserve OFF safety'
+
+# The pusher logs the guarded write's result, not only the attempt.
+brief race-item
+printf '%s\n' 'item [id=race-item] [owner=main] [task=race-item]: owner moves first' > "$T/race.items"
+start race
+: > "$T/steal-race-item"
+"$P" run
+assert_grep 'enforce mark race/race-item running: started race-item' "$H/state/goal-push.log" 'the attempt is logged'
+assert_grep 'mark result race/race-item running: refused rc=1 (fm-goal: push mark refused: the item changed since the pusher read it)' \
+  "$H/state/goal-push.log" 'the refusal and its reason are logged'
+assert_equals waiting "$("$G" export race | jq -r '.goals[0].items[] | select(.id == "race-item").state')" 'the owner mark won'
+pass 'a refused pusher mark is visible in the log with its reason'
 
 # A local mate consumes the parent view and publishes marks via its own stream.
 M=$T/mate
@@ -267,6 +324,8 @@ assert_grep "new draft-bare $H/projects/bare --wait --mode direct-PR --yolo off 
   "$T/dispatch.log" 'broker forwards an explicitly empty branch prefix'
 assert_grep 'enforce drafted draft/draft-good' "$H/state/goal-push.log" 'enforce logs the draft'
 assert_equals 1 "$(grep -c 'goal briefs needed:.*draft/draft-thin.*draft/no-evidence.*draft/no-project' "$H/state/.wake-queue")" 'refusals wake the owner'
+assert_equals 1 "$(grep -c 'goal briefs needed:.* - draft/draft-thin: record concrete scope' "$H/state/.wake-queue")" 'the wake says why a brief is needed'
+assert_grep 'cannot draft draft/no-project: set task= and project=' "$H/state/goal-push.log" 'an ambiguous registry never invents a project'
 for id in draft-thin no-evidence blank-evidence no-project draft-captain draft-mate draft-off over-cap wrong-project captain-hold addendum placeholder; do
   assert_absent "$H/data/$id/brief.md" "$id was not drafted"
 done
@@ -410,5 +469,40 @@ assert_absent "$M/state/moving.meta" 'the old home identity cannot replay a star
 result=$(mate_run run 2>&1) && fail 'the old home must lose access to owner dispatch on rebind'
 assert_contains "$result" 'not checked' 'the stale home is reported as not checked, never main'
 pass 'owner changes and OFF gates both stop owner-local replay before launch'
+
+# A home with one registered project drafts and starts an item that names neither task nor project,
+# and the running mark keeps a task bound by an owner mark instead of erasing it.
+D=$T/mate2
+mkdir -p "$D/config" "$D/state" "$D/data" "$D/projects"
+git init -q "$D/projects/derived"
+printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$H" > "$D/.fm-secondmate-parent"
+printf 'mate2\n' > "$D/.fm-secondmate-home"
+printf 'enforce\n' > "$D/config/goal-push"
+printf '%s\n' '- derived [direct-PR] - single project' > "$D/data/projects.md"
+printf '%s\n' "- mate2 - Lab mate (home: $D; scope: test; projects: derived; added 2026-11-27)" >> "$H/data/secondmates.md"
+printf '%s\n' 'derive-me,queued,ship,derived,Derived binding' 'bound-task,queued,ship,derived,Bound by an owner mark' >> "$D/data/ready.csv"
+spec=$(jq -cn --arg scope "$scope" --arg evidence "$proof" '{section:"Plan 4",scope:$scope,evidence:$evidence,kind:"ship"}')
+printf '%s\n' 'item [id=derive-me] [owner=mate2]: Derive the missing binding' "spec derive-me $spec" \
+  'item [id=bound-me] [owner=mate2]: Task bound by an owner mark' "spec bound-me $spec" > "$T/derivegoal.items"
+start derivegoal
+printf 'goal [goal=derivegoal] [item=bound-me] [state=open] [task=bound-task] [at=%s]: bound\n' "$(date +%s)" >> "$H/state/mate2.status"
+capacity 3
+derive_run() {
+  FM_HOME="$D" FM_STATE_OVERRIDE="$D/state" FM_CONFIG_OVERRIDE="$D/config" FM_DATA_OVERRIDE="$D/data" \
+    FM_PROJECTS_OVERRIDE="$D/projects" "$P" "$@"
+}
+derive_run run
+assert_grep 'Goal pusher project: derived' "$D/data/derive-me/brief.md" 'the single registered project is derived'
+assert_grep 'Goal pusher project: derived' "$D/data/bound-task/brief.md" 'a task bound by a mark also drafts'
+assert_grep "new derive-me $D/projects/derived --wait" "$T/dispatch.log" 'the derived binding starts through the normal broker'
+assert_grep "new bound-task $D/projects/derived --wait" "$T/dispatch.log" 'the bound task starts through the normal broker'
+assert_grep '[item=derive-me] [state=open] [task=derive-me]' "$H/state/mate2.status" 'the derived task is bound in the record before the start'
+assert_grep '[item=derive-me] [state=running] [task=derive-me]' "$H/state/mate2.status" 'the running mark names the derived task'
+assert_grep '[item=bound-me] [state=running] [task=bound-task]' "$H/state/mate2.status" 'the running mark keeps the bound task'
+derive_run run
+assert_no_grep 'orphaned' "$D/state/goal-push.log" 'a freshly started live task is not orphaned'
+assert_equals 2 "$(grep -c "^new \(derive-me\|bound-task\) $D" "$T/dispatch.log")" 'no second start'
+assert_equals 'running running' "$("$G" export derivegoal | jq -r '[.goals[0].items[].state] | join(" ")')" 'both items stay running'
+pass 'a single-project home derives task and project, and a running mark keeps the task bound'
 
 echo '# all fm-goal-push tests passed'
