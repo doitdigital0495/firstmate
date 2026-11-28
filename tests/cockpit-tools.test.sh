@@ -579,6 +579,30 @@ run_refresh COCKPIT_GOAL_HOME="$GOAL_HOME" COCKPIT_SCOREBOARD_CONFIG="$TMP_ROOT/
 grep -q 'id="secondmate-scoreboard"' "$DATA/cockpit-2.html" || fail "scoreboard table not rendered"
 pass "refresh-cockpit: publishes configured hourly scoreboard"
 
+# ---- goal_drive.py: the fixed-card rebuild keeps the host's answer handler ----
+# A host answer handler inside the old decision section must survive the rebuild; without it every kept form
+# falls through to a plain GET submit that drops Lavish's artifact_load_token ("artifact load is no longer current").
+python3 -I - "$ROOT/tools/cockpit" > "$TMP_ROOT/host-script.out" 2>&1 <<'PY' || fail "host answer script dropped: $(<"$TMP_ROOT/host-script.out")"
+import sys
+sys.path.insert(0, sys.argv[1])
+import goal_drive
+page = ('<html><head></head><body><section id="beslissingen"><h2>old</h2>'
+        '<form data-lavish-question="q-one" onsubmit="return hostSend(event,\'q-one\')"><button>Send</button></form>'
+        '<form data-lavish-question="ververs-alles" onsubmit="return hostSend(event,\'ververs-alles\')"></form>'
+        '<script>function hostSend(e,q){e.preventDefault();return false}</script></section><main>rest</main></body></html>')
+row = {'key': 'q-one', 'aliases': [], 'type': 'vraag', 'missing': [], 'about': 'Why', 'goal_links': {},
+       'title': 'Question one', 'question': 'Question one', 'options': [{'value': 'a', 'label': 'A', 'detail': 'Do A'}],
+       'recommendation': 'a', 'group': ''}
+truth = {'goals': [], 'section1': {'must': [row]}}
+out = goal_drive.render_captain_steps(page, truth)
+assert out.count('function hostSend') == 1, 'host script missing or duplicated'
+assert out.count('data-lavish-question="q-one"') == 1 and 'ververs-alles' in out, 'forms not kept'
+assert out.index('class="fm-captain"') < out.index('function hostSend') < out.index('<main>'), 'script out of place'
+assert '<h2>old</h2>' not in out, 'old section kept'
+assert goal_drive.render_captain_steps(out, truth).count('function hostSend') == 1, 'second rebuild lost or duplicated it'
+PY
+pass 'goal_drive: host answer script in the old decision section is kept once across rebuilds'
+
 # ---- cockpit-sync.py: reality beats marks, the captain's list is exact, and a built page is checked ----
 if ! command -v tasks-axi >/dev/null 2>&1; then
   echo "skip: cockpit-sync needs tasks-axi"

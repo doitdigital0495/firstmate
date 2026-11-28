@@ -478,8 +478,12 @@ def render_captain_steps(page, truth):
     sections = [n for n in sections if not n.ancestor(section_set.__contains__)]
     section_id = next((n.id for n in sections if n.id in DECISION_SECTIONS), DECISION_SECTIONS[0])
     owners = {key: row['key'] for _, row in captain_entries(truth) for key in [row['key'], *row['aliases']]}
-    forms, controls = defaultdict(list), []
+    forms, controls, scripts = defaultdict(list), [], []
     for node in parsed.nodes:
+        if node.tag == 'script' and node.close is not None and node.ancestor(section_set.__contains__):
+            # The host's answer handler (e.g. mikoSend) often lives in the old section; the kept forms call it.
+            scripts.append(page[node.start:page.index('>', node.close) + 1])
+            continue
         if node.tag != 'form' or not node.visible or node.close is None or not node.ancestor(section_set.__contains__):
             continue
         key = node.attrs.get('data-lavish-question') or ''
@@ -505,7 +509,7 @@ def render_captain_steps(page, truth):
         page = page[:ref_at] + generated('<section id="fm-captain-goal-refs"><h2>Doelen van overige projecten</h2>'
                                          + cards + '</section>') + page[ref_at:]
     inline_forms = {key: ''.join(values) for key, values in forms.items()}
-    return page[:at] + captain_section(truth, section_id, inline_forms) + ''.join(controls) + page[at:]
+    return page[:at] + captain_section(truth, section_id, inline_forms) + ''.join(controls) + ''.join(scripts) + page[at:]
 
 
 def heading_end(page, parsed):
