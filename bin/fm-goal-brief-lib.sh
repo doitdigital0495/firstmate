@@ -15,6 +15,29 @@ fm_goal_brief_token() {
   LC_ALL=C grep -oE '\{(TASK\}|FIRSTMATE_SPEC\}|FILL:[A-Z0-9_]+\}|FILL:)' | awk 'NR == 1 {print} END {exit !(NR > 0)}'
 }
 
+# Fill a drive item's missing task= and project= for drafting, only from facts
+# that cannot name the wrong work: the item id when it is a valid task id, and
+# the home's single recognised registered project. Marks already bind a task in
+# the fold. Everything else the drafter checks (scope and evidence, ship
+# contract, clone, one unique ready row) is unchanged. Call in the caller's
+# shell so the arrays keep the result; a derived task is flagged in
+# FM_GOAL_DERIVED_TASKS so the pusher can bind it in the record before a start.
+FM_GOAL_DERIVED_TASKS=()
+_fm_goal_derive_binding() {  # <idx>
+  local i=$1 id=${FM_GOAL_ITEMS_IDS[$1]} registry project
+  [ "${FM_GOAL_ITEMS_CLASSES[$i]}" = drive ] && [ -z "${FM_GOAL_ITEMS_BRIEF_SOURCES[$i]}" ] || return 0
+  if [ -z "${FM_GOAL_ITEMS_TASKS[$i]}" ] && fm_task_id_creation_valid "$id"; then
+    FM_GOAL_ITEMS_TASKS[i]=$id
+    FM_GOAL_DERIVED_TASKS[i]=1
+  fi
+  [ -z "${FM_GOAL_ITEMS_PROJECTS[$i]}" ] || return 0
+  [ ! -L "$FM_GOAL_DATA" ] && [ ! -L "$FM_GOAL_DATA/projects.md" ] || return 0
+  registry=$(FM_DATA_OVERRIDE="$FM_GOAL_DATA" "$FM_GOAL_DIR/fm-project-mode.sh" --list-json 2>/dev/null) || return 0
+  project=$(jq -er 'select(.present and (.duplicates | length == 0)) |
+    [.projects[] | select(.recognised)] | select(length == 1) | .[0].name' <<< "$registry" 2>/dev/null) || return 0
+  FM_GOAL_ITEMS_PROJECTS[i]=$project
+}
+
 # <idx> [no-row]; print a fix on failure. The fields populated on success
 # are local to the caller's shell (command substitutions use a subshell).
 _fm_goal_draft_source() {

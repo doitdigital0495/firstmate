@@ -2786,11 +2786,14 @@ cmd_evidence() {
 # goal. The main-home call checks under the same lock as the drive switch.
 _fm_goal_mark_push_guard() {  # <goal> <item> <state-dir> <data-dir>
   [ -n "${FM_GOAL_PUSH_EXPECT:-}" ] || return 0
-  [ "$FM_GOAL_REC_DRIVE" = driven ] || return 1
+  [ "$FM_GOAL_REC_DRIVE" = driven ] || { fm_goal_log 'push mark refused: the goal is not driven'; return 1; }
   local idx
   fm_goal_fold "$1" "$3" "$4" "$(date +%s)"
   idx=$(_fm_goal_index_of "$2") || return 1
-  [ "$FM_GOAL_PUSH_EXPECT" = "${FM_GOAL_ITEMS_OWNERS[$idx]}:${FM_GOAL_M_STATES[$idx]}:${FM_GOAL_M_ATS[$idx]}" ]
+  [ "$FM_GOAL_PUSH_EXPECT" = "${FM_GOAL_ITEMS_OWNERS[$idx]}:${FM_GOAL_M_STATES[$idx]}:${FM_GOAL_M_ATS[$idx]}" ] || {
+    fm_goal_log 'push mark refused: the item changed since the pusher read it'
+    return 1
+  }
 }
 
 cmd_mark() {
@@ -2858,6 +2861,7 @@ cmd_mark() {
   if [ "$rc" -eq 0 ]; then
     # secondmate home: publish through the parent channel.
     if [ "${FM_GOAL_PUSH_EXPECT:-}" != '' ] && [ "$FM_PARENT_CHANNEL_ROUTE" != local ]; then
+      fm_goal_log 'push mark refused: the parent route is not local'
       return 1
     fi
     if [ "${FM_GOAL_RECORDING_EVIDENCE-}" = 1 ] && [ "$FM_PARENT_CHANNEL_ROUTE" != local ]; then
